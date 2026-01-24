@@ -72,7 +72,7 @@ A sandbox is restrictive, not productive. Developers need full tools, not a lock
 | Feature                                                      | Status         |
 | ------------------------------------------------------------ | -------------- |
 | Full dev environment (VS Code, terminal, Node.js, Python)    | ✅ Available   |
-| Works with any MCP agent (Copilot, Claude, Cursor, Aider)    | ✅ Available   |
+| Works with any MCP agent (Copilot, Claude, Gemini, Kiro )    | ✅ Available   |
 | Docker-in-Docker (build containers inside workspace)         | ✅ Available   |
 | No agent modifications required                              | ✅ Available   |
 | Developer mode (relaxed controls, audit preserved)           | ✅ Available   |
