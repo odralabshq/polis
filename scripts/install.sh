@@ -58,9 +58,6 @@ detect_platform() {
         Linux)
             os="linux"
             check_distro
-            if is_wsl; then
-                info "WSL detected - Polis will configure Sysbox automatically during 'polis install'"
-            fi
             ;;
         Darwin) error "macOS is not yet supported. Stay tuned!" ;;
         *)      error "Unsupported OS: $os" ;;
@@ -75,10 +72,10 @@ detect_platform() {
     echo "${os}-${arch}"
 }
 
-# Get latest release version
+# Get latest release version (includes pre-releases)
 get_latest_version() {
-    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | \
-        grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+    curl -fsSL "https://api.github.com/repos/${REPO}/releases" | \
+        grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
 # Download and install
@@ -88,6 +85,10 @@ install_polis() {
     info "Detecting platform..."
     platform="$(detect_platform)"
     info "Platform: $platform"
+
+    if is_wsl; then
+        info "WSL detected - Polis will configure Sysbox automatically during 'polis install'"
+    fi
 
     info "Fetching latest version..."
     version="$(get_latest_version)"
