@@ -8,6 +8,15 @@ REPO="odralabshq/polis"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="polis"
 
+# Temp directory for downloads
+TMP_DIR=""
+cleanup() {
+    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+        rm -rf "$TMP_DIR"
+    fi
+}
+trap cleanup EXIT
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -80,7 +89,7 @@ get_latest_version() {
 
 # Download and install
 install_polis() {
-    local platform version download_url tmp_dir
+    local platform version download_url
 
     info "Detecting platform..."
     platform="$(detect_platform)"
@@ -99,21 +108,20 @@ install_polis() {
 
     download_url="https://github.com/${REPO}/releases/download/${version}/${BINARY_NAME}-${platform}"
 
-    tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' EXIT
+    TMP_DIR="$(mktemp -d)"
 
     info "Downloading Polis CLI..."
-    if ! curl -fsSL "$download_url" -o "$tmp_dir/$BINARY_NAME"; then
+    if ! curl -fsSL "$download_url" -o "$TMP_DIR/$BINARY_NAME"; then
         error "Failed to download from $download_url"
     fi
 
-    chmod +x "$tmp_dir/$BINARY_NAME"
+    chmod +x "$TMP_DIR/$BINARY_NAME"
 
     info "Installing to $INSTALL_DIR..."
     if [ -w "$INSTALL_DIR" ]; then
-        mv "$tmp_dir/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+        mv "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     else
-        sudo mv "$tmp_dir/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+        sudo mv "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     fi
 
     info "Polis CLI installed successfully!"
