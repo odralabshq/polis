@@ -1,0 +1,74 @@
+# Polis - g3proxy Configuration
+# Transparent proxy with TLS MITM and ICAP content inspection
+# All traffic (including AI APIs) routes directly to upstream
+
+# ===========================================
+# Resolver (DNS)
+# ===========================================
+resolver:
+  - name: default
+    type: c-ares
+    server:
+      - 8.8.8.8
+      - 8.8.4.4
+
+# ===========================================
+# Auditor - TLS MITM + ICAP
+# ===========================================
+auditor:
+  - name: default
+    protocol_inspection: {}
+    # TLS certificate generation for MITM - connects to g3fcgen on UDP 2999
+    tls_cert_agent:
+      query_peer_addr: 127.0.0.1:2999
+      query_wait_timeout: 4s
+      protective_cache_ttl: 10
+      maximum_cache_ttl: 300
+    # TLS interception client settings (for upstream connections)
+    tls_interception_client:
+      no_default_ca_certificate: false
+      handshake_timeout: 10s
+    # TLS interception server settings (for client connections)
+    tls_interception_server:
+      accept_timeout: 10s
+    # HTTP/1 interception
+    h1_interception:
+      pipeline_size: 10
+      req_header_recv_timeout: 30s
+      rsp_header_recv_timeout: 60s
+    # HTTP/2 interception
+    h2_interception: {}
+    # ICAP services - internal Docker network (gateway-bridge), no external exposure
+    # REQMOD: echo (passthrough for requests)
+    icap_reqmod_service: icap://icap:1344/echo
+    # RESPMOD: SquidClamav for malware scanning
+    # Use map format with no_preview to avoid ICAP preview failures on
+    # short-body responses (e.g. 302 redirects with empty/minimal body)
+    icap_respmod_service:
+      url: icap://icap:1344/squidclamav
+      no_preview: true
+    # Audit all traffic
+    task_audit_ratio: 1.0
+    # NOTE: Fail-closed behavior enforced via health-check.sh (ICAP connectivity check)
+    # g3proxy does not support native circuit breaker config for ICAP
+
+# ===========================================
+# Escapers - Upstream routing
+# ===========================================
+escaper:
+  # Direct internet access - used for everything
+  # g3proxy handles TLS MITM, then connects directly to upstream
+  - name: direct
+    type: direct_fixed
+    resolver: default
+
+# ===========================================
+# Servers
+# ===========================================
+server:
+  # Main transparent proxy listener
+  - name: transparent
+    type: tcp_tproxy
+    listen: 0.0.0.0:18080
+    escaper: direct
+    auditor: default

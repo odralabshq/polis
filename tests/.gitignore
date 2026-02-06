@@ -1,0 +1,11 @@
+# BATS testing framework (cloned by run-tests.sh)
+bats/
+
+# Test artifacts
+*.tap
+*.xml
+test-results/
+
+# Temporary files
+*.tmp
+*.log

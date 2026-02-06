@@ -1,0 +1,10 @@
+---
+# g3fcgen - Fake Certificate Generator for g3proxy TLS MITM
+# Config directory format - files are relative to this directory
+
+runtime:
+  thread_number: 1
+
+backend:
+  ca_certificate: /etc/g3proxy/ssl/ca.pem
+  ca_private_key: /etc/g3proxy/ssl/ca.key
