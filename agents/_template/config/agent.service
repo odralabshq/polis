@@ -1,0 +1,18 @@
+[Unit]
+Description=CHANGEME Agent
+After=network-online.target polis-init.service
+Wants=network-online.target
+Requires=polis-init.service
+
+[Service]
+Type=simple
+User=polis
+Group=polis
+WorkingDirectory=/opt/agents/CHANGEME
+ExecStart=/bin/echo "CHANGEME: implement ExecStart"
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

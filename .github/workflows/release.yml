@@ -1,0 +1,210 @@
+# Release Workflow for polis-core
+# Builds 3 Docker images (gateway, icap, workspace), signs them, generates SBOMs,
+# and creates a GitHub Release with source tarball.
+#
+# Usage: Go to Actions > Release > Run workflow > Enter version (e.g., v0.1.0)
+# Or push a tag matching v* to trigger automatically.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.1.0, v1.2.3-rc1)'
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/polis
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  # =========================================================
+  # Validate version format
+  # =========================================================
+  validate:
+    name: Validate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      is_prerelease: ${{ steps.validate.outputs.is_prerelease }}
+    steps:
+      - name: Validate version format
+        id: validate
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            echo "::error::Could not determine version"
+            exit 1
+          fi
+
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Invalid version format '$VERSION'. Expected: v0.0.0 or v0.0.0-suffix"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *"-"* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "✓ Version $VERSION is valid"
+
+  # =========================================================
+  # Build, push, sign, and attest each Docker image
+  # =========================================================
+  docker:
+    name: "Docker: ${{ matrix.image }}"
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: gateway
+            dockerfile: ./build/g3proxy/Dockerfile
+            description: Polis Gateway (g3proxy)
+          - image: icap
+            dockerfile: ./build/icap/Dockerfile
+            description: Polis ICAP (c-icap + SquidClamav)
+          - image: workspace
+            dockerfile: ./build/workspace/Dockerfile
+            description: Polis Workspace (base)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Generate CA certificate for build
+        run: |
+          mkdir -p certs/ca
+          openssl genrsa -out certs/ca/ca.key 4096
+          openssl req -new -x509 -days 3650 -key certs/ca/ca.key -out certs/ca/ca.pem \
+            -subj "/C=US/ST=Local/L=Local/O=Polis/OU=Gateway/CN=Polis CA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.12.0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build-push
+        uses: docker/build-push-action@v6.18.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss:${{ needs.validate.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss:latest
+          labels: |
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.0.0
+        with:
+          cosign-release: 'v3.0.3'
+
+      - name: Sign container image
+        run: |
+          cosign sign --yes \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss@${{ steps.build-push.outputs.digest }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0.22.2
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss:${{ needs.validate.outputs.version }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.image }}.spdx.json
+
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@v2.1.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss
+          subject-digest: ${{ steps.build-push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: sbom-${{ matrix.image }}
+          path: sbom-${{ matrix.image }}.spdx.json
+          retention-days: 5
+
+  # =========================================================
+  # Create GitHub Release with source tarball + SBOMs
+  # =========================================================
+  release:
+    name: Create Release
+    needs: [validate, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Create and push tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ needs.validate.outputs.version }}" -m "Release ${{ needs.validate.outputs.version }}"
+          git push origin "${{ needs.validate.outputs.version }}"
+
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v4.2.0
+        with:
+          pattern: sbom-*
+          merge-multiple: true
+          path: ./sboms
+
+      - name: Create source tarball
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          tar czf "polis-core-${VERSION}.tar.gz" \
+            --exclude='.git' \
+            --exclude='certs/ca/*.key' \
+            --exclude='.env' \
+            --transform "s,^,polis-core-${VERSION}/," \
+            build config deploy docs scripts tests tools \
+            README.md .gitignore
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: Release ${{ needs.validate.outputs.version }}
+          draft: false
+          prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          files: |
+            tools/polis.sh
+            scripts/install.sh
+            polis-core-${{ needs.validate.outputs.version }}.tar.gz
+            sboms/sbom-gateway.spdx.json
+            sboms/sbom-icap.spdx.json
+            sboms/sbom-workspace.spdx.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
