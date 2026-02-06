@@ -1,178 +1,196 @@
-# Polis - Secure Workspace for AI Coding Agents
+# Polis
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+Secure AI workspace with full traffic inspection. Run AI agents in an isolated environment where all network traffic is monitored and scanned for malware.
 
-Polis is a **defense-in-depth security layer** for AI coding agents. It provides a containerized workspace where agents can operate autonomously while all their actions are controlled, inspected, and audited.
-
-## ⚡️ Get Started in 60 Seconds
+## Quick Start
 
 ```bash
-# 1. Install the CLI
-curl -fsSL https://raw.githubusercontent.com/odralabshq/polis/main/scripts/install.sh | bash
+# Clone the repository
+git clone https://github.com/OdraLabsHQ/polis-core.git
+cd polis-core
 
-# 2. Setup your local environment
-polis install
+# Initialize (installs dependencies, builds containers, starts services)
+./tools/polis.sh init
 
-# 3. Start secure workspace for your agents
-polis up
-
-# 4. Access via terminal
-polis shell
+# After init completes, open the Control UI
+# http://localhost:18789
 ```
 
-## Security Problems We Solve
+That's it! The `init` command handles everything:
+- ✅ Checks Docker version compatibility
+- ✅ Installs Sysbox runtime (for secure containers)
+- ✅ Generates TLS certificates
+- ✅ Builds/pulls container images
+- ✅ Starts all services
+- ✅ Offers to pair your first device
 
-AI coding agents introduce threats absent from traditional software: uncontrolled goal drift, multi-step reasoning that bypasses security gates, and recursive capability amplification through tool chaining.
+## Requirements
 
-### Security By Default
+- **Linux** (native or WSL2 on Windows)
+- **Docker** 20.10.x - 25.x (version 27+ has known issues with Sysbox)
+- **4GB+ RAM** recommended
 
-Simple sandboxing only isolates processes—an agent in a Docker container can still exfiltrate data to any domain, send secrets over encrypted channels, and execute malicious code via test runners or git hooks. Polis adds network-level controls that containers alone cannot provide.
+### Docker Version Note
 
-| Threat                                                       | Status         |
-| ------------------------------------------------------------ | -------------- |
-| Agent exfiltrates API keys, tokens, credentials              | ✅ Addressed   |
-| PII leakage (names, emails, SSN)                             | ✅ Addressed   |
-| DNS tunneling exfiltration                                   | ✅ Addressed   |
-| Exfiltration via "safe" commands (`npm test`, git hooks)     | ✅ Addressed   |
-| Agent connects to unauthorized domains                       | ✅ Addressed   |
-| Agent bypasses proxy via direct connections                  | ✅ Addressed   |
-| Cloud metadata service access (169.254.169.254)              | ✅ Addressed   |
-| TLS-encrypted malicious traffic                              | ✅ Addressed   |
-| Agent escapes to host system                                 | ✅ Addressed   |
-| Privilege escalation inside container                        | ✅ Addressed   |
-| Typosquatted packages (`nxdebug` vs `nx-debug`)              | 🔜 Coming soon |
-| Poisoned dependencies in lockfiles                           | 🔜 Coming soon |
-| Compromised MCP tool descriptors                             | 🔜 Coming soon |
-| Malicious extensions and dependencies                        | 🔜 Coming soon |
-| Arbitrary code execution via generated code                  | 🔜 Coming soon |
-| Unsafe deserialization (pickle, eval)                        | 🔜 Coming soon |
-
-### Governance By Default
-
-Sandboxes provide no visibility into what agents are doing. You can't prove what an agent did, enforce policies on tool usage, or require human approval for destructive actions. Polis makes every action auditable and controllable.
-
-| Threat                                                       | Status         |
-| ------------------------------------------------------------ | -------------- |
-| No visibility into agent actions                             | ✅ Addressed   |
-| Cannot prove what agent did/didn't do                        | ✅ Addressed   |
-| Human approval bypassed                                      | ✅ Addressed   |
-| Over-privileged tool access                                  | ✅ Addressed   |
-| Unlimited API/tool usage                                     | ✅ Addressed   |
-| Tool chaining for exfiltration (DB read → HTTP POST)         | 🔜 Coming soon |
-| Shell injection via reflected prompts                        | 🔜 Coming soon |
-| Indirect prompt injection via fetched content                | 🔜 Coming soon |
-| Goal drift via manipulated context                           | 🔜 Coming soon |
-| Hidden instructions in documents/emails                      | 🔜 Coming soon |
-| Configuration drift undetected                               | 🔜 Coming soon |
-
-### Agent Development Environment
-
-A sandbox is restrictive, not productive. Developers need full tools, not a locked-down shell. Polis provides a complete development environment where agents can build, test, and deploy—while every action passes through the security plane.
-
-| Feature                                                      | Status         |
-| ------------------------------------------------------------ | -------------- |
-| Full dev environment (VS Code, terminal, Node.js, Python)    | ✅ Available   |
-| Works with any MCP agent (Copilot, Claude, Gemini, Kiro )    | ✅ Available   |
-| Docker-in-Docker (build containers inside workspace)         | ✅ Available   |
-| No agent modifications required                              | ✅ Available   |
-| Developer mode (relaxed controls, audit preserved)           | ✅ Available   |
-
-## Platform Support
-
-| Platform                       | Status          | Notes                              |
-| ------------------------------ | --------------- | ---------------------------------- |
-| Debian/Ubuntu + Sysbox         | ✅ Supported    | Recommended for production         |
-| WSL2 (Debian/Ubuntu) + Sysbox  | ✅ Supported    | Auto-configured by `polis install` |
-| Other Linux distros            | 🔜 Coming soon  | RHEL, Fedora, Arch                 |
-| macOS                          | 🔜 Coming soon  |                                    |
-| Windows (native)               | 🔜 Coming soon  |                                    |
-
-Run `polis doctor` to check your security posture and system compatibility.
-
-## Command Reference
-
-### Lifecycle
-
-| Command           | Description                                      |
-| ----------------- | ------------------------------------------------ |
-| `polis install`   | Setup environment, pull images, generate certs   |
-| `polis up`        | Start the security plane and workspace           |
-| `polis down`      | Stop containers (preserves state)                |
-| `polis uninstall` | Remove containers and clean up resources         |
-| `polis update`    | Pull new images and recreate containers          |
-
-### Interaction
-
-| Command        | Description                                         |
-| -------------- | --------------------------------------------------- |
-| `polis shell`  | Open a secure terminal inside the workspace         |
-| `polis agents` | Manage persistent, monitored agent sessions         |
-
-### Observability
-
-| Command        | Description                          |
-| -------------- | ------------------------------------ |
-| `polis status` | View container health                |
-| `polis logs`   | Stream security and workspace logs   |
-| `polis doctor` | Validate system requirements         |
-
-### `polis agents`
-
-Manage persistent, monitored sessions for your agents. Polis wraps your agent process (e.g., `claude`, `aider`) in a secure TTY session.
-
+If you're on Docker 27+, you may need to downgrade:
 ```bash
-# Start a new agent session
-polis agents start claude
-
-# List active sessions
-polis agents
-
-# Stop a running session
-polis agents stop claude
+sudo apt-get install docker-ce=5:25.0.5-1~ubuntu.22.04~jammy docker-ce-cli=5:25.0.5-1~ubuntu.22.04~jammy
 ```
 
 ## Configuration
 
-Edit `polis.yaml` to customize:
+Before running `init`, add your AI provider API key to `.env`:
 
-```yaml
-gateway:
-  domains:
-    allowed:
-      - api.openai.com
-      - github.com
-      - registry.npmjs.org
+```bash
+# Copy the example config
+cp config/openclaw.env.example .env
 
-governance:
-  secrets:
-    enabled: true
-    action: block  # block | redact | alert
-  pii:
-    enabled: true
-    action: redact
-
-toolbox:
-  filesystem:
-    allowed_paths: [/workspace]
-    denied_paths: ["**/.ssh", "**/.aws"]
+# Edit and add your API key (at least one required)
+nano .env
 ```
 
-## Security Framework Alignment
+Supported providers:
+- `ANTHROPIC_API_KEY` - Claude (recommended)
+- `OPENAI_API_KEY` - GPT-4
+- `OPENROUTER_API_KEY` - Multiple models via single key
 
-Polis is designed against industry security frameworks:
+## Commands
 
-- **OWASP Top 10 for Agentic Applications 2026** — ASI01-ASI10 coverage
-- **MITRE ATLAS** — AI-specific threat tactics and techniques
-- **NIST AI RMF** — Risk management framework alignment
+### Essential Commands
+
+| Command | Description |
+|---------|-------------|
+| `./tools/polis.sh init` | First-time setup - does everything |
+| `./tools/polis.sh connect` | Pair a new device |
+| `./tools/polis.sh openclaw token` | Show access token and URL |
+| `./tools/polis.sh status` | Check if services are running |
+| `./tools/polis.sh down` | Stop everything |
+
+### OpenClaw Commands
+
+| Command | Description |
+|---------|-------------|
+| `openclaw token` | Display gateway token and Control UI URL |
+| `openclaw status` | Show service health and status |
+| `openclaw logs [n]` | View last n log lines (default: 50) |
+| `openclaw shell` | Enter the workspace shell |
+| `openclaw restart` | Restart the OpenClaw service |
+| `openclaw devices` | List all paired devices |
+| `openclaw devices approve` | Approve pending device requests |
+
+### Other Commands
+
+| Command | Description |
+|---------|-------------|
+| `up` | Start containers |
+| `down` | Stop and remove containers |
+| `logs [service]` | View container logs |
+| `shell` | Enter workspace shell |
+| `build [--no-cache]` | Rebuild images |
+
+## Device Pairing
+
+After `init` completes, you'll be prompted to pair a device. You can also do this anytime:
+
+```bash
+./tools/polis.sh connect
+```
+
+This will:
+1. Show your gateway token
+2. Guide you to open http://localhost:18789
+3. Wait for you to request pairing in the UI
+4. Automatically approve the device
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Host Machine                          │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │                    Polis Workspace                       ││
+│  │  ┌─────────────┐                                        ││
+│  │  │  OpenClaw   │ ◄── AI Agent + Control UI              ││
+│  │  │  Gateway    │     http://localhost:18789             ││
+│  │  └──────┬──────┘                                        ││
+│  │         │ All traffic                                   ││
+│  │         ▼                                               ││
+│  │  ┌─────────────┐     ┌─────────────┐                   ││
+│  │  │  G3Proxy    │────►│    ICAP     │                   ││
+│  │  │  Gateway    │     │   Scanner   │                   ││
+│  │  └──────┬──────┘     └──────┬──────┘                   ││
+│  │         │                   │                           ││
+│  │         │            ┌──────┴──────┐                   ││
+│  │         │            │   ClamAV    │                   ││
+│  │         │            │  Antivirus  │                   ││
+│  │         │            └─────────────┘                   ││
+│  └─────────┼───────────────────────────────────────────────┘│
+│            │                                                 │
+│            ▼                                                 │
+│       Internet                                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Components:**
+- **OpenClaw** - AI agent gateway with web Control UI
+- **G3Proxy** - TLS-intercepting proxy for traffic inspection
+- **ICAP/ClamAV** - Malware scanning for all downloads
+- **Sysbox** - Secure container runtime (Docker-in-Docker)
+
+## Troubleshooting
+
+### "Sysbox setup failed"
+
+Sysbox requires a compatible kernel. On WSL2:
+```bash
+# Ensure you're using WSL2, not WSL1
+wsl --set-version Ubuntu 2
+```
+
+### "Docker version may have compatibility issues"
+
+Downgrade Docker to a compatible version:
+```bash
+sudo apt-get install docker-ce=5:25.0.5-1~ubuntu.22.04~jammy
+```
+
+### OpenClaw not starting
+
+Check the logs:
+```bash
+./tools/polis.sh openclaw logs 100
+```
+
+Common issues:
+- No API key configured in `.env`
+- Port 18789 already in use
+
+### Reset everything
+
+```bash
+./tools/polis.sh down
+rm -rf certs/ca/*.key certs/ca/*.pem
+./tools/polis.sh init
+```
+
+## Development
+
+Build from source instead of pulling images:
+```bash
+./tools/polis.sh init --local
+```
+
+Run tests:
+```bash
+./tools/polis.sh test
+```
 
 ## License
 
-Apache 2.0 - see [LICENSE](LICENSE)
+[Add your license here]
 
-## Disclaimer
+## Links
 
-Polis provides defense-in-depth security but is not a silver bullet. Always review agent outputs before deployment, keep secrets out of workspaces, and monitor audit logs.
-
----
-
-Built with ❤️ in Warsaw 🇵🇱
+- [OpenClaw Documentation](https://docs.openclaw.ai)
+- [G3Proxy](https://github.com/bytedance/g3)
+- [Sysbox](https://github.com/nestybox/sysbox)

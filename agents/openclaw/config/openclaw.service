@@ -1,0 +1,65 @@
+# =============================================================================
+# OpenClaw Gateway - Systemd Service Unit
+# =============================================================================
+# Runs the OpenClaw AI agent gateway within the Polis workspace.
+# Gateway provides Control UI and handles all agent interactions.
+# =============================================================================
+
+[Unit]
+Description=OpenClaw AI Agent Gateway
+Documentation=https://docs.openclaw.ai
+After=network-online.target polis-init.service
+Wants=network-online.target
+Requires=polis-init.service
+
+[Service]
+Type=simple
+User=polis
+Group=polis
+WorkingDirectory=/app
+
+# Load environment from init script output
+EnvironmentFile=-/home/polis/.openclaw/.env
+
+# Force IPv4 for DNS resolution (IPv6 is blocked in the container)
+# Also add Polis CA to Node.js trusted certificates for TLS MITM
+Environment=NODE_OPTIONS=--dns-result-order=ipv4first
+Environment=NODE_EXTRA_CA_CERTS=/etc/ssl/certs/polis-ca.pem
+
+# Run initialization before starting gateway
+ExecStartPre=/usr/local/bin/openclaw-init.sh
+
+# Start OpenClaw gateway
+# --allow-unconfigured: Start even without full onboarding
+# --bind lan: Bind to 0.0.0.0 (accessible within container)
+# --port 18789: Gateway port for Control UI
+ExecStart=/usr/bin/node dist/index.js gateway --allow-unconfigured --bind lan --port 18789
+
+# Graceful shutdown
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Security hardening (within workspace context)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/polis/.openclaw
+PrivateTmp=true
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=100%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openclaw
+
+[Install]
+WantedBy=multi-user.target

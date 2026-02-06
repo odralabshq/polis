@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.12.0
+        with:
+          platforms: linux/amd64
+
+      - name: Cleanup existing Docker containers
+        run: docker rm $(docker ps -a -q) -f || true
+
+      - name: Install sysbox
+        run: |
+          wget https://downloads.nestybox.com/sysbox/releases/v0.6.7/sysbox-ce_0.6.7-0.linux_amd64.deb
+          sudo apt-get install -y jq ./sysbox-ce_0.6.7-0.linux_amd64.deb
+          
+          # Configure Docker to use sysbox runtime
+          sudo mkdir -p /etc/docker
+          echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          
+          # Verify sysbox is available
+          docker info | grep -i sysbox
+
+      - name: Setup CA certificates
+        run: ./tools/polis.sh setup-ca
+
+      - name: Build containers
+        run: ./tools/polis.sh build
+
+      - name: Start containers
+        run: ./tools/polis.sh up
+
+      - name: Wait for healthy
+        run: |
+          for i in {1..60}; do
+            if docker ps --filter "health=healthy" | grep -q "polis-gateway" && \
+               docker ps --filter "health=healthy" | grep -q "polis-workspace"; then
+              echo "All containers healthy"
+              exit 0
+            fi
+            echo "Waiting for containers... ($i/60)"
+            sleep 5
+          done
+          echo "Timeout waiting for containers"
+          docker ps -a
+          exit 1
+
+      - name: Run tests
+        run: ./tests/run-tests.sh --tap all
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          docker logs polis-gateway || true
+          docker logs polis-icap || true
+          docker logs polis-workspace || true
