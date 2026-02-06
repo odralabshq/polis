@@ -1,0 +1,26 @@
+# CA certificates - NEVER commit private keys
+certs/ca/ca.key
+certs/ca/ca.pem
+certs/ca/*.key
+certs/ca/*.pem
+
+# Environment files with secrets
+.env
+*.env
+!config/openclaw.env.example
+
+# Generated certificates
+certs/generated/
+
+# Docker volumes
+volumes/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated Dockerfile (created by polis CLI at build time)
+build/workspace/Dockerfile.generated
