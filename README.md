@@ -1,138 +1,112 @@
 # Polis - Secure Workspace for AI Coding Agents
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.3-green.svg)](CHANGELOG.md)
 
-Polis is a **defense-in-depth security layer** for AI coding agents. It provides a containerized workspace where agents can operate autonomously while all their actions are controlled, inspected, and audited through a zero-trust architecture.
+Polis is a secure runtime for AI coding agents. It wraps any AI agent in an isolated container where all network traffic is intercepted, inspected for malware, and audited — without modifying the agent itself.
 
-## ⚡️ Get Started in 60 Seconds
+## The Problem
+
+AI agents make HTTP requests, download packages, and execute code autonomously. A container alone doesn't stop an agent from exfiltrating secrets over HTTPS, pulling malicious dependencies, or connecting to unauthorized services. You need network-level visibility and control.
+
+Polis solves this by routing all agent traffic through a TLS-intercepting proxy with real-time malware scanning. The agent runs normally; Polis handles security transparently.
+
+## ⚡️ Get Started
 
 ```bash
-# 1. Install the CLI
-curl -fsSL https://raw.githubusercontent.com/odralabshq/polis/main/scripts/install.sh | bash
+# Install Polis (clones repo to ~/.polis, creates `polis` command)
+curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis-core/main/scripts/install.sh | bash
 
-# 2. Initialize your workspace
-polis init
+# Configure your API key (at least one required)
+cp ~/.polis/agents/openclaw/config/env.example ~/.polis/.env
+nano ~/.polis/.env
 
-# 3. Start the secure stack
-polis up
+# Initialize and start (installs Sysbox, generates certs, builds images)
+polis init --agent=openclaw --local
 
-# 4. Access via SSH (recommended)
-polis ssh
-
-# Or access via shell
-polis shell
+# Initialize the agent and get your access token
+polis openclaw init
 ```
+
+`init` handles everything: Docker checks, Sysbox runtime, TLS certificates, image builds, and container startup. Takes a few minutes on first run.
+
+> On WSL2, start Docker first: `sudo service docker start`
 
 ## 🏗️ Architecture
 
-Polis implements a **"Blackbox" security model** where all agent activity is isolated, inspected, and controlled:
+Polis routes all workspace traffic through a TLS-intercepting proxy with ICAP-based content inspection:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           HOST SYSTEM                                │
-│  ┌─────────────┐                                                    │
-│  │  Polis CLI  │ ◄── Control Plane Pipe (docker exec)               │
-│  └──────┬──────┘                                                    │
-│         │                                                           │
-│  ┌──────▼──────────────────────────────────────────────────────┐   │
-│  │                    POLIS STACK (Isolated)                    │   │
-│  │                                                              │   │
-│  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │   │
-│  │  │   Gateway   │◄──►│ Governance  │    │   Toolbox   │      │   │
-│  │  │  (g3proxy)  │    │ (DLP/ICAP)  │    │ (MCP Tools) │      │   │
-│  │  └──────┬──────┘    └─────────────┘    └─────────────┘      │   │
-│  │         │                                                    │   │
-│  │  ┌──────▼──────────────────────────────────────────────────┐    │   │
-│  │  │              WORKSPACE (Sysbox Runtime)              │    │   │
-│  │  │  ┌─────────────────────────────────────────────────┐ │    │   │
-│  │  │  │  AI Agent (Claude, Cursor, etc.)                │ │    │   │
-│  │  │  │  • All network traffic → Gateway                │ │    │   │
-│  │  │  │  • All tool calls → Toolbox                     │ │    │   │
-│  │  │  │  • Full Docker-in-Docker support                │ │    │   │
-│  │  │  └─────────────────────────────────────────────────┘ │    │   │
-│  │  └──────────────────────────────────────────────────────┘    │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+  Browser ──► http://localhost:18789 (Agent UI)
+                      │
+  ┌───────────────────┼────────────────────────────┐
+  │  Workspace (Sysbox-isolated)                   │
+  │                   │                            │
+  │    AI Agent (OpenClaw, or any agent)            │
+  │         • Full dev environment                 │
+  │         • Docker-in-Docker support             │
+  │         • No host access                       │
+  │                   │ all traffic                 │
+  └───────────────────┼────────────────────────────┘
+                      ▼
+  ┌────────────────────────────────────────────────┐
+  │  G3Proxy ──► TLS inspect ──► ICAP ──► ClamAV  │
+  └───────────────────┬────────────────────────────┘
+                      ▼
+                  Internet
 ```
+
+### Network Isolation
+
+Three isolated Docker networks ensure the workspace can never bypass inspection:
+
+| Network | Subnet | Purpose |
+|---------|--------|---------|
+| internal-bridge | 10.10.1.0/24 | Workspace ↔ Gateway (only route out) |
+| gateway-bridge | 10.30.1.0/24 | Gateway ↔ ICAP (content inspection) |
+| external-bridge | 10.20.1.0/24 | Gateway ↔ Internet |
 
 ### Key Components
 
 | Component | Purpose | Runtime |
-|-----------|---------|--------|
-| **Gateway** | Network proxy with TLS inspection, domain filtering | runc |
-| **Governance** | DLP engine, secrets detection, policy enforcement | gVisor (runsc) |
-| **Toolbox** | MCP tool gateway, filesystem policies | gVisor (runsc) |
-| **Workspace** | Isolated dev environment with Docker-in-Docker | Sysbox |
+|-----------|---------|---------|
+| **Gateway** | TLS-intercepting proxy (g3proxy), domain filtering, traffic routing | runc (NET_ADMIN) |
+| **ICAP** | Content inspection server (c-icap), request/response analysis | runc |
+| **ClamAV** | Real-time malware scanning of all HTTP responses | runc |
+| **Workspace** | Isolated dev environment with Docker-in-Docker, systemd | Sysbox |
 
-## 🔐 Security Problems We Solve
+## 🔐 What We Address
 
-AI coding agents introduce threats absent from traditional software: uncontrolled goal drift, multi-step reasoning that bypasses security gates, and recursive capability amplification through tool chaining.
+| Threat | How |
+|--------|-----|
+| Agent exfiltrates API keys or credentials over HTTPS | TLS interception — all encrypted traffic is decrypted and inspected by g3proxy |
+| Malicious packages or downloads | ClamAV scans every HTTP response via ICAP before it reaches the agent |
+| Agent connects to unauthorized services | Only HTTP/HTTPS (80/443) allowed outbound; all other ports blocked via iptables |
+| Container escape to host system | Sysbox runtime provides VM-like isolation without privileged mode |
+| IPv6 bypass of proxy controls | IPv6 disabled at Docker network level and via sysctl/ip6tables in containers |
+| Agent accesses Docker socket or host resources | No Docker socket mounted; only read-only CA cert and init scripts bind-mounted |
+| DNS tunneling exfiltration | All traffic forced through proxy; non-HTTP ports blocked |
+| Cloud metadata service access (169.254.169.254) | Blocked by network isolation — workspace has no route to metadata endpoint |
 
-### Security By Default
-
-Simple sandboxing only isolates processes—an agent in a Docker container can still exfiltrate data to any domain, send secrets over encrypted channels, and execute malicious code via test runners or git hooks. Polis adds network-level controls that containers alone cannot provide.
+### Coming Soon
 
 | Threat | Status |
 |--------|--------|
-| Agent exfiltrates API keys, tokens, credentials | ✅ Addressed |
-| PII leakage (names, emails, SSN) | ✅ Addressed |
-| DNS tunneling exfiltration | ✅ Addressed |
-| Exfiltration via "safe" commands (`npm test`, git hooks) | ✅ Addressed |
-| Agent connects to unauthorized domains | ✅ Addressed |
-| Agent bypasses proxy via direct connections | ✅ Addressed |
-| Cloud metadata service access (169.254.169.254) | ✅ Addressed |
-| TLS-encrypted malicious traffic | ✅ Addressed |
-| Agent escapes to host system | ✅ Addressed |
-| Privilege escalation inside container | ✅ Addressed |
 | Typosquatted packages (`nxdebug` vs `nx-debug`) | 🔜 Coming soon |
 | Poisoned dependencies in lockfiles | 🔜 Coming soon |
-| Compromised MCP tool descriptors | 🔜 Coming soon |
-| Malicious extensions and dependencies | 🔜 Coming soon |
-| Arbitrary code execution via generated code | 🔜 Coming soon |
-| Unsafe deserialization (pickle, eval) | 🔜 Coming soon |
-
-### Governance By Default
-
-Sandboxes provide no visibility into what agents are doing. You can't prove what an agent did, enforce policies on tool usage, or require human approval for destructive actions. Polis makes every action auditable and controllable.
-
-| Threat | Status |
-|--------|--------|
-| No visibility into agent actions | ✅ Addressed |
-| Cannot prove what agent did/didn't do | ✅ Addressed |
-| Human approval bypassed | ✅ Addressed |
-| Over-privileged tool access | ✅ Addressed |
-| Unlimited API/tool usage | ✅ Addressed |
+| DLP engine with secrets/PII detection | 🔜 Coming soon |
+| MCP tool gateway with filesystem policies | 🔜 Coming soon |
 | Tool chaining for exfiltration (DB read → HTTP POST) | 🔜 Coming soon |
-| Shell injection via reflected prompts | 🔜 Coming soon |
 | Indirect prompt injection via fetched content | 🔜 Coming soon |
-| Goal drift via manipulated context | 🔜 Coming soon |
-| Hidden instructions in documents/emails | 🔜 Coming soon |
-| Configuration drift undetected | 🔜 Coming soon |
-
-### Agent Development Environment
-
-A sandbox is restrictive, not productive. Developers need full tools, not a locked-down shell. Polis provides a complete development environment where agents can build, test, and deploy—while every action passes through the security plane.
-
-| Feature | Status |
-|---------|--------|
-| Full dev environment (VS Code, terminal, Node.js, Python) | ✅ Available |
-| Works with any MCP agent (Copilot, Claude, Gemini, Kiro) | ✅ Available |
-| Docker-in-Docker (build containers inside workspace) | ✅ Available |
-| No agent modifications required | ✅ Available |
-| Developer mode (relaxed controls, audit preserved) | ✅ Available |
 
 ## 🖥️ Platform Support
 
 | Platform | Status | Notes |
 |----------|--------|-------|
 | Debian/Ubuntu + Sysbox | ✅ Supported | Recommended for production |
-| WSL2 (Debian/Ubuntu) + Sysbox | ✅ Supported | Auto-configured by `polis install` |
+| WSL2 (Debian/Ubuntu) + Sysbox | ✅ Supported | Auto-configured by `polis init` |
 | Other Linux distros | 🔜 Coming soon | RHEL, Fedora, Arch |
-| macOS | 🔜 Coming soon | |
-| Windows (native) | 🔜 Coming soon | |
-
-Run `polis doctor` to check your security posture and system compatibility.
+| macOS | 🔜 Coming soon | Requires Sysbox (Linux-only) |
 
 ## 📋 Command Reference
 
@@ -140,107 +114,117 @@ Run `polis doctor` to check your security posture and system compatibility.
 
 | Command | Description |
 |---------|-------------|
-| `polis init` | Setup environment, pull images, generate certs |
-| `polis up` | Start the security plane and workspace |
+| `polis init` | Full setup: Docker check, Sysbox install, CA generation, image build, start |
+| `polis up` | Start containers |
+| `polis down` | Stop and remove containers |
 | `polis stop` | Stop containers (preserves state) |
-| `polis delete` | Remove containers and clean up resources |
-| `polis update` | Pull new images and recreate containers |
+| `polis start` | Start existing stopped containers |
+| `polis status` | Show container health |
+| `polis logs [service]` | Stream container logs |
+| `polis shell` | Enter workspace shell |
 
-### Interaction
-
-| Command | Description |
-|---------|-------------|
-| `polis ssh` | SSH into workspace (recommended) |
-| `polis shell` | Open a secure terminal inside the workspace |
-| `polis agents` | Manage persistent, monitored agent sessions |
-
-### Observability
+### Agent Commands
 
 | Command | Description |
 |---------|-------------|
-| `polis status` | View container health |
-| `polis logs` | Stream security and workspace logs |
-| `polis doctor` | Validate system requirements |
+| `polis <agent> init` | Initialize agent, wait for ready, show access token |
+| `polis <agent> status` | Show agent service status |
+| `polis <agent> logs [n]` | Show last n lines of agent logs (default: 50) |
+| `polis <agent> restart` | Restart agent service |
+| `polis <agent> shell` | Enter workspace shell |
+| `polis <agent> help` | Show all commands for this agent |
 
-### Policy Management
+### Agent Management
 
 | Command | Description |
 |---------|-------------|
-| `polis manage domains list` | List allowed domains |
-| `polis manage domains add <domain>` | Add domain to allowlist |
-| `polis manage domains remove <domain>` | Remove domain from allowlist |
-| `polis manage exceptions list` | List security exceptions |
-| `polis manage exceptions add <rule>` | Add temporary exception |
-| `polis manage exceptions remove <id>` | Remove exception |
+| `polis agents list` | List available agents |
+| `polis agents info <name>` | Show agent metadata |
+| `polis agent scaffold <name>` | Create new agent from template |
 
-### `polis agents`
+### Setup
 
-Manage persistent, monitored sessions for your agents. Polis wraps your agent process (e.g., `claude`, `aider`) in a secure TTY session.
+| Command | Description |
+|---------|-------------|
+| `polis setup-ca [--force]` | Generate or regenerate CA certificate |
+| `polis setup-sysbox [--force]` | Install or reinstall Sysbox runtime |
+| `polis setup-env` | Validate agent environment variables |
+| `polis build [service]` | Build container images |
+| `polis test [unit\|integration\|e2e]` | Run tests |
+
+### Init Options
+
+| Flag | Description |
+|------|-------------|
+| `--agent=<name>` | Agent to use (default: `openclaw`) |
+| `--local` | Build images from source instead of pulling from registry |
+| `--no-cache` | Build without Docker cache |
+
+## 🔌 Agent Plugin System
+
+Polis is agent-agnostic. OpenClaw is the default, but any agent can be packaged as a plugin under `agents/<name>/`:
+
+```
+agents/openclaw/
+├── agent.conf              # Metadata and required env vars
+├── install.sh              # Runs during image build
+├── commands.sh             # Agent-specific CLI commands
+├── compose.override.yaml   # Ports, volumes, healthcheck
+├── config/openclaw.service # Systemd unit
+└── scripts/
+    ├── init.sh             # Pre-start setup (token generation, etc.)
+    └── health.sh           # Health check
+```
+
+Create a new agent:
 
 ```bash
-# Start a new agent session
-polis agents start claude
-
-# List active sessions
-polis agents
-
-# Stop a running session
-polis agents stop claude
+polis agent scaffold myagent
 ```
 
 ## ⚙️ Configuration
 
-Edit `polis.yaml` to customize your security policies. Example configuration:
+Add at least one API key to `.env`:
 
-```yaml
-version: "1.0"
+```bash
+ANTHROPIC_API_KEY=sk-ant-...    # → Claude (auto-detected)
+OPENAI_API_KEY=sk-proj-...      # → GPT-4o
+OPENROUTER_API_KEY=sk-or-...    # → Multiple models
+```
 
-# Domain configuration for polis-gateway
-domains:
-  allowed:
-    - api.github.com
-    - api.openai.com
-    - "*.amazonaws.com"
-    - ".pypi.org"
-  denied:
-    - evil.com
-  control_bypass:
-    - internal.company.com
+After changing API keys, rebuild:
 
-# Command configuration for polis-shell
-commands:
-  deny:
-    - "rm -rf /"
-    - "curl | bash"
-  require_approval:
-    - sudo
-    - chmod 777
+```bash
+polis down && polis init --agent=openclaw --local
+```
 
-# DLP configuration
-dlp:
-  secrets:
-    enabled: true
-    action: block  # block | redact | alert
-  pii:
-    enabled: true
-    action: redact
+Proxy configuration lives in `config/g3proxy.yaml` (TLS inspection, ICAP routing, DNS resolvers). Network isolation is defined in `deploy/docker-compose.yml`.
 
-# Filesystem configuration for polis-toolbox
-filesystem:
-  allowed_paths:
-    - /workspace
-    - /tmp/polis-*
-  denied_paths:
-    - /etc/passwd
-    - "**/.git/config"
-    - "**/.env"
+## 🔧 Troubleshooting
+
+**Sysbox not detected** — Start services manually, then restart Docker:
+```bash
+sudo systemctl start sysbox-mgr sysbox-fs && sudo service docker restart
+```
+
+**Gateway unhealthy / "not found" errors** — CRLF line endings (Windows/WSL2):
+```bash
+dos2unix tools/polis.sh scripts/*.sh agents/openclaw/**/*.sh
+```
+
+**Full reset:**
+```bash
+polis down
+docker rmi $(docker images --filter "reference=polis-*" -q) 2>/dev/null
+rm -f certs/ca/ca.key certs/ca/ca.pem
+polis init --agent=openclaw --local
 ```
 
 ## 🛡️ Security Framework Alignment
 
 Polis is designed against industry security frameworks:
 
-- **OWASP Top 10 for Agentic Applications 2026** — ASI01-ASI10 coverage
+- **OWASP Top 10 for Agentic Applications** — Agent-specific threat coverage
 - **MITRE ATLAS** — AI-specific threat tactics and techniques
 - **NIST AI RMF** — Risk management framework alignment
 
