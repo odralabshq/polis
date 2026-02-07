@@ -205,6 +205,9 @@ Proxy configuration lives in `config/g3proxy.yaml` (TLS inspection, ICAP routing
 **Sysbox not detected** — Start services manually, then restart Docker:
 ```bash
 sudo systemctl start sysbox-mgr sysbox-fs && sudo service docker restart
+sudo systemctl restart sysbox-mgr sysbox-fs
+sudo systemctl start docker
+docker info | grep sysbox
 ```
 
 **Gateway unhealthy / "not found" errors** — CRLF line endings (Windows/WSL2):
