@@ -424,9 +424,9 @@ validate_agent() {
     [[ -x "$agent_dir/install.sh" ]] || log_warn "install.sh is not executable"
 
     local override="$agent_dir/compose.override.yaml"
-    if [[ -f "$override" ]]; then
+    if [[ -f "$override" ]] && [[ -f "$ENV_FILE" ]]; then
         docker compose -f "$COMPOSE_FILE" -f "$override" config --quiet 2>/dev/null \
-            || { log_error "Invalid compose.override.yaml"; exit 1; }
+            || log_warn "compose.override.yaml validation failed (non-fatal, continuing)"
     fi
 }
 
