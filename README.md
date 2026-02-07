@@ -21,8 +21,8 @@ curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/insta
 cp ~/.polis/agents/openclaw/config/env.example ~/.polis/.env
 nano ~/.polis/.env
 
-# Initialize and start (installs Sysbox, generates certs, builds images)
-polis init --agent=openclaw --local
+# Initialize and start (installs Sysbox, generates certs, pulls images)
+polis init --agent=openclaw
 
 # Initialize the agent and get your access token
 polis openclaw init
@@ -195,7 +195,7 @@ OPENROUTER_API_KEY=sk-or-...    # → Multiple models
 After changing API keys, rebuild:
 
 ```bash
-polis down && polis init --agent=openclaw --local
+polis down && polis init --agent=openclaw
 ```
 
 Proxy configuration lives in `config/g3proxy.yaml` (TLS inspection, ICAP routing, DNS resolvers). Network isolation is defined in `deploy/docker-compose.yml`.
@@ -217,7 +217,7 @@ dos2unix tools/polis.sh scripts/*.sh agents/openclaw/**/*.sh
 polis down
 docker rmi $(docker images --filter "reference=polis-*" -q) 2>/dev/null
 rm -f certs/ca/ca.key certs/ca/ca.pem
-polis init --agent=openclaw --local
+polis init --agent=openclaw
 ```
 
 ## 🛡️ Security Framework Alignment
