@@ -2,14 +2,14 @@
 # =============================================================================
 # Polis Installer
 # =============================================================================
-# One-line install: curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis-core/main/scripts/install.sh | bash
+# One-line install: curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
 # =============================================================================
 
 set -euo pipefail
 
 # Configuration
 REPO_OWNER="OdraLabsHQ"
-REPO_NAME="polis-core"
+REPO_NAME="polis"
 INSTALL_DIR="${POLIS_INSTALL_DIR:-$HOME/.polis}"
 BRANCH="${POLIS_BRANCH:-main}"
 
@@ -173,7 +173,7 @@ install_polis() {
     echo "Next steps:"
     echo ""
     echo "  1. Configure your API key:"
-    echo "     cp ${INSTALL_DIR}/config/openclaw.env.example ${INSTALL_DIR}/.env"
+    echo "     cp ${INSTALL_DIR}/agents/openclaw/config/env.example ${INSTALL_DIR}/.env"
     echo "     nano ${INSTALL_DIR}/.env"
     echo "     # Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY"
     echo ""
