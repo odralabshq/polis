@@ -2,14 +2,14 @@
 # =============================================================================
 # Polis Installer
 # =============================================================================
-# One-line install: curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis-core/main/scripts/install.sh | bash
+# One-line install: curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
 # =============================================================================
 
 set -euo pipefail
 
 # Configuration
 REPO_OWNER="OdraLabsHQ"
-REPO_NAME="polis-core"
+REPO_NAME="polis"
 INSTALL_DIR="${POLIS_INSTALL_DIR:-$HOME/.polis}"
 BRANCH="${POLIS_BRANCH:-main}"
 
@@ -116,6 +116,27 @@ install_polis() {
     detect_platform
     check_prerequisites
     
+    # Handle existing install directory
+    if [[ -d "${INSTALL_DIR}/.git" ]]; then
+        log_info "Existing installation found at ${INSTALL_DIR}, updating..."
+        cd "${INSTALL_DIR}"
+        if git pull --ff-only origin "${BRANCH}" 2>/dev/null; then
+            log_success "Updated existing installation"
+            # Skip clone, jump to symlink/permissions
+            chmod +x tools/polis.sh scripts/*.sh 2>/dev/null || true
+            mkdir -p "$HOME/.local/bin"
+            ln -sf "${INSTALL_DIR}/tools/polis.sh" "$HOME/.local/bin/polis"
+            log_success "Polis updated successfully!"
+            return 0
+        else
+            log_warn "Update failed, performing fresh install..."
+            rm -rf "${INSTALL_DIR}"
+        fi
+    elif [[ -d "${INSTALL_DIR}" ]] && [[ -n "$(ls -A "${INSTALL_DIR}" 2>/dev/null)" ]]; then
+        log_warn "Non-empty directory exists at ${INSTALL_DIR}, removing..."
+        rm -rf "${INSTALL_DIR}"
+    fi
+    
     # Create install directory
     log_info "Installing to ${INSTALL_DIR}..."
     mkdir -p "${INSTALL_DIR}"
@@ -125,10 +146,10 @@ install_polis() {
     if command -v git &>/dev/null; then
         log_info "Cloning Polis repository..."
         
-        # Try HTTPS first (works for public repos)
-        if git clone --depth 1 --branch "${BRANCH}" "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" . 2>/dev/null; then
+        # GIT_TERMINAL_PROMPT=0 prevents git from prompting for credentials
+        # This ensures the clone fails cleanly for public repos instead of hanging
+        if GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "${BRANCH}" "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" . 2>/dev/null; then
             log_success "Repository cloned successfully"
-        # Try SSH (works if user has SSH keys configured)
         elif git clone --depth 1 --branch "${BRANCH}" "git@github.com:${REPO_OWNER}/${REPO_NAME}.git" . 2>/dev/null; then
             log_success "Repository cloned via SSH"
         else
@@ -173,7 +194,7 @@ install_polis() {
     echo "Next steps:"
     echo ""
     echo "  1. Configure your API key:"
-    echo "     cp ${INSTALL_DIR}/config/openclaw.env.example ${INSTALL_DIR}/.env"
+    echo "     cp ${INSTALL_DIR}/agents/openclaw/config/env.example ${INSTALL_DIR}/.env"
     echo "     nano ${INSTALL_DIR}/.env"
     echo "     # Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY"
     echo ""

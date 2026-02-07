@@ -15,7 +15,7 @@ Polis solves this by routing all agent traffic through a TLS-intercepting proxy 
 
 ```bash
 # Install Polis (clones repo to ~/.polis, creates `polis` command)
-curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis-core/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
 
 # Configure your API key (at least one required)
 cp ~/.polis/agents/openclaw/config/env.example ~/.polis/.env
