@@ -380,6 +380,43 @@ generate_ca() {
     return 0
 }
 
+# Setup Valkey TLS certificates and secrets (idempotent)
+setup_valkey() {
+    local VALKEY_CERTS_DIR="${PROJECT_ROOT}/certs/valkey"
+    local VALKEY_SECRETS_DIR="${PROJECT_ROOT}/secrets"
+
+    # --- Valkey TLS certificates ---
+    if [[ -f "${VALKEY_CERTS_DIR}/ca.crt" ]] \
+        && [[ -f "${VALKEY_CERTS_DIR}/server.crt" ]] \
+        && [[ -f "${VALKEY_CERTS_DIR}/client.crt" ]]; then
+        log_success "Valkey TLS certificates already exist."
+    else
+        echo "Generating Valkey TLS certificates..."
+        if ! bash "${PROJECT_ROOT}/scripts/generate-valkey-certs.sh" \
+            "${VALKEY_CERTS_DIR}"; then
+            log_error "Failed to generate Valkey TLS certificates"
+            return 1
+        fi
+        log_success "Valkey TLS certificates generated."
+    fi
+
+    # --- Valkey secrets (passwords + ACL) ---
+    if [[ -f "${VALKEY_SECRETS_DIR}/valkey_password.txt" ]] \
+        && [[ -f "${VALKEY_SECRETS_DIR}/valkey_users.acl" ]]; then
+        log_success "Valkey secrets already exist."
+    else
+        echo "Generating Valkey secrets..."
+        if ! bash "${PROJECT_ROOT}/scripts/generate-valkey-secrets.sh" \
+            "${VALKEY_SECRETS_DIR}"; then
+            log_error "Failed to generate Valkey secrets"
+            return 1
+        fi
+        log_success "Valkey secrets generated."
+    fi
+
+    return 0
+}
+
 # =============================================================================
 # Agent Plugin System
 # =============================================================================
@@ -411,8 +448,20 @@ validate_agent() {
 
     local override="$agent_dir/compose.override.yaml"
     if [[ -f "$override" ]]; then
-        docker compose -f "$COMPOSE_FILE" -f "$override" config --quiet 2>/dev/null \
-            || { log_error "Invalid compose.override.yaml"; exit 1; }
+        # Skip compose validation if secrets haven't been generated yet
+        # (they will be created during init before containers start)
+        if docker compose -f "$COMPOSE_FILE" -f "$override" config --quiet 2>/dev/null; then
+            :
+        else
+            local secrets_dir
+            secrets_dir="$(dirname "$COMPOSE_FILE")/../secrets"
+            if [[ ! -f "${secrets_dir}/valkey_password.txt" ]]; then
+                log_warn "Skipping compose validation (secrets not yet generated)"
+            else
+                log_error "Invalid compose.override.yaml"
+                exit 1
+            fi
+        fi
     fi
 }
 
@@ -691,18 +740,26 @@ case "${1:-}" in
             exit 1
         fi
         
-        # Step 3: Validate agent environment
+        # Step 3: Setup Valkey TLS and secrets
+        echo ""
+        log_step "Setting up Valkey state management..."
+        if ! setup_valkey; then
+            log_error "Valkey setup failed. Cannot proceed."
+            exit 1
+        fi
+        
+        # Step 4: Validate agent environment
         echo ""
         log_step "Checking agent environment..."
         validate_agent_env "$EFFECTIVE_AGENT"
         
-        # Step 4: Clean up existing containers
+        # Step 5: Clean up existing containers
         echo ""
         log_step "Cleaning up existing containers..."
         docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
         
-        # Step 5: Build or pull images
+        # Step 6: Build or pull images
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
         
         if [[ "$LOCAL_BUILD" == "true" ]]; then

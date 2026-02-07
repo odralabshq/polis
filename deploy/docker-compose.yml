@@ -172,6 +172,72 @@ services:
     labels:
       service: "polis-workspace"
 
+  # =========================================================
+  # VALKEY INIT (Volume permission setup)
+  # =========================================================
+  valkey-init:
+    image: alpine
+    container_name: polis-v2-valkey-init
+    volumes:
+      - valkey-data:/data
+    command: chown -R 999:999 /data
+    restart: "no"
+
+  # =========================================================
+  # VALKEY (State Management)
+  # =========================================================
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: polis-v2-valkey
+    user: "999:999"
+    entrypoint: []
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    networks:
+      gateway-bridge: {}
+    depends_on:
+      valkey-init:
+        condition: service_completed_successfully
+    secrets:
+      - valkey_password
+      - valkey_acl
+    volumes:
+      - ../config/valkey.conf:/etc/valkey/valkey.conf:ro
+      - ../certs/valkey:/etc/valkey/tls:ro
+      - valkey-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "sh -c \"REDISCLI_AUTH=$$(cat /run/secrets/valkey_password) valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt ping\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M,mode=1777
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "molis-valkey"
+    restart: unless-stopped
+
 networks:
   internal-bridge:
     enable_ipv6: false
@@ -200,6 +266,14 @@ networks:
 volumes:
   clamav-db:
     name: polis-clamav-db
+  valkey-data:
+    name: molis-valkey-data
   # Uncomment to persist OpenClaw data across container restarts
   # openclaw-data:
   #   name: polis-openclaw-data
+
+secrets:
+  valkey_password:
+    file: ../secrets/valkey_password.txt
+  valkey_acl:
+    file: ../secrets/valkey_users.acl
