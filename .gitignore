@@ -28,5 +28,5 @@ build/workspace/Dockerfile.generated
 # Valkey secrets directory - passwords, ACL files, credentials
 secrets/
 
-# Valkey TLS private keys - NEVER commit private keys
-certs/valkey/*.key
+# Valkey TLS certificates and keys - generated per-install by polis init
+certs/valkey/

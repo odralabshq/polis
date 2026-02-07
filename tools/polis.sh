@@ -386,9 +386,9 @@ setup_valkey() {
     local VALKEY_SECRETS_DIR="${PROJECT_ROOT}/secrets"
 
     # --- Valkey TLS certificates ---
-    if [[ -f "${VALKEY_CERTS_DIR}/ca.crt" ]] \
-        && [[ -f "${VALKEY_CERTS_DIR}/server.crt" ]] \
-        && [[ -f "${VALKEY_CERTS_DIR}/client.crt" ]]; then
+    if [[ -f "${VALKEY_CERTS_DIR}/ca.crt" ]] && [[ -f "${VALKEY_CERTS_DIR}/ca.key" ]] \
+        && [[ -f "${VALKEY_CERTS_DIR}/server.crt" ]] && [[ -f "${VALKEY_CERTS_DIR}/server.key" ]] \
+        && [[ -f "${VALKEY_CERTS_DIR}/client.crt" ]] && [[ -f "${VALKEY_CERTS_DIR}/client.key" ]]; then
         log_success "Valkey TLS certificates already exist."
     else
         echo "Generating Valkey TLS certificates..."

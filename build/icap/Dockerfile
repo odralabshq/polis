@@ -73,6 +73,6 @@ rm -f /var/run/c-icap/c-icap.pid /var/run/c-icap/c-icap.ctl
 echo "[icap] Starting c-icap with SquidClamav on 0.0.0.0:1344..."
 exec gosu c-icap /usr/bin/c-icap -N -D -d 1 -f /etc/c-icap/c-icap.conf
 EOF
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

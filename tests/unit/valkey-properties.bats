@@ -79,10 +79,8 @@ get_password() {
         result="$(valkey_cli_as \
             "mcp-admin" "${admin_pass}" ${cmd} 2>&1 || true)"
 
-        # The command should return an error (ERR unknown command)
-        if [[ "${result}" != *"ERR"* ]] \
-           && [[ "${result}" != *"error"* ]] \
-           && [[ "${result}" != *"unknown"* ]]; then
+        # Renamed commands must return "unknown command"
+        if [[ "${result}" != *"unknown command"* ]]; then
             fail "Dangerous command ${cmd} was not blocked." \
                  " Got: ${result}"
         fi

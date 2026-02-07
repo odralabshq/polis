@@ -80,8 +80,8 @@ cat > "${OUTPUT_DIR}/valkey_users.acl" <<EOF
 user default off
 user mcp-agent on #${HASH_MCP_AGENT} ~molis:blocked:* ~molis:approved:* ~molis:config:* +@read +@write +@connection -@admin -@dangerous -DEL -UNLINK
 user mcp-admin on #${HASH_MCP_ADMIN} ~molis:* +@all -@dangerous -FLUSHALL -FLUSHDB -DEBUG -CONFIG -SHUTDOWN
-user log-writer on #${HASH_LOG_WRITER} ~molis:log:events +ZADD +ZRANGEBYSCORE +ZCARD +PING -@all
-user healthcheck on #${HASH_HEALTHCHECK} +PING +INFO -@all
+user log-writer on #${HASH_LOG_WRITER} ~molis:log:events -@all +ZADD +ZRANGEBYSCORE +ZCARD +PING
+user healthcheck on #${HASH_HEALTHCHECK} -@all +PING +INFO
 EOF
 
 echo "valkey_users.acl created (5 user entries)."

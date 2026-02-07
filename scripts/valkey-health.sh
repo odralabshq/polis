@@ -70,6 +70,7 @@ CLI_ARGS=(
     --cert "${VALKEY_TLS_CERT}"
     --key "${VALKEY_TLS_KEY}"
     --cacert "${VALKEY_TLS_CA}"
+    --user healthcheck
     -h "${VALKEY_HOST}"
     -p "${VALKEY_PORT}"
 )

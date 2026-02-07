@@ -208,7 +208,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "sh -c \"REDISCLI_AUTH=$$(cat /run/secrets/valkey_password) valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt ping\"",
+          "sh -c \"REDISCLI_AUTH=$$(cat /run/secrets/valkey_password) valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user healthcheck ping\"",
         ]
       interval: 10s
       timeout: 5s
