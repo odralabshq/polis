@@ -35,6 +35,13 @@ RUN wget -q https://github.com/darold/squidclamav/archive/refs/tags/v7.3.tar.gz 
     make -j$(nproc) && \
     make install DESTDIR=/install
 
+# Copy and compile DLP module against c-ICAP source headers
+COPY build/icap/srv_molis_dlp.c /build/
+RUN gcc -shared -fPIC -Wall -Werror -o /build/srv_molis_dlp.so /build/srv_molis_dlp.c \
+    -I/build/c-icap-server-C_ICAP_0.6.4 \
+    -I/build/c-icap-server-C_ICAP_0.6.4/include \
+    -L/usr/lib -licapapi
+
 # Runtime image
 FROM debian:trixie
 ENV DEBIAN_FRONTEND=noninteractive
@@ -53,6 +60,9 @@ RUN apt-get update && apt-get install -y \
 # Copy built c-icap and squidclamav
 COPY --from=builder /install/usr /usr
 COPY --from=builder /install/etc /etc
+
+# Copy DLP module
+COPY --from=builder /build/srv_molis_dlp.so /usr/lib/c_icap/
 
 # Create dedicated c-icap user and group
 RUN groupadd -r c-icap && useradd -r -g c-icap -s /sbin/nologin c-icap

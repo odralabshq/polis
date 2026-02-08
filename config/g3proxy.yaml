@@ -39,8 +39,10 @@ auditor:
     # HTTP/2 interception
     h2_interception: {}
     # ICAP services - internal Docker network (gateway-bridge), no external exposure
-    # REQMOD: echo (passthrough for requests)
-    icap_reqmod_service: icap://icap:1344/echo
+    # REQMOD: DLP credential scanning
+    icap_reqmod_service:
+      url: icap://icap:1344/credcheck
+      no_preview: true
     # RESPMOD: SquidClamav for malware scanning
     # Use map format with no_preview to avoid ICAP preview failures on
     # short-body responses (e.g. 302 redirects with empty/minimal body)

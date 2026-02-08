@@ -69,6 +69,7 @@ services:
     volumes:
       - ../config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
       - ../config/squidclamav.conf:/etc/squidclamav.conf:ro
+      - ../config/molis_dlp.conf:/etc/c-icap/molis_dlp.conf:ro
     depends_on:
       clamav:
         condition: service_healthy
