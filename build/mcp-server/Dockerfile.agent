@@ -1,0 +1,17 @@
+FROM rust:1-bookworm AS builder
+WORKDIR /build
+COPY crates/ crates/
+COPY Cargo.toml Cargo.lock ./
+RUN cargo build --release -p molis-mcp-agent
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN useradd -r -s /bin/false molis
+COPY --from=builder /build/target/release/molis-mcp-agent /usr/bin/
+USER molis
+ENV RUST_LOG=info
+ENV MOLIS_AGENT_LISTEN_ADDR=0.0.0.0:8080
+ENV MOLIS_AGENT_VALKEY_URL=redis://valkey:6379
+EXPOSE 8080
+ENTRYPOINT ["/usr/bin/molis-mcp-agent"]

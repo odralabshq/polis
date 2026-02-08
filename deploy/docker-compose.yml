@@ -239,6 +239,47 @@ services:
       service: "molis-valkey"
     restart: unless-stopped
 
+  # =========================================================
+  # MCP-AGENT (AI Agent MCP Server)
+  # =========================================================
+  mcp-agent:
+    build:
+      context: ..
+      dockerfile: ./build/mcp-server/Dockerfile.agent
+    image: polis-mcp-agent-oss:latest
+    container_name: polis-mcp-agent
+    networks:
+      internal-bridge: {}
+      gateway-bridge: {}
+    environment:
+      - RUST_LOG=info
+      - MOLIS_AGENT_LISTEN_ADDR=0.0.0.0:8080
+      - MOLIS_AGENT_VALKEY_URL=redis://valkey:6379
+      - MOLIS_AGENT_VALKEY_USER=mcp-agent
+      - MOLIS_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-mcp-agent"
+
 networks:
   internal-bridge:
     enable_ipv6: false

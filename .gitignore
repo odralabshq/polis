@@ -30,3 +30,6 @@ secrets/
 
 # Valkey TLS certificates and keys - generated per-install by polis init
 certs/valkey/
+
+# Rust build artifacts
+target/
