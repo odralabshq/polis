@@ -2,5 +2,6 @@
 members = [
     "crates/molis-mcp-common",
     "crates/molis-mcp-agent",
+    "crates/molis-approve-cli",
 ]
 resolver = "2"

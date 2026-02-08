@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     libtool \
     wget \
     libssl-dev \
+    libhiredis-dev \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -42,6 +43,24 @@ RUN gcc -shared -fPIC -Wall -Werror -o /build/srv_molis_dlp.so /build/srv_molis_
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
     -L/usr/lib -licapapi
 
+# Copy and compile approval REQMOD rewriter module
+COPY build/icap/srv_molis_approval_rewrite.c /build/
+RUN gcc -shared -fPIC -Wall -Werror \
+    -o /build/srv_molis_approval_rewrite.so \
+    /build/srv_molis_approval_rewrite.c \
+    -I/build/c-icap-server-C_ICAP_0.6.4 \
+    -I/build/c-icap-server-C_ICAP_0.6.4/include \
+    -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto
+
+# Copy and compile approval RESPMOD scanner module
+COPY build/icap/srv_molis_approval.c /build/
+RUN gcc -shared -fPIC -Wall -Werror \
+    -o /build/srv_molis_approval.so \
+    /build/srv_molis_approval.c \
+    -I/build/c-icap-server-C_ICAP_0.6.4 \
+    -I/build/c-icap-server-C_ICAP_0.6.4/include \
+    -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lz
+
 # Runtime image
 FROM debian:trixie
 ENV DEBIAN_FRONTEND=noninteractive
@@ -51,6 +70,7 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     zlib1g \
     libatomic1 \
+    libhiredis1.1.0 \
     procps \
     gosu \
     netcat-openbsd \
@@ -63,6 +83,10 @@ COPY --from=builder /install/etc /etc
 
 # Copy DLP module
 COPY --from=builder /build/srv_molis_dlp.so /usr/lib/c_icap/
+
+# Copy approval modules
+COPY --from=builder /build/srv_molis_approval_rewrite.so /usr/lib/c_icap/
+COPY --from=builder /build/srv_molis_approval.so /usr/lib/c_icap/
 
 # Create dedicated c-icap user and group
 RUN groupadd -r c-icap && useradd -r -g c-icap -s /sbin/nologin c-icap

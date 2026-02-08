@@ -39,20 +39,23 @@ auditor:
     # HTTP/2 interception
     h2_interception: {}
     # ICAP services - internal Docker network (gateway-bridge), no external exposure
-    # REQMOD: DLP credential scanning
-    icap_reqmod_service:
-      url: icap://icap:1344/credcheck
-      no_preview: true
-    # RESPMOD: SquidClamav for malware scanning
-    # Use map format with no_preview to avoid ICAP preview failures on
-    # short-body responses (e.g. 302 redirects with empty/minimal body)
-    icap_respmod_service:
-      url: icap://icap:1344/squidclamav
-      no_preview: true
+    # REQMOD chain: DLP credential scanning → approval OTT rewriter
+    icap_reqmod_services:
+      - url: icap://icap:1344/credcheck
+        no_preview: true
+      - url: icap://icap:1344/approval_rewrite
+        no_preview: true
+    # RESPMOD chain: SquidClamav malware scanning → approval OTT scanner
+    icap_respmod_services:
+      - url: icap://icap:1344/squidclamav
+        no_preview: true
+      - url: icap://icap:1344/approvalcheck
+        no_preview: true
+    # Fail-closed: block traffic if ICAP services are unavailable
+    icap_reqmod_on_error: block
+    icap_respmod_on_error: block
     # Audit all traffic
     task_audit_ratio: 1.0
-    # NOTE: Fail-closed behavior enforced via health-check.sh (ICAP connectivity check)
-    # g3proxy does not support native circuit breaker config for ICAP
 
 # ===========================================
 # Escapers - Upstream routing

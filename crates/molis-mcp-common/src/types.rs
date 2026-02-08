@@ -99,9 +99,12 @@ pub struct OttMapping {
     pub request_id: String,
     /// Timestamp after which this OTT becomes valid (time-gate)
     pub armed_after: DateTime<Utc>,
+    /// The destination host that triggered OTT generation (context binding)
+    pub origin_host: String,
     /// When this mapping was created
     pub created_at: DateTime<Utc>,
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -208,6 +211,7 @@ mod tests {
             ott_code: "ott-x7k9m2p4".to_string(),
             request_id: "req-abc12345".to_string(),
             armed_after: now,
+            origin_host: "api.telegram.org".to_string(),
             created_at: now,
         };
         let json = serde_json::to_string(&mapping).unwrap();
@@ -215,6 +219,7 @@ mod tests {
         assert_eq!(deserialized.ott_code, mapping.ott_code);
         assert_eq!(deserialized.request_id, mapping.request_id);
         assert_eq!(deserialized.armed_after, mapping.armed_after);
+        assert_eq!(deserialized.origin_host, mapping.origin_host);
         assert_eq!(deserialized.created_at, mapping.created_at);
     }
 
