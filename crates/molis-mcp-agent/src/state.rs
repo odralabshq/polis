@@ -18,6 +18,9 @@ use molis_mcp_common::{
 /// Default connection-pool size.
 const DEFAULT_POOL_SIZE: usize = 8;
 
+/// Default path to Valkey CA certificate (mounted in container).
+const DEFAULT_VALKEY_CA_PATH: &str = "/etc/valkey/tls/ca.crt";
+
 /// Shared application state holding the Valkey connection pool.
 #[derive(Clone)]
 pub struct AppState {
@@ -30,8 +33,15 @@ impl AppState {
     ///
     /// # Arguments
     /// * `valkey_url` — Redis-compatible URL, e.g. `redis://valkey:6379`
+    ///                  or `rediss://valkey:6379` for TLS
     /// * `user`       — ACL username (e.g. `mcp-agent`)
     /// * `password`   — ACL password
+    ///
+    /// # TLS Configuration
+    /// For `rediss://` URLs, the client uses rustls with the system CA store
+    /// by default. To use a custom CA (e.g., self-signed), set the
+    /// `MOLIS_AGENT_VALKEY_CA` environment variable to the CA cert path,
+    /// or mount the CA at `/etc/valkey/tls/ca.crt`.
     ///
     /// # Errors
     /// Returns an error if the pool cannot be created or the startup

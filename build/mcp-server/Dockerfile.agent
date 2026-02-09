@@ -9,9 +9,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl && rm -rf /var/lib/apt/lists/*
 RUN useradd -r -s /bin/false molis
 COPY --from=builder /build/target/release/molis-mcp-agent /usr/bin/
-USER molis
+
+# Create directory for Valkey TLS certificates (mounted at runtime)
+RUN mkdir -p /etc/valkey/tls && chown molis:molis /etc/valkey/tls
+
+# Create entrypoint script that adds the Valkey CA to the system trust store
+# This runs as root briefly to update CA certs, then drops to molis user
+COPY <<'EOF' /entrypoint.sh
+#!/bin/sh
+set -e
+# If Valkey CA cert is mounted, add it to system trust store
+if [ -f /etc/valkey/tls/ca.crt ]; then
+    cp /etc/valkey/tls/ca.crt /usr/local/share/ca-certificates/valkey-ca.crt
+    update-ca-certificates 2>/dev/null || true
+fi
+# Drop privileges and exec the agent
+exec su -s /bin/sh molis -c "/usr/bin/molis-mcp-agent"
+EOF
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+
 ENV RUST_LOG=info
 ENV MOLIS_AGENT_LISTEN_ADDR=0.0.0.0:8080
 ENV MOLIS_AGENT_VALKEY_URL=redis://valkey:6379
 EXPOSE 8080
-ENTRYPOINT ["/usr/bin/molis-mcp-agent"]
+ENTRYPOINT ["/entrypoint.sh"]

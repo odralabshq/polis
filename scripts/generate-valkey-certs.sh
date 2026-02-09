@@ -43,6 +43,10 @@ echo ""
 echo "--- Generating server certificate ---"
 openssl genrsa -out "${OUTPUT_DIR}/server.key" 2048 2>/dev/null
 
+# Create extension file for SANs
+EXT_FILE="${OUTPUT_DIR}/server.ext"
+echo "subjectAltName = DNS:valkey,DNS:localhost,IP:127.0.0.1" > "${EXT_FILE}"
+
 openssl req -new \
     -key "${OUTPUT_DIR}/server.key" \
     -out "${OUTPUT_DIR}/server.csr" \
@@ -56,10 +60,11 @@ openssl x509 -req \
     -CAcreateserial \
     -out "${OUTPUT_DIR}/server.crt" \
     -days "${DAYS}" \
-    -sha256
+    -sha256 \
+    -extfile "${EXT_FILE}"
 
-# Remove server CSR
-rm -f "${OUTPUT_DIR}/server.csr"
+# Remove server CSR and ext file
+rm -f "${OUTPUT_DIR}/server.csr" "${EXT_FILE}"
 
 echo "Server certificate created."
 

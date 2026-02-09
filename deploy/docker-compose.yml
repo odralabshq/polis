@@ -71,6 +71,9 @@ services:
       - ../config/squidclamav.conf:/etc/squidclamav.conf:ro
       - ../config/molis_dlp.conf:/etc/c-icap/molis_dlp.conf:ro
       - ../config/molis_approval.conf:/etc/c-icap/molis_approval.conf:ro
+      - ../certs/valkey:/etc/valkey/tls:ro
+    env_file:
+      - ../.env
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
     depends_on:
