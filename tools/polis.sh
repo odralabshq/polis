@@ -401,13 +401,34 @@ setup_valkey() {
     fi
 
     # --- Valkey secrets (passwords + ACL) ---
-    if [[ -f "${VALKEY_SECRETS_DIR}/valkey_password.txt" ]] \
+    # Force regeneration if ACL has placeholder passwords (template from repo)
+    local needs_regen=false
+    if [[ -f "${VALKEY_SECRETS_DIR}/valkey_users.acl" ]]; then
+        if grep -q '>password' "${VALKEY_SECRETS_DIR}/valkey_users.acl" 2>/dev/null; then
+            log_warn "Valkey ACL contains placeholder passwords. Regenerating..."
+            needs_regen=true
+        fi
+    fi
+
+    if [[ "$needs_regen" == "false" ]] \
+        && [[ -f "${VALKEY_SECRETS_DIR}/valkey_password.txt" ]] \
         && [[ -f "${VALKEY_SECRETS_DIR}/valkey_users.acl" ]]; then
         log_success "Valkey secrets already exist."
+        # Ensure VALKEY_MCP_AGENT_PASS is in .env even if secrets were pre-generated
+        if ! grep -q '^VALKEY_MCP_AGENT_PASS=' "${PROJECT_ROOT}/.env" 2>/dev/null; then
+            if [[ -f "${VALKEY_SECRETS_DIR}/credentials.env.example" ]]; then
+                local agent_pass
+                agent_pass=$(grep '^VALKEY_MCP_AGENT_PASS=' "${VALKEY_SECRETS_DIR}/credentials.env.example" | cut -d= -f2-)
+                if [[ -n "$agent_pass" ]]; then
+                    echo "VALKEY_MCP_AGENT_PASS=${agent_pass}" >> "${PROJECT_ROOT}/.env"
+                    log_info "Added VALKEY_MCP_AGENT_PASS to .env from existing credentials."
+                fi
+            fi
+        fi
     else
         echo "Generating Valkey secrets..."
         if ! bash "${PROJECT_ROOT}/scripts/generate-valkey-secrets.sh" \
-            "${VALKEY_SECRETS_DIR}"; then
+            "${VALKEY_SECRETS_DIR}" "${PROJECT_ROOT}"; then
             log_error "Failed to generate Valkey secrets"
             return 1
         fi
@@ -450,7 +471,7 @@ validate_agent() {
     if [[ -f "$override" ]]; then
         # Skip compose validation if secrets haven't been generated yet
         # (they will be created during init before containers start)
-        if docker compose -f "$COMPOSE_FILE" -f "$override" config --quiet 2>/dev/null; then
+        if docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" -f "$override" config --quiet 2>/dev/null; then
             :
         else
             local secrets_dir
@@ -492,7 +513,7 @@ HEADER
 
 build_compose_flags() {
     local agent="$1"
-    local flags="-f ${COMPOSE_FILE}"
+    local flags="-f ${COMPOSE_FILE} --env-file ${ENV_FILE}"
 
     local override="${PROJECT_ROOT}/agents/${agent}/compose.override.yaml"
     if [[ -f "$override" ]]; then
@@ -756,7 +777,7 @@ case "${1:-}" in
         # Step 5: Clean up existing containers
         echo ""
         log_step "Cleaning up existing containers..."
-        docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
         
         # Step 6: Build or pull images
@@ -782,7 +803,7 @@ case "${1:-}" in
             fi
             
             # Build remaining services
-            docker compose -f "$COMPOSE_FILE" build $NO_CACHE
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build $NO_CACHE
         else
             echo ""
             echo "=== Checking images at GitHub Container Registry ==="
@@ -805,7 +826,7 @@ case "${1:-}" in
                     -f "${PROJECT_ROOT}/build/workspace/Dockerfile" \
                     -t "polis-workspace-oss:latest" \
                     "${PROJECT_ROOT}"
-                docker compose -f "$COMPOSE_FILE" build $NO_CACHE
+                docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build $NO_CACHE
                 if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
                     generate_dockerfile "$EFFECTIVE_AGENT"
                     docker build $NO_CACHE \
@@ -894,7 +915,7 @@ case "${1:-}" in
         
     down)
         echo "=== Polis: Removing Containers ==="
-        docker compose -f "$COMPOSE_FILE" down
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down
         ;;
         
     stop)
@@ -919,15 +940,15 @@ case "${1:-}" in
         
     status)
         echo "=== Polis: Container Status ==="
-        docker compose -f "$COMPOSE_FILE" ps
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
         ;;
         
     logs)
         SERVICE="${2:-}"
         if [[ -n "$SERVICE" ]]; then
-            docker compose -f "$COMPOSE_FILE" logs --tail=50 -f "$SERVICE"
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=50 -f "$SERVICE"
         else
-            docker compose -f "$COMPOSE_FILE" logs --tail=50 -f
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=50 -f
         fi
         ;;
         

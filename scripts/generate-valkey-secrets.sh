@@ -9,6 +9,9 @@ set -euo pipefail
 
 # Output directory (default: ./secrets)
 OUTPUT_DIR="${1:-./secrets}"
+# Project root for .env file (default: parent of output dir)
+PROJECT_ROOT="${2:-$(cd "$(dirname "${OUTPUT_DIR}")" && pwd)}"
+ENV_FILE="${PROJECT_ROOT}/.env"
 
 echo "=== Valkey Secrets Generator ==="
 echo "Output directory: ${OUTPUT_DIR}"
@@ -18,7 +21,7 @@ mkdir -p "${OUTPUT_DIR}"
 
 # =============================================================================
 # Password Generation
-# Generate four unique 32-character alphanumeric passwords
+# Generate unique 32-character alphanumeric passwords for each user
 # =============================================================================
 
 echo ""
@@ -32,8 +35,10 @@ PASS_MCP_AGENT="$(generate_password)"
 PASS_MCP_ADMIN="$(generate_password)"
 PASS_LOG_WRITER="$(generate_password)"
 PASS_HEALTHCHECK="$(generate_password)"
+PASS_GOV_REQMOD="$(generate_password)"
+PASS_GOV_RESPMOD="$(generate_password)"
 
-echo "Generated 4 unique passwords (32 characters each)."
+echo "Generated 6 unique passwords (32 characters each)."
 
 # =============================================================================
 # SHA-256 Hash Generation
@@ -51,6 +56,8 @@ HASH_MCP_AGENT="$(hash_password "${PASS_MCP_AGENT}")"
 HASH_MCP_ADMIN="$(hash_password "${PASS_MCP_ADMIN}")"
 HASH_LOG_WRITER="$(hash_password "${PASS_LOG_WRITER}")"
 HASH_HEALTHCHECK="$(hash_password "${PASS_HEALTHCHECK}")"
+HASH_GOV_REQMOD="$(hash_password "${PASS_GOV_REQMOD}")"
+HASH_GOV_RESPMOD="$(hash_password "${PASS_GOV_RESPMOD}")"
 
 echo "SHA-256 hashes computed for all users."
 
@@ -71,6 +78,7 @@ echo "valkey_password.txt created (healthcheck password)."
 # =============================================================================
 # Create valkey_users.acl
 # ACL rules with SHA-256 hashed passwords for all users
+# Includes: governance ICAP users, MCP users, utility users
 # =============================================================================
 
 echo ""
@@ -78,17 +86,19 @@ echo "--- Creating valkey_users.acl ---"
 
 cat > "${OUTPUT_DIR}/valkey_users.acl" <<EOF
 user default off
+user governance-reqmod on #${HASH_GOV_REQMOD} ~molis:ott:* ~molis:blocked:* ~molis:log:* -@all +get +set +setnx +exists +zadd
+user governance-respmod on #${HASH_GOV_RESPMOD} ~molis:ott:* ~molis:blocked:* ~molis:approved:* ~molis:log:* -@all +get +del +setex +exists +zadd
 user mcp-agent on #${HASH_MCP_AGENT} ~molis:blocked:* ~molis:approved:* ~molis:config:* +@read +@write +@connection -@admin -@dangerous -DEL -UNLINK
 user mcp-admin on #${HASH_MCP_ADMIN} ~molis:* +@all -@dangerous -FLUSHALL -FLUSHDB -DEBUG -CONFIG -SHUTDOWN
 user log-writer on #${HASH_LOG_WRITER} ~molis:log:events -@all +ZADD +ZRANGEBYSCORE +ZCARD +PING
 user healthcheck on #${HASH_HEALTHCHECK} -@all +PING +INFO
 EOF
 
-echo "valkey_users.acl created (5 user entries)."
+echo "valkey_users.acl created (7 user entries)."
 
 # =============================================================================
 # Create credentials.env.example
-# Plaintext credentials for reference (not used in production)
+# Plaintext credentials for development reference
 # =============================================================================
 
 echo ""
@@ -100,17 +110,36 @@ cat > "${OUTPUT_DIR}/credentials.env.example" <<EOF
 # These are plaintext credentials for development reference only.
 # Production uses Docker secrets with hashed passwords in the ACL file.
 
-VALKEY_MCP_AGENT_PASSWORD=${PASS_MCP_AGENT}
-VALKEY_MCP_ADMIN_PASSWORD=${PASS_MCP_ADMIN}
-VALKEY_LOG_WRITER_PASSWORD=${PASS_LOG_WRITER}
-VALKEY_HEALTHCHECK_PASSWORD=${PASS_HEALTHCHECK}
+VALKEY_MCP_AGENT_PASS=${PASS_MCP_AGENT}
+VALKEY_MCP_ADMIN_PASS=${PASS_MCP_ADMIN}
+VALKEY_LOG_WRITER_PASS=${PASS_LOG_WRITER}
+VALKEY_HEALTHCHECK_PASS=${PASS_HEALTHCHECK}
+VALKEY_GOV_REQMOD_PASS=${PASS_GOV_REQMOD}
+VALKEY_GOV_RESPMOD_PASS=${PASS_GOV_RESPMOD}
 EOF
 
-echo "credentials.env.example created (4 user credentials)."
+echo "credentials.env.example created (6 user credentials)."
+
+# =============================================================================
+# Write required env vars to .env
+# Docker-compose needs VALKEY_MCP_AGENT_PASS for the mcp-agent service
+# =============================================================================
+
+echo ""
+echo "--- Updating .env file ---"
+
+if [[ -f "$ENV_FILE" ]]; then
+    # Remove any existing VALKEY_ vars to avoid duplicates
+    sed -i '/^VALKEY_MCP_AGENT_PASS=/d' "$ENV_FILE"
+fi
+
+# Append the password docker-compose needs
+echo "VALKEY_MCP_AGENT_PASS=${PASS_MCP_AGENT}" >> "$ENV_FILE"
+
+echo "VALKEY_MCP_AGENT_PASS written to ${ENV_FILE}"
 
 # =============================================================================
 # Set File Permissions
-# All generated files set to 600 (owner read/write only)
 # =============================================================================
 
 echo ""

@@ -257,9 +257,11 @@ services:
     environment:
       - RUST_LOG=info
       - MOLIS_AGENT_LISTEN_ADDR=0.0.0.0:8080
-      - MOLIS_AGENT_VALKEY_URL=redis://valkey:6379
+      - MOLIS_AGENT_VALKEY_URL=rediss://valkey:6379
       - MOLIS_AGENT_VALKEY_USER=mcp-agent
       - MOLIS_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
+    volumes:
+      - ../certs/valkey:/etc/valkey/tls:ro
     depends_on:
       valkey:
         condition: service_healthy

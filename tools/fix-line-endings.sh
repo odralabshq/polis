@@ -90,7 +90,12 @@ fix_file "${PROJECT_ROOT}/deploy/docker-compose.yml"
 # 7. .env file
 fix_file "${PROJECT_ROOT}/.env"
 
-# 8. Test files (BATS tests, helpers)
+# 8. Secrets files (ACL, password files — CRLF breaks Valkey ACL parser)
+for f in "${PROJECT_ROOT}"/secrets/*.acl "${PROJECT_ROOT}"/secrets/*.txt; do
+    fix_file "$f"
+done
+
+# 9. Test files (BATS tests, helpers)
 for f in "${PROJECT_ROOT}"/tests/*.sh "${PROJECT_ROOT}"/tests/*.bash; do
     fix_file "$f"
 done
