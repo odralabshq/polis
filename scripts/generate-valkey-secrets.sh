@@ -37,8 +37,9 @@ PASS_LOG_WRITER="$(generate_password)"
 PASS_HEALTHCHECK="$(generate_password)"
 PASS_GOV_REQMOD="$(generate_password)"
 PASS_GOV_RESPMOD="$(generate_password)"
+DLP_PASS="$(generate_password)"
 
-echo "Generated 6 unique passwords (32 characters each)."
+echo "Generated 7 unique passwords (32 characters each)."
 
 # =============================================================================
 # SHA-256 Hash Generation
@@ -58,6 +59,7 @@ HASH_LOG_WRITER="$(hash_password "${PASS_LOG_WRITER}")"
 HASH_HEALTHCHECK="$(hash_password "${PASS_HEALTHCHECK}")"
 HASH_GOV_REQMOD="$(hash_password "${PASS_GOV_REQMOD}")"
 HASH_GOV_RESPMOD="$(hash_password "${PASS_GOV_RESPMOD}")"
+HASH_DLP="$(hash_password "${DLP_PASS}")"
 
 echo "SHA-256 hashes computed for all users."
 
@@ -88,13 +90,26 @@ cat > "${OUTPUT_DIR}/valkey_users.acl" <<EOF
 user default off
 user governance-reqmod on #${HASH_GOV_REQMOD} ~molis:ott:* ~molis:blocked:* ~molis:log:* -@all +get +set +setnx +exists +zadd
 user governance-respmod on #${HASH_GOV_RESPMOD} ~molis:ott:* ~molis:blocked:* ~molis:approved:* ~molis:log:* -@all +get +del +setex +exists +zadd
-user mcp-agent on #${HASH_MCP_AGENT} ~molis:blocked:* ~molis:approved:* ~molis:config:* +@read +@write +@connection -@admin -@dangerous -DEL -UNLINK
+user mcp-agent on #${HASH_MCP_AGENT} ~molis:blocked:* ~molis:approved:* +GET +SETEX +EXISTS +SCAN +PING -@all
 user mcp-admin on #${HASH_MCP_ADMIN} ~molis:* +@all -@dangerous -FLUSHALL -FLUSHDB -DEBUG -CONFIG -SHUTDOWN
 user log-writer on #${HASH_LOG_WRITER} ~molis:log:events -@all +ZADD +ZRANGEBYSCORE +ZCARD +PING
 user healthcheck on #${HASH_HEALTHCHECK} -@all +PING +INFO
+user dlp-reader on #${HASH_DLP} ~molis:config:security_level +GET +PING -@all
 EOF
 
-echo "valkey_users.acl created (7 user entries)."
+echo "valkey_users.acl created (8 user entries)."
+
+# =============================================================================
+# Create valkey_dlp_password.txt
+# Contains the dlp-reader user password (used by DLP module Docker secret)
+# =============================================================================
+
+echo ""
+echo "--- Creating valkey_dlp_password.txt ---"
+
+echo -n "$DLP_PASS" > "${OUTPUT_DIR}/valkey_dlp_password.txt"
+
+echo "valkey_dlp_password.txt created (dlp-reader password)."
 
 # =============================================================================
 # Create credentials.env.example
@@ -116,9 +131,11 @@ VALKEY_LOG_WRITER_PASS=${PASS_LOG_WRITER}
 VALKEY_HEALTHCHECK_PASS=${PASS_HEALTHCHECK}
 VALKEY_GOV_REQMOD_PASS=${PASS_GOV_REQMOD}
 VALKEY_GOV_RESPMOD_PASS=${PASS_GOV_RESPMOD}
+VALKEY_DLP_USER=dlp-reader
+VALKEY_DLP_PASS=${DLP_PASS}
 EOF
 
-echo "credentials.env.example created (6 user credentials)."
+echo "credentials.env.example created (8 user credentials)."
 
 # =============================================================================
 # Write required env vars to .env
@@ -147,6 +164,7 @@ echo "--- Setting file permissions ---"
 
 chmod 600 "${OUTPUT_DIR}/valkey_password.txt"
 chmod 600 "${OUTPUT_DIR}/valkey_users.acl"
+chmod 600 "${OUTPUT_DIR}/valkey_dlp_password.txt"
 chmod 600 "${OUTPUT_DIR}/credentials.env.example"
 
 echo "Permissions set: all files=600"
@@ -156,4 +174,5 @@ echo "=== Secrets generation complete ==="
 echo "Files created in: ${OUTPUT_DIR}"
 echo "  valkey_password.txt      (healthcheck password)"
 echo "  valkey_users.acl         (ACL with hashed passwords)"
+echo "  valkey_dlp_password.txt  (dlp-reader password)"
 echo "  credentials.env.example  (plaintext reference)"

@@ -76,6 +76,8 @@ services:
       - ../.env
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
+    secrets:
+      - valkey_dlp_password
     depends_on:
       clamav:
         condition: service_healthy
@@ -163,6 +165,30 @@ services:
       - ../certs/ca/ca.pem:/usr/local/share/ca-certificates/polis-ca.crt:ro
       - ../scripts/workspace-init.sh:/usr/local/bin/polis-init.sh:ro
       - ../config/polis-init.service:/etc/systemd/system/polis-init.service:ro
+      - type: tmpfs
+        target: /root/.ssh
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.aws
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.gnupg
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.config/gcloud
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.kube
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.docker
+        tmpfs:
+          mode: 0000
     healthcheck:
       test: ["CMD-SHELL", "systemctl is-active polis-init.service && ip route | grep -q default"]
       interval: 30s
@@ -327,3 +353,5 @@ secrets:
     file: ../secrets/valkey_password.txt
   valkey_acl:
     file: ../secrets/valkey_users.acl
+  valkey_dlp_password:
+    file: ../secrets/valkey_dlp_password.txt

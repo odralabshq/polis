@@ -62,6 +62,26 @@ if ! type disable_ipv6 &>/dev/null; then
     }
 fi
 
+# Protect sensitive paths — defense-in-depth layer (secondary to tmpfs mounts)
+# chmod 000 existing dirs, create decoys for missing ones
+protect_sensitive_paths() {
+    local paths=(".ssh" ".aws" ".gnupg" ".config/gcloud" ".kube" ".docker")
+
+    echo "[workspace] Protecting sensitive paths..."
+    for p in "${paths[@]}"; do
+        local full_path="$HOME/$p"
+        if [[ -d "$full_path" ]]; then
+            chmod 000 "$full_path"
+            echo "[workspace] Protected existing: $full_path"
+        else
+            mkdir -p "$full_path"
+            chmod 000 "$full_path"
+            echo "[workspace] Created decoy: $full_path"
+        fi
+    done
+    echo "[workspace] Sensitive paths protected (6 paths)"
+}
+
 disable_ipv6 "workspace" || exit 1
 
 # Detect gateway IP dynamically via DNS
@@ -82,5 +102,8 @@ echo "[workspace] Gateway IP: $GATEWAY_IP"
 # Configure routing
 ip route del default 2>/dev/null || true
 ip route add default via $GATEWAY_IP
+
+# Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
+protect_sensitive_paths
 
 echo "[workspace] Initialization complete"

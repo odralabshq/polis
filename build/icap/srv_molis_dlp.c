@@ -18,6 +18,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* Valkey/Redis client */
+#include <hiredis/hiredis.h>
+#include <hiredis/hiredis_ssl.h>
+
 /* Constants */
 #define MAX_PATTERNS    32
 #define MAX_PATTERN_LEN 256
@@ -56,6 +60,26 @@ static dlp_pattern_t patterns[MAX_PATTERNS];
 static int pattern_count = 0;
 
 /*
+ * Security level enum — maps to Valkey values at molis:config:security_level.
+ * Controls DLP behavior for new (unknown) domains.
+ */
+typedef enum {
+    LEVEL_RELAXED  = 0,   /* New domains: auto-allow */
+    LEVEL_BALANCED = 1,   /* New domains: HITL prompt (default) */
+    LEVEL_STRICT   = 2    /* New domains: block */
+} security_level_t;
+
+/* Valkey polling constants */
+#define LEVEL_POLL_INTERVAL 100    /* Requests between Valkey polls */
+#define LEVEL_POLL_MAX      10000  /* Max backoff interval (requests) */
+
+/* Security level state — Valkey connection and polling */
+static redisContext *valkey_level_ctx = NULL;
+static security_level_t current_level = LEVEL_BALANCED;
+static unsigned long request_counter = 0;
+static unsigned long current_poll_interval = LEVEL_POLL_INTERVAL;
+
+/*
  * find_pattern_by_name - Look up a loaded pattern by its name.
  * Returns pointer to the pattern, or NULL if not found.
  */
@@ -67,6 +91,351 @@ static dlp_pattern_t *find_pattern_by_name(const char *name)
             return &patterns[i];
     }
     return NULL;
+}
+
+/*
+ * refresh_security_level - Poll Valkey for the current security level.
+ *
+ * Executes GET molis:config:security_level via hiredis. On success,
+ * parses the value (handling both "relaxed" and relaxed — with or
+ * without JSON quotes) and updates current_level. Unknown values
+ * default to LEVEL_BALANCED.
+ *
+ * On failure: keeps current_level unchanged, doubles the poll
+ * interval (exponential backoff, capped at LEVEL_POLL_MAX), and
+ * logs the new backoff value.
+ *
+ * On success: resets current_poll_interval to LEVEL_POLL_INTERVAL.
+ *
+ * Requirements: 1.3, 1.4, 1.5, 1.6
+ */
+static void refresh_security_level(void)
+{
+    redisReply *reply;
+    const char *val;
+    char stripped[64];
+    size_t len;
+
+    /* No Valkey connection — skip polling entirely */
+    if (valkey_level_ctx == NULL)
+        return;
+
+    reply = redisCommand(valkey_level_ctx,
+                         "GET molis:config:security_level");
+
+    /* Failure path: keep current level, backoff */
+    if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
+        current_poll_interval *= 2;
+        if (current_poll_interval > LEVEL_POLL_MAX)
+            current_poll_interval = LEVEL_POLL_MAX;
+        ci_debug_printf(1, "molis_dlp: Valkey poll failed, "
+                           "keeping level %d, next poll in "
+                           "%lu requests\n",
+                       (int)current_level,
+                       current_poll_interval);
+        if (reply)
+            freeReplyObject(reply);
+        return;
+    }
+
+    /* Success: reset poll interval */
+    current_poll_interval = LEVEL_POLL_INTERVAL;
+
+    /* NIL reply (key not set) — default to balanced */
+    if (reply->type == REDIS_REPLY_NIL || reply->str == NULL) {
+        current_level = LEVEL_BALANCED;
+        freeReplyObject(reply);
+        return;
+    }
+
+    /*
+     * Strip leading/trailing '"' from the value.
+     * The CLI uses serde_json::to_string() which wraps the
+     * value in JSON quotes: "\"relaxed\"" stored in Valkey.
+     */
+    val = reply->str;
+    len = strlen(val);
+    if (len >= 2 && val[0] == '"' && val[len - 1] == '"') {
+        /* Copy without surrounding quotes */
+        if (len - 2 < sizeof(stripped)) {
+            memcpy(stripped, val + 1, len - 2);
+            stripped[len - 2] = '\0';
+        } else {
+            stripped[0] = '\0';
+        }
+        val = stripped;
+    }
+
+    /* Map string value to security_level_t enum */
+    if (strcasecmp(val, "relaxed") == 0) {
+        current_level = LEVEL_RELAXED;
+    } else if (strcasecmp(val, "balanced") == 0) {
+        current_level = LEVEL_BALANCED;
+    } else if (strcasecmp(val, "strict") == 0) {
+        current_level = LEVEL_STRICT;
+    } else {
+        /* Unknown value — default to balanced */
+        ci_debug_printf(1, "molis_dlp: Unknown security level "
+                           "'%s', defaulting to balanced\n",
+                       val);
+        current_level = LEVEL_BALANCED;
+    }
+
+    ci_debug_printf(5, "molis_dlp: Security level updated "
+                       "to %d\n", (int)current_level);
+
+    freeReplyObject(reply);
+}
+
+/*
+ * is_new_domain - Check if a host is a known-good domain.
+ *
+ * Uses dot-boundary suffix matching to prevent CWE-346
+ * substring spoofing. Known domains are stored with a
+ * leading dot (e.g., ".github.com") so that:
+ *   - "api.github.com" matches (ends with ".github.com")
+ *   - "evil-github.com" does NOT match (no dot boundary)
+ *   - "github.com" matches via exact match (domain + 1)
+ *
+ * Returns 0 if the host is a known domain, 1 if new.
+ */
+static int is_new_domain(const char *host)
+{
+    static const char *known_domains[] = {
+        ".api.anthropic.com",
+        ".api.openai.com",
+        ".api.github.com",
+        ".github.com",
+        ".amazonaws.com",
+        NULL
+    };
+    size_t hlen, dlen;
+    int i;
+
+    if (host == NULL || host[0] == '\0')
+        return 1;
+
+    hlen = strlen(host);
+
+    for (i = 0; known_domains[i] != NULL; i++) {
+        dlen = strlen(known_domains[i]);
+
+        /* Suffix match: host ends with ".domain.com" */
+        if (hlen >= dlen &&
+            strcasecmp(host + (hlen - dlen),
+                       known_domains[i]) == 0) {
+            return 0;  /* known domain */
+        }
+
+        /* Exact match without leading dot */
+        if (strcasecmp(host, known_domains[i] + 1) == 0) {
+            return 0;  /* known domain */
+        }
+    }
+
+    return 1;  /* new domain */
+}
+
+/*
+ * apply_security_policy - Per-request policy decision.
+ *
+ * Increments the request counter and polls Valkey for security level
+ * changes every current_poll_interval requests. Then evaluates the
+ * request against the active security level:
+ *
+ *   - Credentials always trigger a HITL prompt (return 1) regardless
+ *     of security level (Requirement 2.4).
+ *   - New domains: RELAXED → allow (0), BALANCED → prompt (1),
+ *     STRICT → block (2).
+ *   - Known domains with no credential → allow (0).
+ *
+ * Returns: 0 = allow, 1 = prompt (HITL), 2 = block.
+ *
+ * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
+ */
+static int apply_security_policy(const char *host, int has_credential)
+{
+    int new_domain;
+
+    /* Increment request counter and poll Valkey on interval */
+    request_counter++;
+    if (request_counter % current_poll_interval == 0) {
+        refresh_security_level();
+    }
+
+    /* Credentials always trigger a HITL prompt at any level */
+    if (has_credential) {
+        return 1;  /* prompt */
+    }
+
+    /* Check if this is a new (unknown) domain */
+    new_domain = is_new_domain(host);
+
+    if (!new_domain) {
+        return 0;  /* known domain, no credential → allow */
+    }
+
+    /* New domain: behavior depends on current security level */
+    switch (current_level) {
+    case LEVEL_RELAXED:
+        return 0;  /* auto-allow new domains */
+    case LEVEL_BALANCED:
+        return 1;  /* prompt for new domains */
+    case LEVEL_STRICT:
+        return 2;  /* block new domains */
+    default:
+        return 1;  /* unknown level → treat as balanced */
+    }
+}
+
+/*
+ * dlp_valkey_init - Connect to Valkey as dlp-reader with TLS + ACL.
+ *
+ * Reads MOLIS_VALKEY_HOST env var (default: "valkey"), port 6379.
+ * Creates TLS context with CA, client cert, client key from
+ * /etc/valkey/tls/. Reads password from Docker secret file at
+ * /run/secrets/valkey_dlp_password, strips trailing newline,
+ * authenticates as dlp-reader, then scrubs password from stack.
+ * Calls refresh_security_level() for initial level read.
+ *
+ * Returns 0 on success, -1 on any failure.
+ *
+ * Requirements: 1.1, 1.2, 1.7, 1.8
+ */
+static int dlp_valkey_init(void)
+{
+    const char *vk_host;
+    int vk_port = 6379;
+    redisSSLContext *ssl_ctx = NULL;
+    redisSSLContextError ssl_err;
+    redisReply *reply;
+    FILE *fp;
+    char password[256];
+    size_t pass_len;
+
+    /* Read Valkey host from environment (default: "valkey") */
+    vk_host = getenv("MOLIS_VALKEY_HOST");
+    if (!vk_host) vk_host = "valkey";
+
+    /* Initialize OpenSSL for hiredis TLS */
+    redisInitOpenSSL();
+
+    /* Create TLS context with client certificates for mTLS */
+    ssl_ctx = redisCreateSSLContext(
+        "/etc/valkey/tls/ca.crt",
+        NULL,   /* capath — not used, single CA file */
+        "/etc/valkey/tls/client.crt",
+        "/etc/valkey/tls/client.key",
+        NULL,   /* server_name — use default */
+        &ssl_err);
+    if (ssl_ctx == NULL) {
+        ci_debug_printf(1, "molis_dlp: WARNING: "
+            "Failed to create TLS context: %s — "
+            "Valkey connection unavailable\n",
+            redisSSLContextGetError(ssl_err));
+        return -1;
+    }
+
+    /* Establish TCP connection to Valkey */
+    valkey_level_ctx = redisConnect(vk_host, vk_port);
+    if (valkey_level_ctx == NULL ||
+        valkey_level_ctx->err) {
+        ci_debug_printf(1, "molis_dlp: WARNING: "
+            "Cannot connect to Valkey at %s:%d%s%s — "
+            "Valkey connection unavailable\n",
+            vk_host, vk_port,
+            valkey_level_ctx ? ": " : "",
+            valkey_level_ctx ? valkey_level_ctx->errstr : "");
+        if (valkey_level_ctx) {
+            redisFree(valkey_level_ctx);
+            valkey_level_ctx = NULL;
+        }
+        redisFreeSSLContext(ssl_ctx);
+        return -1;
+    }
+
+    /* Initiate TLS handshake on the connection */
+    if (redisInitiateSSLWithContext(valkey_level_ctx,
+                                    ssl_ctx) != REDIS_OK) {
+        ci_debug_printf(1, "molis_dlp: WARNING: "
+            "TLS handshake failed with Valkey: %s — "
+            "Valkey connection unavailable\n",
+            valkey_level_ctx->errstr);
+        redisFree(valkey_level_ctx);
+        valkey_level_ctx = NULL;
+        redisFreeSSLContext(ssl_ctx);
+        return -1;
+    }
+
+    /* Read dlp-reader password from Docker secret file */
+    fp = fopen("/run/secrets/valkey_dlp_password", "r");
+    if (!fp) {
+        ci_debug_printf(1, "molis_dlp: WARNING: "
+            "Cannot open /run/secrets/valkey_dlp_password — "
+            "ACL authentication unavailable\n");
+        redisFree(valkey_level_ctx);
+        valkey_level_ctx = NULL;
+        redisFreeSSLContext(ssl_ctx);
+        return -1;
+    }
+
+    memset(password, 0, sizeof(password));
+    if (fgets(password, sizeof(password), fp) == NULL) {
+        ci_debug_printf(1, "molis_dlp: WARNING: "
+            "Failed to read password from "
+            "/run/secrets/valkey_dlp_password\n");
+        fclose(fp);
+        memset(password, 0, sizeof(password));
+        redisFree(valkey_level_ctx);
+        valkey_level_ctx = NULL;
+        redisFreeSSLContext(ssl_ctx);
+        return -1;
+    }
+    fclose(fp);
+
+    /* Strip trailing newline from password */
+    pass_len = strlen(password);
+    while (pass_len > 0 &&
+           (password[pass_len - 1] == '\n' ||
+            password[pass_len - 1] == '\r')) {
+        password[--pass_len] = '\0';
+    }
+
+    /* Authenticate with ACL: AUTH dlp-reader <password> */
+    reply = redisCommand(valkey_level_ctx,
+        "AUTH dlp-reader %s", password);
+
+    /* Scrub password from stack immediately after AUTH */
+    memset(password, 0, sizeof(password));
+
+    if (reply == NULL ||
+        reply->type == REDIS_REPLY_ERROR) {
+        ci_debug_printf(1, "molis_dlp: CRITICAL: "
+            "Valkey ACL auth failed as dlp-reader%s%s — "
+            "Valkey connection unavailable\n",
+            reply ? ": " : "",
+            reply ? reply->str : "");
+        if (reply) freeReplyObject(reply);
+        redisFree(valkey_level_ctx);
+        valkey_level_ctx = NULL;
+        redisFreeSSLContext(ssl_ctx);
+        return -1;
+    }
+    freeReplyObject(reply);
+
+    ci_debug_printf(3, "molis_dlp: "
+        "Authenticated as dlp-reader\n");
+
+    ci_debug_printf(3, "molis_dlp: "
+        "Connected to Valkey at %s:%d (TLS + ACL)\n",
+        vk_host, vk_port);
+
+    redisFreeSSLContext(ssl_ctx);
+
+    /* Read initial security level from Valkey */
+    refresh_security_level();
+
+    return 0;
 }
 
 /* Forward declarations for service callbacks */
@@ -215,6 +584,21 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
 
     ci_debug_printf(3, "molis_dlp: Initialization complete, "
                        "%d patterns loaded\n", pattern_count);
+
+    /* Fail-closed: refuse to start if no credential patterns loaded (CWE-636) */
+    if (pattern_count == 0) {
+        ci_debug_printf(0, "molis_dlp: CRITICAL: No credential patterns "
+                           "loaded from molis_dlp.conf — refusing to start "
+                           "(fail-closed, CWE-636)\n");
+        return CI_ERROR;
+    }
+
+    /* Initialize Valkey connection for dynamic security levels (non-fatal) */
+    if (dlp_valkey_init() != 0) {
+        ci_debug_printf(2, "molis_dlp: WARNING: Valkey init failed — "
+                           "DLP will operate without dynamic security "
+                           "levels, defaulting to balanced\n");
+    }
 
     return CI_OK;
 }
@@ -421,12 +805,20 @@ int dlp_check_preview(char *preview_data, int preview_data_len,
  * the body exceeded 1MB, also scans the 10KB tail buffer to prevent
  * trivial padding bypass.
  *
- * If a credential is detected going to an unauthorized destination:
- *   - Returns HTTP 403 with X-Molis diagnostic headers
- *   - Logs the pattern name (never the credential value)
+ * After credential matching, applies security level policy via
+ * apply_security_policy(). For new domains:
+ *   - STRICT: blocks with reason "new_domain_blocked"
+ *   - BALANCED: blocks with reason "new_domain_prompt" (HITL)
+ *   - RELAXED: allows through
  *
- * If no credential detected or credential going to expected destination:
+ * If blocked (credential or policy):
+ *   - Returns HTTP 403 with X-Molis diagnostic headers
+ *   - Logs the pattern/reason name (never the credential value)
+ *
+ * If no block triggered:
  *   - Returns 204 (no modification)
+ *
+ * Requirements: 2.1, 2.2, 2.3
  */
 int dlp_process(ci_request_t *req)
 {
@@ -460,6 +852,38 @@ int dlp_process(ci_request_t *req)
         check_patterns(data->tail, (int)data->tail_len, data);
     }
 
+    /* Apply security level policy after credential matching.
+     * data->blocked from credential matching is passed as
+     * has_credential — if already blocked, policy returns 1
+     * (prompt) which is already handled above. We only act
+     * on the policy result if not already blocked.
+     * Requirements: 2.1, 2.2, 2.3 */
+    {
+        int policy = apply_security_policy(data->host,
+                                           data->blocked);
+        if (policy == 2 && data->blocked != 1) {
+            /* STRICT: block new domain */
+            data->blocked = 1;
+            strncpy(data->matched_pattern, "new_domain_blocked",
+                    sizeof(data->matched_pattern) - 1);
+            data->matched_pattern[
+                sizeof(data->matched_pattern) - 1] = '\0';
+            ci_debug_printf(3, "molis_dlp: BLOCKED new domain "
+                               "'%s' — security level STRICT\n",
+                           data->host);
+        } else if (policy == 1 && data->blocked != 1) {
+            /* BALANCED: trigger HITL prompt for new domain */
+            data->blocked = 1;
+            strncpy(data->matched_pattern, "new_domain_prompt",
+                    sizeof(data->matched_pattern) - 1);
+            data->matched_pattern[
+                sizeof(data->matched_pattern) - 1] = '\0';
+            ci_debug_printf(3, "molis_dlp: PROMPT new domain "
+                               "'%s' — security level BALANCED\n",
+                           data->host);
+        }
+    }
+
     /* If blocked, create 403 response with X-Molis headers */
     if (data->blocked == 1) {
         ci_http_response_create(req, 1, 1);
@@ -467,8 +891,10 @@ int dlp_process(ci_request_t *req)
             "HTTP/1.1 403 Forbidden");
         ci_http_response_add_header(req,
             "X-Molis-Block: true");
-        ci_http_response_add_header(req,
-            "X-Molis-Reason: credential_detected");
+
+        snprintf(hdr_buf, sizeof(hdr_buf),
+                 "X-Molis-Reason: %s", data->matched_pattern);
+        ci_http_response_add_header(req, hdr_buf);
 
         snprintf(hdr_buf, sizeof(hdr_buf),
                  "X-Molis-Pattern: %s", data->matched_pattern);
