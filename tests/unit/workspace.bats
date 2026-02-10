@@ -268,3 +268,22 @@ setup() {
     assert_success
     assert_output --partial "nologin"
 }
+
+# =============================================================================
+# Protected Path Tests (Requirement 5)
+# =============================================================================
+
+@test "workspace: sensitive paths are inaccessible (mode 000)" {
+    local paths=(".ssh" ".aws" ".gnupg" ".config/gcloud" ".kube" ".docker")
+    for p in "${paths[@]}"; do
+        # Check that it exists and has mode 000
+        run docker exec "${WORKSPACE_CONTAINER}" stat -c '%a' "/root/$p"
+        assert_success
+        assert_output "0"
+        
+        # Check that listing it fails
+        run docker exec "${WORKSPACE_CONTAINER}" ls "/root/$p"
+        assert_failure
+        assert_output --partial "Permission denied"
+    done
+}

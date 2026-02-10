@@ -216,7 +216,35 @@ setup() {
 # =============================================================================
 
 @test "valkey: uses valkey/valkey:8-alpine image" {
+    run docker exec "${VALKEY_CONTAINER}" grep -E "^tls-auth-clients yes" /etc/valkey/valkey.conf
     run docker inspect --format '{{.Config.Image}}' "${VALKEY_CONTAINER}"
     assert_success
     assert_output "valkey/valkey:8-alpine"
+}
+
+# =============================================================================
+# ACL Tests (Requirement 7)
+# =============================================================================
+
+@test "valkey: mcp-agent ACL is tightened (no config access)" {
+    # Verify mcp-agent user cannot set security level
+    local mcp_pass=$(cat "${PROJECT_ROOT}/secrets/credentials.env.example" | grep VALKEY_MCP_AGENT_PASS | cut -d'=' -f2)
+    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt -u mcp-agent -p "$mcp_pass" SET molis:config:security_level strict
+    assert_output --partial "NOPERM"
+}
+
+@test "valkey: dlp-reader ACL is restricted (read-only level)" {
+    local dlp_pass=$(cat "${PROJECT_ROOT}/secrets/valkey_dlp_password.txt")
+    
+    # Verify dlp-reader can GET security level
+    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt -u dlp-reader -p "$dlp_pass" GET molis:config:security_level
+    assert_success
+    
+    # Verify dlp-reader cannot SET security level
+    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt -u dlp-reader -p "$dlp_pass" SET molis:config:security_level relaxed
+    assert_output --partial "NOPERM"
+    
+    # Verify dlp-reader cannot access other keys
+    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt -u dlp-reader -p "$dlp_pass" GET molis:blocked:somekey
+    assert_output --partial "NOPERM"
 }

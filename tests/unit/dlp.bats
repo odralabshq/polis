@@ -63,3 +63,33 @@ setup() {
     run docker exec "${GATEWAY_CONTAINER}" grep "icap://icap:1344/credcheck" /etc/g3proxy/g3proxy.yaml
     assert_success
 }
+
+# =============================================================================
+# Initialization Tests (Requirement 4)
+# =============================================================================
+
+@test "dlp: fail-closed if no patterns loaded" {
+    # Backup config, create empty one, restart icap, check logs, restore
+    run docker exec "${ICAP_CONTAINER}" sh -c "mv /etc/c-icap/molis_dlp.conf /etc/c-icap/molis_dlp.conf.bak && touch /etc/c-icap/molis_dlp.conf"
+    assert_success
+    
+    # Restart c-icap (this will fail to start the module)
+    run docker restart "${ICAP_CONTAINER}"
+    assert_success
+    
+    # Wait for restart attempt
+    sleep 2
+    
+    # Check logs for CRITICAL and CWE-636
+    run docker logs "${ICAP_CONTAINER}"
+    assert_output --partial "CRITICAL: No credential patterns loaded"
+    assert_output --partial "fail-closed, CWE-636"
+    
+    # Restore config
+    run docker exec "${ICAP_CONTAINER}" sh -c "mv /etc/c-icap/molis_dlp.conf.bak /etc/c-icap/molis_dlp.conf"
+    assert_success
+    
+    # Restart to healthy state
+    run docker restart "${ICAP_CONTAINER}"
+    assert_success
+}

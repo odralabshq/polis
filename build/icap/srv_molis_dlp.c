@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 /* Valkey/Redis client */
 #include <hiredis/hiredis.h>
@@ -78,6 +79,15 @@ static redisContext *valkey_level_ctx = NULL;
 static security_level_t current_level = LEVEL_BALANCED;
 static unsigned long request_counter = 0;
 static unsigned long current_poll_interval = LEVEL_POLL_INTERVAL;
+
+/*
+ * Mutex protecting all Valkey-related shared state:
+ * valkey_level_ctx, current_level, request_counter, current_poll_interval.
+ * c-ICAP uses MPMT (multi-threaded) model — concurrent requests call
+ * apply_security_policy() from different threads. hiredis contexts are
+ * NOT thread-safe, so all access must be serialized.
+ */
+static pthread_mutex_t valkey_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  * find_pattern_by_name - Look up a loaded pattern by its name.
@@ -256,12 +266,16 @@ static int is_new_domain(const char *host)
 static int apply_security_policy(const char *host, int has_credential)
 {
     int new_domain;
+    security_level_t level_snapshot;
 
-    /* Increment request counter and poll Valkey on interval */
+    /* Lock: increment counter, poll if needed, snapshot level */
+    pthread_mutex_lock(&valkey_mutex);
     request_counter++;
     if (request_counter % current_poll_interval == 0) {
         refresh_security_level();
     }
+    level_snapshot = current_level;
+    pthread_mutex_unlock(&valkey_mutex);
 
     /* Credentials always trigger a HITL prompt at any level */
     if (has_credential) {
@@ -276,7 +290,7 @@ static int apply_security_policy(const char *host, int has_credential)
     }
 
     /* New domain: behavior depends on current security level */
-    switch (current_level) {
+    switch (level_snapshot) {
     case LEVEL_RELAXED:
         return 0;  /* auto-allow new domains */
     case LEVEL_BALANCED:
@@ -312,6 +326,10 @@ static int dlp_valkey_init(void)
     FILE *fp;
     char password[256];
     size_t pass_len;
+    int result = -1;
+
+    /* Lock: all Valkey state modifications under mutex */
+    pthread_mutex_lock(&valkey_mutex);
 
     /* Read Valkey host from environment (default: "valkey") */
     vk_host = getenv("MOLIS_VALKEY_HOST");
@@ -333,6 +351,7 @@ static int dlp_valkey_init(void)
             "Failed to create TLS context: %s — "
             "Valkey connection unavailable\n",
             redisSSLContextGetError(ssl_err));
+        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
 
@@ -351,6 +370,7 @@ static int dlp_valkey_init(void)
             valkey_level_ctx = NULL;
         }
         redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
 
@@ -364,6 +384,7 @@ static int dlp_valkey_init(void)
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
         redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
 
@@ -376,6 +397,7 @@ static int dlp_valkey_init(void)
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
         redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
 
@@ -389,6 +411,7 @@ static int dlp_valkey_init(void)
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
         redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
     fclose(fp);
@@ -419,6 +442,7 @@ static int dlp_valkey_init(void)
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
         redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
     freeReplyObject(reply);
@@ -435,6 +459,7 @@ static int dlp_valkey_init(void)
     /* Read initial security level from Valkey */
     refresh_security_level();
 
+    pthread_mutex_unlock(&valkey_mutex);
     return 0;
 }
 
@@ -619,6 +644,15 @@ void dlp_close_service(void)
             regfree(&patterns[i].allow_regex);
     }
     pattern_count = 0;
+
+    /* Tear down Valkey connection under lock */
+    pthread_mutex_lock(&valkey_mutex);
+    if (valkey_level_ctx) {
+        redisFree(valkey_level_ctx);
+        valkey_level_ctx = NULL;
+    }
+    pthread_mutex_unlock(&valkey_mutex);
+    pthread_mutex_destroy(&valkey_mutex);
 }
 
 /*

@@ -41,7 +41,7 @@ COPY build/icap/srv_molis_dlp.c /build/
 RUN gcc -shared -fPIC -Wall -Werror -o /build/srv_molis_dlp.so /build/srv_molis_dlp.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
-    -L/usr/lib -licapapi -lhiredis
+    -L/usr/lib -licapapi -lhiredis -lpthread
 
 # Copy and compile approval REQMOD rewriter module
 COPY build/icap/srv_molis_approval_rewrite.c /build/
