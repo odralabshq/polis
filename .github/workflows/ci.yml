@@ -33,6 +33,12 @@ jobs:
           # Verify sysbox is available
           docker info | grep -i sysbox
 
+      - name: Set script permissions
+        run: |
+          chmod +x ./tools/polis.sh
+          chmod +x ./tests/run-tests.sh
+          chmod +x ./scripts/*.sh
+
       - name: Setup CA certificates
         run: ./tools/polis.sh setup-ca
 
