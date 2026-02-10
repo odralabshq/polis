@@ -253,21 +253,35 @@ configure_docker_sysbox() {
         echo "$sysbox_config" | sudo tee "$daemon_json" > /dev/null
     fi
     
-    log_info "Restarting Docker daemon..."
-    if is_wsl; then
-        # WSL2 may use different service management
-        if command -v service &>/dev/null; then
-            sudo service docker restart
-        else
-            log_warn "Could not restart Docker automatically in WSL."
-            echo "Please restart Docker manually or restart WSL."
-        fi
+    # Full stop/start cycle is required (especially on WSL2) for Docker to
+    # pick up new runtimes from daemon.json. A simple restart often doesn't work.
+    log_info "Stopping Docker daemon..."
+    if command -v systemctl &>/dev/null; then
+        sudo systemctl stop docker docker.socket 2>/dev/null || true
+    elif command -v service &>/dev/null; then
+        sudo service docker stop 2>/dev/null || true
+    fi
+    
+    # Ensure sysbox services are running before Docker starts
+    log_info "Restarting Sysbox services..."
+    if command -v systemctl &>/dev/null; then
+        sudo systemctl restart sysbox-mgr sysbox-fs 2>/dev/null || true
+        sleep 2
+    fi
+    
+    log_info "Starting Docker daemon..."
+    if command -v systemctl &>/dev/null; then
+        sudo systemctl start docker
+    elif command -v service &>/dev/null; then
+        sudo service docker start
     else
-        sudo systemctl restart docker
+        log_warn "Could not restart Docker automatically."
+        echo "Please restart Docker manually, then re-run this command."
+        return 1
     fi
     
     # Wait for Docker to come back up
-    log_info "Waiting for Docker to restart..."
+    log_info "Waiting for Docker to start..."
     local retries=30
     while ! docker info &>/dev/null && [[ $retries -gt 0 ]]; do
         sleep 1
@@ -275,7 +289,7 @@ configure_docker_sysbox() {
     done
     
     if ! docker info &>/dev/null; then
-        log_error "Docker failed to restart. Check 'journalctl -u docker' for details."
+        log_error "Docker failed to start. Check 'journalctl -u docker' for details."
         return 1
     fi
     
@@ -468,21 +482,9 @@ validate_agent() {
     [[ -x "$agent_dir/install.sh" ]] || log_warn "install.sh is not executable"
 
     local override="$agent_dir/compose.override.yaml"
-    if [[ -f "$override" ]]; then
-        # Skip compose validation if secrets haven't been generated yet
-        # (they will be created during init before containers start)
-        if docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" -f "$override" config --quiet 2>/dev/null; then
-            :
-        else
-            local secrets_dir
-            secrets_dir="$(dirname "$COMPOSE_FILE")/../secrets"
-            if [[ ! -f "${secrets_dir}/valkey_password.txt" ]]; then
-                log_warn "Skipping compose validation (secrets not yet generated)"
-            else
-                log_error "Invalid compose.override.yaml"
-                exit 1
-            fi
-        fi
+    if [[ -f "$override" ]] && [[ -f "$ENV_FILE" ]]; then
+        docker compose -f "$COMPOSE_FILE" -f "$override" config --quiet 2>/dev/null \
+            || log_warn "compose.override.yaml validation failed (non-fatal, continuing)"
     fi
 }
 
