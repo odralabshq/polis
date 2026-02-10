@@ -148,12 +148,16 @@ echo "--- Updating .env file ---"
 if [[ -f "$ENV_FILE" ]]; then
     # Remove any existing VALKEY_ vars to avoid duplicates
     sed -i '/^VALKEY_MCP_AGENT_PASS=/d' "$ENV_FILE"
+    sed -i '/^VALKEY_REQMOD_PASS=/d' "$ENV_FILE"
+    sed -i '/^VALKEY_RESPMOD_PASS=/d' "$ENV_FILE"
 fi
 
-# Append the password docker-compose needs
+# Append passwords docker-compose needs
 echo "VALKEY_MCP_AGENT_PASS=${PASS_MCP_AGENT}" >> "$ENV_FILE"
+echo "VALKEY_REQMOD_PASS=${PASS_GOV_REQMOD}" >> "$ENV_FILE"
+echo "VALKEY_RESPMOD_PASS=${PASS_GOV_RESPMOD}" >> "$ENV_FILE"
 
-echo "VALKEY_MCP_AGENT_PASS written to ${ENV_FILE}"
+echo "VALKEY_MCP_AGENT_PASS, VALKEY_REQMOD_PASS, VALKEY_RESPMOD_PASS written to ${ENV_FILE}"
 
 # =============================================================================
 # Set File Permissions

@@ -326,7 +326,6 @@ static int dlp_valkey_init(void)
     FILE *fp;
     char password[256];
     size_t pass_len;
-    int result = -1;
 
     /* Lock: all Valkey state modifications under mutex */
     pthread_mutex_lock(&valkey_mutex);

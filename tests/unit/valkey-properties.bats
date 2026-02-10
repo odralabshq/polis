@@ -57,7 +57,7 @@ get_password() {
 
 @test "property 1: all 11 dangerous commands return error" {
     local admin_pass
-    admin_pass="$(get_password VALKEY_MCP_ADMIN_PASSWORD)"
+    admin_pass="$(get_password VALKEY_MCP_ADMIN_PASS)"
 
     # Full set of dangerous commands that must be disabled
     local dangerous_commands=(
@@ -100,7 +100,7 @@ get_password() {
 
 @test "property 2: mcp-agent denied access to unauthorized keys" {
     local agent_pass
-    agent_pass="$(get_password VALKEY_MCP_AGENT_PASSWORD)"
+    agent_pass="$(get_password VALKEY_MCP_AGENT_PASS)"
 
     # Keys outside the allowed patterns
     local denied_keys=(
@@ -127,7 +127,7 @@ get_password() {
 
 @test "property 2: mcp-agent denied DEL and UNLINK on allowed keys" {
     local agent_pass
-    agent_pass="$(get_password VALKEY_MCP_AGENT_PASSWORD)"
+    agent_pass="$(get_password VALKEY_MCP_AGENT_PASS)"
 
     # DEL and UNLINK must be denied even on allowed key patterns
     local denied_commands=("DEL" "UNLINK")
@@ -159,7 +159,7 @@ get_password() {
 
 @test "property 3: mcp-admin denied dangerous commands" {
     local admin_pass
-    admin_pass="$(get_password VALKEY_MCP_ADMIN_PASSWORD)"
+    admin_pass="$(get_password VALKEY_MCP_ADMIN_PASS)"
 
     # Dangerous commands that mcp-admin must be denied
     local denied_commands=(
@@ -197,7 +197,7 @@ get_password() {
 
 @test "property 4: log-writer denied non-allowed commands" {
     local lw_pass
-    lw_pass="$(get_password VALKEY_LOG_WRITER_PASSWORD)"
+    lw_pass="$(get_password VALKEY_LOG_WRITER_PASS)"
 
     # Commands that log-writer must NOT be able to run
     local denied_commands=(
@@ -227,7 +227,7 @@ get_password() {
 
 @test "property 4: log-writer denied access to non-allowed keys" {
     local lw_pass
-    lw_pass="$(get_password VALKEY_LOG_WRITER_PASSWORD)"
+    lw_pass="$(get_password VALKEY_LOG_WRITER_PASS)"
 
     # Keys outside the allowed pattern
     local denied_keys=(
@@ -264,7 +264,7 @@ get_password() {
 
 @test "property 5: healthcheck denied non-allowed commands" {
     local hc_pass
-    hc_pass="$(get_password VALKEY_HEALTHCHECK_PASSWORD)"
+    hc_pass="$(get_password VALKEY_HEALTHCHECK_PASS)"
 
     # Commands that healthcheck must NOT be able to run
     local denied_commands=(
@@ -294,7 +294,7 @@ get_password() {
 
 @test "property 5: healthcheck denied key access" {
     local hc_pass
-    hc_pass="$(get_password VALKEY_HEALTHCHECK_PASSWORD)"
+    hc_pass="$(get_password VALKEY_HEALTHCHECK_PASS)"
 
     # Any key access should be denied for healthcheck
     local test_keys=(
@@ -434,10 +434,10 @@ get_password() {
     }
 
     local password_keys=(
-        "VALKEY_MCP_AGENT_PASSWORD"
-        "VALKEY_MCP_ADMIN_PASSWORD"
-        "VALKEY_LOG_WRITER_PASSWORD"
-        "VALKEY_HEALTHCHECK_PASSWORD"
+        "VALKEY_MCP_AGENT_PASS"
+        "VALKEY_MCP_ADMIN_PASS"
+        "VALKEY_LOG_WRITER_PASS"
+        "VALKEY_HEALTHCHECK_PASS"
     )
 
     for key in "${password_keys[@]}"; do
@@ -477,10 +477,10 @@ get_password() {
     }
 
     local password_keys=(
-        "VALKEY_MCP_AGENT_PASSWORD"
-        "VALKEY_MCP_ADMIN_PASSWORD"
-        "VALKEY_LOG_WRITER_PASSWORD"
-        "VALKEY_HEALTHCHECK_PASSWORD"
+        "VALKEY_MCP_AGENT_PASS"
+        "VALKEY_MCP_ADMIN_PASS"
+        "VALKEY_LOG_WRITER_PASS"
+        "VALKEY_HEALTHCHECK_PASS"
     )
 
     local passwords=()
@@ -544,10 +544,10 @@ get_password() {
 
     # Map ACL usernames to env var keys
     local -A user_to_env=(
-        ["mcp-agent"]="VALKEY_MCP_AGENT_PASSWORD"
-        ["mcp-admin"]="VALKEY_MCP_ADMIN_PASSWORD"
-        ["log-writer"]="VALKEY_LOG_WRITER_PASSWORD"
-        ["healthcheck"]="VALKEY_HEALTHCHECK_PASSWORD"
+        ["mcp-agent"]="VALKEY_MCP_AGENT_PASS"
+        ["mcp-admin"]="VALKEY_MCP_ADMIN_PASS"
+        ["log-writer"]="VALKEY_LOG_WRITER_PASS"
+        ["healthcheck"]="VALKEY_HEALTHCHECK_PASS"
     )
 
     for acl_user in "mcp-agent" "mcp-admin" \

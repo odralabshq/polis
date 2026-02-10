@@ -94,7 +94,7 @@ setup() {
 @test "mcp-agent: MOLIS_AGENT_VALKEY_URL is set" {
     run docker exec "${MCP_AGENT_CONTAINER}" printenv MOLIS_AGENT_VALKEY_URL
     assert_success
-    assert_output "redis://valkey:6379"
+    assert_output "rediss://valkey:6379"
 }
 
 @test "mcp-agent: MOLIS_AGENT_VALKEY_USER is set" {

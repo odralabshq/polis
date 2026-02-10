@@ -17,7 +17,7 @@ setup() {
 # =============================================================================
 
 @test "valkey: container exists" {
-    run docker ps -a --filter "name=${VALKEY_CONTAINER}" --format '{{.Names}}'
+    run docker ps -a --filter "name=^${VALKEY_CONTAINER}$" --format '{{.Names}}'
     assert_success
     assert_output "${VALKEY_CONTAINER}"
 }
@@ -229,7 +229,7 @@ setup() {
 @test "valkey: mcp-agent ACL is tightened (no config access)" {
     # Verify mcp-agent user cannot set security level
     local mcp_pass=$(cat "${PROJECT_ROOT}/secrets/credentials.env.example" | grep VALKEY_MCP_AGENT_PASS | cut -d'=' -f2)
-    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt -u mcp-agent -p "$mcp_pass" SET molis:config:security_level strict
+    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-agent --pass "$mcp_pass" SET molis:config:security_level strict
     assert_output --partial "NOPERM"
 }
 
@@ -237,14 +237,14 @@ setup() {
     local dlp_pass=$(cat "${PROJECT_ROOT}/secrets/valkey_dlp_password.txt")
     
     # Verify dlp-reader can GET security level
-    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt -u dlp-reader -p "$dlp_pass" GET molis:config:security_level
+    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass "$dlp_pass" GET molis:config:security_level
     assert_success
     
     # Verify dlp-reader cannot SET security level
-    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt -u dlp-reader -p "$dlp_pass" SET molis:config:security_level relaxed
+    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass "$dlp_pass" SET molis:config:security_level relaxed
     assert_output --partial "NOPERM"
     
     # Verify dlp-reader cannot access other keys
-    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt -u dlp-reader -p "$dlp_pass" GET molis:blocked:somekey
+    run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass "$dlp_pass" GET molis:blocked:somekey
     assert_output --partial "NOPERM"
 }

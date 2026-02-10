@@ -12,6 +12,16 @@ setup() {
     ICAP_CONTAINER="polis-icap"
     WORKSPACE_CONTAINER="polis-workspace"
     CLAMAV_CONTAINER="polis-clamav"
+
+    # Ensure security level is relaxed so test traffic isn't blocked by new_domain_prompt
+    local admin_pass
+    admin_pass="$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/secrets/credentials.env.example" 2>/dev/null | cut -d'=' -f2)"
+    if [[ -n "$admin_pass" ]]; then
+        docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt \
+            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
+            --user mcp-admin --pass "$admin_pass" \
+            SET molis:config:security_level relaxed 2>/dev/null || true
+    fi
 }
 
 # =============================================================================

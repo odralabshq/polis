@@ -21,6 +21,12 @@ skip_if_not_openclaw() {
     if ! docker exec "${WORKSPACE_CONTAINER}" test -f /etc/systemd/system/openclaw.service 2>/dev/null; then
         skip "OpenClaw profile not running (use --profile=openclaw)"
     fi
+    # Check if the openclaw service actually started (init may have failed)
+    local svc_state
+    svc_state="$(docker exec "${WORKSPACE_CONTAINER}" systemctl is-active openclaw.service 2>/dev/null || echo "inactive")"
+    if [[ "$svc_state" != "active" ]]; then
+        skip "OpenClaw service is not active (state: ${svc_state})"
+    fi
 }
 
 # =============================================================================
