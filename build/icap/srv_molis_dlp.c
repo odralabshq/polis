@@ -523,9 +523,9 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
 
     fp = fopen("/etc/c-icap/molis_dlp.conf", "r");
     if (!fp) {
-        ci_debug_printf(1, "molis_dlp: ERROR: Cannot open config file "
-                           "/etc/c-icap/molis_dlp.conf\n");
-        return CI_OK;
+        ci_debug_printf(0, "molis_dlp: CRITICAL: Cannot open config file "
+                           "/etc/c-icap/molis_dlp.conf — refusing to start\n");
+        return CI_ERROR;
     }
 
     while (fgets(line, sizeof(line), fp)) {
