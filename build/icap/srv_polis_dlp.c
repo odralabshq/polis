@@ -76,7 +76,7 @@ typedef enum {
 } security_level_t;
 
 /* Valkey polling constants */
-#define LEVEL_POLL_INTERVAL 100    /* Requests between Valkey polls */
+#define LEVEL_POLL_INTERVAL 1      /* Requests between Valkey polls */
 #define LEVEL_POLL_MAX      10000  /* Max backoff interval (requests) */
 
 /* Security level state — Valkey connection and polling */
@@ -900,20 +900,36 @@ int dlp_process(ci_request_t *req)
                    (int)data->total_body_len, data);
 
     /* If body exceeded 1MB, also scan the tail buffer */
-    if (data->total_body_len > MAX_BODY_SCAN) {
+    if (data->total_body_len > MAX_BODY_SCAN && data->tail_len > 0) {
         ci_debug_printf(3, "polis_dlp: DLP_PARTIAL_SCAN - "
                            "body size %zu exceeds %d, "
-                           "scanning tail buffer\n",
-                       data->total_body_len, MAX_BODY_SCAN);
+                           "scanning tail buffer (%zu bytes)\n",
+                       data->total_body_len, MAX_BODY_SCAN,
+                       data->tail_len);
 
-        /* Null-terminate the tail buffer */
-        if (data->tail_len < TAIL_SCAN_SIZE) {
-            data->tail[data->tail_len] = '\0';
-        } else {
-            data->tail[TAIL_SCAN_SIZE - 1] = '\0';
+        /* The tail buffer may contain embedded null bytes (e.g., from
+         * zero-padded payloads). regexec stops at the first null, so
+         * we scan each non-null segment independently. */
+        {
+            size_t pos = 0;
+            while (pos < data->tail_len && !data->blocked) {
+                /* Skip null bytes */
+                while (pos < data->tail_len && data->tail[pos] == '\0')
+                    pos++;
+                if (pos >= data->tail_len)
+                    break;
+                /* Find the end of this non-null segment */
+                size_t seg_start = pos;
+                while (pos < data->tail_len && data->tail[pos] != '\0')
+                    pos++;
+                /* Null-terminate the segment (pos is either at a null
+                 * byte or at tail_len where we can safely write) */
+                if (pos < TAIL_SCAN_SIZE)
+                    data->tail[pos] = '\0';
+                check_patterns(data->tail + seg_start,
+                               (int)(pos - seg_start), data);
+            }
         }
-
-        check_patterns(data->tail, (int)data->tail_len, data);
     }
 
     /* Apply security level policy after credential matching.
@@ -1023,6 +1039,28 @@ int dlp_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
             int to_write = (*rlen < space) ? *rlen : space;
             ci_membuf_write(data->body, rbuf, to_write, 0);
         }
+
+        /* Maintain rolling tail buffer (last TAIL_SCAN_SIZE bytes)
+         * for detecting credentials appended after the 1MB scan window */
+        {
+            int chunk = *rlen;
+            if (chunk >= TAIL_SCAN_SIZE) {
+                /* Chunk alone fills the tail — just keep the last TAIL_SCAN_SIZE bytes */
+                memcpy(data->tail, rbuf + chunk - TAIL_SCAN_SIZE, TAIL_SCAN_SIZE);
+                data->tail_len = TAIL_SCAN_SIZE;
+            } else if (data->tail_len + (size_t)chunk <= TAIL_SCAN_SIZE) {
+                /* Fits without eviction */
+                memcpy(data->tail + data->tail_len, rbuf, chunk);
+                data->tail_len += chunk;
+            } else {
+                /* Shift old data left to make room */
+                size_t keep = TAIL_SCAN_SIZE - chunk;
+                memmove(data->tail, data->tail + data->tail_len - keep, keep);
+                memcpy(data->tail + keep, rbuf, chunk);
+                data->tail_len = TAIL_SCAN_SIZE;
+            }
+        }
+
         /* Also write to ring buffer for later pass-through if allowed */
         if (data->ring) {
             if (ci_ring_buf_write(data->ring, rbuf, *rlen) < 0)
