@@ -46,7 +46,10 @@ jobs:
         run: ./tools/polis.sh setup-ca
 
       - name: Setup Valkey TLS certificates
-        run: ./scripts/generate-valkey-certs.sh ./certs/valkey
+        run: |
+          ./scripts/generate-valkey-certs.sh ./certs/valkey
+          # Valkey runs as uid 999 — make certs readable via ownership
+          sudo chown -R 999:999 ./certs/valkey
 
       - name: Setup Valkey secrets
         run: |
