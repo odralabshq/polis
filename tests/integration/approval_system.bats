@@ -3,16 +3,8 @@
 # Tests for C-ICAP modules, configuration, and security controls
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    
-    ICAP_CONTAINER="polis-icap"
-    GATEWAY_CONTAINER="polis-gateway"
-    VALKEY_CONTAINER="polis-v2-valkey"
+    load "../helpers/common.bash"
+    require_container "$ICAP_CONTAINER" "$GATEWAY_CONTAINER" "$VALKEY_CONTAINER"
 }
 
 # =============================================================================

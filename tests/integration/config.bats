@@ -3,41 +3,25 @@
 # Verifies config files are correctly applied in running containers
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    GATEWAY_CONTAINER="polis-gateway"
-    ICAP_CONTAINER="polis-icap"
-    WORKSPACE_CONTAINER="polis-workspace"
-    CLAMAV_CONTAINER="polis-clamav"
-    
-    # Set PROJECT_ROOT relative to this test file
-    PROJECT_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
+    load "../helpers/common.bash"
+    require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER" "$WORKSPACE_CONTAINER"
 }
 
 # =============================================================================
 # g3proxy.yaml Configuration Tests
 # =============================================================================
 
-@test "config: g3proxy resolver uses Google DNS 8.8.8.8" {
+@test "config: g3proxy resolver uses CoreDNS at 10.30.1.10" {
     run docker exec "${GATEWAY_CONTAINER}" cat /etc/g3proxy/g3proxy.yaml
     assert_success
-    assert_output --partial "8.8.8.8"
-}
-
-@test "config: g3proxy resolver uses Google DNS 8.8.4.4" {
-    run docker exec "${GATEWAY_CONTAINER}" cat /etc/g3proxy/g3proxy.yaml
-    assert_success
-    assert_output --partial "8.8.4.4"
+    assert_output --partial "10.30.1.10"
 }
 
 @test "config: g3proxy ICAP reqmod service configured" {
     run docker exec "${GATEWAY_CONTAINER}" cat /etc/g3proxy/g3proxy.yaml
     assert_success
     assert_output --partial "icap_reqmod_service:"
-    assert_output --partial "url: icap://icap:1344/credcheck"
+    assert_output --partial "url: icap://icap:1344/url_check"
 }
 
 @test "config: g3proxy ICAP respmod service configured" {

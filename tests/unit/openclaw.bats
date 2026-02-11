@@ -3,10 +3,7 @@
 # Tests for OpenClaw agent plugin structure and configuration
 
 setup() {
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
+    load "../helpers/common.bash"
 }
 
 # =============================================================================

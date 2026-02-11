@@ -4,11 +4,8 @@
 # Requires: ./tools/polis.sh init --profile=openclaw --local
 
 setup() {
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    WORKSPACE_CONTAINER="polis-workspace"
+    load "../helpers/common.bash"
+    require_container "$WORKSPACE_CONTAINER"
     OPENCLAW_PORT="18789"
 }
 

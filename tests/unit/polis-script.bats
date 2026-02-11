@@ -1,12 +1,10 @@
 #!/usr/bin/env bats
 # Polis Management Script Tests
 
-load '../bats/bats-support/load'
-load '../bats/bats-assert/load'
+load '../helpers/common'
 load '../bats/bats-file/load'
 
 setup() {
-    PROJECT_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
     POLIS_SCRIPT="${PROJECT_ROOT}/tools/polis.sh"
 }
 

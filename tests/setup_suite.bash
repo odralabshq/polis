@@ -1,63 +1,71 @@
-# Polis Core Test Suite Setup
-# This file runs once before all tests in the suite
+# Polis Test Suite Setup
+# Runs once before all tests in the suite.
+# Automatically starts containers if not running.
+#
+# Environment:
+#   POLIS_TEST_NO_START=1   — Skip auto-start (tests will be skipped if containers missing)
+#   POLIS_TEST_TEARDOWN=1   — Tear down containers after tests (for CI)
 
-# Export common variables
 export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)}"
+export COMPOSE_FILE="${PROJECT_ROOT}/deploy/docker-compose.yml"
+
+# Container names (must match common.bash)
+export DNS_CONTAINER="polis-dns"
 export GATEWAY_CONTAINER="polis-gateway"
 export ICAP_CONTAINER="polis-icap"
 export WORKSPACE_CONTAINER="polis-workspace"
 
-setup_suite() {
-    echo "# Setting up test suite..." >&3
-    
-    # Check if containers are running
-    local containers_running=true
-    
-    if ! docker ps --format '{{.Names}}' | grep -q "${GATEWAY_CONTAINER}"; then
-        containers_running=false
-    fi
-    if ! docker ps --format '{{.Names}}' | grep -q "${ICAP_CONTAINER}"; then
-        containers_running=false
-    fi
-    if ! docker ps --format '{{.Names}}' | grep -q "${WORKSPACE_CONTAINER}"; then
-        containers_running=false
-    fi
-    
-    if [[ "$containers_running" == "false" ]]; then
-        echo "# WARNING: Not all containers are running. Some tests will be skipped." >&3
-        echo "# Run '../tools/polis.sh up' to start containers for full test coverage." >&3
-    else
-        echo "# All containers running. Waiting for health checks..." >&3
-        
-        # Wait for containers to be healthy (max 60 seconds)
-        local timeout=60
-        local elapsed=0
-        
-        while [[ $elapsed -lt $timeout ]]; do
-            local gateway_health icap_health workspace_health
-            gateway_health=$(docker inspect --format '{{.State.Health.Status}}' "${GATEWAY_CONTAINER}" 2>/dev/null || echo "unknown")
-            icap_health=$(docker inspect --format '{{.State.Health.Status}}' "${ICAP_CONTAINER}" 2>/dev/null || echo "unknown")
-            workspace_health=$(docker inspect --format '{{.State.Health.Status}}' "${WORKSPACE_CONTAINER}" 2>/dev/null || echo "unknown")
-            
-            if [[ "$gateway_health" == "healthy" ]] && [[ "$icap_health" == "healthy" ]] && [[ "$workspace_health" == "healthy" ]]; then
-                echo "# All containers healthy!" >&3
-                break
-            fi
-            
-            sleep 2
-            elapsed=$((elapsed + 2))
+# Track whether we started containers (for teardown decision)
+export _POLIS_STARTED_BY_TESTS="false"
+
+_containers_running() {
+    for c in "$DNS_CONTAINER" "$GATEWAY_CONTAINER" "$ICAP_CONTAINER" "$WORKSPACE_CONTAINER"; do
+        docker ps --format '{{.Names}}' | grep -q "^${c}$" || return 1
+    done
+}
+
+_wait_healthy() {
+    local timeout="${1:-180}" elapsed=0
+    while [[ $elapsed -lt $timeout ]]; do
+        local ok=true
+        for c in "$DNS_CONTAINER" "$GATEWAY_CONTAINER" "$ICAP_CONTAINER"; do
+            local h
+            h=$(docker inspect --format '{{.State.Health.Status}}' "$c" 2>/dev/null || echo "missing")
+            [[ "$h" == "healthy" ]] || { ok=false; break; }
         done
-        
-        if [[ $elapsed -ge $timeout ]]; then
-            echo "# WARNING: Timeout waiting for containers to be healthy" >&3
-        fi
+        [[ "$ok" == "true" ]] && { echo "# All containers healthy (${elapsed}s)" >&3; return 0; }
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+    echo "# WARNING: Health timeout after ${timeout}s" >&3
+    return 1
+}
+
+setup_suite() {
+    echo "# Polis test suite starting..." >&3
+
+    if _containers_running; then
+        echo "# Containers already running" >&3
+        _wait_healthy 60
+        return
     fi
-    
-    echo "# Suite setup complete" >&3
+
+    if [[ "${POLIS_TEST_NO_START:-0}" == "1" ]]; then
+        echo "# Containers not running. POLIS_TEST_NO_START=1 set, skipping auto-start." >&3
+        return
+    fi
+
+    echo "# Containers not running — starting..." >&3
+    docker compose -f "$COMPOSE_FILE" up -d 2>&1 | sed 's/^/# /' >&3
+    _POLIS_STARTED_BY_TESTS="true"
+    export _POLIS_STARTED_BY_TESTS
+    _wait_healthy 180
 }
 
 teardown_suite() {
-    echo "# Tearing down test suite..." >&3
-    # No cleanup needed - we don't stop containers after tests
-    echo "# Suite teardown complete" >&3
+    if [[ "${POLIS_TEST_TEARDOWN:-0}" == "1" && "$_POLIS_STARTED_BY_TESTS" == "true" ]]; then
+        echo "# Tearing down containers..." >&3
+        docker compose -f "$COMPOSE_FILE" down 2>&1 | sed 's/^/# /' >&3
+    fi
+    echo "# Suite complete" >&3
 }

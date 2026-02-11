@@ -1,12 +1,11 @@
 #!/usr/bin/env bats
 # Agent System E2E Tests
 
-load '../bats/bats-support/load'
-load '../bats/bats-assert/load'
+load '../helpers/common'
 load '../bats/bats-file/load'
 
 setup() {
-    PROJECT_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
+    # Pure filesystem tests — no containers needed
 }
 
 # --- Agent contract tests (depend on Issue 01 only) ---

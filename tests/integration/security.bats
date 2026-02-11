@@ -3,18 +3,8 @@
 # Tests for container security hardening
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    
-    # Container names
-    GATEWAY_CONTAINER="polis-gateway"
-    ICAP_CONTAINER="polis-icap"
-    WORKSPACE_CONTAINER="polis-workspace"
-    CLAMAV_CONTAINER="polis-clamav"
+    load "../helpers/common.bash"
+    require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER" "$WORKSPACE_CONTAINER"
 }
 
 # =============================================================================

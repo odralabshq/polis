@@ -1,14 +1,24 @@
+FROM golang:1.24-bookworm AS builder
+
+ARG COREDNS_VERSION=1.14.1
+
+RUN curl -fsSL "https://github.com/coredns/coredns/archive/refs/tags/v${COREDNS_VERSION}.tar.gz" \
+    | tar -xz -C /tmp && mv "/tmp/coredns-${COREDNS_VERSION}" /src
+
+WORKDIR /src
+
+# Inject blocklist plugin before forward (order matters in CoreDNS)
+RUN sed -i '/^forward:forward/i blocklist:github.com/relekang/coredns-blocklist' plugin.cfg \
+    && go generate && go get github.com/relekang/coredns-blocklist \
+    && CGO_ENABLED=0 go build -o /coredns
+
 FROM debian:bookworm-slim
 
-ARG COREDNS_BLOCKLIST_VERSION=1.13.3
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl unzip dnsutils \
+    ca-certificates dnsutils \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL "https://github.com/relekang/coredns-blocklist/releases/download/v${COREDNS_BLOCKLIST_VERSION}/coredns-with-blocklist-linux-amd64.zip" \
-    -o /tmp/coredns.zip && unzip /tmp/coredns.zip -d /tmp && mv /tmp/coredns /usr/local/bin/coredns \
-    && chmod +x /usr/local/bin/coredns && rm /tmp/coredns.zip
+COPY --from=builder /coredns /usr/local/bin/coredns
 
 EXPOSE 53/udp 53/tcp
 

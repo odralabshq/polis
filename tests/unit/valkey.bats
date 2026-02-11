@@ -4,12 +4,8 @@
 # Requirements: 1.1–1.8, 2.1–2.4, 7.1–7.4, 8.1–8.5
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    VALKEY_CONTAINER="polis-v2-valkey"
+    load "../helpers/common.bash"
+    require_container "$VALKEY_CONTAINER"
 }
 
 # =============================================================================

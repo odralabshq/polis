@@ -4,12 +4,8 @@
 # Requirements: 6.1-6.5
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    MCP_AGENT_CONTAINER="polis-mcp-agent"
+    load "../helpers/common.bash"
+    require_container "$MCP_AGENT_CONTAINER"
 }
 
 # =============================================================================
