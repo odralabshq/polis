@@ -1,5 +1,7 @@
-use assert_cmd::Command;
+use assert_cmd::cargo;
+use assert_cmd::prelude::*;
 use predicates::prelude::*;
+use std::process::Command;
 
 // NOTE: These tests expect a running Valkey instance or will fail/skip.
 // For CI, we would typically spin up a container. For this environment,
@@ -13,7 +15,7 @@ use predicates::prelude::*;
 
 #[test]
 fn test_help() {
-    let mut cmd = Command::cargo_bin("polis-approve").unwrap();
+    let mut cmd = Command::new(cargo::cargo_bin!("polis-approve"));
     cmd.arg("--help")
         .assert()
         .success()
@@ -22,7 +24,7 @@ fn test_help() {
 
 #[test]
 fn test_version() {
-    let mut cmd = Command::cargo_bin("polis-approve").unwrap();
+    let mut cmd = Command::new(cargo::cargo_bin!("polis-approve"));
     cmd.arg("--version")
         .assert()
         .success()
@@ -32,7 +34,7 @@ fn test_version() {
 #[test]
 fn test_missing_env_var() {
     // Should fail because polis_VALKEY_PASS is missing
-    let mut cmd = Command::cargo_bin("polis-approve").unwrap();
+    let mut cmd = Command::new(cargo::cargo_bin!("polis-approve"));
     cmd.env_remove("polis_VALKEY_PASS")
         .arg("list-pending")
         .assert()
@@ -42,7 +44,7 @@ fn test_missing_env_var() {
 
 #[test]
 fn test_invalid_subcommand() {
-    let mut cmd = Command::cargo_bin("polis-approve").unwrap();
+    let mut cmd = Command::new(cargo::cargo_bin!("polis-approve"));
     cmd.env("polis_VALKEY_PASS", "dummy")
         .arg("invalid-cmd")
         .assert()

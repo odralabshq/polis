@@ -114,28 +114,28 @@ pub struct CheckRequestStatusOutput {
 }
 
 // ===================================================================
-// polisAgentTools — the MCP server handler
+// PolisAgentTools — the MCP server handler
 // ===================================================================
 
 /// MCP server handler exposing 5 read-only tools to the workspace agent.
 ///
 /// Holds a shared reference to [`AppState`] for Valkey operations.
 #[derive(Clone)]
-pub struct polisAgentTools {
+pub struct PolisAgentTools {
     state: Arc<AppState>,
     tool_router: ToolRouter<Self>,
 }
 
-impl std::fmt::Debug for polisAgentTools {
+impl std::fmt::Debug for PolisAgentTools {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("polisAgentTools")
+        f.debug_struct("PolisAgentTools")
             .field("state", &"<AppState>")
             .finish()
     }
 }
 
-impl polisAgentTools {
-    /// Create a new `polisAgentTools` with the given application state.
+impl PolisAgentTools {
+    /// Create a new `PolisAgentTools` with the given application state.
     pub fn new(state: Arc<AppState>) -> Self {
         Self {
             state,
@@ -149,7 +149,7 @@ impl polisAgentTools {
 // -------------------------------------------------------------------
 
 #[tool_router]
-impl polisAgentTools {
+impl PolisAgentTools {
     /// Report a blocked request to the security system.
     ///
     /// Validates the request_id format, stores the blocked request in
@@ -347,7 +347,7 @@ impl polisAgentTools {
 // -------------------------------------------------------------------
 
 #[tool_handler]
-impl ServerHandler for polisAgentTools {
+impl ServerHandler for PolisAgentTools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
