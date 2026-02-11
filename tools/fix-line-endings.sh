@@ -107,5 +107,28 @@ for f in "${PROJECT_ROOT}"/tests/unit/*.bats "${PROJECT_ROOT}"/tests/integration
     fix_file "$f"
 done
 
+# 10. C source files (ICAP modules)
+for f in "${PROJECT_ROOT}"/build/icap/*.c; do
+    fix_file "$f"
+done
+
+# 11. Rust source files (MCP agent, CLI)
+find "${PROJECT_ROOT}/crates" -type f \( -name "*.rs" -o -name "*.toml" \) 2>/dev/null | while read -r f; do
+    fix_file "$f"
+done
+
+# 12. Cargo workspace files
+fix_file "${PROJECT_ROOT}/Cargo.toml"
+fix_file "${PROJECT_ROOT}/Cargo.lock"
+
+# 13. GitHub workflows
+for f in "${PROJECT_ROOT}"/.github/workflows/*.yml "${PROJECT_ROOT}"/.github/workflows/*.yaml; do
+    fix_file "$f"
+done
+
+# 14. Git configuration files
+fix_file "${PROJECT_ROOT}/.gitattributes"
+fix_file "${PROJECT_ROOT}/.gitignore"
+
 echo ""
 echo -e "${GREEN}Done.${NC} CRLF fixed: ${converted}, BOM stripped: ${bom_fixed}, Already OK: ${skipped}"

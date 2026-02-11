@@ -1,8 +1,10 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
-# Shell scripts must use LF
+# Shell scripts and test files must use LF
 *.sh text eol=lf
+*.bash text eol=lf
+*.bats text eol=lf
 
 # Batch files must use CRLF
 *.bat text eol=crlf
@@ -12,3 +14,10 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 *.json text eol=lf
+*.conf text eol=lf
+*.toml text eol=lf
+
+# Source code
+*.c text eol=lf
+*.rs text eol=lf
+Dockerfile* text eol=lf
