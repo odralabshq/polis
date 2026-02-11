@@ -14,6 +14,8 @@ services:
     networks:
       gateway-bridge:
         ipv4_address: 10.30.1.10
+      internal-bridge:
+        ipv4_address: 10.10.1.2
     volumes:
       - ../config/Corefile:/etc/coredns/Corefile:ro
       - ../config/dns-blocklist.txt:/etc/coredns/blocklist.txt:ro
