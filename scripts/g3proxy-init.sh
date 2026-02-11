@@ -178,8 +178,11 @@ iptables -t mangle -A PREROUTING -i "$INTERNAL_IF_CLEAN" -j G3TPROXY
 # TPROXY intercepts ports 80/443 and redirects to local socket (never reaches FORWARD)
 # Any traffic from internal subnet that reaches FORWARD is non-HTTP and must be blocked
 # Exception: DNS (UDP 53) is needed for hostname resolution
+# DNAT DNS queries from internal network to CoreDNS
+iptables -t nat -A PREROUTING -i "$INTERNAL_IF_CLEAN" -p udp --dport 53 -j DNAT --to-destination 10.30.1.10:53
 iptables -t filter -A FORWARD -i "$INTERNAL_IF_CLEAN" -p udp --dport 53 -j ACCEPT
 iptables -t filter -A FORWARD -i "$INTERNAL_IF_CLEAN" -j DROP
+echo "[gateway] DNS queries from internal network redirected to CoreDNS (10.30.1.10)"
 echo "[gateway] Non-HTTP traffic blocked from internal subnet (only DNS allowed to forward)"
 
 # [SECURITY FIX] NAT only for traffic from internal subnet

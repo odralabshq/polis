@@ -36,7 +36,6 @@ dnslog.cn
 ceye.io
 requestrepo.com
 webhook.lol
-httpbin.org
 postman-echo.com
 
 # Typosquatting

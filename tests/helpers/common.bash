@@ -46,6 +46,12 @@ require_container() {
     done
 }
 
+# Skip if core containers (gateway, icap) are not running
+# Usage: skip_if_containers_not_running
+skip_if_containers_not_running() {
+    require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER"
+}
+
 # =============================================================================
 # Container Assertions
 # =============================================================================

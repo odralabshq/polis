@@ -11,6 +11,7 @@
 #include "c_icap/header.h"
 #include "c_icap/body.h"
 #include "c_icap/simple_api.h"
+#include "c_icap/request_util.h"
 
 /* Standard library headers */
 #include <regex.h>
@@ -48,12 +49,16 @@ typedef struct {
  */
 typedef struct {
     ci_membuf_t *body;          /* Accumulated request body (first 1MB) */
+    ci_ring_buf_t *ring;        /* Ring buffer for body pass-through */
+    ci_membuf_t *error_page;    /* Error page body for blocked responses */
     char tail[TAIL_SCAN_SIZE];  /* Last 10KB ring buffer for tail scan */
     size_t tail_len;            /* Bytes currently in tail buffer */
     size_t total_body_len;      /* Total body length seen so far */
     char host[256];             /* Host header value from request */
     int blocked;                /* Whether this request was blocked */
     char matched_pattern[64];   /* Name of the pattern that matched */
+    int eof;                    /* End of data received */
+    size_t error_page_sent;     /* Bytes of error page already sent */
 } dlp_req_data_t;
 
 /* Static pattern storage - loaded from config at service init */
@@ -677,11 +682,16 @@ void *dlp_init_request_data(ci_request_t *req)
 
     /* Create memory buffer for body accumulation (up to 1MB) */
     data->body = ci_membuf_new_sized(MAX_BODY_SCAN);
+    /* Create ring buffer for body pass-through */
+    data->ring = ci_req_hasbody(req) ? ci_ring_buf_new(32768) : NULL;
+    data->error_page = NULL;
     data->tail_len = 0;
     data->total_body_len = 0;
     data->host[0] = '\0';
     data->blocked = 0;
     data->matched_pattern[0] = '\0';
+    data->eof = 0;
+    data->error_page_sent = 0;
     memset(data->tail, 0, TAIL_SCAN_SIZE);
 
     /* Extract Host header from the HTTP request */
@@ -713,6 +723,16 @@ void dlp_release_request_data(void *data)
     if (req_data->body) {
         ci_membuf_free(req_data->body);
         req_data->body = NULL;
+    }
+
+    if (req_data->ring) {
+        ci_ring_buf_destroy(req_data->ring);
+        req_data->ring = NULL;
+    }
+
+    if (req_data->error_page) {
+        ci_membuf_free(req_data->error_page);
+        req_data->error_page = NULL;
     }
 
     free(req_data);
@@ -808,25 +828,33 @@ static int check_patterns(const char *body, int body_len,
 /*
  * dlp_check_preview - Handle ICAP preview data.
  *
- * Accumulates the preview chunk into the body memory buffer
- * and updates the total body length counter. Returns
- * CI_MOD_CONTINUE to request the full request body.
+ * Accumulates the preview chunk into the body memory buffer.
+ * Does NOT unlock data - we need to scan the full body before deciding.
  */
 int dlp_check_preview(char *preview_data, int preview_data_len,
                       ci_request_t *req)
 {
     dlp_req_data_t *data = ci_service_data(req);
 
-    if (!data || !preview_data || preview_data_len <= 0)
+    if (!data)
         return CI_MOD_CONTINUE;
 
-    ci_membuf_write(data->body, preview_data, preview_data_len, 0);
-    data->total_body_len += preview_data_len;
+    /* If no body, allow through */
+    if (!ci_req_hasbody(req)) {
+        ci_debug_printf(5, "polis_dlp: No body, allowing request\n");
+        return CI_MOD_ALLOW204;
+    }
 
-    ci_debug_printf(5, "polis_dlp: Preview received %d bytes, "
-                       "total so far: %zu\n",
-                   preview_data_len, data->total_body_len);
+    /* Accumulate preview data for scanning */
+    if (preview_data && preview_data_len > 0) {
+        ci_membuf_write(data->body, preview_data, preview_data_len, 0);
+        data->total_body_len += preview_data_len;
+        ci_debug_printf(5, "polis_dlp: Preview received %d bytes, "
+                           "total so far: %zu\n",
+                       preview_data_len, data->total_body_len);
+    }
 
+    /* Don't unlock data yet - wait until we've scanned the body */
     return CI_MOD_CONTINUE;
 }
 
@@ -858,8 +886,11 @@ int dlp_process(ci_request_t *req)
     dlp_req_data_t *data = ci_service_data(req);
     char hdr_buf[256];
 
-    if (!data || !data->body)
-        return CI_MOD_ALLOW204;
+    if (!data || !data->body) {
+        if (data)
+            data->eof = 1;
+        return CI_MOD_DONE;
+    }
 
     /* Null-terminate the body membuf for regex scanning */
     ci_membuf_write(data->body, "\0", 1, 1);
@@ -917,13 +948,35 @@ int dlp_process(ci_request_t *req)
         }
     }
 
-    /* If blocked, create 403 response with X-polis headers */
+    /* If blocked, create 403 response with body (like srv_url_check) */
     if (data->blocked == 1) {
+        char body_buf[512];
+        int body_len;
+        char len_hdr[64];
+
+        /* Build minimal HTML error page body */
+        body_len = snprintf(body_buf, sizeof(body_buf),
+            "<html><head><title>403 Forbidden</title></head>"
+            "<body><h1>403 Forbidden</h1>"
+            "<p>Request blocked by DLP: %s</p></body></html>",
+            data->matched_pattern);
+
+        /* Store error page for streaming via dlp_io */
+        data->error_page = ci_membuf_new_sized(body_len + 1);
+        ci_membuf_write(data->error_page, body_buf, body_len, 1);
+
+        /* Create HTTP response with body (has_reshdr=1, has_body=1) */
         ci_http_response_create(req, 1, 1);
-        ci_http_response_add_header(req,
-            "HTTP/1.1 403 Forbidden");
-        ci_http_response_add_header(req,
-            "X-polis-Block: true");
+        ci_http_response_add_header(req, "HTTP/1.1 403 Forbidden");
+        ci_http_response_add_header(req, "Server: C-ICAP/polis-dlp");
+        ci_http_response_add_header(req, "Content-Type: text/html");
+        ci_http_response_add_header(req, "Connection: close");
+
+        snprintf(len_hdr, sizeof(len_hdr), "Content-Length: %d", body_len);
+        ci_http_response_add_header(req, len_hdr);
+
+        /* Add diagnostic headers */
+        ci_http_response_add_header(req, "X-polis-Block: true");
 
         snprintf(hdr_buf, sizeof(hdr_buf),
                  "X-polis-Reason: %s", data->matched_pattern);
@@ -937,99 +990,72 @@ int dlp_process(ci_request_t *req)
                            "'%s' - pattern '%s' matched\n",
                        data->host, data->matched_pattern);
 
+        data->eof = 1;
+        ci_req_unlock_data(req);
         return CI_MOD_DONE;
     }
 
-    /* No credential detected or allowed - pass through */
-    return CI_MOD_ALLOW204;
+    /* No credential detected or allowed - pass through unchanged */
+    data->eof = 1;
+    ci_req_unlock_data(req);
+    return CI_MOD_DONE;
 }
 
 /*
  * dlp_io - Handle body data streaming during REQMOD.
  *
- * Accumulates request body data:
- *   - First MAX_BODY_SCAN (1MB) bytes go into the ci_membuf.
- *   - Bytes beyond 1MB are written into a rolling 10KB tail buffer
- *     so the last 10KB of the body is always available for scanning.
- *   - We never modify the request body, so wlen is set to 0.
- *
+ * Accumulates body data for scanning. Only streams data back AFTER
+ * dlp_process() has made the block/allow decision (eof is set).
+ * When blocked, streams the error page body instead.
  * Returns CI_OK on success.
  */
 int dlp_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
            int iseof, ci_request_t *req)
 {
     dlp_req_data_t *data = ci_service_data(req);
-    int bytes_to_read;
-    int membuf_space;
-    int membuf_write;
-    int tail_bytes;
-    int tail_offset;
+    int ret = CI_OK;
 
-    (void)iseof;
-
-    /* We don't modify the request body - pass through unchanged */
-    if (wbuf && wlen)
-        *wlen = 0;
-
-    if (!data || !rbuf || !rlen || *rlen <= 0)
-        return CI_OK;
-
-    bytes_to_read = *rlen;
-
-    /* Case 1: All incoming bytes fit within the 1MB membuf limit */
-    if (data->total_body_len + bytes_to_read <= MAX_BODY_SCAN) {
-        ci_membuf_write(data->body, rbuf, bytes_to_read, 0);
-        data->total_body_len += bytes_to_read;
-        return CI_OK;
+    /* Accumulate incoming body data for scanning */
+    if (rlen && rbuf && *rlen > 0 && data) {
+        /* Accumulate for scanning (up to MAX_BODY_SCAN) */
+        if (data->body && data->total_body_len < MAX_BODY_SCAN) {
+            int space = MAX_BODY_SCAN - (int)data->total_body_len;
+            int to_write = (*rlen < space) ? *rlen : space;
+            ci_membuf_write(data->body, rbuf, to_write, 0);
+        }
+        /* Also write to ring buffer for later pass-through if allowed */
+        if (data->ring) {
+            if (ci_ring_buf_write(data->ring, rbuf, *rlen) < 0)
+                ret = CI_ERROR;
+        }
+        data->total_body_len += *rlen;
     }
 
-    /* Case 2: Some bytes go to membuf, rest to tail buffer */
-    if (data->total_body_len < MAX_BODY_SCAN) {
-        membuf_space = MAX_BODY_SCAN - (int)data->total_body_len;
-        membuf_write = (bytes_to_read < membuf_space)
-                       ? bytes_to_read : membuf_space;
-        ci_membuf_write(data->body, rbuf, membuf_write, 0);
-        rbuf += membuf_write;
-        bytes_to_read -= membuf_write;
-        data->total_body_len += membuf_write;
-    }
-
-    /* Remaining bytes go into the rolling tail buffer */
-    if (bytes_to_read > 0) {
-        data->total_body_len += bytes_to_read;
-
-        if (bytes_to_read >= TAIL_SCAN_SIZE) {
-            /* Incoming chunk is larger than tail buffer -
-               keep only the last TAIL_SCAN_SIZE bytes */
-            tail_offset = bytes_to_read - TAIL_SCAN_SIZE;
-            memcpy(data->tail, rbuf + tail_offset, TAIL_SCAN_SIZE);
-            data->tail_len = TAIL_SCAN_SIZE;
-        } else {
-            /* Incoming chunk fits - append with wrap-around */
-            tail_bytes = bytes_to_read;
-            if (data->tail_len + tail_bytes <= TAIL_SCAN_SIZE) {
-                /* Fits without wrapping */
-                memcpy(data->tail + data->tail_len,
-                       rbuf, tail_bytes);
-                data->tail_len += tail_bytes;
+    /* Only send data back AFTER dlp_process() has run (eof is set) */
+    if (wbuf && wlen) {
+        if (!data || !data->eof) {
+            /* Not ready to send yet - still accumulating */
+            *wlen = 0;
+        } else if (data->blocked && data->error_page) {
+            /* Stream error page body for blocked response */
+            int avail = ci_membuf_size(data->error_page) - data->error_page_sent;
+            if (avail > 0) {
+                int to_send = (avail < *wlen) ? avail : *wlen;
+                memcpy(wbuf, ci_membuf_raw(data->error_page) + data->error_page_sent, to_send);
+                data->error_page_sent += to_send;
+                *wlen = to_send;
             } else {
-                /* Need to shift: drop oldest bytes to make room */
-                int new_len = data->tail_len + tail_bytes;
-                int drop = new_len - TAIL_SCAN_SIZE;
-                if (drop > 0 && drop < (int)data->tail_len) {
-                    memmove(data->tail,
-                            data->tail + drop,
-                            data->tail_len - drop);
-                    data->tail_len -= drop;
-                } else if (drop >= (int)data->tail_len) {
-                    data->tail_len = 0;
-                }
-                memcpy(data->tail + data->tail_len,
-                       rbuf, tail_bytes);
-                data->tail_len += tail_bytes;
+                *wlen = CI_EOF;
             }
+        } else if (data->ring) {
+            /* Normal pass-through from ring buffer */
+            *wlen = ci_ring_buf_read(data->ring, wbuf, *wlen);
+            if (*wlen == 0)
+                *wlen = CI_EOF;
+        } else {
+            *wlen = CI_EOF;
         }
     }
 
-    return CI_OK;
+    return ret;
 }

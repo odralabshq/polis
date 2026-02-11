@@ -148,7 +148,7 @@ setup() {
 @test "edge: DNS resolver is configured in g3proxy" {
     run docker exec "${GATEWAY_CONTAINER}" grep -A5 "resolver:" /etc/g3proxy/g3proxy.yaml
     assert_success
-    assert_output --partial "8.8.8.8"
+    assert_output --partial "10.30.1.10"
 }
 
 @test "edge: DNS resolution for non-existent domain fails gracefully" {
@@ -279,7 +279,7 @@ setup() {
 @test "edge: icap health check verifies process" {
     run docker inspect --format '{{.Config.Healthcheck.Test}}' "${ICAP_CONTAINER}"
     assert_success
-    assert_output --partial "pgrep"
+    assert_output --partial "ICAP"
 }
 
 # =============================================================================

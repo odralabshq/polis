@@ -190,7 +190,7 @@ services:
     container_name: polis-workspace
     runtime: sysbox-runc
     dns:
-      - 10.30.1.10
+      - 10.10.1.2
     depends_on:
       dns:
         condition: service_healthy
@@ -325,12 +325,14 @@ services:
     networks:
       internal-bridge: {}
       gateway-bridge: {}
+    env_file:
+      - ../.env
     environment:
       - RUST_LOG=info
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
       - polis_AGENT_VALKEY_URL=rediss://valkey:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
-      - polis_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
+      - polis_AGENT_VALKEY_PASS=$VALKEY_MCP_AGENT_PASS
     volumes:
       - ../certs/valkey:/etc/valkey/tls:ro
     depends_on:

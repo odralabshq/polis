@@ -171,13 +171,13 @@ setup() {
 }
 
 @test "squidclamav: service reports correct methods" {
-    run docker exec "${ICAP_CONTAINER}" sh -c "printf 'OPTIONS icap://localhost:1344/squidclamav ICAP/1.0\r\nHost: localhost\r\n\r\n' | nc localhost 1344"
+    run docker exec "${ICAP_CONTAINER}" sh -c "printf 'OPTIONS icap://localhost:1344/squidclamav ICAP/1.0\r\nHost: localhost\r\n\r\n' | nc -q 1 localhost 1344"
     assert_success
     assert_output --partial "Methods: RESPMOD, REQMOD"
 }
 
 @test "squidclamav: service identifies as SquidClamav" {
-    run docker exec "${ICAP_CONTAINER}" sh -c "printf 'OPTIONS icap://localhost:1344/squidclamav ICAP/1.0\r\nHost: localhost\r\n\r\n' | nc localhost 1344"
+    run docker exec "${ICAP_CONTAINER}" sh -c "printf 'OPTIONS icap://localhost:1344/squidclamav ICAP/1.0\r\nHost: localhost\r\n\r\n' | nc -q 1 localhost 1344"
     assert_success
     assert_output --partial "SquidClamav"
 }
@@ -193,7 +193,7 @@ setup() {
 }
 
 @test "g3proxy: REQMOD configured for credcheck" {
-    run docker exec "${GATEWAY_CONTAINER}" grep "icap_reqmod_service" /etc/g3proxy/g3proxy.yaml
+    run docker exec "${GATEWAY_CONTAINER}" grep -A1 "icap_reqmod_service" /etc/g3proxy/g3proxy.yaml
     assert_success
     assert_output --partial "credcheck"
 }

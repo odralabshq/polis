@@ -66,10 +66,11 @@ fi
 # chmod 000 existing dirs, create decoys for missing ones
 protect_sensitive_paths() {
     local paths=(".ssh" ".aws" ".gnupg" ".config/gcloud" ".kube" ".docker")
+    local home_dir="${HOME:-/root}"
 
     echo "[workspace] Protecting sensitive paths..."
     for p in "${paths[@]}"; do
-        local full_path="$HOME/$p"
+        local full_path="$home_dir/$p"
         if [[ -d "$full_path" ]]; then
             chmod 000 "$full_path"
             echo "[workspace] Protected existing: $full_path"

@@ -47,7 +47,7 @@ auditor:
     #   b) Manual switching between credcheck and approval_rewrite based on use case
     # To test approval system: change url to icap://icap:1344/approval_rewrite
     icap_reqmod_service:
-      url: icap://icap:1344/url_check
+      url: icap://icap:1344/credcheck
       no_preview: true
     # RESPMOD: SquidClamav malware scanning
     icap_respmod_service:
@@ -70,6 +70,12 @@ escaper:
 # Servers
 # ===========================================
 server:
+  # HTTP proxy for explicit proxy mode (testing)
+  - name: http_proxy
+    type: http_proxy
+    listen: 0.0.0.0:8080
+    escaper: direct
+    auditor: default
   # Main transparent proxy listener
   - name: transparent
     type: tcp_tproxy
