@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libhiredis-dev \
     zlib1g-dev \
+    libdb-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and build c-icap from GitHub release (with SHA256 verification)
@@ -25,6 +26,17 @@ RUN wget -q https://github.com/c-icap/c-icap-server/archive/refs/tags/C_ICAP_0.6
     make -j$(nproc) && \
     make install DESTDIR=/install && \
     make install
+
+# Download and build c-icap-modules (contains srv_url_check)
+ENV CICAP_MODULES_SHA256=a7ea38d09888920da12167d4f26669bbc454401561570e24a63af52f9f17cadc
+RUN wget -q https://github.com/c-icap/c-icap-modules/archive/refs/tags/C_ICAP_MODULES_0.5.7.tar.gz -O c-icap-modules.tar.gz && \
+    echo "${CICAP_MODULES_SHA256}  c-icap-modules.tar.gz" | sha256sum -c - && \
+    tar xzf c-icap-modules.tar.gz && \
+    cd c-icap-modules-C_ICAP_MODULES_0.5.7 && \
+    autoreconf -i && \
+    ./configure --with-c-icap=/usr --prefix=/usr && \
+    make -j$(nproc) && \
+    make install DESTDIR=/install
 
 # Download and build SquidClamav (with SHA256 verification)
 ENV SQUIDCLAMAV_SHA256=772c058d113a17de0e96b3c8acaad75d78cd4c000f325b865d6c88503c353fc9

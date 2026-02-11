@@ -9,8 +9,7 @@ resolver:
   - name: default
     type: c-ares
     server:
-      - 8.8.8.8
-      - 8.8.4.4
+      - 10.30.1.10
 
 # ===========================================
 # Auditor - TLS MITM + ICAP
@@ -48,7 +47,7 @@ auditor:
     #   b) Manual switching between credcheck and approval_rewrite based on use case
     # To test approval system: change url to icap://icap:1344/approval_rewrite
     icap_reqmod_service:
-      url: icap://icap:1344/credcheck
+      url: icap://icap:1344/url_check
       no_preview: true
     # RESPMOD: SquidClamav malware scanning
     icap_respmod_service:
