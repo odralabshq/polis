@@ -183,10 +183,10 @@ services:
           memory: 1G
 
   # =========================================================
-  # WORKSPACE (agent selected via POLIS_AGENT image tag)
+  # WORKSPACE
   # =========================================================
   workspace:
-    image: polis-workspace-oss:${POLIS_AGENT:-latest}
+    image: polis-workspace-oss:latest
     container_name: polis-workspace
     runtime: sysbox-runc
     dns:

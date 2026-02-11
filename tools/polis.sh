@@ -605,16 +605,6 @@ dispatch_agent_command() {
     esac
 }
 
-write_polis_agent_env() {
-    local agent="$1"
-    local env_file="${PROJECT_ROOT}/.env"
-    if grep -q '^POLIS_AGENT=' "$env_file" 2>/dev/null; then
-        sed -i "s/^POLIS_AGENT=.*/POLIS_AGENT=${agent}/" "$env_file"
-    else
-        echo "POLIS_AGENT=${agent}" >> "$env_file"
-    fi
-}
-
 scaffold_agent() {
     local name="$1"
     local target="${PROJECT_ROOT}/agents/${name}"
@@ -726,11 +716,13 @@ case "${1:-}" in
         echo "╚═══════════════════════════════════════════════════════════════╝"
         echo ""
         
-        # Determine agent
-        EFFECTIVE_AGENT="${AGENT_NAME:-openclaw}"
-        validate_agent "$EFFECTIVE_AGENT"
-        load_agent_conf "$EFFECTIVE_AGENT"
-        log_info "Using agent: ${AGENT_DISPLAY_NAME} (${EFFECTIVE_AGENT})"
+        # Determine agent (base if not specified)
+        EFFECTIVE_AGENT="${AGENT_NAME:-base}"
+        if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
+            validate_agent "$EFFECTIVE_AGENT"
+            load_agent_conf "$EFFECTIVE_AGENT"
+            log_info "Using agent: ${AGENT_DISPLAY_NAME} (${EFFECTIVE_AGENT})"
+        fi
         
         # Step 0: Environment checks
         log_step "Checking environment..."
@@ -773,8 +765,10 @@ case "${1:-}" in
         
         # Step 4: Validate agent environment
         echo ""
-        log_step "Checking agent environment..."
-        validate_agent_env "$EFFECTIVE_AGENT"
+        if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
+            log_step "Checking agent environment..."
+            validate_agent_env "$EFFECTIVE_AGENT"
+        fi
         
         # Step 5: Clean up existing containers
         echo ""
@@ -789,18 +783,18 @@ case "${1:-}" in
             echo ""
             log_step "Building containers from source..."
             
-            # Build base workspace image directly (no build: in compose)
+            # Build base workspace image
             docker build $NO_CACHE \
                 -f "${PROJECT_ROOT}/build/workspace/Dockerfile" \
                 -t "polis-workspace-oss:latest" \
                 "${PROJECT_ROOT}"
             
-            # Generate and build agent image if not base
+            # Build agent image on top of base if agent specified
             if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
                 generate_dockerfile "$EFFECTIVE_AGENT"
                 docker build $NO_CACHE \
                     -f "${PROJECT_ROOT}/build/workspace/Dockerfile.generated" \
-                    -t "polis-workspace-oss:${EFFECTIVE_AGENT}" \
+                    -t "polis-workspace-oss:latest" \
                     "${PROJECT_ROOT}"
             fi
             
@@ -833,7 +827,7 @@ case "${1:-}" in
                     generate_dockerfile "$EFFECTIVE_AGENT"
                     docker build $NO_CACHE \
                         -f "${PROJECT_ROOT}/build/workspace/Dockerfile.generated" \
-                        -t "polis-workspace-oss:${EFFECTIVE_AGENT}" \
+                        -t "polis-workspace-oss:latest" \
                         "${PROJECT_ROOT}"
                 fi
             else
@@ -845,21 +839,17 @@ case "${1:-}" in
                     docker tag "${REGISTRY}/${img}" "${img}"
                 done
                 
-                # Build agent image locally on top of pulled base
+                # Build agent image on top of pulled base if agent specified
                 if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
-                    log_info "Building ${EFFECTIVE_AGENT} agent image..."
+                    log_info "Building ${EFFECTIVE_AGENT} agent layer..."
                     generate_dockerfile "$EFFECTIVE_AGENT"
                     docker build $NO_CACHE \
                         -f "${PROJECT_ROOT}/build/workspace/Dockerfile.generated" \
-                        -t "polis-workspace-oss:${EFFECTIVE_AGENT}" \
+                        -t "polis-workspace-oss:latest" \
                         "${PROJECT_ROOT}"
                 fi
             fi
         fi
-        
-        # Write POLIS_AGENT to .env
-        write_polis_agent_env "$EFFECTIVE_AGENT"
-        export POLIS_AGENT="$EFFECTIVE_AGENT"
         
         echo ""
         echo "=== Starting containers ==="
@@ -887,8 +877,7 @@ case "${1:-}" in
         
     build)
         echo "=== Polis: Building images ==="
-        EFFECTIVE_AGENT="${AGENT_NAME:-openclaw}"
-        export POLIS_AGENT="$EFFECTIVE_AGENT"
+        EFFECTIVE_AGENT="${AGENT_NAME:-base}"
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
         SERVICE="${2:-}"
         if [[ -n "$SERVICE" ]] && [[ "$SERVICE" != "--no-cache" ]]; then
@@ -903,11 +892,9 @@ case "${1:-}" in
         
     up)
         echo "=== Polis: Starting Containers ==="
-        EFFECTIVE_AGENT="${AGENT_NAME:-openclaw}"
+        EFFECTIVE_AGENT="${AGENT_NAME:-base}"
         # Ensure .env exists
         touch "${PROJECT_ROOT}/.env"
-        write_polis_agent_env "$EFFECTIVE_AGENT"
-        export POLIS_AGENT="$EFFECTIVE_AGENT"
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
         # shellcheck disable=SC2086
         docker compose $COMPOSE_FLAGS up -d
@@ -922,8 +909,7 @@ case "${1:-}" in
         
     stop)
         echo "=== Polis: Stopping Containers ==="
-        EFFECTIVE_AGENT="${AGENT_NAME:-openclaw}"
-        export POLIS_AGENT="$EFFECTIVE_AGENT"
+        EFFECTIVE_AGENT="${AGENT_NAME:-base}"
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
         # shellcheck disable=SC2086
         docker compose $COMPOSE_FLAGS stop
@@ -931,8 +917,7 @@ case "${1:-}" in
         
     start)
         echo "=== Polis: Starting Existing Containers ==="
-        EFFECTIVE_AGENT="${AGENT_NAME:-openclaw}"
-        export POLIS_AGENT="$EFFECTIVE_AGENT"
+        EFFECTIVE_AGENT="${AGENT_NAME:-base}"
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
         # shellcheck disable=SC2086
         docker compose $COMPOSE_FLAGS start
