@@ -29,13 +29,24 @@ echo ""
 echo "--- Generating CA certificate ---"
 openssl genrsa -out "${OUTPUT_DIR}/ca.key" 4096 2>/dev/null
 
+# Create CA extension file
+CA_EXT_FILE="${OUTPUT_DIR}/ca.ext"
+cat > "${CA_EXT_FILE}" << EOF
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+EOF
+
 openssl req -new -x509 \
     -key "${OUTPUT_DIR}/ca.key" \
     -out "${OUTPUT_DIR}/ca.crt" \
     -days "${DAYS}" \
     -sha256 \
-    -subj "${CA_SUBJECT}"
+    -subj "${CA_SUBJECT}" \
+    -extensions v3_ca \
+    -config <(cat /etc/ssl/openssl.cnf <(printf "\n[v3_ca]\n") "${CA_EXT_FILE}")
 
+rm -f "${CA_EXT_FILE}"
 echo "CA certificate created."
 
 # ---- Server Certificate ----
@@ -43,9 +54,16 @@ echo ""
 echo "--- Generating server certificate ---"
 openssl genrsa -out "${OUTPUT_DIR}/server.key" 2048 2>/dev/null
 
-# Create extension file for SANs
+# Create extension file for server cert
 EXT_FILE="${OUTPUT_DIR}/server.ext"
-echo "subjectAltName = DNS:valkey,DNS:localhost,IP:127.0.0.1" > "${EXT_FILE}"
+cat > "${EXT_FILE}" << EOF
+basicConstraints = CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:valkey,DNS:localhost,IP:127.0.0.1
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+EOF
 
 openssl req -new \
     -key "${OUTPUT_DIR}/server.key" \
@@ -73,6 +91,16 @@ echo ""
 echo "--- Generating client certificate ---"
 openssl genrsa -out "${OUTPUT_DIR}/client.key" 2048 2>/dev/null
 
+# Create extension file for client cert
+CLIENT_EXT_FILE="${OUTPUT_DIR}/client.ext"
+cat > "${CLIENT_EXT_FILE}" << EOF
+basicConstraints = CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = clientAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+EOF
+
 openssl req -new \
     -key "${OUTPUT_DIR}/client.key" \
     -out "${OUTPUT_DIR}/client.csr" \
@@ -86,10 +114,11 @@ openssl x509 -req \
     -CAcreateserial \
     -out "${OUTPUT_DIR}/client.crt" \
     -days "${DAYS}" \
-    -sha256
+    -sha256 \
+    -extfile "${CLIENT_EXT_FILE}"
 
-# Remove client CSR
-rm -f "${OUTPUT_DIR}/client.csr"
+# Remove client CSR and ext file
+rm -f "${OUTPUT_DIR}/client.csr" "${CLIENT_EXT_FILE}"
 
 echo "Client certificate created."
 
