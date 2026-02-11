@@ -244,7 +244,7 @@ setup() {
 }
 
 @test "openclaw: docker-compose workspace depends on gateway" {
-    run grep -A 10 'workspace:' "${PROJECT_ROOT}/deploy/docker-compose.yml"
+    run grep -A 15 '^\s*workspace:' "${PROJECT_ROOT}/deploy/docker-compose.yml"
     assert_success
     assert_output --partial "gateway"
 }
