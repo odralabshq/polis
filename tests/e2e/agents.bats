@@ -1,11 +1,9 @@
 #!/usr/bin/env bats
 # Agent System E2E Tests
 
-load '../helpers/common'
-load '../bats/bats-file/load'
-
 setup() {
-    # Pure filesystem tests — no containers needed
+    load '../helpers/common.bash'
+    load '../bats/bats-file/load.bash'
 }
 
 # --- Agent contract tests (depend on Issue 01 only) ---

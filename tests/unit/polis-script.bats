@@ -1,10 +1,9 @@
 #!/usr/bin/env bats
 # Polis Management Script Tests
 
-load '../helpers/common'
-load '../bats/bats-file/load'
-
 setup() {
+    load '../helpers/common.bash'
+    load '../bats/bats-file/load.bash'
     POLIS_SCRIPT="${PROJECT_ROOT}/tools/polis.sh"
 }
 
