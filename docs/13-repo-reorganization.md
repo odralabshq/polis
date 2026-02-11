@@ -35,16 +35,16 @@ polis/
 │   │   ├── Dockerfile
 │   │   ├── modules/                    # C source (c-icap native modules)
 │   │   │   ├── dlp/
-│   │   │   │   └── srv_molis_dlp.c
+│   │   │   │   └── srv_polis_dlp.c
 │   │   │   └── approval/
-│   │   │       ├── srv_molis_approval.c
-│   │   │       └── srv_molis_approval_rewrite.c
+│   │   │       ├── srv_polis_approval.c
+│   │   │       └── srv_polis_approval_rewrite.c
 │   │   ├── config/
 │   │   │   ├── c-icap.conf
 │   │   │   ├── squidclamav.conf
 │   │   │   ├── freshclam.conf
-│   │   │   ├── molis_dlp.conf
-│   │   │   ├── molis_approval.conf
+│   │   │   ├── polis_dlp.conf
+│   │   │   ├── polis_approval.conf
 │   │   │   └── seccomp.json
 │   │   └── README.md
 │   │
@@ -84,7 +84,7 @@ polis/
 │
 ├── lib/                                # Shared code across services
 │   ├── crates/
-│   │   └── molis-common/              # Shared Rust types (BlockReason, SecurityLevel, etc.)
+│   │   └── polis-common/              # Shared Rust types (BlockReason, SecurityLevel, etc.)
 │   │       ├── Cargo.toml
 │   │       └── src/
 │   │           ├── lib.rs
@@ -119,7 +119,7 @@ polis/
 │       └── README.md
 │
 ├── config/
-│   └── molis.yaml                      # Cross-cutting security policy only
+│   └── polis.yaml                      # Cross-cutting security policy only
 │
 ├── deploy/
 │   └── docker-compose.yml
@@ -171,9 +171,9 @@ Every file in the current repo mapped to its new location. Files not listed here
 |---|---|
 | `build/g3proxy/Dockerfile` | `services/gate/Dockerfile` |
 | `build/icap/Dockerfile` | `services/sentinel/Dockerfile` |
-| `build/icap/srv_molis_dlp.c` | `services/sentinel/modules/dlp/srv_molis_dlp.c` |
-| `build/icap/srv_molis_approval.c` | `services/sentinel/modules/approval/srv_molis_approval.c` |
-| `build/icap/srv_molis_approval_rewrite.c` | `services/sentinel/modules/approval/srv_molis_approval_rewrite.c` |
+| `build/icap/srv_polis_dlp.c` | `services/sentinel/modules/dlp/srv_polis_dlp.c` |
+| `build/icap/srv_polis_approval.c` | `services/sentinel/modules/approval/srv_polis_approval.c` |
+| `build/icap/srv_polis_approval_rewrite.c` | `services/sentinel/modules/approval/srv_polis_approval_rewrite.c` |
 | `build/icap/test_is_new_domain.c` | `tests/native/sentinel/test_is_new_domain.c` |
 | `build/icap/test_is_allowed_domain.c` | `tests/native/sentinel/test_is_allowed_domain.c` |
 | `build/icap/test_is_new_domain.exe` | **DELETE** (binary, should not be in VCS) |
@@ -190,12 +190,12 @@ Every file in the current repo mapped to its new location. Files not listed here
 | `config/c-icap.conf` | `services/sentinel/config/c-icap.conf` |
 | `config/squidclamav.conf` | `services/sentinel/config/squidclamav.conf` |
 | `config/freshclam.conf` | `services/sentinel/config/freshclam.conf` |
-| `config/molis_dlp.conf` | `services/sentinel/config/molis_dlp.conf` |
-| `config/molis_approval.conf` | `services/sentinel/config/molis_approval.conf` |
+| `config/polis_dlp.conf` | `services/sentinel/config/polis_dlp.conf` |
+| `config/polis_approval.conf` | `services/sentinel/config/polis_approval.conf` |
 | `config/seccomp/icap.json` | `services/sentinel/config/seccomp.json` |
 | `config/polis-init.service` | `services/workspace/config/polis-init.service` |
 | `config/valkey.conf` | `services/state/config/valkey.conf` |
-| `config/molis.yaml` | `config/molis.yaml` (stays — cross-cutting) |
+| `config/polis.yaml` | `config/polis.yaml` (stays — cross-cutting) |
 
 ### `scripts/` → distributed
 
@@ -214,9 +214,9 @@ Every file in the current repo mapped to its new location. Files not listed here
 
 | Current Path | New Path |
 |---|---|
-| `crates/molis-mcp-agent/` | `services/toolbox/crates/mcp-agent/` |
-| `crates/molis-approve-cli/` | `services/toolbox/crates/approve-cli/` |
-| `crates/molis-mcp-common/` | `lib/crates/molis-common/` |
+| `crates/polis-mcp-agent/` | `services/toolbox/crates/mcp-agent/` |
+| `crates/polis-approve-cli/` | `services/toolbox/crates/approve-cli/` |
+| `crates/polis-mcp-common/` | `lib/crates/polis-common/` |
 
 ### Unchanged
 
@@ -238,7 +238,7 @@ Every file in the current repo mapped to its new location. Files not listed here
 members = [
     "services/toolbox/crates/mcp-agent",
     "services/toolbox/crates/approve-cli",
-    "lib/crates/molis-common",
+    "lib/crates/polis-common",
 ]
 resolver = "2"
 
@@ -257,7 +257,7 @@ Update the dependency path:
 
 ```toml
 [dependencies]
-molis-common = { path = "../../../lib/crates/molis-common" }
+polis-common = { path = "../../../lib/crates/polis-common" }
 # ... rest unchanged
 ```
 
@@ -265,7 +265,7 @@ molis-common = { path = "../../../lib/crates/molis-common" }
 
 ```toml
 [dependencies]
-molis-common = { path = "../../../lib/crates/molis-common" }
+polis-common = { path = "../../../lib/crates/polis-common" }
 # ... rest unchanged
 ```
 
@@ -681,9 +681,9 @@ Execute in this order to minimize breakage. Each step should be a separate PR.
 
 ### Phase 4: Move Rust crates
 
-17. Move `molis-mcp-common` to `lib/crates/molis-common/`
-18. Move `molis-mcp-agent` to `services/toolbox/crates/mcp-agent/`
-19. Move `molis-approve-cli` to `services/toolbox/crates/approve-cli/`
+17. Move `polis-mcp-common` to `lib/crates/polis-common/`
+18. Move `polis-mcp-agent` to `services/toolbox/crates/mcp-agent/`
+19. Move `polis-approve-cli` to `services/toolbox/crates/approve-cli/`
 20. Update `Cargo.toml` workspace members
 21. Update inter-crate dependency paths
 22. Add `[workspace.dependencies]` section
@@ -714,25 +714,25 @@ Execute in this order to minimize breakage. Each step should be a separate PR.
 
 ---
 
-## Naming Convention: Polis vs Molis
+## Naming Convention: Polis vs Polis
 
 Current state:
 
 - **Polis**: project name, CLI (`polis.sh`), containers (`polis-gate`), service file (`polis-init.service`)
-- **Molis**: security subsystem, Rust crates (`molis-mcp-agent`), configs (`molis.yaml`, `molis_dlp.conf`)
+- **Polis**: security subsystem, Rust crates (`polis-mcp-agent`), configs (`polis.yaml`, `polis_dlp.conf`)
 
-Decision needed: either rename all `molis-*` crates to `polis-*`, or document the convention.
+Decision needed: either rename all `polis-*` crates to `polis-*`, or document the convention.
 
 If keeping both names, add this to the root README:
 
-> **Naming**: "Polis" is the overall project and runtime. "Molis" is the security inspection
+> **Naming**: "Polis" is the overall project and runtime. "Polis" is the security inspection
 > subsystem (DLP, approval, credential scanning). Rust crates and security configs use the
-> `molis` prefix. Infrastructure, containers, and the CLI use `polis`.
+> `polis` prefix. Infrastructure, containers, and the CLI use `polis`.
 
 If renaming, do it in Phase 4 alongside the crate moves. Rename:
 
-- `molis-mcp-common` → `polis-common`
-- `molis-mcp-agent` → `polis-mcp-agent`
-- `molis-approve-cli` → `polis-approve-cli`
-- `molis.yaml` → keep as-is (it's the molis subsystem config)
-- `molis_dlp.conf` → keep as-is (c-icap module config)
+- `polis-mcp-common` → `polis-common`
+- `polis-mcp-agent` → `polis-mcp-agent`
+- `polis-approve-cli` → `polis-approve-cli`
+- `polis.yaml` → keep as-is (it's the polis subsystem config)
+- `polis_dlp.conf` → keep as-is (c-icap module config)
