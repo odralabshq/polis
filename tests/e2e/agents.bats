@@ -55,8 +55,8 @@ setup() {
     assert_failure
 }
 
-@test "agents: docker-compose uses POLIS_AGENT variable" {
-    run grep -q 'POLIS_AGENT' "${PROJECT_ROOT}/deploy/docker-compose.yml"
+@test "agents: docker-compose workspace uses latest tag" {
+    run grep -q 'polis-workspace-oss:latest' "${PROJECT_ROOT}/deploy/docker-compose.yml"
     assert_success
 }
 
