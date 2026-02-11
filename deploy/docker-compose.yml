@@ -188,6 +188,9 @@ services:
   # WORKSPACE
   # =========================================================
   workspace:
+    build:
+      context: ..
+      dockerfile: ./build/workspace/Dockerfile
     image: polis-workspace-oss:latest
     container_name: polis-workspace
     runtime: sysbox-runc
