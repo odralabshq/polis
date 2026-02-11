@@ -31,7 +31,7 @@ Call this immediately when you receive a 403 with `X-Molis-Block: true`. Provide
 The tool returns an `approval_command` — show this to the user so they can approve the request from the host terminal.
 
 ### check_request_status
-Poll this after reporting a block to see if the user has approved or denied the request. Provide the `request_id`. Returns one of: `pending`, `approved`, `denied`, `expired`.
+Poll this after reporting a block to see if the user has approved or denied the request. Provide the `request_id`. Returns one of: `pending`, `approved`, `not_found` (for unknown or no-longer-active requests).
 
 ### list_pending_approvals
 Lists all currently blocked requests awaiting human approval. Use this to show the user what's pending.
