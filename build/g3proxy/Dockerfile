@@ -79,5 +79,9 @@ RUN mkdir -p /etc/g3proxy /var/lib/g3proxy/ssl /tmp/g3 && \
 RUN which g3proxy && which g3fcgen && \
     g3proxy --version && g3fcgen --version
 
+# Copy init script
+COPY scripts/g3proxy-init.sh /init.sh
+RUN chmod +x /init.sh
+
 ENTRYPOINT ["/init.sh"]
 

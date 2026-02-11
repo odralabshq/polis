@@ -271,7 +271,10 @@ services:
         condition: service_completed_successfully
     secrets:
       - valkey_password
-      - valkey_acl
+      - source: valkey_acl
+        uid: "999"
+        gid: "999"
+        mode: 0440
     volumes:
       - ../config/valkey.conf:/etc/valkey/valkey.conf:ro
       - ../certs/valkey:/etc/valkey/tls:ro
