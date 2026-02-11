@@ -13,7 +13,7 @@ export MSYS_NO_PATHCONV=1
 OUTPUT_DIR="${1:-./certs/valkey}"
 
 # Certificate parameters
-CA_SUBJECT="/CN=Molis-Valkey-CA/O=OdraLabs"
+CA_SUBJECT="/CN=polis-Valkey-CA/O=OdraLabs"
 SERVER_SUBJECT="/CN=valkey/O=OdraLabs"
 CLIENT_SUBJECT="/CN=valkey-client/O=OdraLabs"
 DAYS=365

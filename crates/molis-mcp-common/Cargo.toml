@@ -1,8 +1,8 @@
 [package]
-name = "molis-mcp-common"
+name = "polis-mcp-common"
 version = "0.1.0"
 edition = "2021"
-description = "Shared types for Molis MCP servers"
+description = "Shared types for polis MCP servers"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

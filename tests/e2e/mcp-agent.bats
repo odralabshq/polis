@@ -118,7 +118,7 @@ cleanup_valkey_key() {
     local req_id="req-e2e00001"
 
     # Clean up any leftover key from a previous run
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 
     # Call report_block via MCP
     run mcp_call "report_block" \
@@ -129,20 +129,20 @@ cleanup_valkey_key() {
     assert_output --partial "${req_id}"
 
     # Verify the Valkey key was created
-    run valkey_cli GET "molis:blocked:${req_id}"
+    run valkey_cli GET "polis:blocked:${req_id}"
     assert_success
     assert_output --partial "${req_id}"
     assert_output --partial "credential_detected"
     assert_output --partial "https://evil.com"
 
     # Cleanup
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 }
 
 @test "e2e-mcp: report_block sets TTL on blocked key" {
     local req_id="req-e2e00002"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 
     # Call report_block
     run mcp_call "report_block" \
@@ -150,7 +150,7 @@ cleanup_valkey_key() {
     assert_success
 
     # Verify TTL is set (should be between 1 and 3600 seconds)
-    run valkey_cli TTL "molis:blocked:${req_id}"
+    run valkey_cli TTL "polis:blocked:${req_id}"
     assert_success
     local ttl_val="${output}"
     # TTL must be positive (key exists with expiry) and <= 3600
@@ -159,13 +159,13 @@ cleanup_valkey_key() {
     [[ "${ttl_val}" -le 3600 ]] || \
         fail "TTL should be <= 3600, got: ${ttl_val}"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 }
 
 @test "e2e-mcp: report_block returns approval command" {
     local req_id="req-e2e00003"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 
     run mcp_call "report_block" \
         "{\"request_id\":\"${req_id}\",\"reason\":\"url_blocked\",\"destination\":\"https://blocked.com\"}"
@@ -174,13 +174,13 @@ cleanup_valkey_key() {
     # Response should contain the approval command
     assert_output --partial "polis approve ${req_id}"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 }
 
 @test "e2e-mcp: report_block redacts pattern from response" {
     local req_id="req-e2e00004"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 
     run mcp_call "report_block" \
         "{\"request_id\":\"${req_id}\",\"reason\":\"credential_detected\",\"destination\":\"https://evil.com\",\"pattern\":\"aws_secret_key\"}"
@@ -190,11 +190,11 @@ cleanup_valkey_key() {
     refute_output --partial "aws_secret_key"
 
     # But the pattern SHOULD be stored in Valkey
-    run valkey_cli GET "molis:blocked:${req_id}"
+    run valkey_cli GET "polis:blocked:${req_id}"
     assert_success
     assert_output --partial "aws_secret_key"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 }
 
 # =============================================================================
@@ -204,7 +204,7 @@ cleanup_valkey_key() {
 @test "e2e-mcp: check_request_status returns pending for stored request" {
     local req_id="req-e2e00005"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 
     # First, store a blocked request
     run mcp_call "report_block" \
@@ -217,7 +217,7 @@ cleanup_valkey_key() {
     assert_success
     assert_output --partial "pending"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 }
 
 @test "e2e-mcp: check_request_status returns not_found for unknown request" {
@@ -225,8 +225,8 @@ cleanup_valkey_key() {
     local req_id="req-e2efffff"
 
     # Ensure the key doesn't exist
-    cleanup_valkey_key "molis:blocked:${req_id}"
-    cleanup_valkey_key "molis:approved:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
+    cleanup_valkey_key "polis:approved:${req_id}"
 
     run mcp_call "check_request_status" \
         "{\"request_id\":\"${req_id}\"}"
@@ -255,7 +255,7 @@ cleanup_valkey_key() {
 @test "e2e-mcp: list_pending_approvals returns stored requests" {
     local req_id="req-e2e00006"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 
     # Store a blocked request first
     run mcp_call "report_block" \
@@ -270,7 +270,7 @@ cleanup_valkey_key() {
     # Pattern should be redacted (null) in the response
     refute_output --partial "secret_pattern"
 
-    cleanup_valkey_key "molis:blocked:${req_id}"
+    cleanup_valkey_key "polis:blocked:${req_id}"
 }
 
 # =============================================================================

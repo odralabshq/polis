@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "crates/molis-mcp-common",
-    "crates/molis-mcp-agent",
-    "crates/molis-approve-cli",
+    "crates/polis-mcp-common",
+    "crates/polis-mcp-agent",
+    "crates/polis-approve-cli",
 ]
 resolver = "2"

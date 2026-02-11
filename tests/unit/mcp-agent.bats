@@ -85,20 +85,20 @@ setup() {
 # Environment Tests (Requirement 6.1)
 # =============================================================================
 
-@test "mcp-agent: MOLIS_AGENT_LISTEN_ADDR is set" {
-    run docker exec "${MCP_AGENT_CONTAINER}" printenv MOLIS_AGENT_LISTEN_ADDR
+@test "mcp-agent: polis_AGENT_LISTEN_ADDR is set" {
+    run docker exec "${MCP_AGENT_CONTAINER}" printenv polis_AGENT_LISTEN_ADDR
     assert_success
     assert_output "0.0.0.0:8080"
 }
 
-@test "mcp-agent: MOLIS_AGENT_VALKEY_URL is set" {
-    run docker exec "${MCP_AGENT_CONTAINER}" printenv MOLIS_AGENT_VALKEY_URL
+@test "mcp-agent: polis_AGENT_VALKEY_URL is set" {
+    run docker exec "${MCP_AGENT_CONTAINER}" printenv polis_AGENT_VALKEY_URL
     assert_success
     assert_output "rediss://valkey:6379"
 }
 
-@test "mcp-agent: MOLIS_AGENT_VALKEY_USER is set" {
-    run docker exec "${MCP_AGENT_CONTAINER}" printenv MOLIS_AGENT_VALKEY_USER
+@test "mcp-agent: polis_AGENT_VALKEY_USER is set" {
+    run docker exec "${MCP_AGENT_CONTAINER}" printenv polis_AGENT_VALKEY_USER
     assert_success
     assert_output "mcp-agent"
 }

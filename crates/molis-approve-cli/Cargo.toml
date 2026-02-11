@@ -1,15 +1,15 @@
 [package]
-name = "molis-approve-cli"
+name = "polis-approve-cli"
 version = "0.1.0"
 edition = "2021"
-description = "CLI approval tool for Molis HITL approval system"
+description = "CLI approval tool for polis HITL approval system"
 
 [[bin]]
-name = "molis-approve"
+name = "polis-approve"
 path = "src/main.rs"
 
 [dependencies]
-molis-mcp-common = { path = "../molis-mcp-common" }
+polis-mcp-common = { path = "../polis-mcp-common" }
 clap = { version = "4.0", features = ["derive"] }
 redis = { version = "0.27", features = ["tokio-rustls-comp"] }
 tokio = { version = "1.0", features = ["full"] }

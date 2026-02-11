@@ -1,5 +1,5 @@
 /*
- * srv_molis_approval_rewrite.c - c-ICAP REQMOD approval code rewriter
+ * srv_polis_approval_rewrite.c - c-ICAP REQMOD approval code rewriter
  *
  * REQMOD service that scans outbound HTTP request bodies for
  * /polis-approve req-* commands and rewrites the request_id with
@@ -71,11 +71,11 @@ static int ensure_valkey_connected(void);
 /*
  * Service module definition - exported to c-ICAP.
  * Registers the approval rewriter as a REQMOD service
- * named "molis_approval_rewrite".
+ * named "polis_approval_rewrite".
  */
 CI_DECLARE_MOD_DATA ci_service_module_t service = {
-    "molis_approval_rewrite",                    /* mod_name */
-    "Molis approval code rewriter (REQMOD)",     /* mod_short_descr */
+    "polis_approval_rewrite",                    /* mod_name */
+    "polis approval code rewriter (REQMOD)",     /* mod_short_descr */
     ICAP_REQMOD,                                 /* mod_type */
     rewrite_init_service,                        /* mod_init_service */
     NULL,                                        /* mod_post_init_service */
@@ -176,7 +176,7 @@ static int generate_ott(char *buf, size_t buf_len)
  * rewrite_init_service - Initialize the approval rewriter service.
  *
  * Performs four setup steps:
- *   1. Load time-gate duration from MOLIS_APPROVAL_TIME_GATE_SECS env
+ *   1. Load time-gate duration from polis_APPROVAL_TIME_GATE_SECS env
  *      (default: 15 seconds per Requirement 1.10)
  *   2. Compile the approve pattern regex for body scanning
  *   3. Connect to Valkey with TLS + ACL as governance-reqmod
@@ -192,28 +192,28 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
     const char *env_val;
     int rc;
 
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
                        "Initializing service\n");
 
     /* ---------------------------------------------------------- */
     /* Step 1: Load time-gate from environment (Requirement 1.10) */
     /* ---------------------------------------------------------- */
-    env_val = getenv("MOLIS_APPROVAL_TIME_GATE_SECS");
+    env_val = getenv("polis_APPROVAL_TIME_GATE_SECS");
     if (env_val != NULL) {
         int parsed = atoi(env_val);
         if (parsed > 0) {
             time_gate_secs = parsed;
-            ci_debug_printf(3, "molis_approval_rewrite: "
+            ci_debug_printf(3, "polis_approval_rewrite: "
                 "time_gate_secs set to %d from env\n",
                 time_gate_secs);
         } else {
-            ci_debug_printf(1, "molis_approval_rewrite: WARNING: "
-                "invalid MOLIS_APPROVAL_TIME_GATE_SECS='%s', "
+            ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
+                "invalid polis_APPROVAL_TIME_GATE_SECS='%s', "
                 "using default %d\n", env_val, time_gate_secs);
         }
     } else {
-        ci_debug_printf(3, "molis_approval_rewrite: "
-            "MOLIS_APPROVAL_TIME_GATE_SECS not set, "
+        ci_debug_printf(3, "polis_approval_rewrite: "
+            "polis_APPROVAL_TIME_GATE_SECS not set, "
             "using default %d\n", time_gate_secs);
     }
 
@@ -226,12 +226,12 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
     if (rc != 0) {
         char errbuf[128];
         regerror(rc, &approve_pattern, errbuf, sizeof(errbuf));
-        ci_debug_printf(0, "molis_approval_rewrite: CRITICAL: "
+        ci_debug_printf(0, "polis_approval_rewrite: CRITICAL: "
             "Failed to compile approve pattern regex: %s\n",
             errbuf);
         return CI_ERROR;
     }
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
                        "Approve pattern regex compiled\n");
 
     /* ---------------------------------------------------------- */
@@ -270,7 +270,7 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
             NULL,  /* server_name — use default */
             &ssl_err);
         if (ssl_ctx == NULL) {
-            ci_debug_printf(1, "molis_approval_rewrite: WARNING: "
+            ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
                 "Failed to create TLS context: %s — "
                 "Valkey connection unavailable\n",
                 redisSSLContextGetError(ssl_err));
@@ -280,7 +280,7 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
         /* Establish TCP connection to Valkey */
         valkey_ctx = redisConnect(vk_host, vk_port);
         if (valkey_ctx == NULL || valkey_ctx->err) {
-            ci_debug_printf(1, "molis_approval_rewrite: WARNING: "
+            ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
                 "Cannot connect to Valkey at %s:%d%s%s — "
                 "Valkey connection unavailable\n",
                 vk_host, vk_port,
@@ -297,7 +297,7 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
         /* Initiate TLS handshake on the connection */
         if (redisInitiateSSLWithContext(valkey_ctx,
                                         ssl_ctx) != REDIS_OK) {
-            ci_debug_printf(1, "molis_approval_rewrite: WARNING: "
+            ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
                 "TLS handshake failed with Valkey: %s — "
                 "Valkey connection unavailable\n",
                 valkey_ctx->errstr);
@@ -312,7 +312,7 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
             reply = redisCommand(valkey_ctx,
                 "AUTH governance-reqmod %s", vk_pass);
             if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-                ci_debug_printf(1, "molis_approval_rewrite: WARNING: "
+                ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
                     "Valkey ACL auth failed%s%s — "
                     "Valkey connection unavailable\n",
                     reply ? ": " : "",
@@ -324,15 +324,15 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
                 goto valkey_done;
             }
             freeReplyObject(reply);
-            ci_debug_printf(3, "molis_approval_rewrite: "
+            ci_debug_printf(3, "polis_approval_rewrite: "
                 "Authenticated as governance-reqmod\n");
         } else {
-            ci_debug_printf(1, "molis_approval_rewrite: WARNING: "
+            ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
                 "VALKEY_REQMOD_PASS not set — "
                 "ACL authentication skipped\n");
         }
 
-        ci_debug_printf(3, "molis_approval_rewrite: "
+        ci_debug_printf(3, "polis_approval_rewrite: "
             "Connected to Valkey at %s:%d (TLS + ACL)\n",
             vk_host, vk_port);
 
@@ -346,7 +346,7 @@ valkey_done:
     ci_service_set_preview(srv_xdata, 8192);
     ci_service_enable_204(srv_xdata);
 
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
         "Initialization complete (time_gate=%ds, "
         "ott_ttl=%ds, valkey=%s)\n",
         time_gate_secs, ott_ttl_secs,
@@ -377,11 +377,11 @@ static int ensure_valkey_connected(void)
     if (reply) freeReplyObject(reply);
 
     /* Connection is dead — attempt reconnect */
-    ci_debug_printf(1, "molis_approval_rewrite: "
+    ci_debug_printf(1, "polis_approval_rewrite: "
         "Valkey connection lost — attempting reconnect\n");
 
     if (redisReconnect(valkey_ctx) != REDIS_OK) {
-        ci_debug_printf(1, "molis_approval_rewrite: WARNING: "
+        ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
             "Valkey reconnect failed: %s\n",
             valkey_ctx->errstr);
         redisFree(valkey_ctx);
@@ -398,7 +398,7 @@ static int ensure_valkey_connected(void)
             if (reply == NULL ||
                 reply->type == REDIS_REPLY_ERROR) {
                 ci_debug_printf(1,
-                    "molis_approval_rewrite: WARNING: "
+                    "polis_approval_rewrite: WARNING: "
                     "Valkey re-auth failed after reconnect\n");
                 if (reply) freeReplyObject(reply);
                 redisFree(valkey_ctx);
@@ -409,7 +409,7 @@ static int ensure_valkey_connected(void)
         }
     }
 
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
         "Valkey reconnected successfully\n");
     return 1;
 }
@@ -429,10 +429,10 @@ static int ensure_valkey_connected(void)
  *   1. Enforce MAX_BODY_SCAN limit (CWE-400)
  *   2. Regex scan for /polis-approve req-{hex8}
  *   3. Validate request_id format (CWE-116)
- *   4. Check molis:blocked:{request_id} exists in Valkey
+ *   4. Check polis:blocked:{request_id} exists in Valkey
  *   5. Generate OTT via /dev/urandom (fail-closed)
  *   6. Store OTT mapping with SET ... NX EX (collision-safe)
- *   7. Log rewrite to molis:log:events
+ *   7. Log rewrite to polis:log:events
  *   8. Perform length-preserving body substitution
  *
  * Returns CI_MOD_ALLOW204 if no rewrite needed, CI_MOD_DONE
@@ -456,7 +456,7 @@ int rewrite_process(ci_request_t *req)
     /* Step 1: Enforce MAX_BODY_SCAN limit (Req 1.8, CWE-400)        */
     /* -------------------------------------------------------------- */
     if (data->total_body_len > MAX_BODY_SCAN) {
-        ci_debug_printf(3, "molis_approval_rewrite: "
+        ci_debug_printf(3, "polis_approval_rewrite: "
             "Body size %zu exceeds MAX_BODY_SCAN (%d) — "
             "skipping scan (CWE-400)\n",
             data->total_body_len, MAX_BODY_SCAN);
@@ -468,7 +468,7 @@ int rewrite_process(ci_request_t *req)
     body_raw = (char *)ci_membuf_raw(data->body);
 
     if (!body_raw) {
-        ci_debug_printf(5, "molis_approval_rewrite: "
+        ci_debug_printf(5, "polis_approval_rewrite: "
             "Empty body buffer — no scan needed\n");
         return CI_MOD_ALLOW204;
     }
@@ -477,7 +477,7 @@ int rewrite_process(ci_request_t *req)
     /* Step 2: Regex scan for /polis-approve req-{hex8} (Req 1.2)    */
     /* -------------------------------------------------------------- */
     if (regexec(&approve_pattern, body_raw, 2, matches, 0) != 0) {
-        ci_debug_printf(5, "molis_approval_rewrite: "
+        ci_debug_printf(5, "polis_approval_rewrite: "
             "No /polis-approve pattern found in body\n");
         return CI_MOD_ALLOW204;
     }
@@ -485,7 +485,7 @@ int rewrite_process(ci_request_t *req)
     /* Extract the captured request_id (group 1) */
     req_id_len = (size_t)(matches[1].rm_eo - matches[1].rm_so);
     if (req_id_len == 0 || req_id_len >= sizeof(req_id)) {
-        ci_debug_printf(3, "molis_approval_rewrite: "
+        ci_debug_printf(3, "polis_approval_rewrite: "
             "Captured request_id has invalid length %zu\n",
             req_id_len);
         return CI_MOD_ALLOW204;
@@ -499,7 +499,7 @@ int rewrite_process(ci_request_t *req)
     /* -------------------------------------------------------------- */
     if (req_id_len != OTT_LEN ||
         strncmp(req_id, "req-", 4) != 0) {
-        ci_debug_printf(3, "molis_approval_rewrite: "
+        ci_debug_printf(3, "polis_approval_rewrite: "
             "Invalid request_id format: '%s' (CWE-116)\n",
             req_id);
         return CI_MOD_ALLOW204;
@@ -507,21 +507,21 @@ int rewrite_process(ci_request_t *req)
     for (i = 4; i < (int)req_id_len; i++) {
         if (!((req_id[i] >= '0' && req_id[i] <= '9') ||
               (req_id[i] >= 'a' && req_id[i] <= 'f'))) {
-            ci_debug_printf(3, "molis_approval_rewrite: "
+            ci_debug_printf(3, "polis_approval_rewrite: "
                 "Invalid hex char in request_id: '%s' "
                 "(CWE-116)\n", req_id);
             return CI_MOD_ALLOW204;
         }
     }
 
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
         "Found valid request_id: '%s'\n", req_id);
 
     /* -------------------------------------------------------------- */
-    /* Step 4: Check molis:blocked:{request_id} exists (Req 1.3)     */
+    /* Step 4: Check polis:blocked:{request_id} exists (Req 1.3)     */
     /* -------------------------------------------------------------- */
     if (!valkey_ctx) {
-        ci_debug_printf(1, "molis_approval_rewrite: "
+        ci_debug_printf(1, "polis_approval_rewrite: "
             "Valkey unavailable — fail closed, "
             "no OTT rewrite for '%s'\n", req_id);
         return CI_MOD_ALLOW204;
@@ -529,7 +529,7 @@ int rewrite_process(ci_request_t *req)
 
     /* Lazy reconnect if connection was lost (Finding 5 fix) */
     if (!ensure_valkey_connected()) {
-        ci_debug_printf(1, "molis_approval_rewrite: "
+        ci_debug_printf(1, "polis_approval_rewrite: "
             "Valkey reconnect failed — fail closed, "
             "no OTT rewrite for '%s'\n", req_id);
         return CI_MOD_ALLOW204;
@@ -539,12 +539,12 @@ int rewrite_process(ci_request_t *req)
         redisReply *reply;
 
         snprintf(valkey_key, sizeof(valkey_key),
-                 "molis:blocked:%s", req_id);
+                 "polis:blocked:%s", req_id);
 
         reply = redisCommand(valkey_ctx,
                              "EXISTS %s", valkey_key);
         if (!reply || reply->type == REDIS_REPLY_ERROR) {
-            ci_debug_printf(1, "molis_approval_rewrite: "
+            ci_debug_printf(1, "polis_approval_rewrite: "
                 "Valkey EXISTS failed for '%s'%s%s\n",
                 valkey_key,
                 reply ? ": " : "",
@@ -554,7 +554,7 @@ int rewrite_process(ci_request_t *req)
         }
 
         if (reply->integer == 0) {
-            ci_debug_printf(3, "molis_approval_rewrite: "
+            ci_debug_printf(3, "polis_approval_rewrite: "
                 "No blocked entry for '%s' — "
                 "skipping rewrite\n", req_id);
             freeReplyObject(reply);
@@ -563,7 +563,7 @@ int rewrite_process(ci_request_t *req)
         freeReplyObject(reply);
     }
 
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
         "Blocked entry found for '%s'\n", req_id);
 
     /* -------------------------------------------------------------- */
@@ -571,7 +571,7 @@ int rewrite_process(ci_request_t *req)
     /* Context binding: OTT is bound to the originating host         */
     /* -------------------------------------------------------------- */
     if (data->host[0] == '\0') {
-        ci_debug_printf(1, "molis_approval_rewrite: "
+        ci_debug_printf(1, "polis_approval_rewrite: "
             "No Host header available for context binding — "
             "fail closed, no OTT rewrite\n");
         return CI_MOD_ALLOW204;
@@ -582,13 +582,13 @@ int rewrite_process(ci_request_t *req)
     /* Fail-closed: abort rewrite if generation fails                 */
     /* -------------------------------------------------------------- */
     if (generate_ott(ott_buf, sizeof(ott_buf)) != 0) {
-        ci_debug_printf(0, "CRITICAL: molis_approval_rewrite: "
+        ci_debug_printf(0, "CRITICAL: polis_approval_rewrite: "
             "OTT generation failed — fail closed, "
             "no rewrite for '%s'\n", req_id);
         return CI_MOD_ALLOW204;
     }
 
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
         "Generated OTT '%s' for '%s'\n", ott_buf, req_id);
 
     /* -------------------------------------------------------------- */
@@ -608,13 +608,13 @@ int rewrite_process(ci_request_t *req)
         for (attempt = 0; attempt < 2; attempt++) {
             if (attempt == 1) {
                 /* Collision on first attempt — regenerate OTT */
-                ci_debug_printf(3, "molis_approval_rewrite: "
+                ci_debug_printf(3, "polis_approval_rewrite: "
                     "OTT collision on '%s', retrying "
                     "with new OTT\n", ott_buf);
                 if (generate_ott(ott_buf,
                                  sizeof(ott_buf)) != 0) {
                     ci_debug_printf(0,
-                        "CRITICAL: molis_approval_rewrite: "
+                        "CRITICAL: polis_approval_rewrite: "
                         "OTT regeneration failed — "
                         "fail closed\n");
                     return CI_MOD_ALLOW204;
@@ -630,7 +630,7 @@ int rewrite_process(ci_request_t *req)
                 (long)armed_after, data->host);
 
             snprintf(valkey_key, sizeof(valkey_key),
-                     "molis:ott:%s", ott_buf);
+                     "polis:ott:%s", ott_buf);
 
             reply = redisCommand(valkey_ctx,
                 "SET %s %s NX EX %d",
@@ -639,7 +639,7 @@ int rewrite_process(ci_request_t *req)
             if (!reply ||
                 reply->type == REDIS_REPLY_ERROR) {
                 ci_debug_printf(1,
-                    "molis_approval_rewrite: "
+                    "polis_approval_rewrite: "
                     "Valkey SET failed for '%s'%s%s\n",
                     valkey_key,
                     reply ? ": " : "",
@@ -658,7 +658,7 @@ int rewrite_process(ci_request_t *req)
             /* Success — key was set */
             freeReplyObject(reply);
             ci_debug_printf(3,
-                "molis_approval_rewrite: "
+                "polis_approval_rewrite: "
                 "Stored OTT mapping '%s' "
                 "(ttl=%ds, armed_after=%ld)\n",
                 valkey_key, ott_ttl_secs,
@@ -669,7 +669,7 @@ int rewrite_process(ci_request_t *req)
         /* If we exhausted both attempts, fail closed */
         if (attempt >= 2) {
             ci_debug_printf(0,
-                "CRITICAL: molis_approval_rewrite: "
+                "CRITICAL: polis_approval_rewrite: "
                 "OTT collision on both attempts — "
                 "fail closed, no rewrite for '%s'\n",
                 req_id);
@@ -677,7 +677,7 @@ int rewrite_process(ci_request_t *req)
         }
 
         /* ---------------------------------------------------------- */
-        /* Step 7: Log rewrite to molis:log:events (Req 1.9)         */
+        /* Step 7: Log rewrite to polis:log:events (Req 1.9)         */
         /* ZADD with timestamp score for ordered event log            */
         /* Log full mapping but never credential values               */
         /* ---------------------------------------------------------- */
@@ -696,13 +696,13 @@ int rewrite_process(ci_request_t *req)
                 (long)armed_after, (long)time(NULL));
 
             reply = redisCommand(valkey_ctx,
-                "ZADD molis:log:events %f %s",
+                "ZADD polis:log:events %f %s",
                 now_score, log_entry);
 
             if (!reply ||
                 reply->type == REDIS_REPLY_ERROR) {
                 ci_debug_printf(1,
-                    "molis_approval_rewrite: WARNING: "
+                    "polis_approval_rewrite: WARNING: "
                     "Failed to log OTT rewrite%s%s "
                     "— continuing with rewrite\n",
                     reply ? ": " : "",
@@ -711,7 +711,7 @@ int rewrite_process(ci_request_t *req)
             if (reply) freeReplyObject(reply);
 
             ci_debug_printf(3,
-                "molis_approval_rewrite: "
+                "polis_approval_rewrite: "
                 "Logged OTT rewrite event for '%s'\n",
                 req_id);
         }
@@ -723,7 +723,7 @@ int rewrite_process(ci_request_t *req)
         if (req_id_len != OTT_LEN) {
             /* Safety check: lengths must match for in-place swap */
             ci_debug_printf(0,
-                "CRITICAL: molis_approval_rewrite: "
+                "CRITICAL: polis_approval_rewrite: "
                 "Length mismatch: req_id=%zu, OTT=%d — "
                 "aborting substitution\n",
                 req_id_len, OTT_LEN);
@@ -734,7 +734,7 @@ int rewrite_process(ci_request_t *req)
         memcpy(body_raw + matches[1].rm_so,
                ott_buf, OTT_LEN);
 
-        ci_debug_printf(3, "molis_approval_rewrite: "
+        ci_debug_printf(3, "polis_approval_rewrite: "
             "Rewrote '%s' → '%s' in body "
             "(length-preserving, %zu bytes)\n",
             req_id, ott_buf, req_id_len);
@@ -743,7 +743,7 @@ int rewrite_process(ci_request_t *req)
     /* Body was modified in-place — return CI_MOD_DONE to tell
      * c-ICAP to forward the request with the modified body.
      * No HTTP response is created; this is REQMOD, not RESPMOD. */
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
         "OTT rewrite complete for '%s' → '%s' "
         "(host=%s)\n", req_id, ott_buf, data->host);
 
@@ -772,7 +772,7 @@ void *rewrite_init_request_data(ci_request_t *req)
 
     data = (rewrite_req_data_t *)malloc(sizeof(rewrite_req_data_t));
     if (!data) {
-        ci_debug_printf(1, "molis_approval_rewrite: ERROR: "
+        ci_debug_printf(1, "polis_approval_rewrite: ERROR: "
                            "Failed to allocate request data\n");
         return NULL;
     }
@@ -787,10 +787,10 @@ void *rewrite_init_request_data(ci_request_t *req)
     if (host_hdr) {
         strncpy(data->host, host_hdr, sizeof(data->host) - 1);
         data->host[sizeof(data->host) - 1] = '\0';
-        ci_debug_printf(5, "molis_approval_rewrite: "
+        ci_debug_printf(5, "polis_approval_rewrite: "
                            "Request to host: %s\n", data->host);
     } else {
-        ci_debug_printf(5, "molis_approval_rewrite: "
+        ci_debug_printf(5, "polis_approval_rewrite: "
                            "No Host header found\n");
     }
 
@@ -835,7 +835,7 @@ int rewrite_check_preview(char *preview_data, int preview_data_len,
     ci_membuf_write(data->body, preview_data, preview_data_len, 0);
     data->total_body_len += preview_data_len;
 
-    ci_debug_printf(5, "molis_approval_rewrite: "
+    ci_debug_printf(5, "polis_approval_rewrite: "
                        "Preview received %d bytes, "
                        "total so far: %zu\n",
                    preview_data_len, data->total_body_len);
@@ -897,7 +897,7 @@ int rewrite_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
  */
 void rewrite_close_service(void)
 {
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
                        "Closing service\n");
 
     /* Free the compiled regex pattern */
@@ -909,6 +909,6 @@ void rewrite_close_service(void)
         valkey_ctx = NULL;
     }
 
-    ci_debug_printf(3, "molis_approval_rewrite: "
+    ci_debug_printf(3, "polis_approval_rewrite: "
                        "Service closed, resources freed\n");
 }

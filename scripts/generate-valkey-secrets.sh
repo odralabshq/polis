@@ -88,13 +88,13 @@ echo "--- Creating valkey_users.acl ---"
 
 cat > "${OUTPUT_DIR}/valkey_users.acl" <<EOF
 user default off
-user governance-reqmod on #${HASH_GOV_REQMOD} ~molis:ott:* ~molis:blocked:* ~molis:log:* -@all +get +set +setnx +exists +zadd
-user governance-respmod on #${HASH_GOV_RESPMOD} ~molis:ott:* ~molis:blocked:* ~molis:approved:* ~molis:log:* -@all +get +del +setex +exists +zadd
-user mcp-agent on #${HASH_MCP_AGENT} ~molis:blocked:* ~molis:approved:* +GET +SETEX +EXISTS +SCAN +PING -@all
-user mcp-admin on #${HASH_MCP_ADMIN} ~molis:* +@all -@dangerous -FLUSHALL -FLUSHDB -DEBUG -CONFIG -SHUTDOWN
-user log-writer on #${HASH_LOG_WRITER} ~molis:log:events -@all +ZADD +ZRANGEBYSCORE +ZCARD +PING
+user governance-reqmod on #${HASH_GOV_REQMOD} ~polis:ott:* ~polis:blocked:* ~polis:log:* -@all +get +set +setnx +exists +zadd
+user governance-respmod on #${HASH_GOV_RESPMOD} ~polis:ott:* ~polis:blocked:* ~polis:approved:* ~polis:log:* -@all +get +del +setex +exists +zadd
+user mcp-agent on #${HASH_MCP_AGENT} ~polis:blocked:* ~polis:approved:* +GET +SETEX +EXISTS +SCAN +PING -@all
+user mcp-admin on #${HASH_MCP_ADMIN} ~polis:* +@all -@dangerous -FLUSHALL -FLUSHDB -DEBUG -CONFIG -SHUTDOWN
+user log-writer on #${HASH_LOG_WRITER} ~polis:log:events -@all +ZADD +ZRANGEBYSCORE +ZCARD +PING
 user healthcheck on #${HASH_HEALTHCHECK} -@all +PING +INFO
-user dlp-reader on #${HASH_DLP} ~molis:config:security_level +GET +PING -@all
+user dlp-reader on #${HASH_DLP} ~polis:config:security_level +GET +PING -@all
 EOF
 
 echo "valkey_users.acl created (8 user entries)."

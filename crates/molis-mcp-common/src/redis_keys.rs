@@ -1,38 +1,38 @@
-/// Redis key prefixes for Molis state management
+/// Redis key prefixes for polis state management
 pub mod keys {
     /// Blocked requests awaiting approval
-    /// Format: molis:blocked:{request_id}
+    /// Format: polis:blocked:{request_id}
     /// Value: JSON-serialized BlockedRequest
     /// TTL: None (persists until approved/denied)
-    pub const BLOCKED: &str = "molis:blocked";
+    pub const BLOCKED: &str = "polis:blocked";
 
     /// Approved requests (temporary allowlist)
-    /// Format: molis:approved:{request_id}
+    /// Format: polis:approved:{request_id}
     /// Value: "approved"
     /// TTL: 300 seconds (5 minutes)
-    pub const APPROVED: &str = "molis:approved";
+    pub const APPROVED: &str = "polis:approved";
 
     /// Auto-approve configuration rules
-    /// Format: molis:config:auto_approve:{pattern}
+    /// Format: polis:config:auto_approve:{pattern}
     /// Value: AutoApproveAction as string
-    pub const AUTO_APPROVE: &str = "molis:config:auto_approve";
+    pub const AUTO_APPROVE: &str = "polis:config:auto_approve";
 
     /// Global security level setting
-    /// Format: molis:config:security_level
+    /// Format: polis:config:security_level
     /// Value: SecurityLevel as string
-    pub const SECURITY_LEVEL: &str = "molis:config:security_level";
+    pub const SECURITY_LEVEL: &str = "polis:config:security_level";
 
     /// Security event log (sorted set)
-    /// Format: molis:log:events
+    /// Format: polis:log:events
     /// Score: Unix timestamp
     /// Value: JSON-serialized SecurityLogEntry
-    pub const EVENT_LOG: &str = "molis:log:events";
+    pub const EVENT_LOG: &str = "polis:log:events";
 
     /// OTT (One-Time Token) mappings created by REQMOD code rewriting
-    /// Format: molis:ott:{ott_code}
+    /// Format: polis:ott:{ott_code}
     /// Value: JSON-serialized OttMapping
     /// TTL: 600 seconds (10 minutes — generous window for user to respond)
-    pub const OTT_MAPPING: &str = "molis:ott";
+    pub const OTT_MAPPING: &str = "polis:ott";
 }
 
 /// TTL constants
@@ -61,7 +61,7 @@ pub mod approval {
     /// Default time-gate duration in seconds.
     /// OTT codes are not valid until this many seconds after REQMOD rewriting.
     /// Prevents self-approval via sendMessage API echo.
-    /// Configurable via MOLIS_APPROVAL_TIME_GATE_SECS environment variable.
+    /// Configurable via polis_APPROVAL_TIME_GATE_SECS environment variable.
     pub const DEFAULT_TIME_GATE_SECS: u64 = 15;
 
     /// OTT code length (must match request_id length for JSON-safe substitution)
@@ -74,7 +74,7 @@ pub mod approval {
     /// RESPMOD only scans responses from these domains for approval codes.
     /// Dot-prefix prevents spoofing: ".slack.com" won't match "evil-slack.com".
     /// The RESPMOD scanner MUST enforce dot-boundary matching (CWE-346).
-    /// Configurable via MOLIS_APPROVAL_DOMAINS environment variable (comma-separated).
+    /// Configurable via polis_APPROVAL_DOMAINS environment variable (comma-separated).
     pub const DEFAULT_APPROVAL_DOMAINS: &[&str] = &[
         ".api.telegram.org",
         ".api.slack.com",
@@ -144,25 +144,25 @@ mod tests {
 
     #[test]
     fn blocked_key_format() {
-        assert_eq!(blocked_key("req-abc12345"), "molis:blocked:req-abc12345");
+        assert_eq!(blocked_key("req-abc12345"), "polis:blocked:req-abc12345");
     }
 
     #[test]
     fn approved_key_format() {
-        assert_eq!(approved_key("req-abc12345"), "molis:approved:req-abc12345");
+        assert_eq!(approved_key("req-abc12345"), "polis:approved:req-abc12345");
     }
 
     #[test]
     fn auto_approve_key_format() {
         assert_eq!(
             auto_approve_key("*.example.com"),
-            "molis:config:auto_approve:*.example.com"
+            "polis:config:auto_approve:*.example.com"
         );
     }
 
     #[test]
     fn ott_key_format() {
-        assert_eq!(ott_key("ott-x7k9m2p4"), "molis:ott:ott-x7k9m2p4");
+        assert_eq!(ott_key("ott-x7k9m2p4"), "polis:ott:ott-x7k9m2p4");
     }
 
     // --- Approval command test (Requirements 4.2–4.4) ---

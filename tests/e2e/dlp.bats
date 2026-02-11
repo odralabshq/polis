@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # DLP Module E2E Tests
-# Tests for credential detection and blocking via srv_molis_dlp
+# Tests for credential detection and blocking via srv_polis_dlp
 #
 # NOTE: g3proxy uses HTTP/2 which causes curl exit code 92 (stream CANCEL)
 # on many requests. Tests check output content, not exit codes.
@@ -23,7 +23,7 @@ setup() {
         docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt \
             --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
             --user mcp-admin --pass "$admin_pass" \
-            SET molis:config:security_level relaxed 2>/dev/null || true
+            SET polis:config:security_level relaxed 2>/dev/null || true
     fi
 }
 
@@ -32,33 +32,33 @@ setup() {
     run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST -d "key=${ANTHROPIC_KEY}" \
         --connect-timeout 15 https://api.anthropic.com/v1/messages
-    # Must NOT contain molis block headers
-    refute_output --partial "x-molis-block"
+    # Must NOT contain polis block headers
+    refute_output --partial "x-polis-block"
 }
 
 @test "e2e-dlp: Anthropic key to google.com is BLOCKED" {
     run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST -d "exfiltrating_key=${ANTHROPIC_KEY}" \
         --connect-timeout 15 https://www.google.com
-    assert_output --partial "x-molis-block: true"
+    assert_output --partial "x-polis-block: true"
     # DLP module returns the pattern name as the reason
-    assert_output --partial "x-molis-reason: anthropic"
-    assert_output --partial "x-molis-pattern: anthropic"
+    assert_output --partial "x-polis-reason: anthropic"
+    assert_output --partial "x-polis-pattern: anthropic"
 }
 
 @test "e2e-dlp: RSA private key to any destination is BLOCKED" {
     run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST -d "data=${RSA_PRIVATE_KEY}" \
         --connect-timeout 15 https://httpbin.org/post
-    assert_output --partial "x-molis-block: true"
-    assert_output --partial "x-molis-pattern: rsa_key"
+    assert_output --partial "x-polis-block: true"
+    assert_output --partial "x-polis-pattern: rsa_key"
 }
 
 @test "e2e-dlp: plain traffic without credentials is ALLOWED" {
     run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST -d "hello=world" \
         --connect-timeout 15 https://httpbin.org/post
-    refute_output --partial "x-molis-block"
+    refute_output --partial "x-polis-block"
 }
 
 @test "e2e-dlp: credential in tail of large body (>1MB) is BLOCKED" {
@@ -69,7 +69,7 @@ setup() {
         -X POST --data-binary @/tmp/large_payload \
         --connect-timeout 15 https://httpbin.org/post
 
-    assert_output --partial "x-molis-block: true"
+    assert_output --partial "x-polis-block: true"
 
     # Cleanup
     docker exec "${WORKSPACE_CONTAINER}" rm -f /tmp/large_payload

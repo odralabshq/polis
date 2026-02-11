@@ -903,13 +903,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "molis-approve-cli"
+name = "polis-approve-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
- "molis-mcp-common",
+ "polis-mcp-common",
  "predicates",
  "redis 0.27.6",
  "serde_json",
@@ -917,7 +917,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "molis-mcp-agent"
+name = "polis-mcp-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -925,7 +925,7 @@ dependencies = [
  "chrono",
  "deadpool-redis",
  "envy",
- "molis-mcp-common",
+ "polis-mcp-common",
  "percent-encoding",
  "rmcp",
  "rustls",
@@ -939,7 +939,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "molis-mcp-common"
+name = "polis-mcp-common"
 version = "0.1.0"
 dependencies = [
  "chrono",

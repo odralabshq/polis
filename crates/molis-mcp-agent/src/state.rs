@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use deadpool_redis::redis::{self, AsyncCommands};
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
-use molis_mcp_common::{
+use polis_mcp_common::{
     blocked_key, approved_key,
     redis_keys::{keys, ttl},
     BlockedRequest, RequestStatus, SecurityLevel, SecurityLogEntry,
@@ -53,9 +53,9 @@ impl AppState {
     ///
     /// # Environment Variables (optional)
     ///
-    /// - `MOLIS_AGENT_VALKEY_CA`          — CA cert path (default: `/etc/valkey/tls/ca.crt`)
-    /// - `MOLIS_AGENT_VALKEY_CLIENT_CERT` — Client cert path (default: `/etc/valkey/tls/client.crt`)
-    /// - `MOLIS_AGENT_VALKEY_CLIENT_KEY`  — Client key path (default: `/etc/valkey/tls/client.key`)
+    /// - `polis_AGENT_VALKEY_CA`          — CA cert path (default: `/etc/valkey/tls/ca.crt`)
+    /// - `polis_AGENT_VALKEY_CLIENT_CERT` — Client cert path (default: `/etc/valkey/tls/client.crt`)
+    /// - `polis_AGENT_VALKEY_CLIENT_KEY`  — Client key path (default: `/etc/valkey/tls/client.key`)
     pub async fn new(
         valkey_url: &str,
         user: &str,
@@ -115,7 +115,7 @@ impl AppState {
     // count_pending_approvals  (Requirement 2.7)
     // ---------------------------------------------------------------
 
-    /// Count keys matching `molis:blocked:*` using SCAN (never KEYS).
+    /// Count keys matching `polis:blocked:*` using SCAN (never KEYS).
     pub async fn count_pending_approvals(&self) -> Result<usize> {
         self.scan_count(&format!("{}*", keys::BLOCKED)).await
     }
@@ -124,7 +124,7 @@ impl AppState {
     // count_recent_approvals  (Requirement 2.7)
     // ---------------------------------------------------------------
 
-    /// Count keys matching `molis:approved:*` using SCAN (never KEYS).
+    /// Count keys matching `polis:approved:*` using SCAN (never KEYS).
     pub async fn count_recent_approvals(&self) -> Result<usize> {
         self.scan_count(&format!("{}*", keys::APPROVED)).await
     }
@@ -325,9 +325,9 @@ impl AppState {
 
 /// Check if mTLS cert files are available at the configured paths.
 fn is_mtls_configured() -> bool {
-    let cert_path = std::env::var("MOLIS_AGENT_VALKEY_CLIENT_CERT")
+    let cert_path = std::env::var("polis_AGENT_VALKEY_CLIENT_CERT")
         .unwrap_or_else(|_| DEFAULT_VALKEY_CLIENT_CERT_PATH.to_string());
-    let key_path = std::env::var("MOLIS_AGENT_VALKEY_CLIENT_KEY")
+    let key_path = std::env::var("polis_AGENT_VALKEY_CLIENT_KEY")
         .unwrap_or_else(|_| DEFAULT_VALKEY_CLIENT_KEY_PATH.to_string());
     std::path::Path::new(&cert_path).exists()
         && std::path::Path::new(&key_path).exists()
@@ -354,17 +354,17 @@ fn build_client(url_with_auth: &str) -> Result<redis::Client> {
 ///
 /// | Env var                          | Default                          |
 /// |----------------------------------|----------------------------------|
-/// | `MOLIS_AGENT_VALKEY_CA`          | `/etc/valkey/tls/ca.crt`         |
-/// | `MOLIS_AGENT_VALKEY_CLIENT_CERT` | `/etc/valkey/tls/client.crt`     |
-/// | `MOLIS_AGENT_VALKEY_CLIENT_KEY`  | `/etc/valkey/tls/client.key`     |
+/// | `polis_AGENT_VALKEY_CA`          | `/etc/valkey/tls/ca.crt`         |
+/// | `polis_AGENT_VALKEY_CLIENT_CERT` | `/etc/valkey/tls/client.crt`     |
+/// | `polis_AGENT_VALKEY_CLIENT_KEY`  | `/etc/valkey/tls/client.key`     |
 fn build_mtls_client(url_with_auth: &str) -> Result<redis::Client> {
     use deadpool_redis::redis::{ClientTlsConfig, TlsCertificates};
 
-    let ca_path = std::env::var("MOLIS_AGENT_VALKEY_CA")
+    let ca_path = std::env::var("polis_AGENT_VALKEY_CA")
         .unwrap_or_else(|_| DEFAULT_VALKEY_CA_PATH.to_string());
-    let cert_path = std::env::var("MOLIS_AGENT_VALKEY_CLIENT_CERT")
+    let cert_path = std::env::var("polis_AGENT_VALKEY_CLIENT_CERT")
         .unwrap_or_else(|_| DEFAULT_VALKEY_CLIENT_CERT_PATH.to_string());
-    let key_path = std::env::var("MOLIS_AGENT_VALKEY_CLIENT_KEY")
+    let key_path = std::env::var("polis_AGENT_VALKEY_CLIENT_KEY")
         .unwrap_or_else(|_| DEFAULT_VALKEY_CLIENT_KEY_PATH.to_string());
 
     let ca_cert = std::fs::read(&ca_path)
@@ -499,8 +499,8 @@ mod tests {
     #[test]
     fn mtls_configured_returns_false_when_no_certs() {
         // In test env, default paths don't exist.
-        std::env::remove_var("MOLIS_AGENT_VALKEY_CLIENT_CERT");
-        std::env::remove_var("MOLIS_AGENT_VALKEY_CLIENT_KEY");
+        std::env::remove_var("polis_AGENT_VALKEY_CLIENT_CERT");
+        std::env::remove_var("polis_AGENT_VALKEY_CLIENT_KEY");
         assert!(!is_mtls_configured());
     }
 
@@ -515,8 +515,8 @@ mod tests {
     fn build_client_rediss_without_certs_falls_back() {
         // rediss:// but no cert files → should still create a client
         // (server-only TLS, no mTLS).
-        std::env::remove_var("MOLIS_AGENT_VALKEY_CLIENT_CERT");
-        std::env::remove_var("MOLIS_AGENT_VALKEY_CLIENT_KEY");
+        std::env::remove_var("polis_AGENT_VALKEY_CLIENT_CERT");
+        std::env::remove_var("polis_AGENT_VALKEY_CLIENT_KEY");
         let url = "rediss://localhost:6380";
         let client = build_client(url);
         assert!(client.is_ok());

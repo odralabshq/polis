@@ -69,8 +69,8 @@ services:
     volumes:
       - ../config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
       - ../config/squidclamav.conf:/etc/squidclamav.conf:ro
-      - ../config/molis_dlp.conf:/etc/c-icap/molis_dlp.conf:ro
-      - ../config/molis_approval.conf:/etc/c-icap/molis_approval.conf:ro
+      - ../config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
+      - ../config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
       - ../certs/valkey:/etc/valkey/tls:ro
     env_file:
       - ../.env
@@ -268,7 +268,7 @@ services:
         max-file: "5"
         labels: "service"
     labels:
-      service: "molis-valkey"
+      service: "polis-valkey"
     restart: unless-stopped
 
   # =========================================================
@@ -285,10 +285,10 @@ services:
       gateway-bridge: {}
     environment:
       - RUST_LOG=info
-      - MOLIS_AGENT_LISTEN_ADDR=0.0.0.0:8080
-      - MOLIS_AGENT_VALKEY_URL=rediss://valkey:6379
-      - MOLIS_AGENT_VALKEY_USER=mcp-agent
-      - MOLIS_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
+      - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
+      - polis_AGENT_VALKEY_URL=rediss://valkey:6379
+      - polis_AGENT_VALKEY_USER=mcp-agent
+      - polis_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
     volumes:
       - ../certs/valkey:/etc/valkey/tls:ro
     depends_on:
@@ -343,7 +343,7 @@ volumes:
   clamav-db:
     name: polis-clamav-db
   valkey-data:
-    name: molis-valkey-data
+    name: polis-valkey-data
   # Uncomment to persist OpenClaw data across container restarts
   # openclaw-data:
   #   name: polis-openclaw-data

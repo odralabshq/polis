@@ -1,5 +1,5 @@
 /*
- * srv_molis_approval.c - c-ICAP RESPMOD OTT scanner for approval detection
+ * srv_polis_approval.c - c-ICAP RESPMOD OTT scanner for approval detection
  *
  * RESPMOD service that scans inbound HTTP response bodies from
  * allowlisted messaging domains for OTT (One-Time Token) codes.
@@ -42,7 +42,7 @@
 
 /*
  * Static domain allowlist — dot-prefixed for dot-boundary matching.
- * Loaded from MOLIS_APPROVAL_DOMAINS env var or defaults at init.
+ * Loaded from polis_APPROVAL_DOMAINS env var or defaults at init.
  * Dot-prefix ensures ".slack.com" matches "api.slack.com" but NOT
  * "evil-slack.com" (CWE-346 prevention).
  */
@@ -95,11 +95,11 @@ static int ensure_valkey_connected(void);
 /*
  * Service module definition - exported to c-ICAP.
  * Registers the approval scanner as a RESPMOD service
- * named "molis_approval".
+ * named "polis_approval".
  */
 CI_DECLARE_MOD_DATA ci_service_module_t service = {
-    "molis_approval",                            /* mod_name */
-    "Molis approval OTT scanner (RESPMOD)",      /* mod_short_descr */
+    "polis_approval",                            /* mod_name */
+    "polis approval OTT scanner (RESPMOD)",      /* mod_short_descr */
     ICAP_RESPMOD,                                /* mod_type */
     approval_init_service,                       /* mod_init_service */
     NULL,                                        /* mod_post_init_service */
@@ -217,7 +217,7 @@ static int is_allowed_domain(const char *host)
  *
  * Performs three initialization steps:
  *   1. Compile OTT regex pattern: ott-[a-zA-Z0-9]{8}
- *   2. Load domain allowlist from MOLIS_APPROVAL_DOMAINS env var
+ *   2. Load domain allowlist from polis_APPROVAL_DOMAINS env var
  *      or fall back to DEFAULT_DOMAINS (dot-prefixed)
  *   3. Connect to Valkey with TLS + ACL as governance-respmod
  *
@@ -229,7 +229,7 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
 {
     int rc;
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
                        "Initializing service\n");
 
     /* ---------------------------------------------------------- */
@@ -242,20 +242,20 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
     if (rc != 0) {
         char errbuf[128];
         regerror(rc, &ott_pattern, errbuf, sizeof(errbuf));
-        ci_debug_printf(0, "molis_approval: CRITICAL: "
+        ci_debug_printf(0, "polis_approval: CRITICAL: "
             "Failed to compile OTT regex: %s\n", errbuf);
         return CI_ERROR;
     }
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
                        "OTT regex compiled\n");
 
     /* ---------------------------------------------------------- */
     /* Step 2: Load domain allowlist (Requirements 2.4, 2.5)      */
-    /*         Source: MOLIS_APPROVAL_DOMAINS env var              */
+    /*         Source: polis_APPROVAL_DOMAINS env var              */
     /*         Fallback: DEFAULT_DOMAINS[] (dot-prefixed)          */
     /* ---------------------------------------------------------- */
     {
-        const char *env_domains = getenv("MOLIS_APPROVAL_DOMAINS");
+        const char *env_domains = getenv("polis_APPROVAL_DOMAINS");
 
         domain_count = 0;
 
@@ -289,7 +289,7 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
                     snprintf(allowed_domains[domain_count],
                              sizeof(allowed_domains[0]),
                              "%s", token);
-                    ci_debug_printf(3, "molis_approval: "
+                    ci_debug_printf(3, "polis_approval: "
                         "Loaded domain [%d]: %s (from env)\n",
                         domain_count,
                         allowed_domains[domain_count]);
@@ -299,9 +299,9 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
                 token = strtok_r(NULL, ",", &saveptr);
             }
 
-            ci_debug_printf(3, "molis_approval: "
+            ci_debug_printf(3, "polis_approval: "
                 "Loaded %d domain(s) from "
-                "MOLIS_APPROVAL_DOMAINS env\n", domain_count);
+                "polis_APPROVAL_DOMAINS env\n", domain_count);
         } else {
             /*
              * No env var set — use default dot-prefixed domains.
@@ -314,14 +314,14 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
                 snprintf(allowed_domains[domain_count],
                          sizeof(allowed_domains[0]),
                          "%s", DEFAULT_DOMAINS[i]);
-                ci_debug_printf(3, "molis_approval: "
+                ci_debug_printf(3, "polis_approval: "
                     "Loaded domain [%d]: %s (default)\n",
                     domain_count,
                     allowed_domains[domain_count]);
                 domain_count++;
             }
 
-            ci_debug_printf(3, "molis_approval: "
+            ci_debug_printf(3, "polis_approval: "
                 "Loaded %d default domain(s)\n", domain_count);
         }
     }
@@ -362,7 +362,7 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
             NULL,  /* server_name — use default */
             &ssl_err);
         if (ssl_ctx == NULL) {
-            ci_debug_printf(1, "molis_approval: WARNING: "
+            ci_debug_printf(1, "polis_approval: WARNING: "
                 "Failed to create TLS context: %s — "
                 "Valkey connection unavailable\n",
                 redisSSLContextGetError(ssl_err));
@@ -372,7 +372,7 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
         /* Establish TCP connection to Valkey */
         valkey_ctx = redisConnect(vk_host, vk_port);
         if (valkey_ctx == NULL || valkey_ctx->err) {
-            ci_debug_printf(1, "molis_approval: WARNING: "
+            ci_debug_printf(1, "polis_approval: WARNING: "
                 "Cannot connect to Valkey at %s:%d%s%s — "
                 "Valkey connection unavailable\n",
                 vk_host, vk_port,
@@ -389,7 +389,7 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
         /* Initiate TLS handshake on the connection */
         if (redisInitiateSSLWithContext(valkey_ctx,
                                         ssl_ctx) != REDIS_OK) {
-            ci_debug_printf(1, "molis_approval: WARNING: "
+            ci_debug_printf(1, "polis_approval: WARNING: "
                 "TLS handshake failed with Valkey: %s — "
                 "Valkey connection unavailable\n",
                 valkey_ctx->errstr);
@@ -404,7 +404,7 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
             reply = redisCommand(valkey_ctx,
                 "AUTH governance-respmod %s", vk_pass);
             if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-                ci_debug_printf(1, "molis_approval: WARNING: "
+                ci_debug_printf(1, "polis_approval: WARNING: "
                     "Valkey ACL auth failed%s%s — "
                     "Valkey connection unavailable\n",
                     reply ? ": " : "",
@@ -416,15 +416,15 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
                 goto valkey_done;
             }
             freeReplyObject(reply);
-            ci_debug_printf(3, "molis_approval: "
+            ci_debug_printf(3, "polis_approval: "
                 "Authenticated as governance-respmod\n");
         } else {
-            ci_debug_printf(1, "molis_approval: WARNING: "
+            ci_debug_printf(1, "polis_approval: WARNING: "
                 "VALKEY_RESPMOD_PASS not set — "
                 "ACL authentication skipped\n");
         }
 
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Connected to Valkey at %s:%d (TLS + ACL)\n",
             vk_host, vk_port);
 
@@ -438,7 +438,7 @@ valkey_done:
     ci_service_set_preview(srv_xdata, 8192);
     ci_service_enable_204(srv_xdata);
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
         "Initialization complete (domains=%d, valkey=%s)\n",
         domain_count,
         valkey_ctx ? "connected" : "unavailable");
@@ -468,11 +468,11 @@ static int ensure_valkey_connected(void)
     if (reply) freeReplyObject(reply);
 
     /* Connection is dead — attempt reconnect */
-    ci_debug_printf(1, "molis_approval: "
+    ci_debug_printf(1, "polis_approval: "
         "Valkey connection lost — attempting reconnect\n");
 
     if (redisReconnect(valkey_ctx) != REDIS_OK) {
-        ci_debug_printf(1, "molis_approval: WARNING: "
+        ci_debug_printf(1, "polis_approval: WARNING: "
             "Valkey reconnect failed: %s\n",
             valkey_ctx->errstr);
         redisFree(valkey_ctx);
@@ -488,7 +488,7 @@ static int ensure_valkey_connected(void)
                 "AUTH governance-respmod %s", vk_pass);
             if (reply == NULL ||
                 reply->type == REDIS_REPLY_ERROR) {
-                ci_debug_printf(1, "molis_approval: WARNING: "
+                ci_debug_printf(1, "polis_approval: WARNING: "
                     "Valkey re-auth failed after reconnect\n");
                 if (reply) freeReplyObject(reply);
                 redisFree(valkey_ctx);
@@ -499,7 +499,7 @@ static int ensure_valkey_connected(void)
         }
     }
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
         "Valkey reconnected successfully\n");
     return 1;
 }
@@ -513,7 +513,7 @@ static int ensure_valkey_connected(void)
  * process_ott_approval() — Resolve OTT to request_id and write approval.
  *
  * Performs the full approval flow:
- *   1. GET molis:ott:{ott} → parse JSON mapping
+ *   1. GET polis:ott:{ott} → parse JSON mapping
  *   2. Check time-gate: now >= armed_after (Req 2.7)
  *   3. Check context binding: resp_host == origin_host (Req 2.8)
  *   4. Check blocked request exists
@@ -544,13 +544,13 @@ static int process_ott_approval(const char *ott_code,
     time_t now;
 
     if (ott_code == NULL || resp_host == NULL) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "process_ott_approval: NULL parameter\n");
         return -1;
     }
 
     if (valkey_ctx == NULL) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "process_ott_approval: Valkey unavailable — "
             "cannot process OTT '%s'\n", ott_code);
         return -1;
@@ -558,21 +558,21 @@ static int process_ott_approval(const char *ott_code,
 
     /* Lazy reconnect if connection was lost (Finding 5 fix) */
     if (!ensure_valkey_connected()) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "process_ott_approval: Valkey reconnect failed — "
             "cannot process OTT '%s'\n", ott_code);
         return -1;
     }
 
     /* ---------------------------------------------------------- */
-    /* Step 1: GET molis:ott:{ott} → parse JSON mapping           */
+    /* Step 1: GET polis:ott:{ott} → parse JSON mapping           */
     /* ---------------------------------------------------------- */
     snprintf(ott_key, sizeof(ott_key),
-             "molis:ott:%s", ott_code);
+             "polis:ott:%s", ott_code);
 
     reply = redisCommand(valkey_ctx, "GET %s", ott_key);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "Valkey GET failed for OTT '%s'%s%s\n",
             ott_code,
             reply ? ": " : "",
@@ -582,7 +582,7 @@ static int process_ott_approval(const char *ott_code,
     }
 
     if (reply->type == REDIS_REPLY_NIL || reply->str == NULL) {
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "OTT '%s' not found in Valkey — "
             "expired or invalid\n", ott_code);
         freeReplyObject(reply);
@@ -595,7 +595,7 @@ static int process_ott_approval(const char *ott_code,
     reply = NULL;
 
     if (ott_json == NULL) {
-        ci_debug_printf(0, "molis_approval: CRITICAL: "
+        ci_debug_printf(0, "polis_approval: CRITICAL: "
             "strdup failed for OTT JSON\n");
         return -1;
     }
@@ -615,7 +615,7 @@ static int process_ott_approval(const char *ott_code,
         /* Extract request_id */
         p = strstr(ott_json, "\"request_id\":\"");
         if (p == NULL) {
-            ci_debug_printf(1, "molis_approval: "
+            ci_debug_printf(1, "polis_approval: "
                 "Malformed OTT JSON — missing request_id "
                 "for OTT '%s'\n", ott_code);
             free(ott_json);
@@ -625,7 +625,7 @@ static int process_ott_approval(const char *ott_code,
         end = strchr(p, '"');
         if (end == NULL || (size_t)(end - p) >=
                 sizeof(parsed_request_id)) {
-            ci_debug_printf(1, "molis_approval: "
+            ci_debug_printf(1, "polis_approval: "
                 "Malformed request_id in OTT JSON "
                 "for OTT '%s'\n", ott_code);
             free(ott_json);
@@ -638,7 +638,7 @@ static int process_ott_approval(const char *ott_code,
         /* Extract armed_after (integer) */
         p = strstr(ott_json, "\"armed_after\":");
         if (p == NULL) {
-            ci_debug_printf(1, "molis_approval: "
+            ci_debug_printf(1, "polis_approval: "
                 "Malformed OTT JSON — missing armed_after "
                 "for OTT '%s'\n", ott_code);
             free(ott_json);
@@ -650,7 +650,7 @@ static int process_ott_approval(const char *ott_code,
         /* Extract origin_host */
         p = strstr(ott_json, "\"origin_host\":\"");
         if (p == NULL) {
-            ci_debug_printf(1, "molis_approval: "
+            ci_debug_printf(1, "polis_approval: "
                 "Malformed OTT JSON — missing origin_host "
                 "for OTT '%s'\n", ott_code);
             free(ott_json);
@@ -660,7 +660,7 @@ static int process_ott_approval(const char *ott_code,
         end = strchr(p, '"');
         if (end == NULL || (size_t)(end - p) >=
                 sizeof(parsed_origin_host)) {
-            ci_debug_printf(1, "molis_approval: "
+            ci_debug_printf(1, "polis_approval: "
                 "Malformed origin_host in OTT JSON "
                 "for OTT '%s'\n", ott_code);
             free(ott_json);
@@ -675,7 +675,7 @@ static int process_ott_approval(const char *ott_code,
     free(ott_json);
     ott_json = NULL;
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
         "OTT '%s' → request_id='%s', origin_host='%s', "
         "armed_after=%ld\n",
         ott_code, parsed_request_id,
@@ -688,7 +688,7 @@ static int process_ott_approval(const char *ott_code,
     /* ---------------------------------------------------------- */
     now = time(NULL);
     if ((long)now < parsed_armed_after) {
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "OTT '%s' time-gate not elapsed — "
             "now=%ld < armed_after=%ld — "
             "ignoring (echo protection)\n",
@@ -702,7 +702,7 @@ static int process_ott_approval(const char *ott_code,
     /* Prevents cross-channel OTT replay attacks.                 */
     /* ---------------------------------------------------------- */
     if (strcasecmp(resp_host, parsed_origin_host) != 0) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "OTT '%s' context binding FAILED — "
             "resp_host='%s' != origin_host='%s' — "
             "rejecting (cross-channel replay prevention)\n",
@@ -710,7 +710,7 @@ static int process_ott_approval(const char *ott_code,
         return 0;
     }
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
         "OTT '%s' passed time-gate and context binding\n",
         ott_code);
 
@@ -718,12 +718,12 @@ static int process_ott_approval(const char *ott_code,
     /* Step 4: Check blocked request exists                       */
     /* ---------------------------------------------------------- */
     snprintf(blocked_key, sizeof(blocked_key),
-             "molis:blocked:%s", parsed_request_id);
+             "polis:blocked:%s", parsed_request_id);
 
     reply = redisCommand(valkey_ctx,
                          "EXISTS %s", blocked_key);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "Valkey EXISTS failed for '%s'%s%s\n",
             blocked_key,
             reply ? ": " : "",
@@ -733,7 +733,7 @@ static int process_ott_approval(const char *ott_code,
     }
 
     if (reply->integer == 0) {
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Blocked request '%s' not found — "
             "OTT '%s' stale or already processed\n",
             parsed_request_id, ott_code);
@@ -749,7 +749,7 @@ static int process_ott_approval(const char *ott_code,
     /* ---------------------------------------------------------- */
     reply = redisCommand(valkey_ctx, "GET %s", blocked_key);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "Valkey GET failed for '%s'%s%s\n",
             blocked_key,
             reply ? ": " : "",
@@ -765,25 +765,25 @@ static int process_ott_approval(const char *ott_code,
     reply = NULL;
 
     if (blocked_data == NULL) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "Blocked data for '%s' is empty or "
             "strdup failed — proceeding without "
             "audit data\n", parsed_request_id);
         /* Non-fatal: proceed with approval but log warning */
         blocked_data = strdup("{}");
         if (blocked_data == NULL) {
-            ci_debug_printf(0, "molis_approval: CRITICAL: "
+            ci_debug_printf(0, "polis_approval: CRITICAL: "
                 "strdup failed for fallback blocked_data\n");
             return -1;
         }
     }
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
         "Preserved blocked data for '%s' "
         "(audit trail)\n", parsed_request_id);
 
     snprintf(approved_key, sizeof(approved_key),
-             "molis:approved:%s", parsed_request_id);
+             "polis:approved:%s", parsed_request_id);
 
     /* ---------------------------------------------------------- */
     /* Step 6: ZADD audit log BEFORE destructive ops (Req 2.9)    */
@@ -806,7 +806,7 @@ static int process_ott_approval(const char *ott_code,
             bd_fmt = "\"blocked_request\":%s}";
         } else {
             bd_fmt = "\"blocked_request\":\"%s\"}";
-            ci_debug_printf(1, "molis_approval: WARNING: "
+            ci_debug_printf(1, "polis_approval: WARNING: "
                 "blocked_data is not JSON object — "
                 "embedding as string\n");
         }
@@ -818,7 +818,7 @@ static int process_ott_approval(const char *ott_code,
         log_size = 512 + strlen(blocked_data);
         log_entry = malloc(log_size);
         if (log_entry == NULL) {
-            ci_debug_printf(0, "molis_approval: CRITICAL: "
+            ci_debug_printf(0, "polis_approval: CRITICAL: "
                 "malloc failed for audit log entry\n");
             free(blocked_data);
             return -1;
@@ -845,12 +845,12 @@ static int process_ott_approval(const char *ott_code,
         }
 
         reply = redisCommand(valkey_ctx,
-            "ZADD molis:log:events %f %s",
+            "ZADD polis:log:events %f %s",
             now_score, log_entry);
 
         if (reply == NULL ||
             reply->type == REDIS_REPLY_ERROR) {
-            ci_debug_printf(1, "molis_approval: WARNING: "
+            ci_debug_printf(1, "polis_approval: WARNING: "
                 "Failed to write audit log%s%s — "
                 "aborting approval to preserve data "
                 "integrity\n",
@@ -861,7 +861,7 @@ static int process_ott_approval(const char *ott_code,
             free(blocked_data);
             return -1;
         }
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Audit log written for '%s'\n",
             parsed_request_id);
         if (reply) freeReplyObject(reply);
@@ -884,7 +884,7 @@ static int process_ott_approval(const char *ott_code,
     reply = redisCommand(valkey_ctx,
                          "DEL %s", blocked_key);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "Valkey DEL failed for '%s'%s%s\n",
             blocked_key,
             reply ? ": " : "",
@@ -900,7 +900,7 @@ static int process_ott_approval(const char *ott_code,
         "SETEX %s %d approved",
         approved_key, APPROVAL_TTL_SECS);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "Valkey SETEX failed for '%s'%s%s\n",
             approved_key,
             reply ? ": " : "",
@@ -911,7 +911,7 @@ static int process_ott_approval(const char *ott_code,
     freeReplyObject(reply);
     reply = NULL;
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
         "Approved '%s' — SETEX with %ds TTL\n",
         parsed_request_id, APPROVAL_TTL_SECS);
 
@@ -922,19 +922,19 @@ static int process_ott_approval(const char *ott_code,
     /* ---------------------------------------------------------- */
     reply = redisCommand(valkey_ctx, "DEL %s", ott_key);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-        ci_debug_printf(1, "molis_approval: WARNING: "
+        ci_debug_printf(1, "polis_approval: WARNING: "
             "Failed to DEL OTT key '%s'%s%s — "
             "approval still valid, OTT will expire\n",
             ott_key,
             reply ? ": " : "",
             reply ? reply->str : "");
     } else {
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Deleted OTT key '%s'\n", ott_key);
     }
     if (reply) freeReplyObject(reply);
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
         "OTT '%s' → request_id '%s' approved "
         "via proxy (origin: %s)\n",
         ott_code, parsed_request_id,
@@ -983,7 +983,7 @@ int approval_process(ci_request_t *req)
     /* ---------------------------------------------------------- */
     data = ci_service_data(req);
     if (data == NULL) {
-        ci_debug_printf(1, "molis_approval: "
+        ci_debug_printf(1, "polis_approval: "
             "approval_process: no request data\n");
         return CI_MOD_ALLOW204;
     }
@@ -993,20 +993,20 @@ int approval_process(ci_request_t *req)
     /* Non-allowlisted domains are ignored entirely (Req 2.2)     */
     /* ---------------------------------------------------------- */
     if (data->host[0] == '\0') {
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "approval_process: no Host header — "
             "skipping scan\n");
         return CI_MOD_ALLOW204;
     }
 
     if (!is_allowed_domain(data->host)) {
-        ci_debug_printf(5, "molis_approval: "
+        ci_debug_printf(5, "polis_approval: "
             "Host '%s' not in domain allowlist — "
             "skipping scan\n", data->host);
         return CI_MOD_ALLOW204;
     }
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
         "Host '%s' is allowlisted — "
         "scanning body for OTT\n", data->host);
 
@@ -1016,7 +1016,7 @@ int approval_process(ci_request_t *req)
     /* to prevent resource exhaustion.                            */
     /* ---------------------------------------------------------- */
     if (data->body == NULL) {
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "approval_process: no body accumulated — "
             "skipping scan\n");
         return CI_MOD_ALLOW204;
@@ -1026,14 +1026,14 @@ int approval_process(ci_request_t *req)
     body_len = (size_t)ci_membuf_size(data->body);
 
     if (body_ptr == NULL || body_len == 0) {
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "approval_process: empty body — "
             "skipping scan\n");
         return CI_MOD_ALLOW204;
     }
 
     if (body_len > MAX_BODY_SCAN) {
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Body size %zu exceeds MAX_BODY_SCAN (%d) — "
             "skipping scan (CWE-400)\n",
             body_len, MAX_BODY_SCAN);
@@ -1063,7 +1063,7 @@ int approval_process(ci_request_t *req)
 
         decompressed = malloc(try_len);
         if (decompressed == NULL) {
-            ci_debug_printf(0, "molis_approval: CRITICAL: "
+            ci_debug_printf(0, "polis_approval: CRITICAL: "
                 "malloc failed for gzip decompression "
                 "buffer (%lu bytes)\n",
                 (unsigned long)try_len);
@@ -1084,14 +1084,14 @@ int approval_process(ci_request_t *req)
             if (retry_len > MAX_BODY_SCAN)
                 retry_len = MAX_BODY_SCAN;
 
-            ci_debug_printf(3, "molis_approval: "
+            ci_debug_printf(3, "polis_approval: "
                 "Decompression buffer too small (%lu), "
                 "retrying with %lu bytes\n",
                 try_len, retry_len);
 
             retry_buf = realloc(decompressed, retry_len);
             if (retry_buf == NULL) {
-                ci_debug_printf(0, "molis_approval: CRITICAL: "
+                ci_debug_printf(0, "polis_approval: CRITICAL: "
                     "realloc failed for decompression "
                     "retry (%lu bytes)\n", retry_len);
                 free(decompressed);
@@ -1106,14 +1106,14 @@ int approval_process(ci_request_t *req)
         }
 
         if (zrc != Z_OK) {
-            ci_debug_printf(1, "molis_approval: "
+            ci_debug_printf(1, "polis_approval: "
                 "gzip decompression failed (zlib rc=%d) — "
                 "skipping scan\n", zrc);
             free(decompressed);
             return CI_MOD_ALLOW204;
         }
 
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Decompressed gzip body: %zu → %lu bytes\n",
             body_len, decomp_len);
 
@@ -1161,7 +1161,7 @@ int approval_process(ci_request_t *req)
                OTT_LEN);
         ott_code[OTT_LEN] = '\0';
 
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Found OTT '%s' in body at offset %zu\n",
             ott_code,
             search_offset + (size_t)match.rm_so);
@@ -1186,11 +1186,11 @@ int approval_process(ci_request_t *req)
             memset(scan_buf + abs_offset, '*', OTT_LEN);
             body_modified = 1;
 
-            ci_debug_printf(3, "molis_approval: "
+            ci_debug_printf(3, "polis_approval: "
                 "Stripped OTT '%s' from body "
                 "(replaced with asterisks)\n", ott_code);
         } else if (approval_rc < 0) {
-            ci_debug_printf(1, "molis_approval: "
+            ci_debug_printf(1, "polis_approval: "
                 "Error processing OTT '%s' — "
                 "continuing scan\n", ott_code);
         }
@@ -1215,7 +1215,7 @@ int approval_process(ci_request_t *req)
         recomp_len = compressBound(decomp_len);
         recompressed = malloc(recomp_len);
         if (recompressed == NULL) {
-            ci_debug_printf(0, "molis_approval: CRITICAL: "
+            ci_debug_printf(0, "polis_approval: CRITICAL: "
                 "malloc failed for gzip recompression "
                 "buffer (%lu bytes)\n",
                 (unsigned long)recomp_len);
@@ -1226,7 +1226,7 @@ int approval_process(ci_request_t *req)
         zrc = compress(recompressed, &recomp_len,
                        decompressed, decomp_len);
         if (zrc != Z_OK) {
-            ci_debug_printf(1, "molis_approval: "
+            ci_debug_printf(1, "polis_approval: "
                 "gzip recompression failed (zlib rc=%d) — "
                 "passing through unmodified\n", zrc);
             free(recompressed);
@@ -1234,7 +1234,7 @@ int approval_process(ci_request_t *req)
             return CI_MOD_ALLOW204;
         }
 
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Recompressed body: %lu → %lu bytes\n",
             decomp_len, recomp_len);
 
@@ -1260,7 +1260,7 @@ int approval_process(ci_request_t *req)
          * already contains the modified content, so we just
          * signal that the body was changed.
          */
-        ci_debug_printf(3, "molis_approval: "
+        ci_debug_printf(3, "polis_approval: "
             "Body modified in-place "
             "(non-gzip, OTT stripped)\n");
         return CI_MOD_DONE;
@@ -1271,7 +1271,7 @@ int approval_process(ci_request_t *req)
         free(decompressed);
 
     if (!body_modified) {
-        ci_debug_printf(5, "molis_approval: "
+        ci_debug_printf(5, "polis_approval: "
             "No OTT approvals in body from '%s' — "
             "passing through unmodified\n", data->host);
     }
@@ -1301,7 +1301,7 @@ void *approval_init_request_data(ci_request_t *req)
     data = (approval_req_data_t *)malloc(
                sizeof(approval_req_data_t));
     if (!data) {
-        ci_debug_printf(1, "molis_approval: ERROR: "
+        ci_debug_printf(1, "polis_approval: ERROR: "
                            "Failed to allocate request data\n");
         return NULL;
     }
@@ -1323,11 +1323,11 @@ void *approval_init_request_data(ci_request_t *req)
         strncpy(data->host, host_hdr,
                 sizeof(data->host) - 1);
         data->host[sizeof(data->host) - 1] = '\0';
-        ci_debug_printf(5, "molis_approval: "
+        ci_debug_printf(5, "polis_approval: "
                            "Response from host: %s\n",
                         data->host);
     } else {
-        ci_debug_printf(5, "molis_approval: "
+        ci_debug_printf(5, "polis_approval: "
                            "No Host header in response\n");
     }
 
@@ -1341,7 +1341,7 @@ void *approval_init_request_data(ci_request_t *req)
     if (encoding_hdr &&
         (strstr(encoding_hdr, "gzip") != NULL)) {
         data->is_gzip = 1;
-        ci_debug_printf(5, "molis_approval: "
+        ci_debug_printf(5, "polis_approval: "
                            "Response is gzip-encoded\n");
     }
 
@@ -1387,7 +1387,7 @@ int approval_check_preview(char *preview_data, int preview_data_len,
                     preview_data_len, 0);
     data->total_body_len += preview_data_len;
 
-    ci_debug_printf(5, "molis_approval: "
+    ci_debug_printf(5, "polis_approval: "
                        "Preview received %d bytes, "
                        "total so far: %zu\n",
                    preview_data_len, data->total_body_len);
@@ -1451,7 +1451,7 @@ int approval_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
  */
 void approval_close_service(void)
 {
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
                        "Closing service\n");
 
     /* Free the compiled OTT regex pattern */
@@ -1463,6 +1463,6 @@ void approval_close_service(void)
         valkey_ctx = NULL;
     }
 
-    ci_debug_printf(3, "molis_approval: "
+    ci_debug_printf(3, "polis_approval: "
                        "Service closed, resources freed\n");
 }

@@ -144,7 +144,7 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
     }
   },
   "mcpServers": {
-    "molis-security": {
+    "polis-security": {
       "url": "http://mcp-agent:8080/mcp"
     }
   }

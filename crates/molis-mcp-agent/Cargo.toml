@@ -1,10 +1,10 @@
 [package]
-name = "molis-mcp-agent"
+name = "polis-mcp-agent"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-molis-mcp-common = { path = "../molis-mcp-common" }
+polis-mcp-common = { path = "../polis-mcp-common" }
 rmcp = { version = "0.14", features = ["server", "macros", "transport-streamable-http-server"] }
 schemars = "1.0"
 tokio = { version = "1.0", features = ["full"] }

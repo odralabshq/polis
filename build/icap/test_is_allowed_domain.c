@@ -16,13 +16,13 @@
 #include <strings.h>   /* strcasecmp */
 #include <stdlib.h>
 
-/* Replicate the static data structures from srv_molis_approval.c */
+/* Replicate the static data structures from srv_polis_approval.c */
 #define MAX_DOMAINS 16
 
 static char allowed_domains[MAX_DOMAINS][256];
 static int  domain_count = 0;
 
-/* ---------- Function under test (copied from srv_molis_approval.c) ---------- */
+/* ---------- Function under test (copied from srv_polis_approval.c) ---------- */
 
 static int is_allowed_domain(const char *host)
 {

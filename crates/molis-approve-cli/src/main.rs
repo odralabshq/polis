@@ -1,15 +1,15 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use molis_mcp_common::{AutoApproveAction, SecurityLevel};
+use polis_mcp_common::{AutoApproveAction, SecurityLevel};
 use redis::AsyncCommands;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Molis HITL approval CLI tool.
+/// polis HITL approval CLI tool.
 ///
 /// Manages blocked-request approvals, security levels, and auto-approve
 /// rules via a TLS-secured Valkey connection authenticated as `mcp-admin`.
 #[derive(Parser, Debug)]
-#[command(name = "molis-approve", version, about)]
+#[command(name = "polis-approve", version, about)]
 struct Cli {
     /// Valkey URL (must use rediss:// for TLS)
     #[arg(long, default_value = "rediss://valkey:6379")]
@@ -19,7 +19,7 @@ struct Cli {
     #[arg(long, default_value = "mcp-admin")]
     valkey_user: String,
 
-    /// Valkey ACL password — loaded from MOLIS_VALKEY_PASS env var (CWE-214).
+    /// Valkey ACL password — loaded from polis_VALKEY_PASS env var (CWE-214).
     /// Never passed as a CLI argument.
     #[arg(skip)]
     valkey_pass: String,
@@ -89,8 +89,8 @@ async fn main() -> Result<()> {
 
     // Load Valkey password from environment variable only (CWE-214).
     // The password MUST NOT be accepted as a CLI argument.
-    cli.valkey_pass = std::env::var("MOLIS_VALKEY_PASS")
-        .context("MOLIS_VALKEY_PASS env var is required")?;
+    cli.valkey_pass = std::env::var("polis_VALKEY_PASS")
+        .context("polis_VALKEY_PASS env var is required")?;
 
     // Build the Valkey connection URL with ACL credentials.
     // Uses rediss:// (TLS) per requirement 5.6.
@@ -110,11 +110,11 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Approve { ref request_id } => {
-            molis_mcp_common::validate_request_id(request_id)
+            polis_mcp_common::validate_request_id(request_id)
                 .map_err(|e| anyhow::anyhow!(e))?;
 
-            let blocked_key = molis_mcp_common::blocked_key(request_id);
-            let approved_key = molis_mcp_common::approved_key(request_id);
+            let blocked_key = polis_mcp_common::blocked_key(request_id);
+            let approved_key = polis_mcp_common::approved_key(request_id);
 
             // Check blocked request exists and GET data for audit preservation (Req 5.4)
             let blocked_data: Option<String> = con
@@ -147,7 +147,7 @@ async fn main() -> Result<()> {
 
             let _: () = con
                 .zadd(
-                    molis_mcp_common::keys::EVENT_LOG,
+                    polis_mcp_common::keys::EVENT_LOG,
                     audit_entry.to_string(),
                     now as f64,
                 )
@@ -162,7 +162,7 @@ async fn main() -> Result<()> {
                 .set_ex(
                     &approved_key,
                     "approved",
-                    molis_mcp_common::ttl::APPROVED_REQUEST_SECS,
+                    polis_mcp_common::ttl::APPROVED_REQUEST_SECS,
                 )
                 .query_async::<Vec<redis::Value>>(&mut con)
                 .await
@@ -172,10 +172,10 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Deny { ref request_id } => {
-            molis_mcp_common::validate_request_id(request_id)
+            polis_mcp_common::validate_request_id(request_id)
                 .map_err(|e| anyhow::anyhow!(e))?;
 
-            let blocked_key = molis_mcp_common::blocked_key(request_id);
+            let blocked_key = polis_mcp_common::blocked_key(request_id);
 
             // Check blocked request exists and GET data for audit preservation (Req 5.4)
             let blocked_data: Option<String> = con
@@ -206,7 +206,7 @@ async fn main() -> Result<()> {
 
             let _: () = con
                 .zadd(
-                    molis_mcp_common::keys::EVENT_LOG,
+                    polis_mcp_common::keys::EVENT_LOG,
                     audit_entry.to_string(),
                     now as f64,
                 )
@@ -223,8 +223,8 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::ListPending => {
-            // SCAN for molis:blocked:* keys using cursor-based iteration.
-            let match_pattern = format!("{}:*", molis_mcp_common::keys::BLOCKED);
+            // SCAN for polis:blocked:* keys using cursor-based iteration.
+            let match_pattern = format!("{}:*", polis_mcp_common::keys::BLOCKED);
             let mut cursor: u64 = 0;
             let mut found = 0u64;
 
@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
             let level_str = level.to_lowercase();
             let _: () = con
                 .set(
-                    molis_mcp_common::keys::SECURITY_LEVEL,
+                    polis_mcp_common::keys::SECURITY_LEVEL,
                     &level_str,
                 )
                 .await
@@ -287,9 +287,9 @@ async fn main() -> Result<()> {
             let _action = parse_auto_approve_action(action)?;
 
             // Store the validated, lowercase action string in Valkey
-            // at the key molis:config:auto_approve:{pattern}.
+            // at the key polis:config:auto_approve:{pattern}.
             let action_str = action.to_lowercase();
-            let key = molis_mcp_common::auto_approve_key(pattern);
+            let key = polis_mcp_common::auto_approve_key(pattern);
             let _: () = con
                 .set(&key, &action_str)
                 .await

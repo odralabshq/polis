@@ -13,20 +13,20 @@ All your HTTP requests pass through a transparent proxy with DLP inspection. The
    - `strict` — new domains are blocked outright
 
 When a request is blocked, the proxy returns HTTP 403 with headers:
-- `X-Molis-Block: true`
-- `X-Molis-Reason: <reason>` (e.g., `credential_detected`, `new_domain_blocked`, `new_domain_prompt`)
-- `X-Molis-Pattern: <pattern_name>`
+- `X-polis-Block: true`
+- `X-polis-Reason: <reason>` (e.g., `credential_detected`, `new_domain_blocked`, `new_domain_prompt`)
+- `X-polis-Pattern: <pattern_name>`
 
 ## What To Do When a Request Is Blocked
 
-You have access to the `molis-security` MCP server with these tools:
+You have access to the `polis-security` MCP server with these tools:
 
 ### report_block
-Call this immediately when you receive a 403 with `X-Molis-Block: true`. Provide:
-- `request_id`: from the `X-Molis-Request-Id` header (format: `req-` + 8 hex chars)
-- `reason`: from `X-Molis-Reason` header
+Call this immediately when you receive a 403 with `X-polis-Block: true`. Provide:
+- `request_id`: from the `X-polis-Request-Id` header (format: `req-` + 8 hex chars)
+- `reason`: from `X-polis-Reason` header
 - `destination`: the host you were trying to reach
-- `pattern`: from `X-Molis-Pattern` header (optional)
+- `pattern`: from `X-polis-Pattern` header (optional)
 
 The tool returns an `approval_command` — show this to the user so they can approve the request from the host terminal.
 
@@ -44,7 +44,7 @@ Returns recent security events (blocks, approvals, denials). Useful for debuggin
 
 ## Approval Workflow
 
-1. Your request gets blocked (HTTP 403 + X-Molis headers)
+1. Your request gets blocked (HTTP 403 + X-polis headers)
 2. Call `report_block` with the block details
 3. Tell the user: "My request to [destination] was blocked. To approve it, run: `[approval_command]`"
 4. Wait for the user to approve (they run the command on the host)

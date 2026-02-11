@@ -1,4 +1,4 @@
-//! MCP tool implementations for the Molis agent server.
+//! MCP tool implementations for the polis agent server.
 //!
 //! Exposes exactly 5 read-only tools via the `rmcp` `#[tool]` macro:
 //!   - `report_block`
@@ -22,7 +22,7 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use molis_mcp_common::{
+use polis_mcp_common::{
     redis_keys::approval::approval_command,
     validate_request_id, BlockedRequest, RequestStatus,
     SecurityLogEntry,
@@ -114,28 +114,28 @@ pub struct CheckRequestStatusOutput {
 }
 
 // ===================================================================
-// MolisAgentTools — the MCP server handler
+// polisAgentTools — the MCP server handler
 // ===================================================================
 
 /// MCP server handler exposing 5 read-only tools to the workspace agent.
 ///
 /// Holds a shared reference to [`AppState`] for Valkey operations.
 #[derive(Clone)]
-pub struct MolisAgentTools {
+pub struct polisAgentTools {
     state: Arc<AppState>,
     tool_router: ToolRouter<Self>,
 }
 
-impl std::fmt::Debug for MolisAgentTools {
+impl std::fmt::Debug for polisAgentTools {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MolisAgentTools")
+        f.debug_struct("polisAgentTools")
             .field("state", &"<AppState>")
             .finish()
     }
 }
 
-impl MolisAgentTools {
-    /// Create a new `MolisAgentTools` with the given application state.
+impl polisAgentTools {
+    /// Create a new `polisAgentTools` with the given application state.
     pub fn new(state: Arc<AppState>) -> Self {
         Self {
             state,
@@ -149,7 +149,7 @@ impl MolisAgentTools {
 // -------------------------------------------------------------------
 
 #[tool_router]
-impl MolisAgentTools {
+impl polisAgentTools {
     /// Report a blocked request to the security system.
     ///
     /// Validates the request_id format, stores the blocked request in
@@ -347,11 +347,11 @@ impl MolisAgentTools {
 // -------------------------------------------------------------------
 
 #[tool_handler]
-impl ServerHandler for MolisAgentTools {
+impl ServerHandler for polisAgentTools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Molis MCP Agent — read-only security tools. \
+                "polis MCP Agent — read-only security tools. \
                  Use report_block to report blocked requests, \
                  check_request_status to query approval state."
                     .into(),
@@ -370,10 +370,10 @@ impl ServerHandler for MolisAgentTools {
 /// Accepts snake_case strings matching the serde representation.
 fn parse_block_reason(
     reason: &str,
-) -> Result<molis_mcp_common::BlockReason, String> {
+) -> Result<polis_mcp_common::BlockReason, String> {
     // Try serde deserialization from a JSON string value.
     let json_str = format!("\"{}\"", reason);
-    serde_json::from_str::<molis_mcp_common::BlockReason>(&json_str)
+    serde_json::from_str::<polis_mcp_common::BlockReason>(&json_str)
         .map_err(|_| {
             format!(
                 "Unknown block reason '{}'. Expected one of: \

@@ -347,24 +347,24 @@ setup() {
 @test "security: level relaxed allows new domains" {
     # Use mcp-admin to SET (dlp-reader only has GET)
     local admin_pass=$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/secrets/credentials.env.example" | cut -d'=' -f2)
-    run docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass "$admin_pass" SET molis:config:security_level relaxed
+    run docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass "$admin_pass" SET polis:config:security_level relaxed
     assert_success
     
     # Verify with dlp-reader (read-only)
     local dlp_pass=$(cat "${PROJECT_ROOT}/secrets/valkey_dlp_password.txt")
-    run docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass "$dlp_pass" GET molis:config:security_level
+    run docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass "$dlp_pass" GET polis:config:security_level
     assert_output --partial "relaxed"
 }
 
 @test "security: level strict blocks new domains" {
     # Use mcp-admin to SET (dlp-reader only has GET)
     local admin_pass=$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/secrets/credentials.env.example" | cut -d'=' -f2)
-    run docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass "$admin_pass" SET molis:config:security_level strict
+    run docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass "$admin_pass" SET polis:config:security_level strict
     assert_success
     
     # Verify with dlp-reader (read-only)
     local dlp_pass=$(cat "${PROJECT_ROOT}/secrets/valkey_dlp_password.txt")
-    run docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass "$dlp_pass" GET molis:config:security_level
+    run docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass "$dlp_pass" GET polis:config:security_level
     assert_output --partial "strict"
 }
 

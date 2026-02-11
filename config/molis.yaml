@@ -1,12 +1,12 @@
 ---
 # =============================================================================
-# Molis Security Configuration
+# polis Security Configuration
 # =============================================================================
 # Central configuration for security level, protected paths, and auto-approve
-# rules. Read by the Molis DLP module and workspace initialization scripts.
+# rules. Read by the polis DLP module and workspace initialization scripts.
 #
 # IMPORTANT: Credential detection patterns are NOT defined here.
-# They are managed in molis_dlp.conf (single source of truth).
+# They are managed in polis_dlp.conf (single source of truth).
 # This file only defines the policy rules that reference those patterns.
 # =============================================================================
 
@@ -23,8 +23,8 @@
 # Credentials are always prompted regardless of level.
 # Malware is always blocked regardless of level.
 #
-# The active level is stored in Valkey at molis:config:security_level
-# and can be changed at runtime via: molis-approve set-security-level <level>
+# The active level is stored in Valkey at polis:config:security_level
+# and can be changed at runtime via: polis-approve set-security-level <level>
 
 security_level: balanced
 
@@ -51,9 +51,9 @@ protected_paths:
 # When a credential is detected heading to its expected destination,
 # the request is auto-approved instead of blocked.
 #
-# NOTE: The actual regex patterns are defined in molis_dlp.conf.
+# NOTE: The actual regex patterns are defined in polis_dlp.conf.
 # This section documents the policy intent only — do not duplicate
-# pattern definitions here. See molis_dlp.conf for the authoritative
+# pattern definitions here. See polis_dlp.conf for the authoritative
 # credential detection patterns.
 
 auto_approve:

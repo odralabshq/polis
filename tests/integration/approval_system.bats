@@ -20,17 +20,17 @@ setup() {
 # =============================================================================
 
 @test "approval: REQMOD rewriter module exists" {
-    run docker exec "${ICAP_CONTAINER}" test -f /usr/lib/c_icap/srv_molis_approval_rewrite.so
+    run docker exec "${ICAP_CONTAINER}" test -f /usr/lib/c_icap/srv_polis_approval_rewrite.so
     assert_success
 }
 
 @test "approval: RESPMOD scanner module exists" {
-    run docker exec "${ICAP_CONTAINER}" test -f /usr/lib/c_icap/srv_molis_approval.so
+    run docker exec "${ICAP_CONTAINER}" test -f /usr/lib/c_icap/srv_polis_approval.so
     assert_success
 }
 
 @test "approval: configuration file exists" {
-    run docker exec "${ICAP_CONTAINER}" test -f /etc/c-icap/molis_approval.conf
+    run docker exec "${ICAP_CONTAINER}" test -f /etc/c-icap/polis_approval.conf
     assert_success
 }
 
@@ -41,19 +41,19 @@ setup() {
 @test "approval: c-icap loads approval configuration" {
     # Approval config is loaded by the modules themselves at init time
     # Verify the approval modules are configured in c-icap.conf
-    run docker exec "${ICAP_CONTAINER}" grep "molis_approval" /etc/c-icap/c-icap.conf
+    run docker exec "${ICAP_CONTAINER}" grep "polis_approval" /etc/c-icap/c-icap.conf
     assert_success
 }
 
 @test "approval: REQMOD service is registered" {
-    run docker exec "${ICAP_CONTAINER}" grep "molis_approval_rewrite" /etc/c-icap/c-icap.conf
+    run docker exec "${ICAP_CONTAINER}" grep "polis_approval_rewrite" /etc/c-icap/c-icap.conf
     assert_success
 }
 
 @test "approval: RESPMOD service is registered" {
-    run docker exec "${ICAP_CONTAINER}" grep "molis_approval" /etc/c-icap/c-icap.conf
+    run docker exec "${ICAP_CONTAINER}" grep "polis_approval" /etc/c-icap/c-icap.conf
     assert_success
-    assert_output --partial "srv_molis_approval.so"
+    assert_output --partial "srv_polis_approval.so"
 }
 
 @test "approval: g3proxy configured for REQMOD" {
@@ -100,7 +100,7 @@ setup() {
 # =============================================================================
 
 @test "approval: valkey ACL prevents agent self-approval" {
-    # Verify mcp-agent user cannot write to molis:approved:*
+    # Verify mcp-agent user cannot write to polis:approved:*
     # We use the valkey-cli inside the valkey container (if available) or mcp-agent container
     
     # Try to set an approved key as mcp-agent
@@ -109,7 +109,7 @@ setup() {
     
     run docker exec "${VALKEY_CONTAINER}" grep "user mcp-agent" /run/secrets/valkey_acl
     assert_success
-    assert_output --partial "~molis:approved:*"
+    assert_output --partial "~polis:approved:*"
     assert_output --partial "-@all"
     # Should NOT have +set or +setex for approved keys (only +get +exists)
     # The config says: +get +setex +exists +scan -@all
@@ -117,17 +117,17 @@ setup() {
     # user mcp-agent ... +get +setex +exists +scan
     # Ah, mcp-agent DOES have setex?
     # Reread Design:
-    # "user mcp-agent ~molis:blocked:* ~molis:approved:* +get +setex +exists +scan -@all"
+    # "user mcp-agent ~polis:blocked:* ~polis:approved:* +get +setex +exists +scan -@all"
     # Wait, Property 1 says: "Agent cannot forge approvals... mcp-agent ACL user lacks write access"
     # But +setex IS write access!
     # Let's check the design doc again carefully.
     
     # Design doc "Component 4: Valkey ACL Rules":
-    # user mcp-agent ~molis:blocked:* ~molis:approved:* +get +setex +exists +scan -@all
+    # user mcp-agent ~polis:blocked:* ~polis:approved:* +get +setex +exists +scan -@all
     
     # This looks like a potential security bug in the spec or my understanding.
-    # If mcp-agent has +setex on molis:approved:*, it CAN forge approvals.
-    # UNLESS ~molis:approved:* restricts it? No, ~ is key pattern.
+    # If mcp-agent has +setex on polis:approved:*, it CAN forge approvals.
+    # UNLESS ~polis:approved:* restricts it? No, ~ is key pattern.
     # Ah, maybe I misread the table.
     # Let's check the ACTUAL file `polis/secrets/valkey_users.acl` if available? No, likely in `config/valkey.acl`?
     # The docker-compose uses `../secrets/valkey_users.acl`.

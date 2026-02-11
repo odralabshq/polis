@@ -1,5 +1,5 @@
 /*
- * srv_molis_dlp.c - c-ICAP DLP module for credential detection
+ * srv_polis_dlp.c - c-ICAP DLP module for credential detection
  *
  * REQMOD service that scans outbound HTTP request bodies for credential
  * patterns and blocks exfiltration to unauthorized destinations.
@@ -61,7 +61,7 @@ static dlp_pattern_t patterns[MAX_PATTERNS];
 static int pattern_count = 0;
 
 /*
- * Security level enum — maps to Valkey values at molis:config:security_level.
+ * Security level enum — maps to Valkey values at polis:config:security_level.
  * Controls DLP behavior for new (unknown) domains.
  */
 typedef enum {
@@ -106,7 +106,7 @@ static dlp_pattern_t *find_pattern_by_name(const char *name)
 /*
  * refresh_security_level - Poll Valkey for the current security level.
  *
- * Executes GET molis:config:security_level via hiredis. On success,
+ * Executes GET polis:config:security_level via hiredis. On success,
  * parses the value (handling both "relaxed" and relaxed — with or
  * without JSON quotes) and updates current_level. Unknown values
  * default to LEVEL_BALANCED.
@@ -131,14 +131,14 @@ static void refresh_security_level(void)
         return;
 
     reply = redisCommand(valkey_level_ctx,
-                         "GET molis:config:security_level");
+                         "GET polis:config:security_level");
 
     /* Failure path: keep current level, backoff */
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
         current_poll_interval *= 2;
         if (current_poll_interval > LEVEL_POLL_MAX)
             current_poll_interval = LEVEL_POLL_MAX;
-        ci_debug_printf(1, "molis_dlp: Valkey poll failed, "
+        ci_debug_printf(1, "polis_dlp: Valkey poll failed, "
                            "keeping level %d, next poll in "
                            "%lu requests\n",
                        (int)current_level,
@@ -185,13 +185,13 @@ static void refresh_security_level(void)
         current_level = LEVEL_STRICT;
     } else {
         /* Unknown value — default to balanced */
-        ci_debug_printf(1, "molis_dlp: Unknown security level "
+        ci_debug_printf(1, "polis_dlp: Unknown security level "
                            "'%s', defaulting to balanced\n",
                        val);
         current_level = LEVEL_BALANCED;
     }
 
-    ci_debug_printf(5, "molis_dlp: Security level updated "
+    ci_debug_printf(5, "polis_dlp: Security level updated "
                        "to %d\n", (int)current_level);
 
     freeReplyObject(reply);
@@ -305,7 +305,7 @@ static int apply_security_policy(const char *host, int has_credential)
 /*
  * dlp_valkey_init - Connect to Valkey as dlp-reader with TLS + ACL.
  *
- * Reads MOLIS_VALKEY_HOST env var (default: "valkey"), port 6379.
+ * Reads polis_VALKEY_HOST env var (default: "valkey"), port 6379.
  * Creates TLS context with CA, client cert, client key from
  * /etc/valkey/tls/. Reads password from Docker secret file at
  * /run/secrets/valkey_dlp_password, strips trailing newline,
@@ -331,7 +331,7 @@ static int dlp_valkey_init(void)
     pthread_mutex_lock(&valkey_mutex);
 
     /* Read Valkey host from environment (default: "valkey") */
-    vk_host = getenv("MOLIS_VALKEY_HOST");
+    vk_host = getenv("polis_VALKEY_HOST");
     if (!vk_host) vk_host = "valkey";
 
     /* Initialize OpenSSL for hiredis TLS */
@@ -346,7 +346,7 @@ static int dlp_valkey_init(void)
         NULL,   /* server_name — use default */
         &ssl_err);
     if (ssl_ctx == NULL) {
-        ci_debug_printf(1, "molis_dlp: WARNING: "
+        ci_debug_printf(1, "polis_dlp: WARNING: "
             "Failed to create TLS context: %s — "
             "Valkey connection unavailable\n",
             redisSSLContextGetError(ssl_err));
@@ -358,7 +358,7 @@ static int dlp_valkey_init(void)
     valkey_level_ctx = redisConnect(vk_host, vk_port);
     if (valkey_level_ctx == NULL ||
         valkey_level_ctx->err) {
-        ci_debug_printf(1, "molis_dlp: WARNING: "
+        ci_debug_printf(1, "polis_dlp: WARNING: "
             "Cannot connect to Valkey at %s:%d%s%s — "
             "Valkey connection unavailable\n",
             vk_host, vk_port,
@@ -376,7 +376,7 @@ static int dlp_valkey_init(void)
     /* Initiate TLS handshake on the connection */
     if (redisInitiateSSLWithContext(valkey_level_ctx,
                                     ssl_ctx) != REDIS_OK) {
-        ci_debug_printf(1, "molis_dlp: WARNING: "
+        ci_debug_printf(1, "polis_dlp: WARNING: "
             "TLS handshake failed with Valkey: %s — "
             "Valkey connection unavailable\n",
             valkey_level_ctx->errstr);
@@ -390,7 +390,7 @@ static int dlp_valkey_init(void)
     /* Read dlp-reader password from Docker secret file */
     fp = fopen("/run/secrets/valkey_dlp_password", "r");
     if (!fp) {
-        ci_debug_printf(1, "molis_dlp: WARNING: "
+        ci_debug_printf(1, "polis_dlp: WARNING: "
             "Cannot open /run/secrets/valkey_dlp_password — "
             "ACL authentication unavailable\n");
         redisFree(valkey_level_ctx);
@@ -402,7 +402,7 @@ static int dlp_valkey_init(void)
 
     memset(password, 0, sizeof(password));
     if (fgets(password, sizeof(password), fp) == NULL) {
-        ci_debug_printf(1, "molis_dlp: WARNING: "
+        ci_debug_printf(1, "polis_dlp: WARNING: "
             "Failed to read password from "
             "/run/secrets/valkey_dlp_password\n");
         fclose(fp);
@@ -432,7 +432,7 @@ static int dlp_valkey_init(void)
 
     if (reply == NULL ||
         reply->type == REDIS_REPLY_ERROR) {
-        ci_debug_printf(1, "molis_dlp: CRITICAL: "
+        ci_debug_printf(1, "polis_dlp: CRITICAL: "
             "Valkey ACL auth failed as dlp-reader%s%s — "
             "Valkey connection unavailable\n",
             reply ? ": " : "",
@@ -446,10 +446,10 @@ static int dlp_valkey_init(void)
     }
     freeReplyObject(reply);
 
-    ci_debug_printf(3, "molis_dlp: "
+    ci_debug_printf(3, "polis_dlp: "
         "Authenticated as dlp-reader\n");
 
-    ci_debug_printf(3, "molis_dlp: "
+    ci_debug_printf(3, "polis_dlp: "
         "Connected to Valkey at %s:%d (TLS + ACL)\n",
         vk_host, vk_port);
 
@@ -476,11 +476,11 @@ int dlp_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
 
 /*
  * Service module definition - exported to c-ICAP.
- * Registers the DLP module as a REQMOD service named "molis_dlp".
+ * Registers the DLP module as a REQMOD service named "polis_dlp".
  */
 CI_DECLARE_MOD_DATA ci_service_module_t service = {
-    "molis_dlp",                     /* mod_name */
-    "Molis DLP credential detection service",  /* mod_short_descr */
+    "polis_dlp",                     /* mod_name */
+    "polis DLP credential detection service",  /* mod_short_descr */
     ICAP_REQMOD,                     /* mod_type */
     dlp_init_service,                /* mod_init_service */
     NULL,                            /* mod_post_init_service */
@@ -497,7 +497,7 @@ CI_DECLARE_MOD_DATA ci_service_module_t service = {
 /*
  * dlp_init_service - Initialize the DLP service.
  *
- * Parses /etc/c-icap/molis_dlp.conf to load credential patterns,
+ * Parses /etc/c-icap/polis_dlp.conf to load credential patterns,
  * allow rules, and action directives. Sets preview size and enables
  * 204 responses for the ICAP service.
  *
@@ -518,13 +518,13 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
 
     pattern_count = 0;
 
-    ci_debug_printf(3, "molis_dlp: Initializing service, "
-                       "loading config from /etc/c-icap/molis_dlp.conf\n");
+    ci_debug_printf(3, "polis_dlp: Initializing service, "
+                       "loading config from /etc/c-icap/polis_dlp.conf\n");
 
-    fp = fopen("/etc/c-icap/molis_dlp.conf", "r");
+    fp = fopen("/etc/c-icap/polis_dlp.conf", "r");
     if (!fp) {
-        ci_debug_printf(0, "molis_dlp: CRITICAL: Cannot open config file "
-                           "/etc/c-icap/molis_dlp.conf — refusing to start\n");
+        ci_debug_printf(0, "polis_dlp: CRITICAL: Cannot open config file "
+                           "/etc/c-icap/polis_dlp.conf — refusing to start\n");
         return CI_ERROR;
     }
 
@@ -541,14 +541,14 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
         /* Parse pattern.<name> = <regex> */
         if (sscanf(line, " pattern.%63[^ ] = %255[^\n]", name, value) == 2) {
             if (pattern_count >= MAX_PATTERNS) {
-                ci_debug_printf(1, "molis_dlp: WARNING: Max patterns (%d) "
+                ci_debug_printf(1, "polis_dlp: WARNING: Max patterns (%d) "
                                    "reached, skipping '%s'\n",
                                 MAX_PATTERNS, name);
                 continue;
             }
             if (regcomp(&patterns[pattern_count].regex, value,
                         REG_EXTENDED | REG_NOSUB) != 0) {
-                ci_debug_printf(1, "molis_dlp: ERROR: Failed to compile "
+                ci_debug_printf(1, "polis_dlp: ERROR: Failed to compile "
                                    "regex for pattern '%s'\n", name);
                 continue;
             }
@@ -559,7 +559,7 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
             patterns[pattern_count].allow_domain[0] = '\0';
             patterns[pattern_count].allow_compiled = 0;
             patterns[pattern_count].always_block = 0;
-            ci_debug_printf(3, "molis_dlp: Loaded pattern '%s'\n", name);
+            ci_debug_printf(3, "polis_dlp: Loaded pattern '%s'\n", name);
             pattern_count++;
             continue;
         }
@@ -575,15 +575,15 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
                 if (regcomp(&pat->allow_regex, value,
                             REG_EXTENDED | REG_NOSUB) == 0) {
                     pat->allow_compiled = 1;
-                    ci_debug_printf(3, "molis_dlp: Set allow domain for "
+                    ci_debug_printf(3, "polis_dlp: Set allow domain for "
                                        "'%s': %s\n", name, value);
                 } else {
                     pat->allow_compiled = 0;
-                    ci_debug_printf(1, "molis_dlp: ERROR: Failed to compile "
+                    ci_debug_printf(1, "polis_dlp: ERROR: Failed to compile "
                                        "allow regex for '%s'\n", name);
                 }
             } else {
-                ci_debug_printf(1, "molis_dlp: WARNING: Allow rule for "
+                ci_debug_printf(1, "polis_dlp: WARNING: Allow rule for "
                                    "unknown pattern '%s'\n", name);
             }
             continue;
@@ -594,10 +594,10 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
             pat = find_pattern_by_name(name);
             if (pat && strcmp(value, "block") == 0) {
                 pat->always_block = 1;
-                ci_debug_printf(3, "molis_dlp: Set always_block for "
+                ci_debug_printf(3, "polis_dlp: Set always_block for "
                                    "'%s'\n", name);
             } else if (!pat) {
-                ci_debug_printf(1, "molis_dlp: WARNING: Action for "
+                ci_debug_printf(1, "polis_dlp: WARNING: Action for "
                                    "unknown pattern '%s'\n", name);
             }
             continue;
@@ -606,20 +606,20 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
 
     fclose(fp);
 
-    ci_debug_printf(3, "molis_dlp: Initialization complete, "
+    ci_debug_printf(3, "polis_dlp: Initialization complete, "
                        "%d patterns loaded\n", pattern_count);
 
     /* Fail-closed: refuse to start if no credential patterns loaded (CWE-636) */
     if (pattern_count == 0) {
-        ci_debug_printf(0, "molis_dlp: CRITICAL: No credential patterns "
-                           "loaded from molis_dlp.conf — refusing to start "
+        ci_debug_printf(0, "polis_dlp: CRITICAL: No credential patterns "
+                           "loaded from polis_dlp.conf — refusing to start "
                            "(fail-closed, CWE-636)\n");
         return CI_ERROR;
     }
 
     /* Initialize Valkey connection for dynamic security levels (non-fatal) */
     if (dlp_valkey_init() != 0) {
-        ci_debug_printf(2, "molis_dlp: WARNING: Valkey init failed — "
+        ci_debug_printf(2, "polis_dlp: WARNING: Valkey init failed — "
                            "DLP will operate without dynamic security "
                            "levels, defaulting to balanced\n");
     }
@@ -635,7 +635,7 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
 void dlp_close_service(void)
 {
     int i;
-    ci_debug_printf(3, "molis_dlp: Closing service, "
+    ci_debug_printf(3, "polis_dlp: Closing service, "
                        "freeing %d patterns\n", pattern_count);
     for (i = 0; i < pattern_count; i++) {
         regfree(&patterns[i].regex);
@@ -670,7 +670,7 @@ void *dlp_init_request_data(ci_request_t *req)
 
     data = (dlp_req_data_t *)malloc(sizeof(dlp_req_data_t));
     if (!data) {
-        ci_debug_printf(1, "molis_dlp: ERROR: Failed to allocate "
+        ci_debug_printf(1, "polis_dlp: ERROR: Failed to allocate "
                            "request data\n");
         return NULL;
     }
@@ -689,10 +689,10 @@ void *dlp_init_request_data(ci_request_t *req)
     if (host_hdr) {
         strncpy(data->host, host_hdr, sizeof(data->host) - 1);
         data->host[sizeof(data->host) - 1] = '\0';
-        ci_debug_printf(5, "molis_dlp: Request to host: %s\n",
+        ci_debug_printf(5, "polis_dlp: Request to host: %s\n",
                         data->host);
     } else {
-        ci_debug_printf(5, "molis_dlp: No Host header found\n");
+        ci_debug_printf(5, "polis_dlp: No Host header found\n");
     }
 
     return data;
@@ -751,7 +751,7 @@ static int check_patterns(const char *body, int body_len,
             continue;
 
         /* Pattern matched - check blocking rules */
-        ci_debug_printf(3, "molis_dlp: Pattern '%s' matched\n",
+        ci_debug_printf(3, "polis_dlp: Pattern '%s' matched\n",
                         patterns[i].name);
 
         /* Always-block patterns (e.g., private keys) */
@@ -761,7 +761,7 @@ static int check_patterns(const char *body, int body_len,
                     sizeof(data->matched_pattern) - 1);
             data->matched_pattern[
                 sizeof(data->matched_pattern) - 1] = '\0';
-            ci_debug_printf(3, "molis_dlp: Blocked by always_block "
+            ci_debug_printf(3, "polis_dlp: Blocked by always_block "
                                "pattern '%s'\n", patterns[i].name);
             return 1;
         }
@@ -772,7 +772,7 @@ static int check_patterns(const char *body, int body_len,
                         0, NULL, 0) == 0) {
                 /* Host matches allow rule - credential going to
                    expected destination, continue scanning */
-                ci_debug_printf(3, "molis_dlp: Pattern '%s' "
+                ci_debug_printf(3, "polis_dlp: Pattern '%s' "
                                    "allowed for host '%s'\n",
                                patterns[i].name, data->host);
                 continue;
@@ -783,7 +783,7 @@ static int check_patterns(const char *body, int body_len,
                     sizeof(data->matched_pattern) - 1);
             data->matched_pattern[
                 sizeof(data->matched_pattern) - 1] = '\0';
-            ci_debug_printf(3, "molis_dlp: Blocked pattern '%s' - "
+            ci_debug_printf(3, "polis_dlp: Blocked pattern '%s' - "
                                "host '%s' not in allow list\n",
                            patterns[i].name, data->host);
             return 1;
@@ -795,7 +795,7 @@ static int check_patterns(const char *body, int body_len,
                 sizeof(data->matched_pattern) - 1);
         data->matched_pattern[
             sizeof(data->matched_pattern) - 1] = '\0';
-        ci_debug_printf(3, "molis_dlp: Blocked pattern '%s' - "
+        ci_debug_printf(3, "polis_dlp: Blocked pattern '%s' - "
                            "no allow rule configured\n",
                        patterns[i].name);
         return 1;
@@ -823,7 +823,7 @@ int dlp_check_preview(char *preview_data, int preview_data_len,
     ci_membuf_write(data->body, preview_data, preview_data_len, 0);
     data->total_body_len += preview_data_len;
 
-    ci_debug_printf(5, "molis_dlp: Preview received %d bytes, "
+    ci_debug_printf(5, "polis_dlp: Preview received %d bytes, "
                        "total so far: %zu\n",
                    preview_data_len, data->total_body_len);
 
@@ -845,7 +845,7 @@ int dlp_check_preview(char *preview_data, int preview_data_len,
  *   - RELAXED: allows through
  *
  * If blocked (credential or policy):
- *   - Returns HTTP 403 with X-Molis diagnostic headers
+ *   - Returns HTTP 403 with X-polis diagnostic headers
  *   - Logs the pattern/reason name (never the credential value)
  *
  * If no block triggered:
@@ -870,7 +870,7 @@ int dlp_process(ci_request_t *req)
 
     /* If body exceeded 1MB, also scan the tail buffer */
     if (data->total_body_len > MAX_BODY_SCAN) {
-        ci_debug_printf(3, "molis_dlp: DLP_PARTIAL_SCAN - "
+        ci_debug_printf(3, "polis_dlp: DLP_PARTIAL_SCAN - "
                            "body size %zu exceeds %d, "
                            "scanning tail buffer\n",
                        data->total_body_len, MAX_BODY_SCAN);
@@ -901,7 +901,7 @@ int dlp_process(ci_request_t *req)
                     sizeof(data->matched_pattern) - 1);
             data->matched_pattern[
                 sizeof(data->matched_pattern) - 1] = '\0';
-            ci_debug_printf(3, "molis_dlp: BLOCKED new domain "
+            ci_debug_printf(3, "polis_dlp: BLOCKED new domain "
                                "'%s' — security level STRICT\n",
                            data->host);
         } else if (policy == 1 && data->blocked != 1) {
@@ -911,29 +911,29 @@ int dlp_process(ci_request_t *req)
                     sizeof(data->matched_pattern) - 1);
             data->matched_pattern[
                 sizeof(data->matched_pattern) - 1] = '\0';
-            ci_debug_printf(3, "molis_dlp: PROMPT new domain "
+            ci_debug_printf(3, "polis_dlp: PROMPT new domain "
                                "'%s' — security level BALANCED\n",
                            data->host);
         }
     }
 
-    /* If blocked, create 403 response with X-Molis headers */
+    /* If blocked, create 403 response with X-polis headers */
     if (data->blocked == 1) {
         ci_http_response_create(req, 1, 1);
         ci_http_response_add_header(req,
             "HTTP/1.1 403 Forbidden");
         ci_http_response_add_header(req,
-            "X-Molis-Block: true");
+            "X-polis-Block: true");
 
         snprintf(hdr_buf, sizeof(hdr_buf),
-                 "X-Molis-Reason: %s", data->matched_pattern);
+                 "X-polis-Reason: %s", data->matched_pattern);
         ci_http_response_add_header(req, hdr_buf);
 
         snprintf(hdr_buf, sizeof(hdr_buf),
-                 "X-Molis-Pattern: %s", data->matched_pattern);
+                 "X-polis-Pattern: %s", data->matched_pattern);
         ci_http_response_add_header(req, hdr_buf);
 
-        ci_debug_printf(3, "molis_dlp: BLOCKED request to "
+        ci_debug_printf(3, "polis_dlp: BLOCKED request to "
                            "'%s' - pattern '%s' matched\n",
                        data->host, data->matched_pattern);
 

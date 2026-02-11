@@ -1,7 +1,7 @@
-//! Molis MCP-Agent server entry point.
+//! polis MCP-Agent server entry point.
 //!
 //! Initialises tracing, loads configuration from environment variables
-//! (prefixed with `MOLIS_AGENT_`), connects to Valkey with ACL auth,
+//! (prefixed with `polis_AGENT_`), connects to Valkey with ACL auth,
 //! and starts a Streamable-HTTP MCP server exposing 5 read-only tools.
 
 mod state;
@@ -19,7 +19,7 @@ use rmcp::transport::streamable_http_server::{
 };
 
 use crate::state::AppState;
-use crate::tools::MolisAgentTools;
+use crate::tools::polisAgentTools;
 
 // ===================================================================
 // Configuration
@@ -27,11 +27,11 @@ use crate::tools::MolisAgentTools;
 
 /// Server configuration loaded from environment variables via `envy`.
 ///
-/// Each field maps to `MOLIS_AGENT_<FIELD>`:
-///   - `MOLIS_AGENT_LISTEN_ADDR`  (default `0.0.0.0:8080`)
-///   - `MOLIS_AGENT_VALKEY_URL`   (default `redis://valkey:6379`)
-///   - `MOLIS_AGENT_VALKEY_USER`  (required)
-///   - `MOLIS_AGENT_VALKEY_PASS`  (required)
+/// Each field maps to `polis_AGENT_<FIELD>`:
+///   - `polis_AGENT_LISTEN_ADDR`  (default `0.0.0.0:8080`)
+///   - `polis_AGENT_VALKEY_URL`   (default `redis://valkey:6379`)
+///   - `polis_AGENT_VALKEY_USER`  (required)
+///   - `polis_AGENT_VALKEY_PASS`  (required)
 #[derive(Debug, Deserialize)]
 struct Config {
     /// Socket address to bind the HTTP server to.
@@ -84,14 +84,14 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    tracing::info!("molis-mcp-agent starting");
+    tracing::info!("polis-mcp-agent starting");
 
-    // 2. Load configuration from MOLIS_AGENT_* env vars.
-    let config: Config = envy::prefixed("MOLIS_AGENT_")
+    // 2. Load configuration from polis_AGENT_* env vars.
+    let config: Config = envy::prefixed("polis_AGENT_")
         .from_env()
         .context(
-            "failed to load config from MOLIS_AGENT_* env vars \
-             (MOLIS_AGENT_VALKEY_USER and MOLIS_AGENT_VALKEY_PASS \
+            "failed to load config from polis_AGENT_* env vars \
+             (polis_AGENT_VALKEY_USER and polis_AGENT_VALKEY_PASS \
              are required)",
         )?;
 
@@ -115,11 +115,11 @@ async fn main() -> Result<()> {
     let state = Arc::new(app_state);
 
     // 4. Build the Streamable-HTTP MCP service.
-    //    The factory closure creates a fresh MolisAgentTools per
+    //    The factory closure creates a fresh polisAgentTools per
     //    session, each sharing the same Arc<AppState>.
     let state_for_factory = state.clone();
     let service = StreamableHttpService::new(
-        move || Ok(MolisAgentTools::new(state_for_factory.clone())),
+        move || Ok(polisAgentTools::new(state_for_factory.clone())),
         LocalSessionManager::default().into(),
         Default::default(),
     );
@@ -155,7 +155,7 @@ async fn main() -> Result<()> {
         .await
         .context("HTTP server error")?;
 
-    tracing::info!("molis-mcp-agent shut down");
+    tracing::info!("polis-mcp-agent shut down");
     Ok(())
 }
 

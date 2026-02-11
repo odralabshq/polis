@@ -13,37 +13,37 @@ use predicates::prelude::*;
 
 #[test]
 fn test_help() {
-    let mut cmd = Command::cargo_bin("molis-approve").unwrap();
+    let mut cmd = Command::cargo_bin("polis-approve").unwrap();
     cmd.arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Molis HITL approval CLI tool"));
+        .stdout(predicate::str::contains("polis HITL approval CLI tool"));
 }
 
 #[test]
 fn test_version() {
-    let mut cmd = Command::cargo_bin("molis-approve").unwrap();
+    let mut cmd = Command::cargo_bin("polis-approve").unwrap();
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("molis-approve"));
+        .stdout(predicate::str::contains("polis-approve"));
 }
 
 #[test]
 fn test_missing_env_var() {
-    // Should fail because MOLIS_VALKEY_PASS is missing
-    let mut cmd = Command::cargo_bin("molis-approve").unwrap();
-    cmd.env_remove("MOLIS_VALKEY_PASS")
+    // Should fail because polis_VALKEY_PASS is missing
+    let mut cmd = Command::cargo_bin("polis-approve").unwrap();
+    cmd.env_remove("polis_VALKEY_PASS")
         .arg("list-pending")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("MOLIS_VALKEY_PASS env var is required"));
+        .stderr(predicate::str::contains("polis_VALKEY_PASS env var is required"));
 }
 
 #[test]
 fn test_invalid_subcommand() {
-    let mut cmd = Command::cargo_bin("molis-approve").unwrap();
-    cmd.env("MOLIS_VALKEY_PASS", "dummy")
+    let mut cmd = Command::cargo_bin("polis-approve").unwrap();
+    cmd.env("polis_VALKEY_PASS", "dummy")
         .arg("invalid-cmd")
         .assert()
         .failure()

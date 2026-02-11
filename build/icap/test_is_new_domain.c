@@ -2,7 +2,7 @@
  * test_is_new_domain.c - Unit tests for dot-boundary domain matching in DLP
  *
  * Standalone test harness that exercises is_new_domain() logic
- * from srv_molis_dlp.c without requiring c-ICAP headers.
+ * from srv_polis_dlp.c without requiring c-ICAP headers.
  *
  * Validates: Requirement 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
  *
@@ -15,7 +15,7 @@
 #include <strings.h>
 #include <stdlib.h>
 
-/* Function under test (copied from srv_molis_dlp.c) */
+/* Function under test (copied from srv_polis_dlp.c) */
 static int is_new_domain(const char *host)
 {
     static const char *known_domains[] = {

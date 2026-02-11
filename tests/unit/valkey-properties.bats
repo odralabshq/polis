@@ -92,8 +92,8 @@ get_password() {
 # Feature: valkey-state-management, Property 2: mcp-agent ACL enforcement
 # Validates: Requirements 3.2
 #
-# For any key pattern outside molis:blocked:*, molis:approved:*, and
-# molis:config:*, the mcp-agent user should be denied access.
+# For any key pattern outside polis:blocked:*, polis:approved:*, and
+# polis:config:*, the mcp-agent user should be denied access.
 # Additionally, for any attempt to execute DEL or UNLINK on allowed
 # keys, the mcp-agent user should be denied.
 # =============================================================================
@@ -104,11 +104,11 @@ get_password() {
 
     # Keys outside the allowed patterns
     local denied_keys=(
-        "molis:log:events"
-        "molis:other:data"
+        "polis:log:events"
+        "polis:other:data"
         "unauthorized:key"
         "random:key"
-        "molis:admin:settings"
+        "polis:admin:settings"
     )
 
     for key in "${denied_keys[@]}"; do
@@ -131,7 +131,7 @@ get_password() {
 
     # DEL and UNLINK must be denied even on allowed key patterns
     local denied_commands=("DEL" "UNLINK")
-    local allowed_key="molis:blocked:test-acl-check"
+    local allowed_key="polis:blocked:test-acl-check"
 
     for cmd in "${denied_commands[@]}"; do
         local result
@@ -154,7 +154,7 @@ get_password() {
 #
 # For any command in the dangerous set {FLUSHALL, FLUSHDB, DEBUG,
 # CONFIG, SHUTDOWN}, the mcp-admin user should be denied execution,
-# even though mcp-admin has full access to the molis:* namespace.
+# even though mcp-admin has full access to the polis:* namespace.
 # =============================================================================
 
 @test "property 3: mcp-admin denied dangerous commands" {
@@ -192,7 +192,7 @@ get_password() {
 #
 # For any command not in {ZADD, ZRANGEBYSCORE, ZCARD, PING}, the
 # log-writer user should be denied execution. For any key other than
-# molis:log:events, the log-writer user should be denied access.
+# polis:log:events, the log-writer user should be denied access.
 # =============================================================================
 
 @test "property 4: log-writer denied non-allowed commands" {
@@ -214,7 +214,7 @@ get_password() {
         local result
         result="$(valkey_cli_as \
             "log-writer" "${lw_pass}" \
-            ${cmd} "molis:log:events" 2>&1 || true)"
+            ${cmd} "polis:log:events" 2>&1 || true)"
 
         if [[ "${result}" != *"NOPERM"* ]] \
            && [[ "${result}" != *"no permissions"* ]] \
@@ -231,10 +231,10 @@ get_password() {
 
     # Keys outside the allowed pattern
     local denied_keys=(
-        "molis:blocked:test"
-        "molis:approved:test"
-        "molis:config:test"
-        "molis:other:data"
+        "polis:blocked:test"
+        "polis:approved:test"
+        "polis:config:test"
+        "polis:other:data"
         "unauthorized:key"
     )
 
@@ -298,10 +298,10 @@ get_password() {
 
     # Any key access should be denied for healthcheck
     local test_keys=(
-        "molis:blocked:test"
-        "molis:approved:test"
-        "molis:config:test"
-        "molis:log:events"
+        "polis:blocked:test"
+        "polis:approved:test"
+        "polis:config:test"
+        "polis:log:events"
         "any:random:key"
     )
 
