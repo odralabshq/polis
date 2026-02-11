@@ -24,3 +24,12 @@ Thumbs.db
 
 # Generated Dockerfile (created by polis CLI at build time)
 build/workspace/Dockerfile.generated
+
+# Valkey secrets directory - passwords, ACL files, credentials
+secrets/
+
+# Valkey TLS certificates and keys - generated per-install by polis init
+certs/valkey/
+
+# Rust build artifacts
+target/

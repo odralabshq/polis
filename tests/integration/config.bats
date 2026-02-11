@@ -36,7 +36,8 @@ setup() {
 @test "config: g3proxy ICAP reqmod service configured" {
     run docker exec "${GATEWAY_CONTAINER}" cat /etc/g3proxy/g3proxy.yaml
     assert_success
-    assert_output --partial "icap_reqmod_service: icap://icap:1344"
+    assert_output --partial "icap_reqmod_service:"
+    assert_output --partial "url: icap://icap:1344/credcheck"
 }
 
 @test "config: g3proxy ICAP respmod service configured" {

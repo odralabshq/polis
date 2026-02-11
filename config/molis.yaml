@@ -1,0 +1,83 @@
+---
+# =============================================================================
+# polis Security Configuration
+# =============================================================================
+# Central configuration for security level, protected paths, and auto-approve
+# rules. Read by the polis DLP module and workspace initialization scripts.
+#
+# IMPORTANT: Credential detection patterns are NOT defined here.
+# They are managed in polis_dlp.conf (single source of truth).
+# This file only defines the policy rules that reference those patterns.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Security Level
+# -----------------------------------------------------------------------------
+# Controls how the DLP module handles requests to new/unknown domains.
+#
+# Possible values:
+#   relaxed  — auto-allow requests to new domains
+#   balanced — prompt user (HITL) for new domains (default)
+#   strict   — block all requests to new domains
+#
+# Credentials are always prompted regardless of level.
+# Malware is always blocked regardless of level.
+#
+# The active level is stored in Valkey at polis:config:security_level
+# and can be changed at runtime via: polis-approve set-security-level <level>
+
+security_level: balanced
+
+# -----------------------------------------------------------------------------
+# Protected Paths
+# -----------------------------------------------------------------------------
+# Sensitive directories in the workspace container that are made inaccessible
+# via tmpfs mounts (primary) and chmod 000 (secondary defense-in-depth).
+#
+# Any process attempting to access these paths will receive "Permission denied".
+
+protected_paths:
+  - ~/.ssh
+  - ~/.aws
+  - ~/.gnupg
+  - ~/.config/gcloud
+  - ~/.kube
+  - ~/.docker
+
+# -----------------------------------------------------------------------------
+# Auto-Approve Rules
+# -----------------------------------------------------------------------------
+# Maps credential pattern prefixes to their expected destinations.
+# When a credential is detected heading to its expected destination,
+# the request is auto-approved instead of blocked.
+#
+# NOTE: The actual regex patterns are defined in polis_dlp.conf.
+# This section documents the policy intent only — do not duplicate
+# pattern definitions here. See polis_dlp.conf for the authoritative
+# credential detection patterns.
+
+auto_approve:
+  # Anthropic API keys (sk-ant-*) → Anthropic API
+  - pattern_ref: anthropic
+    prefix: "sk-ant-"
+    destination: "api.anthropic.com"
+    action: allow
+
+  # GitHub Personal Access Tokens (ghp_*) → GitHub
+  - pattern_ref: github_pat
+    prefix: "ghp_"
+    destination: "github.com"
+    action: allow
+
+  # Private keys (RSA, OpenSSH, EC) → always blocked
+  - pattern_ref: rsa_key
+    description: "RSA private keys"
+    action: block
+
+  - pattern_ref: openssh_key
+    description: "OpenSSH private keys"
+    action: block
+
+  - pattern_ref: ec_key
+    description: "EC private keys"
+    action: block

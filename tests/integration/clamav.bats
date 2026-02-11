@@ -201,10 +201,10 @@ setup() {
     assert_output --partial "squidclamav"
 }
 
-@test "g3proxy: REQMOD configured for echo" {
+@test "g3proxy: REQMOD configured for credcheck" {
     run docker exec "${GATEWAY_CONTAINER}" grep "icap_reqmod_service" /etc/g3proxy/g3proxy.yaml
     assert_success
-    assert_output --partial "echo"
+    assert_output --partial "credcheck"
 }
 
 # =============================================================================

@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     libtool \
     wget \
     libssl-dev \
+    libhiredis-dev \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,6 +36,31 @@ RUN wget -q https://github.com/darold/squidclamav/archive/refs/tags/v7.3.tar.gz 
     make -j$(nproc) && \
     make install DESTDIR=/install
 
+# Copy and compile DLP module against c-ICAP source headers
+COPY build/icap/srv_polis_dlp.c /build/
+RUN gcc -shared -fPIC -Wall -Werror -o /build/srv_polis_dlp.so /build/srv_polis_dlp.c \
+    -I/build/c-icap-server-C_ICAP_0.6.4 \
+    -I/build/c-icap-server-C_ICAP_0.6.4/include \
+    -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lpthread
+
+# Copy and compile approval REQMOD rewriter module
+COPY build/icap/srv_polis_approval_rewrite.c /build/
+RUN gcc -shared -fPIC -Wall -Werror \
+    -o /build/srv_polis_approval_rewrite.so \
+    /build/srv_polis_approval_rewrite.c \
+    -I/build/c-icap-server-C_ICAP_0.6.4 \
+    -I/build/c-icap-server-C_ICAP_0.6.4/include \
+    -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto
+
+# Copy and compile approval RESPMOD scanner module
+COPY build/icap/srv_polis_approval.c /build/
+RUN gcc -shared -fPIC -Wall -Werror \
+    -o /build/srv_polis_approval.so \
+    /build/srv_polis_approval.c \
+    -I/build/c-icap-server-C_ICAP_0.6.4 \
+    -I/build/c-icap-server-C_ICAP_0.6.4/include \
+    -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lz
+
 # Runtime image
 FROM debian:trixie
 ENV DEBIAN_FRONTEND=noninteractive
@@ -44,6 +70,7 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     zlib1g \
     libatomic1 \
+    libhiredis1.1.0 \
     procps \
     gosu \
     netcat-openbsd \
@@ -53,6 +80,13 @@ RUN apt-get update && apt-get install -y \
 # Copy built c-icap and squidclamav
 COPY --from=builder /install/usr /usr
 COPY --from=builder /install/etc /etc
+
+# Copy DLP module
+COPY --from=builder /build/srv_polis_dlp.so /usr/lib/c_icap/
+
+# Copy approval modules
+COPY --from=builder /build/srv_polis_approval_rewrite.so /usr/lib/c_icap/
+COPY --from=builder /build/srv_polis_approval.so /usr/lib/c_icap/
 
 # Create dedicated c-icap user and group
 RUN groupadd -r c-icap && useradd -r -g c-icap -s /sbin/nologin c-icap
@@ -73,6 +107,6 @@ rm -f /var/run/c-icap/c-icap.pid /var/run/c-icap/c-icap.ctl
 echo "[icap] Starting c-icap with SquidClamav on 0.0.0.0:1344..."
 exec gosu c-icap /usr/bin/c-icap -N -D -d 1 -f /etc/c-icap/c-icap.conf
 EOF
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

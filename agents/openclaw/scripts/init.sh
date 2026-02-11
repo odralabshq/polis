@@ -142,6 +142,11 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
     "web": {
       "search": {}
     }
+  },
+  "mcpServers": {
+    "polis-security": {
+      "url": "http://mcp-agent:8080/mcp"
+    }
   }
 }
 CONFIGEOF
@@ -150,6 +155,16 @@ CONFIGEOF
     
     # Mark as initialized
     touch "$FIRST_RUN_MARKER"
+    
+    # Copy SOUL.md (agent instructions for HITL security workflow)
+    SOUL_SRC="/usr/local/share/openclaw/SOUL.md"
+    SOUL_DST="${CONFIG_DIR}/agents/default/SOUL.md"
+    if [[ -f "$SOUL_SRC" ]]; then
+        mkdir -p "${CONFIG_DIR}/agents/default"
+        cp "$SOUL_SRC" "$SOUL_DST"
+        chmod 644 "$SOUL_DST"
+        echo "[openclaw-init] Installed SOUL.md (HITL security instructions)"
+    fi
     
 else
     echo "[openclaw-init] Already initialized, checking config..."

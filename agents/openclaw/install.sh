@@ -50,6 +50,11 @@ cp /tmp/agents/openclaw/scripts/health.sh /usr/local/bin/openclaw-health.sh
 cp /tmp/agents/openclaw/scripts/init.sh /usr/local/bin/openclaw-init.sh
 chmod 755 /usr/local/bin/openclaw-health.sh /usr/local/bin/openclaw-init.sh
 
+# Install SOUL.md (HITL security workflow instructions for the agent)
+mkdir -p /usr/local/share/openclaw
+cp /tmp/agents/openclaw/config/SOUL.md /usr/local/share/openclaw/SOUL.md
+chmod 644 /usr/local/share/openclaw/SOUL.md
+
 # Create openclaw CLI wrapper
 printf '#!/bin/bash\nexec /usr/bin/node /app/dist/index.js "$@"\n' > /usr/local/bin/openclaw
 chmod 755 /usr/local/bin/openclaw

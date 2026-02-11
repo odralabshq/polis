@@ -394,6 +394,64 @@ generate_ca() {
     return 0
 }
 
+# Setup Valkey TLS certificates and secrets (idempotent)
+setup_valkey() {
+    local VALKEY_CERTS_DIR="${PROJECT_ROOT}/certs/valkey"
+    local VALKEY_SECRETS_DIR="${PROJECT_ROOT}/secrets"
+
+    # --- Valkey TLS certificates ---
+    if [[ -f "${VALKEY_CERTS_DIR}/ca.crt" ]] && [[ -f "${VALKEY_CERTS_DIR}/ca.key" ]] \
+        && [[ -f "${VALKEY_CERTS_DIR}/server.crt" ]] && [[ -f "${VALKEY_CERTS_DIR}/server.key" ]] \
+        && [[ -f "${VALKEY_CERTS_DIR}/client.crt" ]] && [[ -f "${VALKEY_CERTS_DIR}/client.key" ]]; then
+        log_success "Valkey TLS certificates already exist."
+    else
+        echo "Generating Valkey TLS certificates..."
+        if ! bash "${PROJECT_ROOT}/scripts/generate-valkey-certs.sh" \
+            "${VALKEY_CERTS_DIR}"; then
+            log_error "Failed to generate Valkey TLS certificates"
+            return 1
+        fi
+        log_success "Valkey TLS certificates generated."
+    fi
+
+    # --- Valkey secrets (passwords + ACL) ---
+    # Force regeneration if ACL has placeholder passwords (template from repo)
+    local needs_regen=false
+    if [[ -f "${VALKEY_SECRETS_DIR}/valkey_users.acl" ]]; then
+        if grep -q '>password' "${VALKEY_SECRETS_DIR}/valkey_users.acl" 2>/dev/null; then
+            log_warn "Valkey ACL contains placeholder passwords. Regenerating..."
+            needs_regen=true
+        fi
+    fi
+
+    if [[ "$needs_regen" == "false" ]] \
+        && [[ -f "${VALKEY_SECRETS_DIR}/valkey_password.txt" ]] \
+        && [[ -f "${VALKEY_SECRETS_DIR}/valkey_users.acl" ]]; then
+        log_success "Valkey secrets already exist."
+        # Ensure VALKEY_MCP_AGENT_PASS is in .env even if secrets were pre-generated
+        if ! grep -q '^VALKEY_MCP_AGENT_PASS=' "${PROJECT_ROOT}/.env" 2>/dev/null; then
+            if [[ -f "${VALKEY_SECRETS_DIR}/credentials.env.example" ]]; then
+                local agent_pass
+                agent_pass=$(grep '^VALKEY_MCP_AGENT_PASS=' "${VALKEY_SECRETS_DIR}/credentials.env.example" | cut -d= -f2-)
+                if [[ -n "$agent_pass" ]]; then
+                    echo "VALKEY_MCP_AGENT_PASS=${agent_pass}" >> "${PROJECT_ROOT}/.env"
+                    log_info "Added VALKEY_MCP_AGENT_PASS to .env from existing credentials."
+                fi
+            fi
+        fi
+    else
+        echo "Generating Valkey secrets..."
+        if ! bash "${PROJECT_ROOT}/scripts/generate-valkey-secrets.sh" \
+            "${VALKEY_SECRETS_DIR}" "${PROJECT_ROOT}"; then
+            log_error "Failed to generate Valkey secrets"
+            return 1
+        fi
+        log_success "Valkey secrets generated."
+    fi
+
+    return 0
+}
+
 # =============================================================================
 # Agent Plugin System
 # =============================================================================
@@ -457,7 +515,7 @@ HEADER
 
 build_compose_flags() {
     local agent="$1"
-    local flags="-f ${COMPOSE_FILE}"
+    local flags="-f ${COMPOSE_FILE} --env-file ${ENV_FILE}"
 
     local override="${PROJECT_ROOT}/agents/${agent}/compose.override.yaml"
     if [[ -f "$override" ]]; then
@@ -705,18 +763,26 @@ case "${1:-}" in
             exit 1
         fi
         
-        # Step 3: Validate agent environment
+        # Step 3: Setup Valkey TLS and secrets
+        echo ""
+        log_step "Setting up Valkey state management..."
+        if ! setup_valkey; then
+            log_error "Valkey setup failed. Cannot proceed."
+            exit 1
+        fi
+        
+        # Step 4: Validate agent environment
         echo ""
         log_step "Checking agent environment..."
         validate_agent_env "$EFFECTIVE_AGENT"
         
-        # Step 4: Clean up existing containers
+        # Step 5: Clean up existing containers
         echo ""
         log_step "Cleaning up existing containers..."
-        docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
         
-        # Step 5: Build or pull images
+        # Step 6: Build or pull images
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
         
         if [[ "$LOCAL_BUILD" == "true" ]]; then
@@ -739,7 +805,7 @@ case "${1:-}" in
             fi
             
             # Build remaining services
-            docker compose -f "$COMPOSE_FILE" build $NO_CACHE
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build $NO_CACHE
         else
             echo ""
             echo "=== Checking images at GitHub Container Registry ==="
@@ -762,7 +828,7 @@ case "${1:-}" in
                     -f "${PROJECT_ROOT}/build/workspace/Dockerfile" \
                     -t "polis-workspace-oss:latest" \
                     "${PROJECT_ROOT}"
-                docker compose -f "$COMPOSE_FILE" build $NO_CACHE
+                docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build $NO_CACHE
                 if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
                     generate_dockerfile "$EFFECTIVE_AGENT"
                     docker build $NO_CACHE \
@@ -851,7 +917,7 @@ case "${1:-}" in
         
     down)
         echo "=== Polis: Removing Containers ==="
-        docker compose -f "$COMPOSE_FILE" down
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down
         ;;
         
     stop)
@@ -876,15 +942,15 @@ case "${1:-}" in
         
     status)
         echo "=== Polis: Container Status ==="
-        docker compose -f "$COMPOSE_FILE" ps
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
         ;;
         
     logs)
         SERVICE="${2:-}"
         if [[ -n "$SERVICE" ]]; then
-            docker compose -f "$COMPOSE_FILE" logs --tail=50 -f "$SERVICE"
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=50 -f "$SERVICE"
         else
-            docker compose -f "$COMPOSE_FILE" logs --tail=50 -f
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=50 -f
         fi
         ;;
         

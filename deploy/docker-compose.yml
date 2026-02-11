@@ -69,6 +69,15 @@ services:
     volumes:
       - ../config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
       - ../config/squidclamav.conf:/etc/squidclamav.conf:ro
+      - ../config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
+      - ../config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
+      - ../certs/valkey:/etc/valkey/tls:ro
+    env_file:
+      - ../.env
+    environment:
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
+    secrets:
+      - valkey_dlp_password
     depends_on:
       clamav:
         condition: service_healthy
@@ -156,6 +165,30 @@ services:
       - ../certs/ca/ca.pem:/usr/local/share/ca-certificates/polis-ca.crt:ro
       - ../scripts/workspace-init.sh:/usr/local/bin/polis-init.sh:ro
       - ../config/polis-init.service:/etc/systemd/system/polis-init.service:ro
+      - type: tmpfs
+        target: /root/.ssh
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.aws
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.gnupg
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.config/gcloud
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.kube
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.docker
+        tmpfs:
+          mode: 0000
     healthcheck:
       test: ["CMD-SHELL", "systemctl is-active polis-init.service && ip route | grep -q default"]
       interval: 30s
@@ -171,6 +204,115 @@ services:
         labels: "service"
     labels:
       service: "polis-workspace"
+
+  # =========================================================
+  # VALKEY INIT (Volume permission setup)
+  # =========================================================
+  valkey-init:
+    image: alpine
+    container_name: polis-v2-valkey-init
+    volumes:
+      - valkey-data:/data
+    command: chown -R 999:999 /data
+    restart: "no"
+
+  # =========================================================
+  # VALKEY (State Management)
+  # =========================================================
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: polis-v2-valkey
+    user: "999:999"
+    entrypoint: []
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    networks:
+      gateway-bridge: {}
+    depends_on:
+      valkey-init:
+        condition: service_completed_successfully
+    secrets:
+      - valkey_password
+      - valkey_acl
+    volumes:
+      - ../config/valkey.conf:/etc/valkey/valkey.conf:ro
+      - ../certs/valkey:/etc/valkey/tls:ro
+      - valkey-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "sh -c \"REDISCLI_AUTH=$$(cat /run/secrets/valkey_password) valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user healthcheck ping\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M,mode=1777
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-valkey"
+    restart: unless-stopped
+
+  # =========================================================
+  # MCP-AGENT (AI Agent MCP Server)
+  # =========================================================
+  mcp-agent:
+    build:
+      context: ..
+      dockerfile: ./build/mcp-server/Dockerfile.agent
+    image: polis-mcp-agent-oss:latest
+    container_name: polis-mcp-agent
+    networks:
+      internal-bridge: {}
+      gateway-bridge: {}
+    environment:
+      - RUST_LOG=info
+      - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
+      - polis_AGENT_VALKEY_URL=rediss://valkey:6379
+      - polis_AGENT_VALKEY_USER=mcp-agent
+      - polis_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
+    volumes:
+      - ../certs/valkey:/etc/valkey/tls:ro
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-mcp-agent"
 
 networks:
   internal-bridge:
@@ -200,6 +342,16 @@ networks:
 volumes:
   clamav-db:
     name: polis-clamav-db
+  valkey-data:
+    name: polis-valkey-data
   # Uncomment to persist OpenClaw data across container restarts
   # openclaw-data:
   #   name: polis-openclaw-data
+
+secrets:
+  valkey_password:
+    file: ../secrets/valkey_password.txt
+  valkey_acl:
+    file: ../secrets/valkey_users.acl
+  valkey_dlp_password:
+    file: ../secrets/valkey_dlp_password.txt

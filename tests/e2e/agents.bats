@@ -85,5 +85,5 @@ setup() {
 @test "agents: can determine active agent from image tag" {
     run docker inspect --format '{{.Config.Image}}' polis-workspace
     assert_success
-    assert_output --regexp "polis-workspace:(base|openclaw)"
+    assert_output --regexp "polis-workspace(-oss)?:(base|openclaw|latest)"
 }
