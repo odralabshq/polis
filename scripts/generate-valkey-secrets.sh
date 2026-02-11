@@ -167,11 +167,11 @@ echo ""
 echo "--- Setting file permissions ---"
 
 chmod 600 "${OUTPUT_DIR}/valkey_password.txt"
-chmod 600 "${OUTPUT_DIR}/valkey_users.acl"
+chmod 644 "${OUTPUT_DIR}/valkey_users.acl"
 chmod 600 "${OUTPUT_DIR}/valkey_dlp_password.txt"
 chmod 600 "${OUTPUT_DIR}/credentials.env.example"
 
-echo "Permissions set: all files=600"
+echo "Permissions set: password files=600, acl=644"
 
 echo ""
 echo "=== Secrets generation complete ==="

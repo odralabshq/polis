@@ -52,6 +52,8 @@ jobs:
         run: |
           touch .env
           ./scripts/generate-valkey-secrets.sh ./secrets .
+          # Ensure ACL file is readable by Docker daemon for secret injection
+          chmod 644 ./secrets/valkey_users.acl
 
       - name: Build containers
         run: ./tools/polis.sh build
