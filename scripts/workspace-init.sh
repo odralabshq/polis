@@ -107,4 +107,27 @@ ip route add default via $GATEWAY_IP
 # Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
 protect_sensitive_paths
 
+# Bootstrap mounted agents (fault-isolated from core init)
+for agent_dir in /tmp/agents/*/; do
+    [ -d "$agent_dir" ] || continue
+    name=$(basename "$agent_dir")
+    echo "[workspace] Bootstrapping agent: ${name}"
+
+    # Run install.sh in a subshell so failures don't kill workspace init
+    if [ -x "${agent_dir}/install.sh" ]; then
+        if ! ("${agent_dir}/install.sh"); then
+            echo "[workspace] WARNING: ${name}/install.sh failed — agent may not work"
+            continue
+        fi
+    fi
+
+    # Enable + start the agent service (if service file was mounted)
+    svc="/etc/systemd/system/${name}.service"
+    if [ -f "$svc" ]; then
+        systemctl daemon-reload
+        systemctl enable --now "${name}.service" || \
+            echo "[workspace] WARNING: failed to enable ${name}.service"
+    fi
+done
+
 echo "[workspace] Initialization complete"

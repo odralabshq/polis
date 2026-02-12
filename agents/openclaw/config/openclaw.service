@@ -11,6 +11,8 @@ Documentation=https://docs.openclaw.ai
 After=network-online.target polis-init.service
 Wants=network-online.target
 Requires=polis-init.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -26,8 +28,7 @@ EnvironmentFile=-/home/polis/.openclaw/.env
 Environment=NODE_OPTIONS=--dns-result-order=ipv4first
 Environment=NODE_EXTRA_CA_CERTS=/etc/ssl/certs/polis-ca.pem
 
-# Run agent install (as root) then initialization before starting gateway
-ExecStartPre=+/tmp/agents/openclaw/install.sh
+# Run initialization before starting gateway
 ExecStartPre=/usr/local/bin/openclaw-init.sh
 
 # Start OpenClaw gateway
@@ -43,8 +44,6 @@ TimeoutStopSec=30
 # Restart policy
 Restart=on-failure
 RestartSec=10
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Security hardening (within workspace context)
 NoNewPrivileges=true

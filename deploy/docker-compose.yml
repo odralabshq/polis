@@ -159,6 +159,7 @@ services:
     volumes:
       - clamav-db:/var/lib/clamav
       - ../config/freshclam.conf:/etc/clamav/freshclam.conf:ro
+      - ../config/clamd.conf:/etc/clamav/clamd.conf:ro
     environment:
       - CLAMAV_NO_FRESHCLAMD=false
       - CLAMAV_NO_MILTERD=true
