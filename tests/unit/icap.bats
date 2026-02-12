@@ -187,7 +187,7 @@ setup() {
 # =============================================================================
 
 @test "icap: server log directory is writable" {
-    run docker exec "${ICAP_CONTAINER}" test -w /var/run/c-icap
+    run docker exec "${ICAP_CONTAINER}" test -w /var/log/c-icap
     assert_success
 }
 
