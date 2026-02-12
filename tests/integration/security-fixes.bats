@@ -152,8 +152,9 @@ setup() {
 }
 
 @test "scan-bypass: squidclamav.conf documents security fix" {
-    run grep -iE "SECURITY|bypass|removed" "${PROJECT_ROOT}/config/squidclamav.conf"
+    run grep -i "abort" "${PROJECT_ROOT}/config/squidclamav.conf"
     assert_success
+    assert_output --partial "No abort"
 }
 
 @test "scan-bypass: running config has no abort directives" {
