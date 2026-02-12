@@ -162,13 +162,13 @@ setup() {
 # =============================================================================
 
 @test "e2e: HTTP redirects are followed" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 "http://httpbin.org/redirect/1"
+    run docker exec "${WORKSPACE_CONTAINER}" curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 --max-time 30 --retry 2 --retry-delay 2 --retry-all-errors "http://httpbin.org/redirect/1"
     assert_success
     assert_output "200"
 }
 
 @test "e2e: HTTPS redirects are followed" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 "https://httpbin.org/redirect/1"
+    run docker exec "${WORKSPACE_CONTAINER}" curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 --max-time 30 --retry 2 --retry-delay 2 --retry-all-errors "https://httpbin.org/redirect/1"
     assert_success
     assert_output "200"
 }

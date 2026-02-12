@@ -30,6 +30,7 @@ valkey_cli() {
         --cacert /etc/valkey/tls/ca.crt \
         --user mcp-agent \
         --pass "${agent_pass}" \
+        --no-auth-warning \
         "$@"
 }
 
@@ -167,7 +168,7 @@ cleanup_valkey_key() {
     assert_success
 
     # Response should contain the approval command
-    assert_output --partial "polis approve ${req_id}"
+    assert_output --partial "/polis-approve ${req_id}"
 
     cleanup_valkey_key "polis:blocked:${req_id}"
 }
