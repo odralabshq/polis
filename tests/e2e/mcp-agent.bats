@@ -19,8 +19,8 @@ setup() {
 # Usage: valkey_cli <command> [args...]
 valkey_cli() {
     local agent_pass
-    agent_pass="$(grep '^VALKEY_MCP_AGENT_PASS=' \
-        "${CREDENTIALS_FILE}" | cut -d'=' -f2)"
+    agent_pass="$(docker exec "${VALKEY_CONTAINER}" \
+        cat /run/secrets/valkey_mcp_agent_password.txt)"
 
     docker exec "${VALKEY_CONTAINER}" \
         valkey-cli \
@@ -92,8 +92,8 @@ mcp_call() {
 cleanup_valkey_key() {
     local key="$1"
     local admin_pass
-    admin_pass="$(grep '^VALKEY_MCP_ADMIN_PASS=' \
-        "${CREDENTIALS_FILE}" | cut -d'=' -f2)"
+    admin_pass="$(docker exec "${VALKEY_CONTAINER}" \
+        cat /run/secrets/valkey_mcp_admin_password.txt)"
 
     docker exec "${VALKEY_CONTAINER}" \
         valkey-cli \

@@ -326,29 +326,23 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
         }
 
         /* Authenticate with ACL: AUTH governance-reqmod <password> */
-        if (vk_pass) {
-            reply = redisCommand(valkey_ctx,
-                "AUTH governance-reqmod %s", vk_pass);
-            if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-                ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
-                    "Valkey ACL auth failed%s%s — "
-                    "Valkey connection unavailable\n",
-                    reply ? ": " : "",
-                    reply ? reply->str : "");
-                if (reply) freeReplyObject(reply);
-                redisFree(valkey_ctx);
-                valkey_ctx = NULL;
-                redisFreeSSLContext(ssl_ctx);
-                goto valkey_done;
-            }
-            freeReplyObject(reply);
-            ci_debug_printf(3, "polis_approval_rewrite: "
-                "Authenticated as governance-reqmod\n");
-        } else {
+        reply = redisCommand(valkey_ctx,
+            "AUTH governance-reqmod %s", vk_pass);
+        if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
             ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
-                "VALKEY_REQMOD_PASS not set — "
-                "ACL authentication skipped\n");
+                "Valkey ACL auth failed%s%s — "
+                "Valkey connection unavailable\n",
+                reply ? ": " : "",
+                reply ? reply->str : "");
+            if (reply) freeReplyObject(reply);
+            redisFree(valkey_ctx);
+            valkey_ctx = NULL;
+            redisFreeSSLContext(ssl_ctx);
+            goto valkey_done;
         }
+        freeReplyObject(reply);
+        ci_debug_printf(3, "polis_approval_rewrite: "
+            "Authenticated as governance-reqmod\n");
 
         ci_debug_printf(3, "polis_approval_rewrite: "
             "Connected to Valkey at %s:%d (TLS + ACL)\n",

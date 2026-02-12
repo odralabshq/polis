@@ -341,7 +341,7 @@ setup() {
 
 @test "security: level relaxed allows new domains" {
     # Use mcp-admin to SET (dlp-reader only has GET)
-    local admin_pass=$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/.env" | cut -d'=' -f2)
+    local admin_pass=$(docker exec polis-v2-valkey cat /run/secrets/valkey_mcp_admin_password.txt)
     run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass '$admin_pass' SET polis:config:security_level relaxed"
     assert_success
     
@@ -353,7 +353,7 @@ setup() {
 
 @test "security: level strict blocks new domains" {
     # Use mcp-admin to SET (dlp-reader only has GET)
-    local admin_pass=$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/.env" | cut -d'=' -f2)
+    local admin_pass=$(docker exec polis-v2-valkey cat /run/secrets/valkey_mcp_admin_password.txt)
     run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass '$admin_pass' SET polis:config:security_level strict"
     assert_success
     

@@ -427,6 +427,10 @@ secrets:
     file: ./secrets/valkey_dlp_password.txt
   valkey_mcp_agent_password:
     file: ./secrets/valkey_mcp_agent_password.txt
+  valkey_mcp_admin_password:
+    file: ./secrets/valkey_mcp_admin_password.txt
+  valkey_log_writer_password:
+    file: ./secrets/valkey_log_writer_password.txt
   valkey_reqmod_password:
     file: ./secrets/valkey_reqmod_password.txt
   valkey_respmod_password:

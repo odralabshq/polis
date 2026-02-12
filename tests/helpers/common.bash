@@ -251,7 +251,7 @@ exec_with_timeout() {
 # (prevents new_domain_prompt from blocking test traffic)
 relax_security_level() {
     local admin_pass
-    admin_pass="$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/.env" 2>/dev/null | cut -d'=' -f2)"
+    admin_pass="$(docker exec "$VALKEY_CONTAINER" cat /run/secrets/valkey_mcp_admin_password.txt 2>/dev/null)"
     if [[ -n "$admin_pass" ]]; then
         docker exec "$VALKEY_CONTAINER" sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt \
             --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \

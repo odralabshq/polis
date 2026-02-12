@@ -329,16 +329,11 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
     /* ---------------------------------------------------------- */
     /* Step 3: Connect to Valkey with TLS + ACL                   */
     /*         User: governance-respmod (least-privilege)          */
-    /*         Env vars:                                          */
-    /*           VALKEY_HOST (default: "valkey")                   */
-    /*           VALKEY_PORT (default: 6379)                       */
-    /*           VALKEY_RESPMOD_PASS (required for ACL auth)       */
-    /*           VALKEY_TLS_CERT, VALKEY_TLS_KEY, VALKEY_TLS_CA   */
+    /*         Password read from /run/secrets/valkey_respmod_password */
     /* ---------------------------------------------------------- */
     {
         const char *vk_host = getenv("VALKEY_HOST");
         const char *vk_port_str = getenv("VALKEY_PORT");
-        const char *vk_pass = getenv("VALKEY_RESPMOD_PASS");
         const char *tls_cert = getenv("VALKEY_TLS_CERT");
         const char *tls_key  = getenv("VALKEY_TLS_KEY");
         const char *tls_ca   = getenv("VALKEY_TLS_CA");
@@ -346,9 +341,28 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
         redisSSLContext *ssl_ctx = NULL;
         redisSSLContextError ssl_err;
         redisReply *reply;
+        char vk_pass[256];
+        FILE *pass_file;
 
         if (!vk_host) vk_host = "valkey";
         vk_port = vk_port_str ? atoi(vk_port_str) : 6379;
+
+        /* Read password from Docker secret */
+        pass_file = fopen("/run/secrets/valkey_respmod_password", "r");
+        if (!pass_file) {
+            ci_debug_printf(1, "polis_approval: WARNING: "
+                "Cannot open /run/secrets/valkey_respmod_password — "
+                "Valkey connection unavailable\n");
+            goto valkey_done;
+        }
+        if (!fgets(vk_pass, sizeof(vk_pass), pass_file)) {
+            ci_debug_printf(1, "polis_approval: WARNING: "
+                "Cannot read /run/secrets/valkey_respmod_password\n");
+            fclose(pass_file);
+            goto valkey_done;
+        }
+        fclose(pass_file);
+        vk_pass[strcspn(vk_pass, "\r\n")] = '\0';  /* Strip newline */
 
         /* Initialize OpenSSL for hiredis TLS */
         redisInitOpenSSL();
@@ -400,29 +414,23 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
         }
 
         /* Authenticate with ACL: AUTH governance-respmod <password> */
-        if (vk_pass) {
-            reply = redisCommand(valkey_ctx,
-                "AUTH governance-respmod %s", vk_pass);
-            if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-                ci_debug_printf(1, "polis_approval: WARNING: "
-                    "Valkey ACL auth failed%s%s — "
-                    "Valkey connection unavailable\n",
-                    reply ? ": " : "",
-                    reply ? reply->str : "");
-                if (reply) freeReplyObject(reply);
-                redisFree(valkey_ctx);
-                valkey_ctx = NULL;
-                redisFreeSSLContext(ssl_ctx);
-                goto valkey_done;
-            }
-            freeReplyObject(reply);
-            ci_debug_printf(3, "polis_approval: "
-                "Authenticated as governance-respmod\n");
-        } else {
+        reply = redisCommand(valkey_ctx,
+            "AUTH governance-respmod %s", vk_pass);
+        if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
             ci_debug_printf(1, "polis_approval: WARNING: "
-                "VALKEY_RESPMOD_PASS not set — "
-                "ACL authentication skipped\n");
+                "Valkey ACL auth failed%s%s — "
+                "Valkey connection unavailable\n",
+                reply ? ": " : "",
+                reply ? reply->str : "");
+            if (reply) freeReplyObject(reply);
+            redisFree(valkey_ctx);
+            valkey_ctx = NULL;
+            redisFreeSSLContext(ssl_ctx);
+            goto valkey_done;
         }
+        freeReplyObject(reply);
+        ci_debug_printf(3, "polis_approval: "
+            "Authenticated as governance-respmod\n");
 
         ci_debug_printf(3, "polis_approval: "
             "Connected to Valkey at %s:%d (TLS + ACL)\n",

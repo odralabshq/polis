@@ -71,13 +71,14 @@ echo ""
 echo "--- Creating Docker secret files ---"
 
 echo -n "$PASS_HEALTHCHECK" > "${OUTPUT_DIR}/valkey_password.txt"
-echo -n "$PASS_DLP" > "${OUTPUT_DIR}/valkey_dlp_password.txt"
+echo -n "$DLP_PASS" > "${OUTPUT_DIR}/valkey_dlp_password.txt"
 echo -n "$PASS_MCP_AGENT" > "${OUTPUT_DIR}/valkey_mcp_agent_password.txt"
 echo -n "$PASS_MCP_ADMIN" > "${OUTPUT_DIR}/valkey_mcp_admin_password.txt"
 echo -n "$PASS_GOV_REQMOD" > "${OUTPUT_DIR}/valkey_reqmod_password.txt"
 echo -n "$PASS_GOV_RESPMOD" > "${OUTPUT_DIR}/valkey_respmod_password.txt"
+echo -n "$PASS_LOG_WRITER" > "${OUTPUT_DIR}/valkey_log_writer_password.txt"
 
-echo "Created 6 password files for Docker secrets"
+echo "Created 7 password files for Docker secrets"
 
 # =============================================================================
 # Create valkey_users.acl
@@ -101,30 +102,22 @@ EOF
 echo "valkey_users.acl created"
 
 # =============================================================================
-# Write .env file (passwords for docker-compose and tests)
+# Write .env file (non-secret configuration only)
+# Passwords are now read from Docker secrets, not environment variables
 # =============================================================================
 
 echo ""
 echo "--- Updating .env file ---"
 
 if [[ -f "$ENV_FILE" ]]; then
-    # Remove any existing VALKEY_ password vars
+    # Remove any existing VALKEY_ password vars (migration cleanup)
     sed -i '/^VALKEY_MCP_AGENT_PASS=/d' "$ENV_FILE"
     sed -i '/^VALKEY_MCP_ADMIN_PASS=/d' "$ENV_FILE"
     sed -i '/^VALKEY_REQMOD_PASS=/d' "$ENV_FILE"
     sed -i '/^VALKEY_RESPMOD_PASS=/d' "$ENV_FILE"
 fi
 
-# Append passwords (needed by docker-compose environment variables)
-echo "VALKEY_MCP_AGENT_PASS=${PASS_MCP_AGENT}" >> "$ENV_FILE"
-echo "VALKEY_MCP_ADMIN_PASS=${PASS_MCP_ADMIN}" >> "$ENV_FILE"
-echo "VALKEY_REQMOD_PASS=${PASS_GOV_REQMOD}" >> "$ENV_FILE"
-echo "VALKEY_RESPMOD_PASS=${PASS_GOV_RESPMOD}" >> "$ENV_FILE"
-
-# Secure .env file permissions
-chmod 600 "$ENV_FILE"
-
-echo "Passwords written to ${ENV_FILE} (chmod 600)"
+echo ".env cleaned (passwords removed, now using Docker secrets)"
 
 # =============================================================================
 # Set File Permissions
@@ -151,11 +144,14 @@ echo "  valkey_mcp_agent_password.txt    (MCP agent)"
 echo "  valkey_mcp_admin_password.txt    (MCP admin)"
 echo "  valkey_reqmod_password.txt       (ICAP REQMOD)"
 echo "  valkey_respmod_password.txt      (ICAP RESPMOD)"
+echo "  valkey_log_writer_password.txt   (log writer)"
 echo "  valkey_users.acl                 (ACL with hashes)"
 echo ""
-echo "Passwords also in: ${ENV_FILE} (chmod 600, gitignored)"
+echo "✅ Passwords stored as Docker secrets (mounted at /run/secrets/)"
+echo "✅ .env cleaned (no plaintext passwords)"
 echo ""
 echo "⚠️  SECURITY NOTE:"
-echo "  - .env contains plaintext passwords (acceptable for local dev)"
+echo "  - All passwords now read from Docker secrets"
+echo "  - .env contains only non-secret configuration"
 echo "  - For production, use external secret manager (Vault, AWS Secrets Manager)"
 echo "  - All files in secrets/ are gitignored"

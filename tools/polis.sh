@@ -428,17 +428,6 @@ setup_valkey() {
         && [[ -f "${VALKEY_SECRETS_DIR}/valkey_password.txt" ]] \
         && [[ -f "${VALKEY_SECRETS_DIR}/valkey_users.acl" ]]; then
         log_success "Valkey secrets already exist."
-        # Ensure VALKEY_MCP_AGENT_PASS is in .env even if secrets were pre-generated
-        if ! grep -q '^VALKEY_MCP_AGENT_PASS=' "${PROJECT_ROOT}/.env" 2>/dev/null; then
-            if [[ -f "${VALKEY_SECRETS_DIR}/credentials.env.example" ]]; then
-                local agent_pass
-                agent_pass=$(grep '^VALKEY_MCP_AGENT_PASS=' "${VALKEY_SECRETS_DIR}/credentials.env.example" | cut -d= -f2-)
-                if [[ -n "$agent_pass" ]]; then
-                    echo "VALKEY_MCP_AGENT_PASS=${agent_pass}" >> "${PROJECT_ROOT}/.env"
-                    log_info "Added VALKEY_MCP_AGENT_PASS to .env from existing credentials."
-                fi
-            fi
-        fi
     else
         echo "Generating Valkey secrets..."
         if ! bash "${PROJECT_ROOT}/scripts/generate-valkey-secrets.sh" \
@@ -861,7 +850,17 @@ case "${1:-}" in
     down)
         echo "=== Polis: Removing Containers ==="
         docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --volumes --remove-orphans
-        log_success "Containers, networks, and volumes removed."
+        
+        echo "=== Polis: Cleaning Secrets and Certificates ==="
+        rm -rf "${PROJECT_ROOT}/secrets/"*.txt
+        rm -rf "${PROJECT_ROOT}/secrets/"*.acl
+        rm -rf "${PROJECT_ROOT}/certs/"*.pem
+        rm -rf "${PROJECT_ROOT}/certs/"*.crt
+        rm -rf "${PROJECT_ROOT}/certs/"*.key
+        rm -rf "${PROJECT_ROOT}/certs/"*.srl
+        
+        log_success "Containers, networks, volumes, secrets, and certificates removed."
+        log_info "Run 'polis init' to regenerate secrets and certificates."
         ;;
         
     stop)
