@@ -98,8 +98,21 @@ services:
       dockerfile: ./build/icap/Dockerfile
     image: polis-icap-oss:latest
     container_name: polis-icap
+    tmpfs:
+      - /tmp:size=2G,mode=1777
+      - /var/log:size=100M,mode=755
+      - /run:size=10M,mode=755
+      - /var/run/c-icap:size=10M,mode=755
+    mem_limit: 3G
+    mem_reservation: 1G
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     networks:
       gateway-bridge: {}
     volumes:
@@ -109,6 +122,7 @@ services:
       - ../config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
       - ../config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
       - ../certs/valkey:/etc/valkey/tls:ro
+      - clamav-db:/var/lib/clamav:ro
     env_file:
       - ../.env
     environment:
@@ -119,17 +133,17 @@ services:
       clamav:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "printf 'OPTIONS icap://localhost:1344/url_check ICAP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | nc -q1 localhost 1344 | grep -q 'ICAP/1.0 200'"]
+      test: ["CMD", "c-icap-client", "-i", "localhost", "-p", "1344", "-s", "squidclamav", "-f", "/dev/null"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 10s
     restart: unless-stopped
     logging:
       driver: json-file
       options:
-        max-size: "50m"
-        max-file: "5"
+        max-size: "10m"
+        max-file: "3"
         labels: "service"
     labels:
       service: "polis-icap"
@@ -156,6 +170,7 @@ services:
       - /var/lock:size=10M,mode=1777
     networks:
       gateway-bridge: {}
+      internet: {}
     volumes:
       - clamav-db:/var/lib/clamav
       - ../config/freshclam.conf:/etc/clamav/freshclam.conf:ro
@@ -173,8 +188,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "50m"
-        max-file: "5"
+        max-size: "10m"
+        max-file: "3"
         labels: "service"
     labels:
       service: "polis-clamav"
@@ -388,6 +403,10 @@ networks:
       driver: default
       config:
         - subnet: 10.20.1.0/24
+
+  internet:
+    enable_ipv6: false
+    driver: bridge
 
 volumes:
   clamav-db:

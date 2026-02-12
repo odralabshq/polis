@@ -104,17 +104,18 @@ COPY --from=builder /build/srv_polis_approval.so /usr/lib/c_icap/
 RUN groupadd -r c-icap && useradd -r -g c-icap -s /sbin/nologin c-icap
 
 # Create directories with proper ownership
-RUN mkdir -p /var/run/c-icap /run/c-icap /usr/var/log && \
-    chown c-icap:c-icap /var/run/c-icap /run/c-icap /usr/var/log && \
-    chmod 755 /var/run/c-icap /run/c-icap /usr/var/log
+RUN mkdir -p /var/run/c-icap /run/c-icap /var/log/c-icap && \
+    chown c-icap:c-icap /var/run/c-icap /run/c-icap /var/log/c-icap && \
+    chmod 755 /var/run/c-icap /run/c-icap /var/log/c-icap
 
 # Entrypoint with gosu for safe privilege dropping
 COPY <<'EOF' /entrypoint.sh
 #!/bin/bash
 set -e
-mkdir -p /var/run/c-icap
-chown c-icap:c-icap /var/run/c-icap
-chmod 755 /var/run/c-icap
+# Create directories in tmpfs mounts with correct ownership
+mkdir -p /var/log/c-icap /var/run/c-icap
+chown c-icap:c-icap /var/log/c-icap /var/run/c-icap
+# Clean up stale PID files
 rm -f /var/run/c-icap/c-icap.pid /var/run/c-icap/c-icap.ctl
 echo "[icap] Starting c-icap with SquidClamav on 0.0.0.0:1344..."
 exec gosu c-icap /usr/bin/c-icap -N -D -d 1 -f /etc/c-icap/c-icap.conf
