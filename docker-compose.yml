@@ -5,7 +5,7 @@ services:
   # =========================================================
   dns:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/dns/Dockerfile
     image: polis-dns-oss:latest
     container_name: polis-dns
@@ -17,8 +17,8 @@ services:
       internal-bridge:
         ipv4_address: 10.10.1.2
     volumes:
-      - ../config/Corefile:/etc/coredns/Corefile:ro
-      - ../config/dns-blocklist.txt:/etc/coredns/blocklist.txt:ro
+      - ./config/Corefile:/etc/coredns/Corefile:ro
+      - ./config/dns-blocklist.txt:/etc/coredns/blocklist.txt:ro
     healthcheck:
       test: ["CMD", "nslookup", "github.com", "127.0.0.1"]
       interval: 30s
@@ -40,7 +40,7 @@ services:
   # =========================================================
   gateway:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/g3proxy/Dockerfile
     image: polis-gateway-oss:latest
     container_name: polis-gateway
@@ -56,17 +56,17 @@ services:
     cap_drop:
       - ALL
     security_opt:
-      - seccomp=../config/seccomp/gateway.json
+      - seccomp=./config/seccomp/gateway.json
     networks:
       internal-bridge: {}
       gateway-bridge: {}
       external-bridge: {}
     volumes:
-      - ../config/g3proxy.yaml:/etc/g3proxy/g3proxy.yaml:ro
-      - ../config/g3fcgen.yaml:/etc/g3proxy/g3fcgen.yaml:ro
-      - ../scripts/g3proxy-init.sh:/init.sh:ro
-      - ../certs/ca:/etc/g3proxy/ssl:ro
-      - ../scripts/health-check.sh:/scripts/health-check.sh:ro
+      - ./config/g3proxy.yaml:/etc/g3proxy/g3proxy.yaml:ro
+      - ./config/g3fcgen.yaml:/etc/g3proxy/g3fcgen.yaml:ro
+      - ./scripts/g3proxy-init.sh:/init.sh:ro
+      - ./certs/ca:/etc/g3proxy/ssl:ro
+      - ./scripts/health-check.sh:/scripts/health-check.sh:ro
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv4.ip_nonlocal_bind=1
@@ -94,7 +94,7 @@ services:
   # =========================================================
   icap:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/icap/Dockerfile
     image: polis-icap-oss:latest
     container_name: polis-icap
@@ -116,15 +116,15 @@ services:
     networks:
       gateway-bridge: {}
     volumes:
-      - ../config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
-      - ../config/squidclamav.conf:/etc/squidclamav.conf:ro
-      - ../config/blocklist.txt:/etc/c-icap/blocklist.txt:ro
-      - ../config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
-      - ../config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
-      - ../certs/valkey:/etc/valkey/tls:ro
+      - ./config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
+      - ./config/squidclamav.conf:/etc/squidclamav.conf:ro
+      - ./config/blocklist.txt:/etc/c-icap/blocklist.txt:ro
+      - ./config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
+      - ./config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
+      - ./certs/valkey:/etc/valkey/tls:ro
       - clamav-db:/var/lib/clamav:ro
     env_file:
-      - ../.env
+      - .env
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
     secrets:
@@ -173,8 +173,8 @@ services:
       internet: {}
     volumes:
       - clamav-db:/var/lib/clamav
-      - ../config/freshclam.conf:/etc/clamav/freshclam.conf:ro
-      - ../config/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ./config/freshclam.conf:/etc/clamav/freshclam.conf:ro
+      - ./config/clamd.conf:/etc/clamav/clamd.conf:ro
     environment:
       - CLAMAV_NO_FRESHCLAMD=false
       - CLAMAV_NO_MILTERD=true
@@ -205,7 +205,7 @@ services:
   # =========================================================
   workspace:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/workspace/Dockerfile
     image: polis-workspace-oss:latest
     container_name: polis-workspace
@@ -220,11 +220,11 @@ services:
     networks:
       internal-bridge: {}
     env_file:
-      - ../.env
+      - .env
     volumes:
-      - ../certs/ca/ca.pem:/usr/local/share/ca-certificates/polis-ca.crt:ro
-      - ../scripts/workspace-init.sh:/usr/local/bin/polis-init.sh:ro
-      - ../config/polis-init.service:/etc/systemd/system/polis-init.service:ro
+      - ./certs/ca/ca.pem:/usr/local/share/ca-certificates/polis-ca.crt:ro
+      - ./scripts/workspace-init.sh:/usr/local/bin/polis-init.sh:ro
+      - ./config/polis-init.service:/etc/systemd/system/polis-init.service:ro
       - type: tmpfs
         target: /root/.ssh
         tmpfs:
@@ -297,8 +297,8 @@ services:
         gid: "999"
         mode: 0440
     volumes:
-      - ../config/valkey.conf:/etc/valkey/valkey.conf:ro
-      - ../certs/valkey:/etc/valkey/tls:ro
+      - ./config/valkey.conf:/etc/valkey/valkey.conf:ro
+      - ./certs/valkey:/etc/valkey/tls:ro
       - valkey-data:/data
     healthcheck:
       test:
@@ -339,7 +339,7 @@ services:
   # =========================================================
   mcp-agent:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/mcp-server/Dockerfile.agent
     image: polis-mcp-agent-oss:latest
     container_name: polis-mcp-agent
@@ -347,15 +347,15 @@ services:
       internal-bridge: {}
       gateway-bridge: {}
     env_file:
-      - ../.env
+      - .env
     environment:
       - RUST_LOG=debug
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
       - polis_AGENT_VALKEY_URL=rediss://valkey:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
-      - polis_AGENT_VALKEY_PASS=$VALKEY_MCP_AGENT_PASS
+      - polis_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
     volumes:
-      - ../certs/valkey:/etc/valkey/tls:ro
+      - ./certs/valkey:/etc/valkey/tls:ro
     depends_on:
       valkey:
         condition: service_healthy
@@ -420,8 +420,8 @@ volumes:
 
 secrets:
   valkey_password:
-    file: ../secrets/valkey_password.txt
+    file: ./secrets/valkey_password.txt
   valkey_acl:
-    file: ../secrets/valkey_users.acl
+    file: ./secrets/valkey_users.acl
   valkey_dlp_password:
-    file: ../secrets/valkey_dlp_password.txt
+    file: ./secrets/valkey_dlp_password.txt
