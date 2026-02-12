@@ -217,7 +217,7 @@ docker info | grep sysbox
 
 **Gateway unhealthy / "not found" errors** — CRLF line endings (Windows/WSL2):
 ```bash
-dos2unix tools/polis.sh scripts/*.sh agents/openclaw/**/*.sh
+bash tools/fix-line-endings.sh
 ```
 
 **Full reset:**

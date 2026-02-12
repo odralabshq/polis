@@ -495,6 +495,86 @@ build_compose_flags() {
     echo "$flags"
 }
 
+seed_openclaw_runtime_from_image() {
+    local seed_container="polis-openclaw-seed"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+
+    mkdir -p "${tmp_dir}/app"
+
+    if ! docker pull alpine/openclaw:latest >/dev/null 2>&1; then
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    docker rm -f "$seed_container" >/dev/null 2>&1 || true
+    if ! docker create --name "$seed_container" alpine/openclaw:latest >/dev/null 2>&1; then
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if ! docker cp "${seed_container}:/app/." "${tmp_dir}/app/"; then
+        docker rm -f "$seed_container" >/dev/null 2>&1 || true
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if ! docker cp "${seed_container}:/usr/local/bin/node" "${tmp_dir}/node"; then
+        docker rm -f "$seed_container" >/dev/null 2>&1 || true
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    docker rm -f "$seed_container" >/dev/null 2>&1 || true
+
+    docker exec polis-workspace bash -lc 'mkdir -p /app /usr/bin'
+    if ! tar -C "${tmp_dir}/app" -cf - . | docker exec -i polis-workspace tar -C /app -xf -; then
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if ! cat "${tmp_dir}/node" | docker exec -i polis-workspace sh -lc 'cat > /usr/bin/node && chmod 755 /usr/bin/node'; then
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    docker exec polis-workspace bash -lc 'chown -R polis:polis /app /home/polis'
+    rm -rf "$tmp_dir"
+    return 0
+}
+
+repair_openclaw_service() {
+    log_info "Attempting OpenClaw self-repair..."
+
+    docker exec polis-workspace bash -lc '
+        mkdir -p /home/polis/.openclaw/workspace /home/polis/.openclaw/agents /home/polis/.openclaw/sessions
+        if [[ -f /tmp/agents/openclaw/scripts/init.sh ]]; then
+            cp /tmp/agents/openclaw/scripts/init.sh /usr/local/bin/openclaw-init.sh
+        fi
+        if [[ -f /tmp/agents/openclaw/scripts/health.sh ]]; then
+            cp /tmp/agents/openclaw/scripts/health.sh /usr/local/bin/openclaw-health.sh
+        fi
+        chmod 755 /usr/local/bin/openclaw-init.sh /usr/local/bin/openclaw-health.sh 2>/dev/null || true
+        if [[ -f /tmp/agents/openclaw/config/SOUL.md ]]; then
+            mkdir -p /usr/local/share/openclaw
+            cp /tmp/agents/openclaw/config/SOUL.md /usr/local/share/openclaw/SOUL.md
+            chmod 644 /usr/local/share/openclaw/SOUL.md
+        fi
+        chown -R polis:polis /home/polis/.openclaw
+    '
+
+    if ! docker exec polis-workspace bash -lc 'command -v node >/dev/null 2>&1 && [[ -d /app ]]'; then
+        log_info "OpenClaw runtime missing in workspace; seeding from alpine/openclaw image..."
+        if ! seed_openclaw_runtime_from_image; then
+            log_warn "Failed to seed OpenClaw runtime from image."
+            return 1
+        fi
+    fi
+
+    docker exec polis-workspace bash -lc 'systemctl daemon-reload && systemctl reset-failed openclaw.service || true'
+    docker exec polis-workspace bash -lc 'systemctl enable --now openclaw.service'
+}
+
 dispatch_agent_command() {
     local agent="$1"
     local subcmd="${2:-}"
@@ -505,6 +585,12 @@ dispatch_agent_command() {
 
     case "$subcmd" in
         init)
+            if [[ "$agent" == "openclaw" ]]; then
+                if ! docker exec polis-workspace systemctl is-active "$AGENT_SERVICE_NAME" &>/dev/null; then
+                    repair_openclaw_service || true
+                fi
+            fi
+
             log_info "Waiting for ${AGENT_DISPLAY_NAME} to initialize..."
             local init_retries=30
             while [[ $init_retries -gt 0 ]]; do
@@ -849,15 +935,38 @@ case "${1:-}" in
         
     down)
         echo "=== Polis: Removing Containers ==="
-        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --volumes --remove-orphans
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --volumes --remove-orphans || true
+
+        lingering_containers=$(docker ps -aq --filter "name=^/polis-")
+        if [[ -n "$lingering_containers" ]]; then
+            log_info "Force removing lingering Polis containers..."
+            docker rm -f $lingering_containers >/dev/null 2>&1 || true
+        fi
+
+        for vol in polis-clamav-db polis-valkey-data; do
+            volume_users=$(docker ps -aq --filter "volume=${vol}")
+            if [[ -n "$volume_users" ]]; then
+                log_info "Force removing containers using volume ${vol}..."
+                docker rm -f $volume_users >/dev/null 2>&1 || true
+            fi
+            docker volume rm -f "$vol" >/dev/null 2>&1 || true
+        done
+
+        deploy_networks=$(docker network ls --format '{{.Name}}' | grep '^deploy_' || true)
+        if [[ -n "$deploy_networks" ]]; then
+            while IFS= read -r network_name; do
+                [[ -n "$network_name" ]] || continue
+                docker network rm "$network_name" >/dev/null 2>&1 || true
+            done <<< "$deploy_networks"
+        fi
         
         echo "=== Polis: Cleaning Secrets and Certificates ==="
-        rm -rf "${PROJECT_ROOT}/secrets/"*.txt
-        rm -rf "${PROJECT_ROOT}/secrets/"*.acl
-        rm -rf "${PROJECT_ROOT}/certs/"*.pem
-        rm -rf "${PROJECT_ROOT}/certs/"*.crt
-        rm -rf "${PROJECT_ROOT}/certs/"*.key
-        rm -rf "${PROJECT_ROOT}/certs/"*.srl
+        rm -f "${PROJECT_ROOT}/secrets/"*.txt
+        rm -f "${PROJECT_ROOT}/secrets/"*.acl
+        rm -f "${PROJECT_ROOT}/certs/"*.pem
+        rm -f "${PROJECT_ROOT}/certs/"*.crt
+        rm -f "${PROJECT_ROOT}/certs/"*.key
+        rm -f "${PROJECT_ROOT}/certs/"*.srl
         
         log_success "Containers, networks, volumes, secrets, and certificates removed."
         log_info "Run 'polis init' to regenerate secrets and certificates."

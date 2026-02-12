@@ -57,6 +57,7 @@ openssl genrsa -out "${OUTPUT_DIR}/server.key" 2048 2>/dev/null
 # Create extension file for server cert
 EXT_FILE="${OUTPUT_DIR}/server.ext"
 cat > "${EXT_FILE}" << EOF
+[v3_server]
 basicConstraints = CA:FALSE
 keyUsage = critical, digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
@@ -79,7 +80,8 @@ openssl x509 -req \
     -out "${OUTPUT_DIR}/server.crt" \
     -days "${DAYS}" \
     -sha256 \
-    -extfile "${EXT_FILE}"
+    -extfile "${EXT_FILE}" \
+    -extensions v3_server
 
 # Remove server CSR and ext file
 rm -f "${OUTPUT_DIR}/server.csr" "${EXT_FILE}"
@@ -94,6 +96,7 @@ openssl genrsa -out "${OUTPUT_DIR}/client.key" 2048 2>/dev/null
 # Create extension file for client cert
 CLIENT_EXT_FILE="${OUTPUT_DIR}/client.ext"
 cat > "${CLIENT_EXT_FILE}" << EOF
+[v3_client]
 basicConstraints = CA:FALSE
 keyUsage = critical, digitalSignature
 extendedKeyUsage = clientAuth
@@ -115,7 +118,8 @@ openssl x509 -req \
     -out "${OUTPUT_DIR}/client.crt" \
     -days "${DAYS}" \
     -sha256 \
-    -extfile "${CLIENT_EXT_FILE}"
+    -extfile "${CLIENT_EXT_FILE}" \
+    -extensions v3_client
 
 # Remove client CSR and ext file
 rm -f "${OUTPUT_DIR}/client.csr" "${CLIENT_EXT_FILE}"

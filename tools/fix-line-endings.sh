@@ -30,7 +30,7 @@ fix_file() {
         # Remove BOM: skip first 3 bytes
         tail -c +4 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
         echo -e "  ${YELLOW}bom${NC}    $f"
-        ((bom_fixed++))
+        bom_fixed=$((bom_fixed + 1))
         changed=1
     fi
 
@@ -38,12 +38,12 @@ fix_file() {
     if grep -qP '\r$' "$f" 2>/dev/null; then
         sed -i 's/\r$//' "$f"
         echo -e "  ${GREEN}crlf${NC}   $f"
-        ((converted++))
+        converted=$((converted + 1))
         changed=1
     fi
 
     if [[ $changed -eq 0 ]]; then
-        ((skipped++))
+        skipped=$((skipped + 1))
     fi
 }
 
