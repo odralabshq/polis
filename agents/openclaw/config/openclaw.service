@@ -24,9 +24,9 @@ WorkingDirectory=/app
 EnvironmentFile=-/home/polis/.openclaw/.env
 
 # Force IPv4 for DNS resolution (IPv6 is blocked in the container)
-# Also add Polis CA to Node.js trusted certificates for TLS MITM
+# Use full OS CA bundle for outbound TLS (OpenAI/API providers behind enterprise proxies)
 Environment=NODE_OPTIONS=--dns-result-order=ipv4first
-Environment=NODE_EXTRA_CA_CERTS=/etc/ssl/certs/polis-ca.pem
+Environment=NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 # Run initialization before starting gateway
 ExecStartPre=/usr/local/bin/openclaw-init.sh

@@ -107,6 +107,11 @@ for f in "${PROJECT_ROOT}"/tests/unit/*.bats "${PROJECT_ROOT}"/tests/integration
     fix_file "$f"
 done
 
+# 9b. BATS framework/vendor files (loaded by tests; CRLF here breaks sourcing)
+find "${PROJECT_ROOT}/tests/bats" -type f \( -name "*.bash" -o -name "*.bats" -o -name "*.sh" \) 2>/dev/null | while read -r f; do
+    fix_file "$f"
+done
+
 # 10. C source files (ICAP modules)
 for f in "${PROJECT_ROOT}"/build/icap/*.c; do
     fix_file "$f"
