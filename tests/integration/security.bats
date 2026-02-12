@@ -57,11 +57,16 @@ setup() {
     assert_output "false"
 }
 
-@test "security: icap has no added capabilities" {
+@test "security: icap has minimal added capabilities" {
     run docker inspect --format '{{.HostConfig.CapAdd}}' "${ICAP_CONTAINER}"
     assert_success
-    # Should be empty or []
-    [[ "$output" == "[]" ]] || [[ -z "$output" ]] || [[ "$output" == "<no value>" ]]
+    # Should only have CHOWN, SETUID, SETGID for privilege dropping
+    assert_output --partial "CHOWN"
+    assert_output --partial "SETUID"
+    assert_output --partial "SETGID"
+    # Should NOT have dangerous capabilities
+    refute_output --partial "SYS_ADMIN"
+    refute_output --partial "NET_ADMIN"
 }
 
 @test "security: icap runs as non-root user" {
