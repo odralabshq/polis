@@ -11,7 +11,7 @@ setup() {
     require_container "$MCP_AGENT_CONTAINER" "$VALKEY_CONTAINER"
 
     MCP_ENDPOINT="http://localhost:8080/mcp"
-    CREDENTIALS_FILE="${PROJECT_ROOT}/secrets/credentials.env.example"
+    CREDENTIALS_FILE="${PROJECT_ROOT}/.env"
 }
 
 # Helper: run a valkey-cli command inside the Valkey container

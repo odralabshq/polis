@@ -9,7 +9,7 @@ setup() {
     require_container "$VALKEY_CONTAINER"
 
     CERT_SCRIPT="${PROJECT_ROOT}/scripts/generate-valkey-certs.sh"
-    CREDENTIALS_FILE="${PROJECT_ROOT}/secrets/credentials.env.example"
+    CREDENTIALS_FILE="${PROJECT_ROOT}/.env"
 }
 
 # Helper: run a valkey-cli command inside the container as a given user

@@ -224,7 +224,7 @@ setup() {
 
 @test "valkey: mcp-agent ACL is tightened (no config access)" {
     # Verify mcp-agent user cannot set security level
-    local mcp_pass=$(cat "${PROJECT_ROOT}/secrets/credentials.env.example" | grep VALKEY_MCP_AGENT_PASS | cut -d'=' -f2)
+    local mcp_pass=$(cat "${PROJECT_ROOT}/.env" | grep VALKEY_MCP_AGENT_PASS | cut -d'=' -f2)
     run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-agent --pass "$mcp_pass" SET polis:config:security_level strict
     assert_output --partial "NOPERM"
 }

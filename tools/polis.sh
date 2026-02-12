@@ -754,8 +754,9 @@ case "${1:-}" in
         # Step 5: Clean up existing containers
         echo ""
         log_step "Cleaning up existing containers..."
-        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans 2>/dev/null || true
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --volumes --remove-orphans 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
+        log_success "Environment cleaned."
         
         # Step 6: Build or pull images
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
@@ -859,7 +860,8 @@ case "${1:-}" in
         
     down)
         echo "=== Polis: Removing Containers ==="
-        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --volumes --remove-orphans
+        log_success "Containers, networks, and volumes removed."
         ;;
         
     stop)
