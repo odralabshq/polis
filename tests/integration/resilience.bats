@@ -41,7 +41,7 @@ setup() {
 @test "resilience: icap has healthcheck configured" {
     run docker inspect --format '{{.Config.Healthcheck.Test}}' "${ICAP_CONTAINER}"
     assert_success
-    assert_output --partial "ICAP"
+    assert_output --partial "c-icap"
 }
 
 @test "resilience: workspace has healthcheck configured" {
