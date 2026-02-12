@@ -8,13 +8,10 @@ polis-mcp-common = { path = "../polis-mcp-common" }
 rmcp = { version = "0.14", features = ["server", "macros", "transport-streamable-http-server"] }
 schemars = "1.0"
 tokio = { version = "1.0", features = ["full"] }
-deadpool-redis = { version = "0.22", features = ["tls-rustls", "tokio-rustls-comp"] }
-# NOTE: Do NOT add a direct `redis` dependency — use `deadpool_redis::redis`
-# re-export to avoid version conflicts. deadpool-redis 0.22 uses redis 0.32.
-# The rustls dependency below is ONLY for installing the crypto provider at startup.
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
-# rustls-pemfile is used to validate PEM cert files at startup (optional).
+fred = { version = "10.1", features = ["enable-rustls", "i-all"] }
+rustls = "0.23"
 rustls-pemfile = "2"
+futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1"

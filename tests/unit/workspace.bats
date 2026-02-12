@@ -172,11 +172,9 @@ setup() {
     # When polis init is run WITHOUT --agent flag, no ports should be exposed
     # When run WITH --agent=openclaw, the compose.override.yaml adds port exposure
     
-    # Check if an agent service is installed (indicates --agent was used)
-    run docker exec "${WORKSPACE_CONTAINER}" systemctl list-unit-files | grep -E "openclaw|agent"
-    
-    if [[ "$status" -eq 0 ]]; then
-        skip "Agent profile detected (--agent was used) - ports are expected"
+    # Check if compose.override.yaml exists (indicates --agent was used)
+    if [[ -f "${PROJECT_ROOT}/deploy/compose.override.yaml" ]]; then
+        skip "Agent profile detected (compose.override.yaml exists) - ports are expected"
     fi
     
     # Base profile: no ports should be exposed

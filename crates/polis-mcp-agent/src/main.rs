@@ -72,10 +72,6 @@ async fn health() -> StatusCode {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Install the default crypto provider (ring) for rustls 0.23+
-    // Ignore error if already installed (e.g. by other dep), but ideally we do it first.
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
     // 1. Initialise tracing with RUST_LOG env filter.
     tracing_subscriber::fmt()
         .with_env_filter(

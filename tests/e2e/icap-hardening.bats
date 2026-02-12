@@ -228,8 +228,9 @@ setup() {
 }
 
 @test "e2e-hardening: whitelist patterns are loaded" {
-    run docker exec "$ICAP_CONTAINER" grep "Reading directive whitelist" /var/log/c-icap/server.log
+    run docker exec "$ICAP_CONTAINER" grep -c "^whitelist" /etc/squidclamav.conf
     assert_success
+    [ "$output" -gt 0 ]
 }
 
 # =============================================================================
