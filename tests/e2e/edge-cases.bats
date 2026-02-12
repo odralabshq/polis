@@ -279,7 +279,7 @@ setup() {
 @test "edge: icap health check verifies process" {
     run docker inspect --format '{{.Config.Healthcheck.Test}}' "${ICAP_CONTAINER}"
     assert_success
-    assert_output --partial "ICAP"
+    assert_output --partial "c-icap"
 }
 
 # =============================================================================
