@@ -257,5 +257,9 @@ relax_security_level() {
             --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
             --user mcp-admin --pass '$admin_pass' \
             SET polis:config:security_level relaxed" 2>/dev/null || true
+        
+        # Restart ICAP to reload security level (it only reads on startup + poll interval)
+        docker restart "$ICAP_CONTAINER" >/dev/null 2>&1 || true
+        sleep 3
     fi
 }
