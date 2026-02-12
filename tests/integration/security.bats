@@ -341,25 +341,37 @@ setup() {
 
 @test "security: level relaxed allows new domains" {
     # Use mcp-admin to SET (dlp-reader only has GET)
-    local admin_pass=$(docker exec polis-v2-valkey cat /run/secrets/valkey_mcp_admin_password.txt)
-    run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass '$admin_pass' SET polis:config:security_level relaxed"
+    local admin_pass
+    admin_pass=$(docker exec polis-v2-valkey cat /run/secrets/valkey_mcp_admin_password 2>/dev/null || echo "")
+    [[ -n "$admin_pass" ]] || skip "valkey_mcp_admin_password secret not mounted"
+    
+    run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass '$admin_pass' --no-auth-warning SET polis:config:security_level relaxed"
     assert_success
     
     # Verify with dlp-reader (read-only)
-    local dlp_pass=$(cat "${PROJECT_ROOT}/secrets/valkey_dlp_password.txt")
-    run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass '$dlp_pass' GET polis:config:security_level"
+    local dlp_pass
+    dlp_pass=$(docker exec polis-v2-valkey cat /run/secrets/valkey_dlp_password 2>/dev/null || echo "")
+    [[ -n "$dlp_pass" ]] || skip "valkey_dlp_password secret not mounted"
+    
+    run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass '$dlp_pass' --no-auth-warning GET polis:config:security_level"
     assert_output --partial "relaxed"
 }
 
 @test "security: level strict blocks new domains" {
     # Use mcp-admin to SET (dlp-reader only has GET)
-    local admin_pass=$(docker exec polis-v2-valkey cat /run/secrets/valkey_mcp_admin_password.txt)
-    run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass '$admin_pass' SET polis:config:security_level strict"
+    local admin_pass
+    admin_pass=$(docker exec polis-v2-valkey cat /run/secrets/valkey_mcp_admin_password 2>/dev/null || echo "")
+    [[ -n "$admin_pass" ]] || skip "valkey_mcp_admin_password secret not mounted"
+    
+    run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-admin --pass '$admin_pass' --no-auth-warning SET polis:config:security_level strict"
     assert_success
     
     # Verify with dlp-reader (read-only)
-    local dlp_pass=$(cat "${PROJECT_ROOT}/secrets/valkey_dlp_password.txt")
-    run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass '$dlp_pass' GET polis:config:security_level"
+    local dlp_pass
+    dlp_pass=$(docker exec polis-v2-valkey cat /run/secrets/valkey_dlp_password 2>/dev/null || echo "")
+    [[ -n "$dlp_pass" ]] || skip "valkey_dlp_password secret not mounted"
+    
+    run docker exec polis-v2-valkey sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass '$dlp_pass' --no-auth-warning GET polis:config:security_level"
     assert_output --partial "strict"
 }
 

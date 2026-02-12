@@ -80,7 +80,16 @@ impl AppState {
         config.username = Some(user.to_string());
         config.password = Some(password.to_string());
 
-        let client = Builder::from_config(config).build()?;
+        let client = Builder::from_config(config)
+            .with_connection_config(|conn_config| {
+                // Set connection timeout to prevent hanging
+                conn_config.connection_timeout = std::time::Duration::from_secs(5);
+                // Set internal command timeout
+                conn_config.internal_command_timeout = std::time::Duration::from_secs(10);
+            })
+            .set_policy(ReconnectPolicy::new_exponential(0, 100, 5000, 5))
+            .build()?;
+        
         client.init().await?;
 
         client.ping::<String>(None).await

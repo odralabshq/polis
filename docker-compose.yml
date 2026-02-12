@@ -296,6 +296,10 @@ services:
         uid: "999"
         gid: "999"
         mode: 0440
+      - valkey_mcp_admin_password
+      - valkey_mcp_agent_password
+      - valkey_dlp_password
+      - valkey_log_writer_password
     volumes:
       - ./config/valkey.conf:/etc/valkey/valkey.conf:ro
       - ./certs/valkey:/etc/valkey/tls:ro

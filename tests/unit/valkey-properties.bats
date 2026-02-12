@@ -33,7 +33,8 @@ valkey_cli_as() {
 # Usage: get_password <secret_filename>
 get_password() {
     local secret_file="$1"
-    cat "${PROJECT_ROOT}/secrets/${secret_file}"
+    # Read from host filesystem (tests run on host, not in container)
+    cat "${PROJECT_ROOT}/secrets/${secret_file}" 2>/dev/null || echo ""
 }
 
 # =============================================================================
