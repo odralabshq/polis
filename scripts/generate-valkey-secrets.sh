@@ -64,23 +64,24 @@ HASH_DLP="$(hash_password "${DLP_PASS}")"
 echo "SHA-256 hashes computed for all users."
 
 # =============================================================================
-# Create valkey_password.txt
-# Contains the healthcheck user password (used by Docker health check)
+# Create individual password files (Docker secrets)
 # =============================================================================
 
 echo ""
-echo "--- Creating valkey_password.txt ---"
+echo "--- Creating Docker secret files ---"
 
-cat > "${OUTPUT_DIR}/valkey_password.txt" <<EOF
-${PASS_HEALTHCHECK}
-EOF
+echo -n "$PASS_HEALTHCHECK" > "${OUTPUT_DIR}/valkey_password.txt"
+echo -n "$PASS_DLP" > "${OUTPUT_DIR}/valkey_dlp_password.txt"
+echo -n "$PASS_MCP_AGENT" > "${OUTPUT_DIR}/valkey_mcp_agent_password.txt"
+echo -n "$PASS_MCP_ADMIN" > "${OUTPUT_DIR}/valkey_mcp_admin_password.txt"
+echo -n "$PASS_GOV_REQMOD" > "${OUTPUT_DIR}/valkey_reqmod_password.txt"
+echo -n "$PASS_GOV_RESPMOD" > "${OUTPUT_DIR}/valkey_respmod_password.txt"
 
-echo "valkey_password.txt created (healthcheck password)."
+echo "Created 6 password files for Docker secrets"
 
 # =============================================================================
 # Create valkey_users.acl
 # ACL rules with SHA-256 hashed passwords for all users
-# Includes: governance ICAP users, MCP users, utility users
 # =============================================================================
 
 echo ""
@@ -97,43 +98,33 @@ user healthcheck on #${HASH_HEALTHCHECK} -@all +PING +INFO
 user dlp-reader on #${HASH_DLP} ~polis:config:security_level -@all +GET +PING
 EOF
 
-echo "valkey_users.acl created (8 user entries)."
+echo "valkey_users.acl created"
 
 # =============================================================================
-# Create valkey_dlp_password.txt
-# Contains the dlp-reader user password (used by DLP module Docker secret)
-# =============================================================================
-
-echo ""
-echo "--- Creating valkey_dlp_password.txt ---"
-
-echo -n "$DLP_PASS" > "${OUTPUT_DIR}/valkey_dlp_password.txt"
-
-echo "valkey_dlp_password.txt created (dlp-reader password)."
-
-# =============================================================================
-# Write required env vars to .env
-# Docker-compose and tests need these passwords
+# Write .env file (passwords for docker-compose and tests)
 # =============================================================================
 
 echo ""
 echo "--- Updating .env file ---"
 
 if [[ -f "$ENV_FILE" ]]; then
-    # Remove any existing VALKEY_ vars to avoid duplicates
+    # Remove any existing VALKEY_ password vars
     sed -i '/^VALKEY_MCP_AGENT_PASS=/d' "$ENV_FILE"
     sed -i '/^VALKEY_MCP_ADMIN_PASS=/d' "$ENV_FILE"
     sed -i '/^VALKEY_REQMOD_PASS=/d' "$ENV_FILE"
     sed -i '/^VALKEY_RESPMOD_PASS=/d' "$ENV_FILE"
 fi
 
-# Append all passwords needed by docker-compose and tests
+# Append passwords (needed by docker-compose environment variables)
 echo "VALKEY_MCP_AGENT_PASS=${PASS_MCP_AGENT}" >> "$ENV_FILE"
 echo "VALKEY_MCP_ADMIN_PASS=${PASS_MCP_ADMIN}" >> "$ENV_FILE"
 echo "VALKEY_REQMOD_PASS=${PASS_GOV_REQMOD}" >> "$ENV_FILE"
 echo "VALKEY_RESPMOD_PASS=${PASS_GOV_RESPMOD}" >> "$ENV_FILE"
 
-echo "Valkey passwords written to ${ENV_FILE}"
+# Secure .env file permissions
+chmod 600 "$ENV_FILE"
+
+echo "Passwords written to ${ENV_FILE} (chmod 600)"
 
 # =============================================================================
 # Set File Permissions
@@ -142,17 +133,29 @@ echo "Valkey passwords written to ${ENV_FILE}"
 echo ""
 echo "--- Setting file permissions ---"
 
-chmod 600 "${OUTPUT_DIR}/valkey_password.txt"
+chmod 600 "${OUTPUT_DIR}"/valkey_*_password.txt
 chmod 644 "${OUTPUT_DIR}/valkey_users.acl"
-chmod 644 "${OUTPUT_DIR}/valkey_dlp_password.txt"
 
-echo "Permissions set: valkey_users.acl=644, valkey_dlp_password.txt=644 (readable by services), valkey_password.txt=600"
+echo "Permissions set: password files=600, ACL=644"
+# =============================================================================
+
+echo ""
+echo "--- Setting file permissions ---"
 
 echo ""
 echo "=== Secrets generation complete ==="
 echo "Files created in: ${OUTPUT_DIR}"
-echo "  valkey_password.txt      (healthcheck password)"
-echo "  valkey_users.acl         (ACL with hashed passwords)"
-echo "  valkey_dlp_password.txt  (dlp-reader password)"
+echo "  valkey_password.txt              (healthcheck)"
+echo "  valkey_dlp_password.txt          (DLP reader)"
+echo "  valkey_mcp_agent_password.txt    (MCP agent)"
+echo "  valkey_mcp_admin_password.txt    (MCP admin)"
+echo "  valkey_reqmod_password.txt       (ICAP REQMOD)"
+echo "  valkey_respmod_password.txt      (ICAP RESPMOD)"
+echo "  valkey_users.acl                 (ACL with hashes)"
 echo ""
-echo "Passwords written to: ${ENV_FILE}"
+echo "Passwords also in: ${ENV_FILE} (chmod 600, gitignored)"
+echo ""
+echo "⚠️  SECURITY NOTE:"
+echo "  - .env contains plaintext passwords (acceptable for local dev)"
+echo "  - For production, use external secret manager (Vault, AWS Secrets Manager)"
+echo "  - All files in secrets/ are gitignored"
