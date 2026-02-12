@@ -2,10 +2,14 @@
 # Edge Case and Failure Mode Tests
 # Tests for error handling, recovery, and boundary conditions
 
+setup_file() {
+    load "../helpers/common.bash"
+    relax_security_level
+}
+
 setup() {
     load "../helpers/common.bash"
     require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER" "$WORKSPACE_CONTAINER"
-    relax_security_level
 }
 
 # =============================================================================

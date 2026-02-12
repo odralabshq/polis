@@ -5,6 +5,11 @@
 # NOTE: g3proxy uses HTTP/2 which causes curl exit code 92 (stream CANCEL)
 # on many requests. Tests check output content, not exit codes.
 
+setup_file() {
+    load "../helpers/common.bash"
+    relax_security_level
+}
+
 setup() {
     load "../helpers/common.bash"
     require_container "$WORKSPACE_CONTAINER"
@@ -12,8 +17,6 @@ setup() {
     # Example credentials — use short keys that won't trigger aws_secret false positive
     ANTHROPIC_KEY="sk-ant-api01-abcdefghij1234567890"
     RSA_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----"
-
-    relax_security_level
 }
 
 @test "e2e-dlp: Anthropic key to api.anthropic.com is ALLOWED" {
