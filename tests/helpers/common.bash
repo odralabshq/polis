@@ -26,6 +26,12 @@ export CLAMAV_CONTAINER="polis-clamav"
 export VALKEY_CONTAINER="polis-v2-valkey"
 export MCP_AGENT_CONTAINER="polis-mcp-agent"
 
+# ── Network names ───────────────────────────────────────────────────────────
+export COMPOSE_PROJECT_NAME="polis"
+export NETWORK_INTERNAL="${COMPOSE_PROJECT_NAME}_internal-bridge"
+export NETWORK_GATEWAY="${COMPOSE_PROJECT_NAME}_gateway-bridge"
+export NETWORK_EXTERNAL="${COMPOSE_PROJECT_NAME}_external-bridge"
+
 # ── Timeouts ────────────────────────────────────────────────────────────────
 export DEFAULT_TIMEOUT=10
 export NETWORK_TIMEOUT=5
@@ -247,9 +253,9 @@ relax_security_level() {
     local admin_pass
     admin_pass="$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/secrets/credentials.env.example" 2>/dev/null | cut -d'=' -f2)"
     if [[ -n "$admin_pass" ]]; then
-        docker exec "$VALKEY_CONTAINER" valkey-cli --tls --cert /etc/valkey/tls/client.crt \
+        docker exec "$VALKEY_CONTAINER" sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt \
             --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
-            --user mcp-admin --pass "$admin_pass" \
-            SET polis:config:security_level relaxed 2>/dev/null || true
+            --user mcp-admin --pass '$admin_pass' \
+            SET polis:config:security_level relaxed" 2>/dev/null || true
     fi
 }

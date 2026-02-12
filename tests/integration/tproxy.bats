@@ -343,7 +343,7 @@ setup() {
     # Check that IPAMConfig doesn't have hardcoded IPs (empty or null IPv4Address)
     # The presence of a non-empty IPv4Address in IPAMConfig indicates static IP
     local internal_ip
-    internal_ip=$(echo "$gateway_networks" | jq -r '."deploy_internal-bridge".IPAMConfig.IPv4Address // empty')
+    internal_ip=$(echo "$gateway_networks" | jq -r ".\"${NETWORK_INTERNAL}\".IPAMConfig.IPv4Address // empty")
     
     [[ -z "$internal_ip" ]]
 }
