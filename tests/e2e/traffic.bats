@@ -2,10 +2,14 @@
 # End-to-End Traffic Tests
 # Tests for HTTP/HTTPS traffic interception and proxy behavior
 
+setup_file() {
+    load "../helpers/common.bash"
+    relax_security_level
+}
+
 setup() {
     load "../helpers/common.bash"
     require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER" "$WORKSPACE_CONTAINER"
-    relax_security_level
 }
 
 # =============================================================================

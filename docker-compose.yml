@@ -5,7 +5,7 @@ services:
   # =========================================================
   dns:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/dns/Dockerfile
     image: polis-dns-oss:latest
     container_name: polis-dns
@@ -17,8 +17,8 @@ services:
       internal-bridge:
         ipv4_address: 10.10.1.2
     volumes:
-      - ../config/Corefile:/etc/coredns/Corefile:ro
-      - ../config/dns-blocklist.txt:/etc/coredns/blocklist.txt:ro
+      - ./config/Corefile:/etc/coredns/Corefile:ro
+      - ./config/dns-blocklist.txt:/etc/coredns/blocklist.txt:ro
     healthcheck:
       test: ["CMD", "nslookup", "github.com", "127.0.0.1"]
       interval: 30s
@@ -40,7 +40,7 @@ services:
   # =========================================================
   gateway:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/g3proxy/Dockerfile
     image: polis-gateway-oss:latest
     container_name: polis-gateway
@@ -56,17 +56,17 @@ services:
     cap_drop:
       - ALL
     security_opt:
-      - seccomp=../config/seccomp/gateway.json
+      - seccomp=./config/seccomp/gateway.json
     networks:
       internal-bridge: {}
       gateway-bridge: {}
       external-bridge: {}
     volumes:
-      - ../config/g3proxy.yaml:/etc/g3proxy/g3proxy.yaml:ro
-      - ../config/g3fcgen.yaml:/etc/g3proxy/g3fcgen.yaml:ro
-      - ../scripts/g3proxy-init.sh:/init.sh:ro
-      - ../certs/ca:/etc/g3proxy/ssl:ro
-      - ../scripts/health-check.sh:/scripts/health-check.sh:ro
+      - ./config/g3proxy.yaml:/etc/g3proxy/g3proxy.yaml:ro
+      - ./config/g3fcgen.yaml:/etc/g3proxy/g3fcgen.yaml:ro
+      - ./scripts/g3proxy-init.sh:/init.sh:ro
+      - ./certs/ca:/etc/g3proxy/ssl:ro
+      - ./scripts/health-check.sh:/scripts/health-check.sh:ro
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv4.ip_nonlocal_bind=1
@@ -94,42 +94,56 @@ services:
   # =========================================================
   icap:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/icap/Dockerfile
     image: polis-icap-oss:latest
     container_name: polis-icap
+    tmpfs:
+      - /tmp:size=2G,mode=1777
+      - /var/log:size=100M,mode=1777
+      - /run:size=10M,mode=755
+      - /var/run/c-icap:size=10M,mode=755
+    mem_limit: 3G
+    mem_reservation: 1G
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     networks:
       gateway-bridge: {}
     volumes:
-      - ../config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
-      - ../config/squidclamav.conf:/etc/squidclamav.conf:ro
-      - ../config/blocklist.txt:/etc/c-icap/blocklist.txt:ro
-      - ../config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
-      - ../config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
-      - ../certs/valkey:/etc/valkey/tls:ro
-    env_file:
-      - ../.env
+      - ./config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
+      - ./config/squidclamav.conf:/etc/squidclamav.conf:ro
+      - ./config/blocklist.txt:/etc/c-icap/blocklist.txt:ro
+      - ./config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
+      - ./config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
+      - ./certs/valkey:/etc/valkey/tls:ro
+      - clamav-db:/var/lib/clamav:ro
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
     secrets:
       - valkey_dlp_password
+      - valkey_reqmod_password
+      - valkey_respmod_password
     depends_on:
       clamav:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "printf 'OPTIONS icap://localhost:1344/url_check ICAP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | nc -q1 localhost 1344 | grep -q 'ICAP/1.0 200'"]
+      test: ["CMD", "c-icap-client", "-i", "localhost", "-p", "1344", "-s", "squidclamav", "-f", "/dev/null"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 10s
     restart: unless-stopped
     logging:
       driver: json-file
       options:
-        max-size: "50m"
-        max-file: "5"
+        max-size: "10m"
+        max-file: "3"
         labels: "service"
     labels:
       service: "polis-icap"
@@ -156,10 +170,11 @@ services:
       - /var/lock:size=10M,mode=1777
     networks:
       gateway-bridge: {}
+      internet: {}
     volumes:
       - clamav-db:/var/lib/clamav
-      - ../config/freshclam.conf:/etc/clamav/freshclam.conf:ro
-      - ../config/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ./config/freshclam.conf:/etc/clamav/freshclam.conf:ro
+      - ./config/clamd.conf:/etc/clamav/clamd.conf:ro
     environment:
       - CLAMAV_NO_FRESHCLAMD=false
       - CLAMAV_NO_MILTERD=true
@@ -173,8 +188,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "50m"
-        max-file: "5"
+        max-size: "10m"
+        max-file: "3"
         labels: "service"
     labels:
       service: "polis-clamav"
@@ -190,7 +205,7 @@ services:
   # =========================================================
   workspace:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/workspace/Dockerfile
     image: polis-workspace-oss:latest
     container_name: polis-workspace
@@ -205,11 +220,11 @@ services:
     networks:
       internal-bridge: {}
     env_file:
-      - ../.env
+      - .env
     volumes:
-      - ../certs/ca/ca.pem:/usr/local/share/ca-certificates/polis-ca.crt:ro
-      - ../scripts/workspace-init.sh:/usr/local/bin/polis-init.sh:ro
-      - ../config/polis-init.service:/etc/systemd/system/polis-init.service:ro
+      - ./certs/ca/ca.pem:/usr/local/share/ca-certificates/polis-ca.crt:ro
+      - ./scripts/workspace-init.sh:/usr/local/bin/polis-init.sh:ro
+      - ./config/polis-init.service:/etc/systemd/system/polis-init.service:ro
       - type: tmpfs
         target: /root/.ssh
         tmpfs:
@@ -281,9 +296,13 @@ services:
         uid: "999"
         gid: "999"
         mode: 0440
+      - valkey_mcp_admin_password
+      - valkey_mcp_agent_password
+      - valkey_dlp_password
+      - valkey_log_writer_password
     volumes:
-      - ../config/valkey.conf:/etc/valkey/valkey.conf:ro
-      - ../certs/valkey:/etc/valkey/tls:ro
+      - ./config/valkey.conf:/etc/valkey/valkey.conf:ro
+      - ./certs/valkey:/etc/valkey/tls:ro
       - valkey-data:/data
     healthcheck:
       test:
@@ -324,23 +343,23 @@ services:
   # =========================================================
   mcp-agent:
     build:
-      context: ..
+      context: .
       dockerfile: ./build/mcp-server/Dockerfile.agent
     image: polis-mcp-agent-oss:latest
     container_name: polis-mcp-agent
     networks:
       internal-bridge: {}
       gateway-bridge: {}
-    env_file:
-      - ../.env
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=debug
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
       - polis_AGENT_VALKEY_URL=rediss://valkey:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
-      - polis_AGENT_VALKEY_PASS=$VALKEY_MCP_AGENT_PASS
+      - polis_AGENT_VALKEY_PASS_FILE=/run/secrets/valkey_mcp_agent_password
+    secrets:
+      - valkey_mcp_agent_password
     volumes:
-      - ../certs/valkey:/etc/valkey/tls:ro
+      - ./certs/valkey:/etc/valkey/tls:ro
     depends_on:
       valkey:
         condition: service_healthy
@@ -376,6 +395,7 @@ networks:
   gateway-bridge:
     enable_ipv6: false
     driver: bridge
+    internal: true
     ipam:
       driver: default
       config:
@@ -389,6 +409,10 @@ networks:
       config:
         - subnet: 10.20.1.0/24
 
+  internet:
+    enable_ipv6: false
+    driver: bridge
+
 volumes:
   clamav-db:
     name: polis-clamav-db
@@ -400,8 +424,18 @@ volumes:
 
 secrets:
   valkey_password:
-    file: ../secrets/valkey_password.txt
+    file: ./secrets/valkey_password.txt
   valkey_acl:
-    file: ../secrets/valkey_users.acl
+    file: ./secrets/valkey_users.acl
   valkey_dlp_password:
-    file: ../secrets/valkey_dlp_password.txt
+    file: ./secrets/valkey_dlp_password.txt
+  valkey_mcp_agent_password:
+    file: ./secrets/valkey_mcp_agent_password.txt
+  valkey_mcp_admin_password:
+    file: ./secrets/valkey_mcp_admin_password.txt
+  valkey_log_writer_password:
+    file: ./secrets/valkey_log_writer_password.txt
+  valkey_reqmod_password:
+    file: ./secrets/valkey_reqmod_password.txt
+  valkey_respmod_password:
+    file: ./secrets/valkey_respmod_password.txt

@@ -11,7 +11,7 @@
 TESTS_DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"
 export PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
 export TESTS_DIR
-export COMPOSE_FILE="${PROJECT_ROOT}/deploy/docker-compose.yml"
+export COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 
 # ── BATS libraries ──────────────────────────────────────────────────────────
 load "${TESTS_DIR}/bats/bats-support/load.bash"
@@ -25,6 +25,12 @@ export WORKSPACE_CONTAINER="polis-workspace"
 export CLAMAV_CONTAINER="polis-clamav"
 export VALKEY_CONTAINER="polis-v2-valkey"
 export MCP_AGENT_CONTAINER="polis-mcp-agent"
+
+# ── Network names ───────────────────────────────────────────────────────────
+export COMPOSE_PROJECT_NAME="polis"
+export NETWORK_INTERNAL="${COMPOSE_PROJECT_NAME}_internal-bridge"
+export NETWORK_GATEWAY="${COMPOSE_PROJECT_NAME}_gateway-bridge"
+export NETWORK_EXTERNAL="${COMPOSE_PROJECT_NAME}_external-bridge"
 
 # ── Timeouts ────────────────────────────────────────────────────────────────
 export DEFAULT_TIMEOUT=10
@@ -244,12 +250,22 @@ exec_with_timeout() {
 # Set valkey security_level to relaxed for e2e tests
 # (prevents new_domain_prompt from blocking test traffic)
 relax_security_level() {
-    local admin_pass
-    admin_pass="$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/secrets/credentials.env.example" 2>/dev/null | cut -d'=' -f2)"
-    if [[ -n "$admin_pass" ]]; then
-        docker exec "$VALKEY_CONTAINER" valkey-cli --tls --cert /etc/valkey/tls/client.crt \
-            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
-            --user mcp-admin --pass "$admin_pass" \
-            SET polis:config:security_level relaxed 2>/dev/null || true
+    # Check if Valkey container exists and is running
+    if ! docker ps --filter "name=^${VALKEY_CONTAINER}$" --format '{{.Names}}' 2>/dev/null | grep -q "^${VALKEY_CONTAINER}$"; then
+        return 0  # Silently skip if Valkey not running
     fi
+    
+    local admin_pass
+    admin_pass=$(docker exec "$VALKEY_CONTAINER" cat /run/secrets/valkey_mcp_admin_password 2>/dev/null || echo "")
+    if [[ -n "$admin_pass" ]]; then
+        docker exec "$VALKEY_CONTAINER" sh -c "valkey-cli --tls --cert /etc/valkey/tls/client.crt \
+            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
+            --user mcp-admin --pass '$admin_pass' --no-auth-warning \
+            SET polis:config:security_level relaxed" 2>/dev/null || true
+        
+        # Restart ICAP to reload security level (it only reads on startup + poll interval)
+        docker restart "$ICAP_CONTAINER" >/dev/null 2>&1 || true
+        sleep 3
+    fi
+    return 0  # Always succeed
 }

@@ -240,13 +240,12 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
     /*         Env vars:                                          */
     /*           VALKEY_HOST (default: "valkey")                   */
     /*           VALKEY_PORT (default: 6379)                       */
-    /*           VALKEY_REQMOD_PASS (required for ACL auth)        */
+    /*           Password read from /run/secrets/valkey_reqmod_password */
     /*           VALKEY_TLS_CERT, VALKEY_TLS_KEY, VALKEY_TLS_CA   */
     /* ---------------------------------------------------------- */
     {
         const char *vk_host = getenv("VALKEY_HOST");
         const char *vk_port_str = getenv("VALKEY_PORT");
-        const char *vk_pass = getenv("VALKEY_REQMOD_PASS");
         const char *tls_cert = getenv("VALKEY_TLS_CERT");
         const char *tls_key  = getenv("VALKEY_TLS_KEY");
         const char *tls_ca   = getenv("VALKEY_TLS_CA");
@@ -254,9 +253,28 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
         redisSSLContext *ssl_ctx = NULL;
         redisSSLContextError ssl_err;
         redisReply *reply;
+        char vk_pass[256];
+        FILE *pass_file;
 
         if (!vk_host) vk_host = "valkey";
         vk_port = vk_port_str ? atoi(vk_port_str) : 6379;
+
+        /* Read password from Docker secret */
+        pass_file = fopen("/run/secrets/valkey_reqmod_password", "r");
+        if (!pass_file) {
+            ci_debug_printf(1, "polis_approval_rewrite: ERROR: "
+                               "Cannot open /run/secrets/valkey_reqmod_password\n");
+            return CI_ERROR;
+        }
+        if (!fgets(vk_pass, sizeof(vk_pass), pass_file)) {
+            ci_debug_printf(1, "polis_approval_rewrite: ERROR: "
+                               "Cannot read password from secret file\n");
+            fclose(pass_file);
+            return CI_ERROR;
+        }
+        fclose(pass_file);
+        /* Strip trailing newline */
+        vk_pass[strcspn(vk_pass, "\r\n")] = '\0';
 
         /* Initialize OpenSSL for hiredis TLS */
         redisInitOpenSSL();
@@ -308,29 +326,23 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
         }
 
         /* Authenticate with ACL: AUTH governance-reqmod <password> */
-        if (vk_pass) {
-            reply = redisCommand(valkey_ctx,
-                "AUTH governance-reqmod %s", vk_pass);
-            if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
-                ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
-                    "Valkey ACL auth failed%s%s — "
-                    "Valkey connection unavailable\n",
-                    reply ? ": " : "",
-                    reply ? reply->str : "");
-                if (reply) freeReplyObject(reply);
-                redisFree(valkey_ctx);
-                valkey_ctx = NULL;
-                redisFreeSSLContext(ssl_ctx);
-                goto valkey_done;
-            }
-            freeReplyObject(reply);
-            ci_debug_printf(3, "polis_approval_rewrite: "
-                "Authenticated as governance-reqmod\n");
-        } else {
+        reply = redisCommand(valkey_ctx,
+            "AUTH governance-reqmod %s", vk_pass);
+        if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
             ci_debug_printf(1, "polis_approval_rewrite: WARNING: "
-                "VALKEY_REQMOD_PASS not set — "
-                "ACL authentication skipped\n");
+                "Valkey ACL auth failed%s%s — "
+                "Valkey connection unavailable\n",
+                reply ? ": " : "",
+                reply ? reply->str : "");
+            if (reply) freeReplyObject(reply);
+            redisFree(valkey_ctx);
+            valkey_ctx = NULL;
+            redisFreeSSLContext(ssl_ctx);
+            goto valkey_done;
         }
+        freeReplyObject(reply);
+        ci_debug_printf(3, "polis_approval_rewrite: "
+            "Authenticated as governance-reqmod\n");
 
         ci_debug_printf(3, "polis_approval_rewrite: "
             "Connected to Valkey at %s:%d (TLS + ACL)\n",
@@ -391,8 +403,12 @@ static int ensure_valkey_connected(void)
 
     /* Re-authenticate after reconnect */
     {
-        const char *vk_pass = getenv("VALKEY_REQMOD_PASS");
-        if (vk_pass) {
+        char vk_pass[256];
+        FILE *pass_file = fopen("/run/secrets/valkey_reqmod_password", "r");
+        if (pass_file && fgets(vk_pass, sizeof(vk_pass), pass_file)) {
+            fclose(pass_file);
+            vk_pass[strcspn(vk_pass, "\r\n")] = '\0';
+            
             reply = redisCommand(valkey_ctx,
                 "AUTH governance-reqmod %s", vk_pass);
             if (reply == NULL ||
@@ -406,6 +422,8 @@ static int ensure_valkey_connected(void)
                 return 0;
             }
             freeReplyObject(reply);
+        } else {
+            if (pass_file) fclose(pass_file);
         }
     }
 

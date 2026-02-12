@@ -11,7 +11,7 @@ setup() {
     require_container "$MCP_AGENT_CONTAINER" "$VALKEY_CONTAINER"
 
     MCP_ENDPOINT="http://localhost:8080/mcp"
-    CREDENTIALS_FILE="${PROJECT_ROOT}/secrets/credentials.env.example"
+    CREDENTIALS_FILE="${PROJECT_ROOT}/.env"
 }
 
 # Helper: run a valkey-cli command inside the Valkey container
@@ -19,8 +19,13 @@ setup() {
 # Usage: valkey_cli <command> [args...]
 valkey_cli() {
     local agent_pass
-    agent_pass="$(grep '^VALKEY_MCP_AGENT_PASS=' \
-        "${CREDENTIALS_FILE}" | cut -d'=' -f2)"
+    agent_pass=$(docker exec "${VALKEY_CONTAINER}" \
+        cat /run/secrets/valkey_mcp_agent_password 2>/dev/null || echo "")
+    
+    [[ -n "$agent_pass" ]] || {
+        echo "ERROR: valkey_mcp_agent_password secret not available" >&2
+        return 1
+    }
 
     docker exec "${VALKEY_CONTAINER}" \
         valkey-cli \
@@ -92,8 +97,10 @@ mcp_call() {
 cleanup_valkey_key() {
     local key="$1"
     local admin_pass
-    admin_pass="$(grep '^VALKEY_MCP_ADMIN_PASS=' \
-        "${CREDENTIALS_FILE}" | cut -d'=' -f2)"
+    admin_pass=$(docker exec "${VALKEY_CONTAINER}" \
+        cat /run/secrets/valkey_mcp_admin_password 2>/dev/null || echo "")
+    
+    [[ -n "$admin_pass" ]] || return 0
 
     docker exec "${VALKEY_CONTAINER}" \
         valkey-cli \
@@ -103,6 +110,7 @@ cleanup_valkey_key() {
         --cacert /etc/valkey/tls/ca.crt \
         --user mcp-admin \
         --pass "${admin_pass}" \
+        --no-auth-warning \
         DEL "${key}" 2>/dev/null || true
 }
 

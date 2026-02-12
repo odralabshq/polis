@@ -17,6 +17,11 @@ Polis solves this by routing all agent traffic through a TLS-intercepting proxy 
 # Install Polis (clones repo to ~/.polis, creates `polis` command)
 curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
 
+# Clone with test dependencies (if developing/testing)
+git clone --recursive https://github.com/OdraLabsHQ/polis.git
+# Or if already cloned:
+git submodule update --init --recursive
+
 # Configure your API key (at least one required)
 cp ~/.polis/agents/openclaw/config/env.example ~/.polis/.env
 nano ~/.polis/.env
@@ -198,7 +203,7 @@ After changing API keys, rebuild:
 polis down && polis init --agent=openclaw
 ```
 
-Proxy configuration lives in `config/g3proxy.yaml` (TLS inspection, ICAP routing, DNS resolvers). Network isolation is defined in `deploy/docker-compose.yml`.
+Proxy configuration lives in `config/g3proxy.yaml` (TLS inspection, ICAP routing, DNS resolvers). Network isolation is defined in `docker-compose.yml`.
 
 ## 🔧 Troubleshooting
 

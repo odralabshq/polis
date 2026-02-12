@@ -9,7 +9,7 @@ setup() {
     require_container "$VALKEY_CONTAINER"
 
     CERT_SCRIPT="${PROJECT_ROOT}/scripts/generate-valkey-certs.sh"
-    CREDENTIALS_FILE="${PROJECT_ROOT}/secrets/credentials.env.example"
+    CREDENTIALS_FILE="${PROJECT_ROOT}/.env"
 }
 
 # Helper: run a valkey-cli command inside the container as a given user
@@ -29,11 +29,12 @@ valkey_cli_as() {
         "$@"
 }
 
-# Helper: read a password from the credentials file
-# Usage: get_password <ENV_VAR_NAME>
+# Helper: read a password from Docker secret file
+# Usage: get_password <secret_filename>
 get_password() {
-    local key="$1"
-    grep "^${key}=" "${CREDENTIALS_FILE}" | cut -d'=' -f2
+    local secret_file="$1"
+    # Read from host filesystem (tests run on host, not in container)
+    cat "${PROJECT_ROOT}/secrets/${secret_file}" 2>/dev/null || echo ""
 }
 
 # =============================================================================
@@ -49,7 +50,7 @@ get_password() {
 
 @test "property 1: all 11 dangerous commands return error" {
     local admin_pass
-    admin_pass="$(get_password VALKEY_MCP_ADMIN_PASS)"
+    admin_pass="$(get_password valkey_mcp_admin_password.txt)"
 
     # Full set of dangerous commands that must be disabled
     local dangerous_commands=(
@@ -92,7 +93,7 @@ get_password() {
 
 @test "property 2: mcp-agent denied access to unauthorized keys" {
     local agent_pass
-    agent_pass="$(get_password VALKEY_MCP_AGENT_PASS)"
+    agent_pass="$(get_password valkey_mcp_agent_password.txt)"
 
     # Keys outside the allowed patterns
     local denied_keys=(
@@ -119,7 +120,7 @@ get_password() {
 
 @test "property 2: mcp-agent denied DEL and UNLINK on allowed keys" {
     local agent_pass
-    agent_pass="$(get_password VALKEY_MCP_AGENT_PASS)"
+    agent_pass="$(get_password valkey_mcp_agent_password.txt)"
 
     # DEL and UNLINK must be denied even on allowed key patterns
     local denied_commands=("DEL" "UNLINK")
@@ -151,7 +152,7 @@ get_password() {
 
 @test "property 3: mcp-admin denied dangerous commands" {
     local admin_pass
-    admin_pass="$(get_password VALKEY_MCP_ADMIN_PASS)"
+    admin_pass="$(get_password valkey_mcp_admin_password.txt)"
 
     # Dangerous commands that mcp-admin must be denied
     local denied_commands=(
@@ -189,7 +190,7 @@ get_password() {
 
 @test "property 4: log-writer denied non-allowed commands" {
     local lw_pass
-    lw_pass="$(get_password VALKEY_LOG_WRITER_PASS)"
+    lw_pass="$(get_password valkey_log_writer_password.txt)"
 
     # Commands that log-writer must NOT be able to run
     local denied_commands=(
@@ -219,7 +220,7 @@ get_password() {
 
 @test "property 4: log-writer denied access to non-allowed keys" {
     local lw_pass
-    lw_pass="$(get_password VALKEY_LOG_WRITER_PASS)"
+    lw_pass="$(get_password valkey_log_writer_password.txt)"
 
     # Keys outside the allowed pattern
     local denied_keys=(
@@ -256,7 +257,7 @@ get_password() {
 
 @test "property 5: healthcheck denied non-allowed commands" {
     local hc_pass
-    hc_pass="$(get_password VALKEY_HEALTHCHECK_PASS)"
+    hc_pass="$(get_password valkey_password.txt)"
 
     # Commands that healthcheck must NOT be able to run
     local denied_commands=(
@@ -286,7 +287,7 @@ get_password() {
 
 @test "property 5: healthcheck denied key access" {
     local hc_pass
-    hc_pass="$(get_password VALKEY_HEALTHCHECK_PASS)"
+    hc_pass="$(get_password valkey_password.txt)"
 
     # Any key access should be denied for healthcheck
     local test_keys=(
@@ -418,28 +419,26 @@ get_password() {
     run bash "${SECRETS_SCRIPT}" "${tmpdir}"
     assert_success
 
-    # Extract passwords from credentials.env.example
-    local creds_file="${tmpdir}/credentials.env.example"
-    [ -f "${creds_file}" ] || {
-        rm -rf "${tmpdir}"
-        fail "credentials.env.example not found"
-    }
-
-    local password_keys=(
-        "VALKEY_MCP_AGENT_PASS"
-        "VALKEY_MCP_ADMIN_PASS"
-        "VALKEY_LOG_WRITER_PASS"
-        "VALKEY_HEALTHCHECK_PASS"
+    # Check password files directly
+    local password_files=(
+        "valkey_mcp_agent_password.txt"
+        "valkey_mcp_admin_password.txt"
+        "valkey_log_writer_password.txt"
+        "valkey_password.txt"
     )
 
-    for key in "${password_keys[@]}"; do
+    for file in "${password_files[@]}"; do
+        local filepath="${tmpdir}/${file}"
+        [ -f "${filepath}" ] || {
+            rm -rf "${tmpdir}"
+            fail "${file} not found"
+        }
         local password
-        password="$(grep "^${key}=" "${creds_file}" \
-                  | cut -d'=' -f2)"
+        password="$(cat "${filepath}")"
         local len="${#password}"
         if [[ "${len}" -ne 32 ]]; then
             rm -rf "${tmpdir}"
-            fail "${key} has length ${len}, expected 32"
+            fail "${file} has length ${len}, expected 32"
         fi
     done
 
@@ -461,25 +460,23 @@ get_password() {
     run bash "${SECRETS_SCRIPT}" "${tmpdir}"
     assert_success
 
-    # Extract passwords from credentials.env.example
-    local creds_file="${tmpdir}/credentials.env.example"
-    [ -f "${creds_file}" ] || {
-        rm -rf "${tmpdir}"
-        fail "credentials.env.example not found"
-    }
-
-    local password_keys=(
-        "VALKEY_MCP_AGENT_PASS"
-        "VALKEY_MCP_ADMIN_PASS"
-        "VALKEY_LOG_WRITER_PASS"
-        "VALKEY_HEALTHCHECK_PASS"
+    # Read passwords from secret files
+    local password_files=(
+        "valkey_mcp_agent_password.txt"
+        "valkey_mcp_admin_password.txt"
+        "valkey_log_writer_password.txt"
+        "valkey_password.txt"
     )
 
     local passwords=()
-    for key in "${password_keys[@]}"; do
+    for file in "${password_files[@]}"; do
+        local filepath="${tmpdir}/${file}"
+        [ -f "${filepath}" ] || {
+            rm -rf "${tmpdir}"
+            fail "${file} not found"
+        }
         local password
-        password="$(grep "^${key}=" "${creds_file}" \
-                  | cut -d'=' -f2)"
+        password="$(cat "${filepath}")"
         passwords+=("${password}")
     done
 
@@ -522,34 +519,28 @@ get_password() {
     run bash "${SECRETS_SCRIPT}" "${tmpdir}"
     assert_success
 
-    local creds_file="${tmpdir}/credentials.env.example"
     local acl_file="${tmpdir}/valkey_users.acl"
 
-    [ -f "${creds_file}" ] || {
-        rm -rf "${tmpdir}"
-        fail "credentials.env.example not found"
-    }
     [ -f "${acl_file}" ] || {
         rm -rf "${tmpdir}"
         fail "valkey_users.acl not found"
     }
 
-    # Map ACL usernames to env var keys
-    local -A user_to_env=(
-        ["mcp-agent"]="VALKEY_MCP_AGENT_PASS"
-        ["mcp-admin"]="VALKEY_MCP_ADMIN_PASS"
-        ["log-writer"]="VALKEY_LOG_WRITER_PASS"
-        ["healthcheck"]="VALKEY_HEALTHCHECK_PASS"
+    # Map ACL usernames to password files
+    local -A user_to_file=(
+        ["mcp-agent"]="valkey_mcp_agent_password.txt"
+        ["mcp-admin"]="valkey_mcp_admin_password.txt"
+        ["log-writer"]="valkey_log_writer_password.txt"
+        ["healthcheck"]="valkey_password.txt"
     )
 
     for acl_user in "mcp-agent" "mcp-admin" \
                     "log-writer" "healthcheck"; do
-        local env_key="${user_to_env[${acl_user}]}"
+        local pass_file="${user_to_file[${acl_user}]}"
 
-        # Get plaintext password from credentials file
+        # Get plaintext password from secret file
         local plaintext
-        plaintext="$(grep "^${env_key}=" "${creds_file}" \
-                   | cut -d'=' -f2)"
+        plaintext="$(cat "${tmpdir}/${pass_file}")"
 
         # Compute expected SHA-256 hash
         local expected_hash
@@ -579,10 +570,10 @@ get_password() {
 # Validates: Requirements 5.5
 #
 # For all files generated by the secrets generator, file permissions
-# should be 600.
+# should be 644 (readable by container users with different UIDs).
 # =============================================================================
 
-@test "property 9: all generated secret files have permission 600" {
+@test "property 9: all generated secret files have permission 644" {
     # Skip on Windows/MSYS — mktemp paths conflict with MSYS_NO_PATHCONV
     if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
         skip "Skipped on Windows/MSYS (MSYS_NO_PATHCONV path conflict)"
@@ -600,8 +591,12 @@ get_password() {
     # Define the full set of expected secret files
     local secret_files=(
         "valkey_password.txt"
-        "valkey_users.acl"
-        "credentials.env.example"
+        "valkey_mcp_agent_password.txt"
+        "valkey_mcp_admin_password.txt"
+        "valkey_log_writer_password.txt"
+        "valkey_dlp_password.txt"
+        "valkey_reqmod_password.txt"
+        "valkey_respmod_password.txt"
     )
 
     for secret_file in "${secret_files[@]}"; do
@@ -615,11 +610,25 @@ get_password() {
         local perms
         perms="$(stat -c '%a' "${filepath}" 2>/dev/null \
               || stat -f '%Lp' "${filepath}" 2>/dev/null)"
-        if [[ "${perms}" != "600" ]]; then
+        if [[ "${perms}" != "644" ]]; then
             rm -rf "${tmpdir}"
-            fail "${secret_file} has permission ${perms}, expected 600"
+            fail "${secret_file} has permission ${perms}, expected 644"
         fi
     done
+
+    # Check ACL file has 644
+    local acl_file="${tmpdir}/valkey_users.acl"
+    [ -f "${acl_file}" ] || {
+        rm -rf "${tmpdir}"
+        fail "valkey_users.acl not found"
+    }
+    local acl_perms
+    acl_perms="$(stat -c '%a' "${acl_file}" 2>/dev/null \
+              || stat -f '%Lp' "${acl_file}" 2>/dev/null)"
+    if [[ "${acl_perms}" != "644" ]]; then
+        rm -rf "${tmpdir}"
+        fail "valkey_users.acl has permission ${acl_perms}, expected 644"
+    fi
 
     rm -rf "${tmpdir}"
 }

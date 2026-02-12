@@ -186,12 +186,17 @@ impl PolisAgentTools {
             .await
             .map_err(|e| format!("Failed to store blocked request: {e}"))?;
 
-        // Log security event (MVP: tracing only).
-        self.state.log_event(
-            "block_reported",
-            &input.request_id,
-            &format!("Blocked request to {}", input.destination),
-        );
+        // Log security event
+        let log_entry = polis_mcp_common::types::SecurityLogEntry {
+            timestamp: chrono::Utc::now(),
+            event_type: "block_reported".to_string(),
+            request_id: Some(input.request_id.clone()),
+            details: format!("Blocked request to {}", input.destination),
+        };
+        self.state
+            .log_security_event(&log_entry)
+            .await
+            .map_err(|e| format!("Failed to log event: {e}"))?;
 
         // Build agent-facing output — pattern is REDACTED (CWE-200).
         let output = ReportBlockOutput {
@@ -302,7 +307,7 @@ impl PolisAgentTools {
 
         let status = self
             .state
-            .get_request_status(&input.request_id)
+            .check_request_status(&input.request_id)
             .await
             .map_err(|e| format!("Failed to check status: {e}"))?;
 

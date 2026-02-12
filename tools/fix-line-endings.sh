@@ -85,7 +85,7 @@ for f in "${PROJECT_ROOT}"/config/*.conf "${PROJECT_ROOT}"/config/*.yaml \
 done
 
 # 6. Docker compose
-fix_file "${PROJECT_ROOT}/deploy/docker-compose.yml"
+fix_file "${PROJECT_ROOT}/docker-compose.yml"
 
 # 7. .env file
 fix_file "${PROJECT_ROOT}/.env"

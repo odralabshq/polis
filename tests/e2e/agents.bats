@@ -51,17 +51,17 @@ setup() {
 }
 
 @test "agents: docker-compose has no profiles directives" {
-    run grep -q 'profiles:' "${PROJECT_ROOT}/deploy/docker-compose.yml"
+    run grep -q 'profiles:' "${PROJECT_ROOT}/docker-compose.yml"
     assert_failure
 }
 
 @test "agents: docker-compose workspace uses latest tag" {
-    run grep -q 'polis-workspace-oss:latest' "${PROJECT_ROOT}/deploy/docker-compose.yml"
+    run grep -q 'polis-workspace-oss:latest' "${PROJECT_ROOT}/docker-compose.yml"
     assert_success
 }
 
 @test "agents: docker-compose base healthcheck includes ip route" {
-    run grep 'systemctl is-active polis-init.service.*ip route' "${PROJECT_ROOT}/deploy/docker-compose.yml"
+    run grep 'systemctl is-active polis-init.service.*ip route' "${PROJECT_ROOT}/docker-compose.yml"
     assert_success
 }
 

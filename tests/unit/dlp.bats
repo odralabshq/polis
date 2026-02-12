@@ -21,9 +21,11 @@ setup() {
     run docker exec "${ICAP_CONTAINER}" test -f /etc/c-icap/polis_dlp.conf
     assert_success
 
-    # Verify read-only mount
+    # Verify read-only mount (config is mounted as volume with :ro)
     run docker exec "${ICAP_CONTAINER}" sh -c "touch /etc/c-icap/polis_dlp.conf 2>&1"
-    assert_output --partial "Read-only file system"
+    assert_failure
+    # Can be either "Read-only file system" or "Permission denied" depending on mount
+    assert_output --regexp "(Read-only file system|Permission denied)"
 }
 
 @test "dlp: c-icap is configured to load the module" {

@@ -228,7 +228,7 @@ download_files() {
     download "${base_url}/tools/polis.sh" "tools/polis.sh" || exit 1
     chmod +x tools/polis.sh
     
-    download "${base_url}/deploy/docker-compose.yml" "deploy/docker-compose.yml" || exit 1
+    download "${base_url}/docker-compose.yml" "docker-compose.yml" || exit 1
     download "${base_url}/config/g3proxy.yaml" "config/g3proxy.yaml" || exit 1
     download "${base_url}/config/g3fcgen.yaml" "config/g3fcgen.yaml" || exit 1
     download "${base_url}/config/c-icap.conf" "config/c-icap.conf" || exit 1

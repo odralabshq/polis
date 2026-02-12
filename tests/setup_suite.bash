@@ -7,7 +7,7 @@
 #   POLIS_TEST_TEARDOWN=1   — Tear down containers after tests (for CI)
 
 export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)}"
-export COMPOSE_FILE="${PROJECT_ROOT}/deploy/docker-compose.yml"
+export COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 
 # Container names (must match common.bash)
 export DNS_CONTAINER="polis-dns"

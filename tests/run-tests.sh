@@ -31,7 +31,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPOSE_FILE="${PROJECT_ROOT}/deploy/docker-compose.yml"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 BATS_DIR="${SCRIPT_DIR}/bats"
 
 RED='\033[0;31m'
@@ -56,15 +56,12 @@ usage() {
 }
 
 install_bats() {
+    # Bats is now managed as git submodules - no installation needed
+    # Submodules are cloned with: git clone --recursive
+    # Or initialized with: git submodule update --init --recursive
     [[ -d "${BATS_DIR}/bats-core" ]] && return
-    log_info "Installing BATS..."
-    mkdir -p "${BATS_DIR}"
-    for lib in bats-core bats-support bats-assert bats-file; do
-        git clone --depth 1 "https://github.com/bats-core/${lib}.git" "${BATS_DIR}/${lib}" 2>/dev/null || {
-            log_error "Failed to clone ${lib}"; exit 1
-        }
-    done
-    log_info "BATS installed"
+    log_error "BATS submodules not initialized. Run: git submodule update --init --recursive"
+    exit 1
 }
 
 compose_up() {

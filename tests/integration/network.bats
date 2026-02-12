@@ -30,37 +30,37 @@ setup() {
 }
 
 @test "network: internal-bridge has IPv6 disabled" {
-    run docker network inspect --format '{{.EnableIPv6}}' deploy_internal-bridge
+    run docker network inspect --format '{{.EnableIPv6}}' polis_internal-bridge
     assert_success
     assert_output "false"
 }
 
 @test "network: gateway-bridge has IPv6 disabled" {
-    run docker network inspect --format '{{.EnableIPv6}}' deploy_gateway-bridge
+    run docker network inspect --format '{{.EnableIPv6}}' polis_gateway-bridge
     assert_success
     assert_output "false"
 }
 
 @test "network: external-bridge has IPv6 disabled" {
-    run docker network inspect --format '{{.EnableIPv6}}' deploy_external-bridge
+    run docker network inspect --format '{{.EnableIPv6}}' polis_external-bridge
     assert_success
     assert_output "false"
 }
 
 @test "network: internal-bridge uses 10.10.1.0/24 subnet" {
-    run docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' deploy_internal-bridge
+    run docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' polis_internal-bridge
     assert_success
     assert_output "10.10.1.0/24"
 }
 
 @test "network: gateway-bridge uses 10.30.1.0/24 subnet" {
-    run docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' deploy_gateway-bridge
+    run docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' polis_gateway-bridge
     assert_success
     assert_output "10.30.1.0/24"
 }
 
 @test "network: external-bridge uses 10.20.1.0/24 subnet" {
-    run docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' deploy_external-bridge
+    run docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' polis_external-bridge
     assert_success
     assert_output "10.20.1.0/24"
 }
@@ -229,7 +229,7 @@ setup() {
 
 @test "network: all networks use bridge driver" {
     for network in internal-bridge gateway-bridge external-bridge; do
-        run docker network inspect --format '{{.Driver}}' "deploy_${network}"
+        run docker network inspect --format '{{.Driver}}' "${COMPOSE_PROJECT_NAME}_${network}"
         assert_success
         assert_output "bridge"
     done
