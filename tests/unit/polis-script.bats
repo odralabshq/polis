@@ -46,11 +46,6 @@ setup() {
     assert_success
 }
 
-@test "polis-script: has generate_dockerfile function" {
-    run grep -q 'generate_dockerfile()' "${POLIS_SCRIPT}"
-    assert_success
-}
-
 @test "polis-script: has build_compose_flags function" {
     run grep -q 'build_compose_flags()' "${POLIS_SCRIPT}"
     assert_success

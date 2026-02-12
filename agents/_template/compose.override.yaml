@@ -5,8 +5,12 @@ services:
   workspace:
     # ports:
     #   - "${CHANGEME_HOST_PORT:-0}:0"
+    volumes:
+      - ../agents/<name>/:/tmp/agents/<name>/:ro
+      - ../agents/<name>/config/agent.service:/etc/systemd/system/<name>.service:ro
+      - ../.env:/run/<name>-env:ro
     healthcheck:
-      test: ["CMD-SHELL", "systemctl is-active polis-init.service && ip route | grep -q default"]
+      test: ["CMD-SHELL", "systemctl is-active polis-init.service && systemctl is-active <name>.service && ip route | grep -q default"]
       interval: 30s
       timeout: 10s
       retries: 5

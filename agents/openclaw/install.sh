@@ -1,12 +1,19 @@
 #!/bin/bash
 # agents/openclaw/install.sh
-# Refactored from build/workspace/Dockerfile.openclaw
-# Executed inside the container during image build:
-#   COPY agents/openclaw/ /tmp/agents/openclaw/
-#   RUN chmod +x /tmp/agents/openclaw/install.sh && /tmp/agents/openclaw/install.sh
+# Installs OpenClaw dependencies and builds the app inside the workspace container.
+# Runs at container boot via systemd ExecStartPre (as root).
+# Idempotent: skips if already installed.
 set -euo pipefail
 
-# Trust Polis CA for SSL connections (if present during build)
+MARKER="/var/lib/openclaw-installed"
+if [[ -f "$MARKER" ]]; then
+    echo "[openclaw-install] Already installed, skipping."
+    exit 0
+fi
+
+echo "[openclaw-install] First boot — installing OpenClaw..."
+
+# Trust Polis CA for SSL connections (if present)
 if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]]; then
     update-ca-certificates 2>/dev/null || true
     export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
@@ -65,3 +72,7 @@ ln -sf /etc/systemd/system/openclaw.service \
 
 # Final ownership
 chown -R polis:polis /app /home/polis
+
+# Mark as installed (idempotency guard)
+touch "$MARKER"
+echo "[openclaw-install] Installation complete."

@@ -9,6 +9,11 @@ Type=simple
 User=polis
 Group=polis
 WorkingDirectory=/opt/agents/CHANGEME
+
+# Run agent install (as root) then initialization before starting
+ExecStartPre=+/tmp/agents/CHANGEME/install.sh
+ExecStartPre=/usr/local/bin/CHANGEME-init.sh
+
 ExecStart=/bin/echo "CHANGEME: implement ExecStart"
 Restart=on-failure
 RestartSec=10
