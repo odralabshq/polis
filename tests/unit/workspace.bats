@@ -169,15 +169,18 @@ setup() {
 }
 
 @test "workspace: (base) no ports exposed to host" {
-    # Base workspace should have no ports exposed
-    # Agent profiles (openclaw) expose their service ports
-    run docker port "${WORKSPACE_CONTAINER}"
+    # When polis init is run WITHOUT --agent flag, no ports should be exposed
+    # When run WITH --agent=openclaw, the compose.override.yaml adds port exposure
     
-    # If ports are exposed, this is likely an agent profile
-    if [[ -n "$output" ]]; then
-        skip "Agent profile detected - ports are expected"
+    # Check if an agent service is installed (indicates --agent was used)
+    run docker exec "${WORKSPACE_CONTAINER}" systemctl list-unit-files | grep -E "openclaw|agent"
+    
+    if [[ "$status" -eq 0 ]]; then
+        skip "Agent profile detected (--agent was used) - ports are expected"
     fi
     
+    # Base profile: no ports should be exposed
+    run docker port "${WORKSPACE_CONTAINER}"
     assert_output ""
 }
 
