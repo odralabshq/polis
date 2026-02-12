@@ -3,11 +3,8 @@
 # Tests for srv_polis_dlp c-ICAP service presence and configuration
 
 setup() {
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    ICAP_CONTAINER="polis-icap"
+    load "../helpers/common.bash"
+    require_container "$ICAP_CONTAINER"
 }
 
 @test "dlp: module binary exists in container" {

@@ -6,15 +6,8 @@
 # =============================================================================
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    GATEWAY_CONTAINER="polis-gateway"
-    ICAP_CONTAINER="polis-icap"
-    WORKSPACE_CONTAINER="polis-workspace"
-    CLAMAV_CONTAINER="polis-clamav"
+    load "../helpers/common.bash"
+    require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER" "$WORKSPACE_CONTAINER"
 }
 
 # =============================================================================
@@ -48,7 +41,7 @@ setup() {
 @test "resilience: icap has healthcheck configured" {
     run docker inspect --format '{{.Config.Healthcheck.Test}}' "${ICAP_CONTAINER}"
     assert_success
-    assert_output --partial "pgrep"
+    assert_output --partial "ICAP"
 }
 
 @test "resilience: workspace has healthcheck configured" {

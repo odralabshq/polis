@@ -1,14 +1,11 @@
 #!/usr/bin/env bats
 # OpenClaw Integration Tests
 # Tests for OpenClaw running in the workspace container
-# Requires: ./tools/polis.sh init --profile=openclaw --local
+# Requires: ./tools/polis.sh init --agent=openclaw --local
 
 setup() {
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    WORKSPACE_CONTAINER="polis-workspace"
+    load "../helpers/common.bash"
+    require_container "$WORKSPACE_CONTAINER"
     OPENCLAW_PORT="18789"
 }
 
@@ -19,7 +16,7 @@ skip_if_not_openclaw() {
     fi
     # Check if this is the openclaw variant
     if ! docker exec "${WORKSPACE_CONTAINER}" test -f /etc/systemd/system/openclaw.service 2>/dev/null; then
-        skip "OpenClaw profile not running (use --profile=openclaw)"
+        skip "OpenClaw agent not running (use --agent=openclaw)"
     fi
     # Check if the openclaw service actually started (init may have failed)
     local svc_state

@@ -11,6 +11,8 @@ Documentation=https://docs.openclaw.ai
 After=network-online.target polis-init.service
 Wants=network-online.target
 Requires=polis-init.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -42,8 +44,6 @@ TimeoutStopSec=30
 # Restart policy
 Restart=on-failure
 RestartSec=10
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Security hardening (within workspace context)
 NoNewPrivileges=true

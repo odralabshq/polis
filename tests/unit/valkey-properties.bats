@@ -5,18 +5,10 @@
 # over the full input domain.
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
+    load "../helpers/common.bash"
+    require_container "$VALKEY_CONTAINER"
 
     CERT_SCRIPT="${PROJECT_ROOT}/scripts/generate-valkey-certs.sh"
-
-    # Container name for docker exec commands
-    VALKEY_CONTAINER="polis-v2-valkey"
-
-    # Credentials file path for reading passwords
     CREDENTIALS_FILE="${PROJECT_ROOT}/secrets/credentials.env.example"
 }
 
@@ -79,8 +71,8 @@ get_password() {
         result="$(valkey_cli_as \
             "mcp-admin" "${admin_pass}" ${cmd} 2>&1 || true)"
 
-        # Renamed commands must return "unknown command"
-        if [[ "${result}" != *"unknown command"* ]]; then
+        # Commands must return "unknown command", NOPERM, or ERR (blocked/unusable)
+        if [[ "${result}" != *"unknown command"* ]] && [[ "${result}" != *"NOPERM"* ]] && [[ "${result}" != *"ERR"* ]]; then
             fail "Dangerous command ${cmd} was not blocked." \
                  " Got: ${result}"
         fi

@@ -90,11 +90,11 @@ cat > "${OUTPUT_DIR}/valkey_users.acl" <<EOF
 user default off
 user governance-reqmod on #${HASH_GOV_REQMOD} ~polis:ott:* ~polis:blocked:* ~polis:log:* -@all +get +set +setnx +exists +zadd
 user governance-respmod on #${HASH_GOV_RESPMOD} ~polis:ott:* ~polis:blocked:* ~polis:approved:* ~polis:log:* -@all +get +del +setex +exists +zadd
-user mcp-agent on #${HASH_MCP_AGENT} ~polis:blocked:* ~polis:approved:* +GET +SETEX +EXISTS +SCAN +PING -@all
+user mcp-agent on #${HASH_MCP_AGENT} ~polis:blocked:* ~polis:approved:* ~polis:config:security_level ~polis:log:events -@all +GET +SETEX +EXISTS +SCAN +PING +ZREVRANGE +TTL
 user mcp-admin on #${HASH_MCP_ADMIN} ~polis:* +@all -@dangerous -FLUSHALL -FLUSHDB -DEBUG -CONFIG -SHUTDOWN
 user log-writer on #${HASH_LOG_WRITER} ~polis:log:events -@all +ZADD +ZRANGEBYSCORE +ZCARD +PING
 user healthcheck on #${HASH_HEALTHCHECK} -@all +PING +INFO
-user dlp-reader on #${HASH_DLP} ~polis:config:security_level +GET +PING -@all
+user dlp-reader on #${HASH_DLP} ~polis:config:security_level -@all +GET +PING
 EOF
 
 echo "valkey_users.acl created (8 user entries)."
@@ -171,7 +171,7 @@ chmod 600 "${OUTPUT_DIR}/valkey_users.acl"
 chmod 600 "${OUTPUT_DIR}/valkey_dlp_password.txt"
 chmod 600 "${OUTPUT_DIR}/credentials.env.example"
 
-echo "Permissions set: all files=600"
+echo "Permissions set: all secret files=600"
 
 echo ""
 echo "=== Secrets generation complete ==="

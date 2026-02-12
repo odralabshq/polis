@@ -46,12 +46,19 @@ jobs:
         run: ./tools/polis.sh setup-ca
 
       - name: Setup Valkey TLS certificates
-        run: ./scripts/generate-valkey-certs.sh ./certs/valkey
+        run: |
+          ./scripts/generate-valkey-certs.sh ./certs/valkey
+          # Multiple containers (valkey uid:999, icap c-icap, mcp-agent polis)
+          # mount the same cert directory. Make all files world-readable so
+          # every container user can access them.
+          chmod 644 ./certs/valkey/*
 
       - name: Setup Valkey secrets
         run: |
           touch .env
           ./scripts/generate-valkey-secrets.sh ./secrets .
+          # Ensure ACL file is readable by Docker daemon for secret injection
+          chmod 644 ./secrets/valkey_users.acl
 
       - name: Build containers
         run: ./tools/polis.sh build
@@ -67,6 +74,7 @@ jobs:
             if echo "$HEALTHY" | grep -q "polis-gateway" && \
                echo "$HEALTHY" | grep -q "polis-icap" && \
                echo "$HEALTHY" | grep -q "polis-v2-valkey" && \
+               echo "$HEALTHY" | grep -q "polis-mcp-agent" && \
                echo "$HEALTHY" | grep -q "polis-workspace"; then
               echo "All containers healthy"
               exit 0
@@ -78,6 +86,7 @@ jobs:
           docker ps -a
           docker logs polis-v2-valkey 2>&1 | tail -30 || true
           docker logs polis-icap 2>&1 | tail -30 || true
+          docker logs polis-mcp-agent 2>&1 | tail -30 || true
           exit 1
 
       - name: Run tests

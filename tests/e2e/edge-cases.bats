@@ -3,25 +3,9 @@
 # Tests for error handling, recovery, and boundary conditions
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    GATEWAY_CONTAINER="polis-gateway"
-    ICAP_CONTAINER="polis-icap"
-    WORKSPACE_CONTAINER="polis-workspace"
-    CLAMAV_CONTAINER="polis-clamav"
-
-    # Ensure security level is relaxed so test traffic isn't blocked by new_domain_prompt
-    local admin_pass
-    admin_pass="$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/secrets/credentials.env.example" 2>/dev/null | cut -d'=' -f2)"
-    if [[ -n "$admin_pass" ]]; then
-        docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt \
-            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
-            --user mcp-admin --pass "$admin_pass" \
-            SET polis:config:security_level relaxed 2>/dev/null || true
-    fi
+    load "../helpers/common.bash"
+    require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER" "$WORKSPACE_CONTAINER"
+    relax_security_level
 }
 
 # =============================================================================
@@ -164,7 +148,7 @@ setup() {
 @test "edge: DNS resolver is configured in g3proxy" {
     run docker exec "${GATEWAY_CONTAINER}" grep -A5 "resolver:" /etc/g3proxy/g3proxy.yaml
     assert_success
-    assert_output --partial "8.8.8.8"
+    assert_output --partial "10.30.1.10"
 }
 
 @test "edge: DNS resolution for non-existent domain fails gracefully" {
@@ -295,7 +279,7 @@ setup() {
 @test "edge: icap health check verifies process" {
     run docker inspect --format '{{.Config.Healthcheck.Test}}' "${ICAP_CONTAINER}"
     assert_success
-    assert_output --partial "pgrep"
+    assert_output --partial "ICAP"
 }
 
 # =============================================================================

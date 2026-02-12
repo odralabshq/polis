@@ -3,15 +3,8 @@
 # Tests for polis-workspace container
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    GATEWAY_CONTAINER="polis-gateway"
-    ICAP_CONTAINER="polis-icap"
-    WORKSPACE_CONTAINER="polis-workspace"
-    CLAMAV_CONTAINER="polis-clamav"
+    load "../helpers/common.bash"
+    require_container "$WORKSPACE_CONTAINER"
 }
 
 # =============================================================================
@@ -190,8 +183,8 @@ setup() {
     # Check if an agent profile is running
     local image_tag
     image_tag=$(docker inspect --format '{{.Config.Image}}' "${WORKSPACE_CONTAINER}" 2>/dev/null || echo "")
-    if [[ "$image_tag" == "polis-workspace:base" ]]; then
-        skip "Base profile running - no ports expected"
+    if [[ "$image_tag" != *"openclaw"* ]]; then
+        skip "OpenClaw profile not running - no ports expected"
     fi
     run docker port "${WORKSPACE_CONTAINER}"
     assert_output --partial "18789"
@@ -291,11 +284,9 @@ setup() {
         [[ "$output" == "0" ]] || [[ "$output" == "700" ]] || \
             fail "Expected mode 0 or 700 for /root/$p, got $output"
         
-        # If mode is 0, verify listing fails
-        if [[ "$output" == "0" ]]; then
-            run docker exec "${WORKSPACE_CONTAINER}" ls "/root/$p"
-            assert_failure
-            assert_output --partial "Permission denied"
-        fi
+        # Verify it's a tmpfs mount (primary protection mechanism)
+        run docker exec "${WORKSPACE_CONTAINER}" mount
+        assert_success
+        assert_output --partial "/root/$p type tmpfs"
     done
 }

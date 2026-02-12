@@ -9,8 +9,7 @@ resolver:
   - name: default
     type: c-ares
     server:
-      - 8.8.8.8
-      - 8.8.4.4
+      - 10.30.1.10
 
 # ===========================================
 # Auditor - TLS MITM + ICAP
@@ -71,6 +70,12 @@ escaper:
 # Servers
 # ===========================================
 server:
+  # HTTP proxy for explicit proxy mode (testing)
+  - name: http_proxy
+    type: http_proxy
+    listen: 0.0.0.0:8080
+    escaper: direct
+    auditor: default
   # Main transparent proxy listener
   - name: transparent
     type: tcp_tproxy

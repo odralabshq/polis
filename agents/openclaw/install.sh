@@ -1,15 +1,23 @@
 #!/bin/bash
 # agents/openclaw/install.sh
-# Refactored from build/workspace/Dockerfile.openclaw
-# Executed inside the container during image build:
-#   COPY agents/openclaw/ /tmp/agents/openclaw/
-#   RUN chmod +x /tmp/agents/openclaw/install.sh && /tmp/agents/openclaw/install.sh
+# Installs OpenClaw dependencies and builds the app inside the workspace container.
+# Runs at container boot via systemd ExecStartPre (as root).
+# Idempotent: skips if already installed.
 set -euo pipefail
 
-# Trust Polis CA for SSL connections (if present during build)
+MARKER="/var/lib/openclaw-installed"
+if [[ -f "$MARKER" ]]; then
+    echo "[openclaw-install] Already installed, skipping."
+    exit 0
+fi
+
+echo "[openclaw-install] First boot — installing OpenClaw..."
+
+# Trust Polis CA for SSL connections (if present)
+# NODE_EXTRA_CA_CERTS is needed for corepack/pnpm which use Node.js fetch()
 if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]]; then
     update-ca-certificates 2>/dev/null || true
-    export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+    export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/polis-ca.pem
 fi
 
 # Install build dependencies and Node.js 22
@@ -17,7 +25,7 @@ apt-get update && apt-get install -y --no-install-recommends \
     gnupg unzip git build-essential python3 jq
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg
 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list
 apt-get update && apt-get install -y --no-install-recommends nodejs
@@ -32,7 +40,7 @@ curl -fsSL https://bun.sh/install | bash
 export PATH="/root/.bun/bin:${PATH}"
 
 # Clone and build OpenClaw
-cd /app || mkdir -p /app && cd /app
+cd /app || { mkdir -p /app && cd /app; }
 git clone --depth 1 https://github.com/openclaw/openclaw.git .
 pnpm install --frozen-lockfile
 OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build
@@ -59,9 +67,9 @@ chmod 644 /usr/local/share/openclaw/SOUL.md
 printf '#!/bin/bash\nexec /usr/bin/node /app/dist/index.js "$@"\n' > /usr/local/bin/openclaw
 chmod 755 /usr/local/bin/openclaw
 
-# Enable systemd service
-ln -sf /etc/systemd/system/openclaw.service \
-       /etc/systemd/system/multi-user.target.wants/openclaw.service
-
 # Final ownership
 chown -R polis:polis /app /home/polis
+
+# Mark as installed (idempotency guard)
+touch "$MARKER"
+echo "[openclaw-install] Installation complete."

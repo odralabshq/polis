@@ -3,25 +3,9 @@
 # Tests for HTTP/HTTPS traffic interception and proxy behavior
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    GATEWAY_CONTAINER="polis-gateway"
-    ICAP_CONTAINER="polis-icap"
-    WORKSPACE_CONTAINER="polis-workspace"
-    CLAMAV_CONTAINER="polis-clamav"
-
-    # Ensure security level is relaxed so test traffic isn't blocked by new_domain_prompt
-    local admin_pass
-    admin_pass="$(grep 'VALKEY_MCP_ADMIN_PASS=' "${PROJECT_ROOT}/secrets/credentials.env.example" 2>/dev/null | cut -d'=' -f2)"
-    if [[ -n "$admin_pass" ]]; then
-        docker exec polis-v2-valkey valkey-cli --tls --cert /etc/valkey/tls/client.crt \
-            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
-            --user mcp-admin --pass "$admin_pass" \
-            SET polis:config:security_level relaxed 2>/dev/null || true
-    fi
+    load "../helpers/common.bash"
+    require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER" "$WORKSPACE_CONTAINER"
+    relax_security_level
 }
 
 # =============================================================================
@@ -178,13 +162,13 @@ setup() {
 # =============================================================================
 
 @test "e2e: HTTP redirects are followed" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 "http://httpbin.org/redirect/1"
+    run docker exec "${WORKSPACE_CONTAINER}" curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 --max-time 30 --retry 2 --retry-delay 2 --retry-all-errors "http://httpbin.org/redirect/1"
     assert_success
     assert_output "200"
 }
 
 @test "e2e: HTTPS redirects are followed" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 "https://httpbin.org/redirect/1"
+    run docker exec "${WORKSPACE_CONTAINER}" curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 --max-time 30 --retry 2 --retry-delay 2 --retry-all-errors "https://httpbin.org/redirect/1"
     assert_success
     assert_output "200"
 }

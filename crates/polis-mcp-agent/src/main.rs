@@ -19,7 +19,7 @@ use rmcp::transport::streamable_http_server::{
 };
 
 use crate::state::AppState;
-use crate::tools::polisAgentTools;
+use crate::tools::PolisAgentTools;
 
 // ===================================================================
 // Configuration
@@ -115,11 +115,11 @@ async fn main() -> Result<()> {
     let state = Arc::new(app_state);
 
     // 4. Build the Streamable-HTTP MCP service.
-    //    The factory closure creates a fresh polisAgentTools per
+    //    The factory closure creates a fresh PolisAgentTools per
     //    session, each sharing the same Arc<AppState>.
     let state_for_factory = state.clone();
     let service = StreamableHttpService::new(
-        move || Ok(polisAgentTools::new(state_for_factory.clone())),
+        move || Ok(PolisAgentTools::new(state_for_factory.clone())),
         LocalSessionManager::default().into(),
         Default::default(),
     );

@@ -5,12 +5,8 @@
 bats_require_minimum_version 1.5.0
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    GATEWAY_CONTAINER="polis-gateway"
+    load "../helpers/common.bash"
+    require_container "$GATEWAY_CONTAINER"
 }
 
 # Helper: check if ip6tables is functional inside the container

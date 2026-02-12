@@ -7,15 +7,10 @@
 # Requirements: 6.6-6.8
 
 setup() {
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
+    load "../helpers/common.bash"
+    require_container "$MCP_AGENT_CONTAINER" "$VALKEY_CONTAINER"
 
-    MCP_AGENT_CONTAINER="polis-mcp-agent"
-    VALKEY_CONTAINER="polis-v2-valkey"
     MCP_ENDPOINT="http://localhost:8080/mcp"
-
     CREDENTIALS_FILE="${PROJECT_ROOT}/secrets/credentials.env.example"
 }
 
@@ -35,6 +30,7 @@ valkey_cli() {
         --cacert /etc/valkey/tls/ca.crt \
         --user mcp-agent \
         --pass "${agent_pass}" \
+        --no-auth-warning \
         "$@"
 }
 
@@ -172,7 +168,7 @@ cleanup_valkey_key() {
     assert_success
 
     # Response should contain the approval command
-    assert_output --partial "polis approve ${req_id}"
+    assert_output --partial "/polis-approve ${req_id}"
 
     cleanup_valkey_key "polis:blocked:${req_id}"
 }

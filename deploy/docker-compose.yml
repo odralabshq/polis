@@ -1,5 +1,41 @@
 services:
   # =========================================================
+  # COREDNS (DNS Filtering)
+  # Blocks resolution of malicious domains
+  # =========================================================
+  dns:
+    build:
+      context: ..
+      dockerfile: ./build/dns/Dockerfile
+    image: polis-dns-oss:latest
+    container_name: polis-dns
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      gateway-bridge:
+        ipv4_address: 10.30.1.10
+      internal-bridge:
+        ipv4_address: 10.10.1.2
+    volumes:
+      - ../config/Corefile:/etc/coredns/Corefile:ro
+      - ../config/dns-blocklist.txt:/etc/coredns/blocklist.txt:ro
+    healthcheck:
+      test: ["CMD", "nslookup", "github.com", "127.0.0.1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-dns"
+
+  # =========================================================
   # G3PROXY GATEWAY (Tier 1 Entry Point)
   # =========================================================
   gateway:
@@ -69,6 +105,7 @@ services:
     volumes:
       - ../config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
       - ../config/squidclamav.conf:/etc/squidclamav.conf:ro
+      - ../config/blocklist.txt:/etc/c-icap/blocklist.txt:ro
       - ../config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
       - ../config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
       - ../certs/valkey:/etc/valkey/tls:ro
@@ -82,8 +119,8 @@ services:
       clamav:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -x c-icap > /dev/null"]
-      interval: 10s
+      test: ["CMD-SHELL", "printf 'OPTIONS icap://localhost:1344/url_check ICAP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | nc -q1 localhost 1344 | grep -q 'ICAP/1.0 200'"]
+      interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
@@ -122,6 +159,7 @@ services:
     volumes:
       - clamav-db:/var/lib/clamav
       - ../config/freshclam.conf:/etc/clamav/freshclam.conf:ro
+      - ../config/clamd.conf:/etc/clamav/clamd.conf:ro
     environment:
       - CLAMAV_NO_FRESHCLAMD=false
       - CLAMAV_NO_MILTERD=true
@@ -148,13 +186,20 @@ services:
           memory: 1G
 
   # =========================================================
-  # WORKSPACE (agent selected via POLIS_AGENT image tag)
+  # WORKSPACE
   # =========================================================
   workspace:
-    image: polis-workspace-oss:${POLIS_AGENT:-latest}
+    build:
+      context: ..
+      dockerfile: ./build/workspace/Dockerfile
+    image: polis-workspace-oss:latest
     container_name: polis-workspace
     runtime: sysbox-runc
+    dns:
+      - 10.10.1.2
     depends_on:
+      dns:
+        condition: service_healthy
       gateway:
         condition: service_healthy
     networks:
@@ -232,7 +277,10 @@ services:
         condition: service_completed_successfully
     secrets:
       - valkey_password
-      - valkey_acl
+      - source: valkey_acl
+        uid: "999"
+        gid: "999"
+        mode: 0440
     volumes:
       - ../config/valkey.conf:/etc/valkey/valkey.conf:ro
       - ../certs/valkey:/etc/valkey/tls:ro
@@ -283,12 +331,14 @@ services:
     networks:
       internal-bridge: {}
       gateway-bridge: {}
+    env_file:
+      - ../.env
     environment:
       - RUST_LOG=info
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
       - polis_AGENT_VALKEY_URL=rediss://valkey:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
-      - polis_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
+      - polis_AGENT_VALKEY_PASS=$VALKEY_MCP_AGENT_PASS
     volumes:
       - ../certs/valkey:/etc/valkey/tls:ro
     depends_on:

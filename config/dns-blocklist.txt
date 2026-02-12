@@ -1,0 +1,51 @@
+# Molis DNS Blocklist
+
+# Data Exfiltration
+webhook.site
+requestbin.com
+pipedream.com
+hookbin.com
+beeceptor.com
+mockbin.org
+postb.in
+
+# File Sharing
+transfer.sh
+file.io
+0x0.st
+
+# Tunneling
+ngrok.io
+ngrok-free.app
+localtunnel.me
+serveo.net
+localhost.run
+telebit.cloud
+pagekite.me
+playit.gg
+bore.pub
+tunnelto.dev
+
+# OOB Platforms
+burpcollaborator.net
+interact.sh
+interactsh.com
+oastify.com
+canarytokens.com
+dnslog.cn
+ceye.io
+requestrepo.com
+webhook.lol
+postman-echo.com
+
+# Typosquatting
+githab.com
+githuub.com
+guthub.com
+gihtub.com
+githib.com
+npmjs.co
+npmjs.net
+npmsj.com
+pypi.co
+pypl.org

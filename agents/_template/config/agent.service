@@ -3,6 +3,8 @@ Description=CHANGEME Agent
 After=network-online.target polis-init.service
 Wants=network-online.target
 Requires=polis-init.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple

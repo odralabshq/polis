@@ -1,12 +1,9 @@
 #!/usr/bin/env bats
 # Agent System E2E Tests
 
-load '../bats/bats-support/load'
-load '../bats/bats-assert/load'
-load '../bats/bats-file/load'
-
 setup() {
-    PROJECT_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
+    load '../helpers/common.bash'
+    load '../bats/bats-file/load.bash'
 }
 
 # --- Agent contract tests (depend on Issue 01 only) ---
@@ -58,8 +55,8 @@ setup() {
     assert_failure
 }
 
-@test "agents: docker-compose uses POLIS_AGENT variable" {
-    run grep -q 'POLIS_AGENT' "${PROJECT_ROOT}/deploy/docker-compose.yml"
+@test "agents: docker-compose workspace uses latest tag" {
+    run grep -q 'polis-workspace-oss:latest' "${PROJECT_ROOT}/deploy/docker-compose.yml"
     assert_success
 }
 

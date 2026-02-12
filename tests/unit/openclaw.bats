@@ -3,10 +3,7 @@
 # Tests for OpenClaw agent plugin structure and configuration
 
 setup() {
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
+    load "../helpers/common.bash"
 }
 
 # =============================================================================
@@ -247,7 +244,7 @@ setup() {
 }
 
 @test "openclaw: docker-compose workspace depends on gateway" {
-    run grep -A 5 'workspace:' "${PROJECT_ROOT}/deploy/docker-compose.yml"
+    run grep -A 15 '^\s*workspace:' "${PROJECT_ROOT}/deploy/docker-compose.yml"
     assert_success
     assert_output --partial "gateway"
 }

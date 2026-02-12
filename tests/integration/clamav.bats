@@ -3,17 +3,8 @@
 # Tests for ClamAV malware scanning via SquidClamav
 
 setup() {
-    # Set paths relative to test file location
-    TESTS_DIR="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
-    PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-    load "${TESTS_DIR}/bats/bats-support/load.bash"
-    load "${TESTS_DIR}/bats/bats-assert/load.bash"
-    GATEWAY_CONTAINER="polis-gateway"
-    ICAP_CONTAINER="polis-icap"
-    WORKSPACE_CONTAINER="polis-workspace"
-    CLAMAV_CONTAINER="polis-clamav"
-    
-    export CLAMAV_CONTAINER="polis-clamav"
+    load "../helpers/common.bash"
+    require_container "$CLAMAV_CONTAINER" "$ICAP_CONTAINER"
 }
 
 # =============================================================================
@@ -180,13 +171,13 @@ setup() {
 }
 
 @test "squidclamav: service reports correct methods" {
-    run docker exec "${ICAP_CONTAINER}" sh -c "printf 'OPTIONS icap://localhost:1344/squidclamav ICAP/1.0\r\nHost: localhost\r\n\r\n' | nc localhost 1344"
+    run docker exec "${ICAP_CONTAINER}" sh -c "printf 'OPTIONS icap://localhost:1344/squidclamav ICAP/1.0\r\nHost: localhost\r\n\r\n' | nc -q 1 localhost 1344"
     assert_success
     assert_output --partial "Methods: RESPMOD, REQMOD"
 }
 
 @test "squidclamav: service identifies as SquidClamav" {
-    run docker exec "${ICAP_CONTAINER}" sh -c "printf 'OPTIONS icap://localhost:1344/squidclamav ICAP/1.0\r\nHost: localhost\r\n\r\n' | nc localhost 1344"
+    run docker exec "${ICAP_CONTAINER}" sh -c "printf 'OPTIONS icap://localhost:1344/squidclamav ICAP/1.0\r\nHost: localhost\r\n\r\n' | nc -q 1 localhost 1344"
     assert_success
     assert_output --partial "SquidClamav"
 }
@@ -202,7 +193,7 @@ setup() {
 }
 
 @test "g3proxy: REQMOD configured for credcheck" {
-    run docker exec "${GATEWAY_CONTAINER}" grep "icap_reqmod_service" /etc/g3proxy/g3proxy.yaml
+    run docker exec "${GATEWAY_CONTAINER}" grep -A1 "icap_reqmod_service" /etc/g3proxy/g3proxy.yaml
     assert_success
     assert_output --partial "credcheck"
 }

@@ -1,12 +1,9 @@
 #!/usr/bin/env bats
 # Polis Management Script Tests
 
-load '../bats/bats-support/load'
-load '../bats/bats-assert/load'
-load '../bats/bats-file/load'
-
 setup() {
-    PROJECT_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
+    load '../helpers/common.bash'
+    load '../bats/bats-file/load.bash'
     POLIS_SCRIPT="${PROJECT_ROOT}/tools/polis.sh"
 }
 
@@ -46,11 +43,6 @@ setup() {
 
 @test "polis-script: has validate_agent function" {
     run grep -q 'validate_agent()' "${POLIS_SCRIPT}"
-    assert_success
-}
-
-@test "polis-script: has generate_dockerfile function" {
-    run grep -q 'generate_dockerfile()' "${POLIS_SCRIPT}"
     assert_success
 }
 
