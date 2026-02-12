@@ -31,7 +31,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPOSE_FILE="${PROJECT_ROOT}/deploy/docker-compose.yml"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 BATS_DIR="${SCRIPT_DIR}/bats"
 
 RED='\033[0;31m'

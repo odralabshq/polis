@@ -15,7 +15,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${SCRIPT_DIR}"
 
 # Compose file path
-COMPOSE_FILE="${PROJECT_ROOT}/deploy/docker-compose.yml"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 ENV_FILE="${PROJECT_ROOT}/.env"
 
 # Parse flags

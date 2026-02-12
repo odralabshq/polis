@@ -11,7 +11,7 @@
 TESTS_DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"
 export PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
 export TESTS_DIR
-export COMPOSE_FILE="${PROJECT_ROOT}/deploy/docker-compose.yml"
+export COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 
 # ── BATS libraries ──────────────────────────────────────────────────────────
 load "${TESTS_DIR}/bats/bats-support/load.bash"

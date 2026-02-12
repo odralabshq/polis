@@ -59,12 +59,12 @@ setup() {
 }
 
 @test "privilege-drop: docker-compose does not set user: root" {
-    run grep -E "^\s+user:\s*root" "${PROJECT_ROOT}/deploy/docker-compose.yml"
+    run grep -E "^\s+user:\s*root" "${PROJECT_ROOT}/docker-compose.yml"
     assert_failure  # Should NOT find user: root
 }
 
 @test "privilege-drop: docker-compose drops ALL capabilities" {
-    run grep -A1 "cap_drop:" "${PROJECT_ROOT}/deploy/docker-compose.yml"
+    run grep -A1 "cap_drop:" "${PROJECT_ROOT}/docker-compose.yml"
     assert_success
     assert_output --partial "ALL"
 }

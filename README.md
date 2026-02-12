@@ -198,7 +198,7 @@ After changing API keys, rebuild:
 polis down && polis init --agent=openclaw
 ```
 
-Proxy configuration lives in `config/g3proxy.yaml` (TLS inspection, ICAP routing, DNS resolvers). Network isolation is defined in `deploy/docker-compose.yml`.
+Proxy configuration lives in `config/g3proxy.yaml` (TLS inspection, ICAP routing, DNS resolvers). Network isolation is defined in `docker-compose.yml`.
 
 ## 🔧 Troubleshooting
 
