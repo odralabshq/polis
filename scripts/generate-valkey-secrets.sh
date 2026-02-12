@@ -167,11 +167,11 @@ echo ""
 echo "--- Setting file permissions ---"
 
 chmod 600 "${OUTPUT_DIR}/valkey_password.txt"
-chmod 600 "${OUTPUT_DIR}/valkey_users.acl"
+chmod 644 "${OUTPUT_DIR}/valkey_users.acl"
 chmod 644 "${OUTPUT_DIR}/valkey_dlp_password.txt"
 chmod 600 "${OUTPUT_DIR}/credentials.env.example"
 
-echo "Permissions set: valkey_dlp_password.txt=644 (readable by c-icap user), others=600"
+echo "Permissions set: valkey_users.acl=644, valkey_dlp_password.txt=644 (readable by services), others=600"
 
 echo ""
 echo "=== Secrets generation complete ==="
