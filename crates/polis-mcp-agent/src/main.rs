@@ -28,10 +28,10 @@ use crate::tools::PolisAgentTools;
 /// Server configuration loaded from environment variables via `envy`.
 ///
 /// Each field maps to `polis_AGENT_<FIELD>`:
-///   - `polis_AGENT_LISTEN_ADDR`  (default `0.0.0.0:8080`)
-///   - `polis_AGENT_VALKEY_URL`   (default `redis://valkey:6379`)
-///   - `polis_AGENT_VALKEY_USER`  (required)
-///   - `polis_AGENT_VALKEY_PASS`  (required)
+///   - `polis_AGENT_LISTEN_ADDR`     (default `0.0.0.0:8080`)
+///   - `polis_AGENT_VALKEY_URL`      (default `redis://valkey:6379`)
+///   - `polis_AGENT_VALKEY_USER`     (required)
+///   - `polis_AGENT_VALKEY_PASS_FILE` (required, path to Docker secret)
 #[derive(Debug, Deserialize)]
 struct Config {
     /// Socket address to bind the HTTP server to.
@@ -45,8 +45,8 @@ struct Config {
     /// ACL username for Valkey authentication.
     valkey_user: String,
 
-    /// ACL password for Valkey authentication.
-    valkey_pass: String,
+    /// Path to file containing ACL password (Docker secret).
+    valkey_pass_file: String,
 }
 
 fn default_listen_addr() -> String {
@@ -87,9 +87,15 @@ async fn main() -> Result<()> {
         .from_env()
         .context(
             "failed to load config from polis_AGENT_* env vars \
-             (polis_AGENT_VALKEY_USER and polis_AGENT_VALKEY_PASS \
+             (polis_AGENT_VALKEY_USER and polis_AGENT_VALKEY_PASS_FILE \
              are required)",
         )?;
+
+    // 3. Read password from Docker secret file
+    let valkey_pass = std::fs::read_to_string(&config.valkey_pass_file)
+        .with_context(|| format!("failed to read password from {}", config.valkey_pass_file))?
+        .trim()
+        .to_string();
 
     tracing::info!(
         listen_addr = %config.listen_addr,
@@ -98,12 +104,12 @@ async fn main() -> Result<()> {
         "configuration loaded",
     );
 
-    // 3. Create AppState — connects to Valkey with ACL auth and
+    // 4. Create AppState — connects to Valkey with ACL auth and
     //    verifies connectivity via PING (Requirement 3.1-3.4).
     let app_state = AppState::new(
         &config.valkey_url,
         &config.valkey_user,
-        &config.valkey_pass,
+        &valkey_pass,
     )
     .await
     .context("failed to initialise Valkey connection")?;

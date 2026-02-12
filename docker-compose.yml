@@ -123,12 +123,12 @@ services:
       - ./config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
       - ./certs/valkey:/etc/valkey/tls:ro
       - clamav-db:/var/lib/clamav:ro
-    env_file:
-      - .env
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
     secrets:
       - valkey_dlp_password
+      - valkey_reqmod_password
+      - valkey_respmod_password
     depends_on:
       clamav:
         condition: service_healthy
@@ -346,14 +346,14 @@ services:
     networks:
       internal-bridge: {}
       gateway-bridge: {}
-    env_file:
-      - .env
     environment:
       - RUST_LOG=debug
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
       - polis_AGENT_VALKEY_URL=rediss://valkey:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
-      - polis_AGENT_VALKEY_PASS=${VALKEY_MCP_AGENT_PASS}
+      - polis_AGENT_VALKEY_PASS_FILE=/run/secrets/valkey_mcp_agent_password
+    secrets:
+      - valkey_mcp_agent_password
     volumes:
       - ./certs/valkey:/etc/valkey/tls:ro
     depends_on:
@@ -425,3 +425,9 @@ secrets:
     file: ./secrets/valkey_users.acl
   valkey_dlp_password:
     file: ./secrets/valkey_dlp_password.txt
+  valkey_mcp_agent_password:
+    file: ./secrets/valkey_mcp_agent_password.txt
+  valkey_reqmod_password:
+    file: ./secrets/valkey_reqmod_password.txt
+  valkey_respmod_password:
+    file: ./secrets/valkey_respmod_password.txt
