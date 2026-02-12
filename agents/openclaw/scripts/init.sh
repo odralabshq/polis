@@ -142,6 +142,11 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
     "web": {
       "search": {}
     }
+  },
+  "mcpServers": {
+    "polis-security": {
+      "url": "http://mcp-agent:8080/mcp"
+    }
   }
 }
 CONFIGEOF
@@ -177,60 +182,6 @@ else
             fi
         fi
     fi
-
-        # Migrate legacy config keys not supported by current OpenClaw versions.
-        if [[ -f "$CONFIG_FILE" ]] && grep -q '"mcpServers"' "$CONFIG_FILE"; then
-                echo "[openclaw-init] Migrating legacy config (removing unsupported mcpServers key)..."
-
-                if [[ -z "${GATEWAY_TOKEN:-}" ]]; then
-                        GATEWAY_TOKEN=$(generate_token)
-                        echo "$GATEWAY_TOKEN" > "$TOKEN_FILE"
-                        chmod 600 "$TOKEN_FILE"
-                fi
-
-                DEFAULT_MODEL=$(detect_model)
-                cat > "$CONFIG_FILE" << CONFIGEOF
-{
-    "gateway": {
-        "bind": "lan",
-        "port": 18789,
-        "auth": {
-            "mode": "token",
-            "token": "${GATEWAY_TOKEN}"
-        },
-        "controlUi": {
-            "enabled": true,
-            "allowInsecureAuth": true
-        }
-    },
-    "agents": {
-        "defaults": {
-            "model": {
-                "primary": "${DEFAULT_MODEL}"
-            },
-            "sandbox": {
-                "mode": "off"
-            }
-        },
-        "list": [
-            {
-                "id": "default",
-                "workspace": "/home/polis/.openclaw/workspace"
-            }
-        ]
-    },
-    "session": {
-        "dmScope": "per-peer"
-    },
-    "tools": {
-        "web": {
-            "search": {}
-        }
-    }
-}
-CONFIGEOF
-                chmod 600 "$CONFIG_FILE"
-        fi
 fi
 
 # Create/update environment file for systemd service
