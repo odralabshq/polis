@@ -16,11 +16,11 @@ tests/
 │   ├── icap.bats                # ICAP container unit tests
 │   └── workspace.bats           # Workspace container unit tests
 ├── integration/
-│   ├── network.bats             # Network isolation tests
-│   ├── tproxy.bats              # TPROXY/iptables tests
-│   └── security.bats            # Security hardening tests
+│   ├── hardening.bats           # Security hardening tests
+│   ├── ipv6.bats                # IPv6 security tests
+│   └── isolation.bats           # Network isolation tests
 └── e2e/
-    ├── traffic.bats             # Traffic interception tests
+    ├── traffic.bats             # Traffic interception tests (nftables)
     └── edge-cases.bats          # Edge case and failure mode tests
 ```
 

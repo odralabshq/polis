@@ -33,3 +33,4 @@ certs/valkey/
 
 # Rust build artifacts
 target/
+.grepai/
