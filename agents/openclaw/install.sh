@@ -31,11 +31,15 @@ echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.co
 apt-get update && apt-get install -y --no-install-recommends nodejs
 corepack enable
 
+# Force Node.js to trust the full OS CA bundle (includes Polis CA)
+export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
 # Pre-install pnpm so corepack doesn't need network access at runtime
 corepack prepare pnpm@latest --activate
 rm -rf /var/lib/apt/lists/*
 
 # Install Bun
+export HOME="${HOME:-/root}"
 curl -fsSL https://bun.sh/install | bash
 export PATH="/root/.bun/bin:${PATH}"
 

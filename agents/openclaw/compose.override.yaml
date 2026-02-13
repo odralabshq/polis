@@ -5,14 +5,18 @@ services:
   workspace:
     ports:
       - "${OPENCLAW_HOST_PORT:-18789}:18789"
+    networks:
+      internal-bridge: {}
+      host-access:
+        ipv4_address: 10.40.1.2
     env_file:
-      - ../.env
+      - .env
     environment:
       - OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}
     volumes:
-      - ../agents/openclaw/:/tmp/agents/openclaw/:ro
-      - ../agents/openclaw/config/openclaw.service:/etc/systemd/system/openclaw.service:ro
-      - ../.env:/run/openclaw-env:ro
+      - ./agents/openclaw/:/tmp/agents/openclaw/:ro
+      - ./agents/openclaw/config/openclaw.service:/etc/systemd/system/openclaw.service:ro
+      - ./.env:/run/openclaw-env:ro
     healthcheck:
       # REPLACES the base healthcheck entirely.
       # Always include polis-init.service AND ip route checks.
@@ -27,3 +31,12 @@ services:
           memory: 4G
         reservations:
           memory: 1G
+
+networks:
+  host-access:
+    enable_ipv6: false
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.40.1.0/24

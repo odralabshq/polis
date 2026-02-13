@@ -20,6 +20,28 @@ FIRST_RUN_MARKER="${CONFIG_DIR}/.initialized"
 
 echo "[openclaw-init] Starting initialization..."
 
+# =============================================================================
+# Inject Polis MITM CA into system trust store
+# =============================================================================
+# The polis-ca.pem is the MITM CA used by g3proxy for TLS interception.
+# The system CA bundle (/etc/ssl/certs/ca-certificates.crt) resets on every
+# container restart, so we must re-inject every time.
+# This ensures ALL TLS clients (node-fetch, undici/globalThis.fetch, curl, etc.)
+# trust the proxy's certificates.
+POLIS_CA="/etc/ssl/certs/polis-ca.pem"
+SYSTEM_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+if [[ -f "$POLIS_CA" ]]; then
+    if ! openssl verify -CAfile "$SYSTEM_CA_BUNDLE" "$POLIS_CA" >/dev/null 2>&1; then
+        echo "[openclaw-init] Injecting polis CA into system trust store..."
+        cat "$POLIS_CA" >> "$SYSTEM_CA_BUNDLE"
+        echo "[openclaw-init] Polis CA added to ${SYSTEM_CA_BUNDLE}"
+    else
+        echo "[openclaw-init] Polis CA already in system trust store"
+    fi
+else
+    echo "[openclaw-init] WARNING: Polis CA not found at ${POLIS_CA}"
+fi
+
 # Ensure directories exist with correct permissions
 mkdir -p "${CONFIG_DIR}/workspace" \
          "${CONFIG_DIR}/agents" \
@@ -141,11 +163,6 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
   "tools": {
     "web": {
       "search": {}
-    }
-  },
-  "mcpServers": {
-    "polis-security": {
-      "url": "http://mcp-agent:8080/mcp"
     }
   }
 }

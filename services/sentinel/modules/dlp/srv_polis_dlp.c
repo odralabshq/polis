@@ -49,7 +49,7 @@ typedef struct {
  */
 typedef struct {
     ci_membuf_t *body;          /* Accumulated request body (first 1MB) */
-    ci_ring_buf_t *ring;        /* Ring buffer for body pass-through */
+    ci_cached_file_t *ring;     /* Cached file for body pass-through (mem → disk) */
     ci_membuf_t *error_page;    /* Error page body for blocked responses */
     char tail[TAIL_SCAN_SIZE];  /* Last 10KB ring buffer for tail scan */
     size_t tail_len;            /* Bytes currently in tail buffer */
@@ -222,6 +222,9 @@ static int is_new_domain(const char *host)
         ".api.github.com",
         ".github.com",
         ".amazonaws.com",
+        ".api.telegram.org",
+        ".discord.com",
+        ".api.slack.com",
         NULL
     };
     size_t hlen, dlen;
@@ -682,8 +685,12 @@ void *dlp_init_request_data(ci_request_t *req)
 
     /* Create memory buffer for body accumulation (up to 1MB) */
     data->body = ci_membuf_new_sized(MAX_BODY_SCAN);
-    /* Create ring buffer for body pass-through */
-    data->ring = ci_req_hasbody(req) ? ci_ring_buf_new(32768) : NULL;
+    /* Create cached file for body pass-through.
+     * Uses ci_cached_file_t: starts in memory (up to CI_BODY_MAX_MEM,
+     * typically 128KB), then spills to a temp file on disk for larger
+     * bodies. Handles arbitrarily large AI agent prompts without the
+     * fixed-size overflow problem of ci_ring_buf_t. */
+    data->ring = ci_req_hasbody(req) ? ci_cached_file_new(CI_BODY_MAX_MEM) : NULL;
     data->error_page = NULL;
     data->tail_len = 0;
     data->total_body_len = 0;
@@ -726,7 +733,7 @@ void dlp_release_request_data(void *data)
     }
 
     if (req_data->ring) {
-        ci_ring_buf_destroy(req_data->ring);
+        ci_cached_file_destroy(req_data->ring);
         req_data->ring = NULL;
     }
 
@@ -1061,9 +1068,9 @@ int dlp_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
             }
         }
 
-        /* Also write to ring buffer for later pass-through if allowed */
+        /* Also write to cached file for later pass-through if allowed */
         if (data->ring) {
-            if (ci_ring_buf_write(data->ring, rbuf, *rlen) < 0)
+            if (ci_cached_file_write(data->ring, rbuf, *rlen, iseof) < 0)
                 ret = CI_ERROR;
         }
         data->total_body_len += *rlen;
@@ -1086,8 +1093,8 @@ int dlp_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
                 *wlen = CI_EOF;
             }
         } else if (data->ring) {
-            /* Normal pass-through from ring buffer */
-            *wlen = ci_ring_buf_read(data->ring, wbuf, *wlen);
+            /* Normal pass-through from cached file */
+            *wlen = ci_cached_file_read(data->ring, wbuf, *wlen);
             if (*wlen == 0)
                 *wlen = CI_EOF;
         } else {
