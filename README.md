@@ -11,7 +11,7 @@ AI agents make HTTP requests, download packages, and execute code autonomously. 
 
 Polis solves this by routing all agent traffic through a TLS-intercepting proxy with real-time malware scanning. The agent runs normally; Polis handles security transparently.
 
-## ⚡️ Quick Start for Users
+## ⚡️ Quick Start for Users (for Developers scroll down)
 
 Run Polis in a fully automated VM. Everything is pre-configured via cloud-init:
 
