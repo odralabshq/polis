@@ -76,13 +76,13 @@ jobs:
       matrix:
         include:
           - image: gateway
-            dockerfile: ./build/g3proxy/Dockerfile
+            dockerfile: services/gate/Dockerfile
             description: Polis Gateway (g3proxy)
           - image: icap
-            dockerfile: ./build/icap/Dockerfile
+            dockerfile: services/sentinel/Dockerfile
             description: Polis ICAP (c-icap + SquidClamav)
           - image: workspace
-            dockerfile: ./build/workspace/Dockerfile
+            dockerfile: services/workspace/Dockerfile
             description: Polis Workspace (base)
     steps:
       - name: Checkout repository
@@ -188,8 +188,8 @@ jobs:
             --exclude='certs/ca/*.key' \
             --exclude='.env' \
             --transform "s,^,polis-core-${VERSION}/," \
-            build config deploy docs scripts tests tools \
-            README.md .gitignore
+            services config docs lib scripts tests tools \
+            README.md .gitignore Cargo.toml Cargo.lock docker-compose.yml
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2.5.0
@@ -200,7 +200,7 @@ jobs:
           prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: |
-            tools/polis.sh
+            cli/polis.sh
             scripts/install.sh
             polis-core-${{ needs.validate.outputs.version }}.tar.gz
             sboms/sbom-gateway.spdx.json

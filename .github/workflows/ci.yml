@@ -35,19 +35,20 @@ jobs:
 
       - name: Set script permissions
         run: |
-          chmod +x ./tools/polis.sh
+          chmod +x ./cli/polis.sh
           chmod +x ./tools/*.sh
           chmod +x ./tests/run-tests.sh
           chmod +x ./scripts/*.sh
+          chmod +x ./services/*/scripts/*.sh
           chmod +x ./agents/openclaw/install.sh
           chmod +x ./agents/openclaw/scripts/*.sh
 
       - name: Setup CA certificates
-        run: ./tools/polis.sh setup-ca
+        run: ./cli/polis.sh setup-ca
 
       - name: Setup Valkey TLS certificates
         run: |
-          ./scripts/generate-valkey-certs.sh ./certs/valkey
+          ./services/state/scripts/generate-certs.sh ./certs/valkey
           # Multiple containers (valkey uid:999, icap c-icap, mcp-agent polis)
           # mount the same cert directory. Make all files world-readable so
           # every container user can access them.
@@ -56,15 +57,15 @@ jobs:
       - name: Setup Valkey secrets
         run: |
           touch .env
-          ./scripts/generate-valkey-secrets.sh ./secrets .
+          ./services/state/scripts/generate-secrets.sh ./secrets .
           # Ensure ACL file is readable by Docker daemon for secret injection
           chmod 644 ./secrets/valkey_users.acl
 
       - name: Build containers
-        run: ./tools/polis.sh build
+        run: ./cli/polis.sh build
 
       - name: Start containers
-        run: ./tools/polis.sh up
+        run: ./cli/polis.sh up
 
       - name: Wait for healthy
         run: |

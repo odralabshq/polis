@@ -8,9 +8,23 @@
 #   }
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-TESTS_DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"
-export PROJECT_ROOT="$(cd "${TESTS_DIR}/.." && pwd)"
-export TESTS_DIR
+# Robustly find PROJECT_ROOT by looking for Justfile up from the test file
+find_project_root() {
+    local current_dir
+    current_dir="$(cd "$(dirname "${BATS_TEST_FILENAME}")" && pwd)"
+    while [[ "$current_dir" != "/" ]]; do
+        if [[ -f "${current_dir}/Justfile" ]]; then
+            echo "${current_dir}"
+            return 0
+        fi
+        current_dir="$(dirname "${current_dir}")"
+    done
+    # Fallback to current behavior if Justfile not found
+    echo "$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
+}
+
+export PROJECT_ROOT="$(find_project_root)"
+export TESTS_DIR="${PROJECT_ROOT}/tests"
 export COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 
 # ── BATS libraries ──────────────────────────────────────────────────────────
@@ -18,13 +32,13 @@ load "${TESTS_DIR}/bats/bats-support/load.bash"
 load "${TESTS_DIR}/bats/bats-assert/load.bash"
 
 # ── Container names ─────────────────────────────────────────────────────────
-export DNS_CONTAINER="polis-dns"
-export GATEWAY_CONTAINER="polis-gateway"
-export ICAP_CONTAINER="polis-icap"
+export DNS_CONTAINER="polis-resolver"
+export GATEWAY_CONTAINER="polis-gate"
+export ICAP_CONTAINER="polis-sentinel"
 export WORKSPACE_CONTAINER="polis-workspace"
-export CLAMAV_CONTAINER="polis-clamav"
-export VALKEY_CONTAINER="polis-v2-valkey"
-export MCP_AGENT_CONTAINER="polis-mcp-agent"
+export CLAMAV_CONTAINER="polis-scanner"
+export VALKEY_CONTAINER="polis-state"
+export MCP_AGENT_CONTAINER="polis-toolbox"
 
 # ── Network names ───────────────────────────────────────────────────────────
 export COMPOSE_PROJECT_NAME="polis"

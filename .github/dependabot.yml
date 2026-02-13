@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # Rust dependencies
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      rust-deps:
+        patterns: ["*"]
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  # Docker — per service
+  - package-ecosystem: docker
+    directory: "services/gate"
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: "services/sentinel"
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: "services/workspace"
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: "services/toolbox"
+    schedule:
+      interval: monthly
