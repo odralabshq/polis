@@ -4,7 +4,7 @@
 setup() {
     load '../helpers/common.bash'
     load '../bats/bats-file/load.bash'
-    POLIS_SCRIPT="${PROJECT_ROOT}/tools/polis.sh"
+    POLIS_SCRIPT="${PROJECT_ROOT}/cli/polis.sh"
 }
 
 @test "polis-script: polis.sh exists" {

@@ -75,7 +75,7 @@ final_message: |
   Next steps:
   1. Access VM: multipass shell polis-vm
   2. Configure API keys: nano ~/polis/.env
-  3. Start Polis: cd ~/polis && ./tools/polis.sh init --agent=openclaw
+  3. Start Polis: cd ~/polis && ./cli/polis.sh init --agent=openclaw
   
   The VM has:
   - Docker Engine with docker-compose

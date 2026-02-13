@@ -165,7 +165,7 @@ create_vm() {
     echo "Or manually:"
     echo "  multipass shell ${VM_NAME}"
     echo "  cd ~/polis"
-    echo "  ./tools/polis.sh init --local"
+    echo "  ./cli/polis.sh init --local"
 }
 
 # Start VM
@@ -262,14 +262,14 @@ rebuild_polis() {
     
     multipass exec "${VM_NAME}" -- bash -c "
         cd ~/polis
-        ./tools/polis.sh down 2>/dev/null || true
-        ./tools/polis.sh init --local --no-cache
+        ./cli/polis.sh down 2>/dev/null || true
+        ./cli/polis.sh init --local --no-cache
     "
     
     log_success "Rebuild complete!"
     echo ""
     echo "Get access token with: $0 shell"
-    echo "Then run: ./tools/polis.sh openclaw init"
+    echo "Then run: ./cli/polis.sh openclaw init"
 }
 
 # Fix file permissions in mounted directory

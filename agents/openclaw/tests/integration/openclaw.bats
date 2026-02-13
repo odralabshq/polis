@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # OpenClaw Integration Tests
 # Tests for OpenClaw running in the workspace container
-# Requires: ./tools/polis.sh init --agent=openclaw --local
+# Requires: ./cli/polis.sh init --agent=openclaw --local
 
 setup() {
     load "../../../../tests/helpers/common.bash"

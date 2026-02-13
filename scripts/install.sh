@@ -123,9 +123,9 @@ install_polis() {
         if git pull --ff-only origin "${BRANCH}" 2>/dev/null; then
             log_success "Updated existing installation"
             # Skip clone, jump to symlink/permissions
-            chmod +x tools/polis.sh scripts/*.sh services/*/scripts/*.sh 2>/dev/null || true
+            chmod +x cli/polis.sh scripts/*.sh services/*/scripts/*.sh 2>/dev/null || true
             mkdir -p "$HOME/.local/bin"
-            ln -sf "${INSTALL_DIR}/tools/polis.sh" "$HOME/.local/bin/polis"
+            ln -sf "${INSTALL_DIR}/cli/polis.sh" "$HOME/.local/bin/polis"
             log_success "Polis updated successfully!"
             return 0
         else
@@ -171,12 +171,12 @@ install_polis() {
     fi
     
     # Make scripts executable
-    chmod +x tools/polis.sh scripts/*.sh services/*/scripts/*.sh 2>/dev/null || true
+    chmod +x cli/polis.sh scripts/*.sh services/*/scripts/*.sh 2>/dev/null || true
     
     # Create symlink for easy access
     log_info "Creating polis command..."
     mkdir -p "$HOME/.local/bin"
-    ln -sf "${INSTALL_DIR}/tools/polis.sh" "$HOME/.local/bin/polis"
+    ln -sf "${INSTALL_DIR}/cli/polis.sh" "$HOME/.local/bin/polis"
     
     # Check if ~/.local/bin is in PATH
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
@@ -199,7 +199,7 @@ install_polis() {
     echo "     # Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY"
     echo ""
     echo "  2. Initialize Polis:"
-    echo "     cd ${INSTALL_DIR} && ./tools/polis.sh init"
+    echo "     cd ${INSTALL_DIR} && ./cli/polis.sh init"
     echo ""
     echo "  The init command will:"
     echo "    - Check Docker compatibility"
@@ -231,8 +231,8 @@ download_files() {
              services/state/scripts
     
     # Download essential files
-    download "${base_url}/tools/polis.sh" "tools/polis.sh" || exit 1
-    chmod +x tools/polis.sh
+    download "${base_url}/cli/polis.sh" "cli/polis.sh" || exit 1
+    chmod +x cli/polis.sh
     
     download "${base_url}/docker-compose.yml" "docker-compose.yml" || exit 1
     download "${base_url}/config/polis.yaml" "config/polis.yaml" || exit 1

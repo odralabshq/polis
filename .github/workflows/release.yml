@@ -200,7 +200,7 @@ jobs:
           prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: |
-            tools/polis.sh
+            cli/polis.sh
             scripts/install.sh
             polis-core-${{ needs.validate.outputs.version }}.tar.gz
             sboms/sbom-gateway.spdx.json

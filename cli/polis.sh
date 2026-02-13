@@ -508,7 +508,7 @@ dispatch_agent_command() {
             
             if [[ $init_retries -eq 0 ]]; then
                 log_warn "${AGENT_DISPLAY_NAME} service not active yet."
-                echo "Check status with: ./polis.sh ${agent} status"
+                echo "Check status with: ./cli/polis.sh ${agent} status"
                 exit 1
             fi
             
@@ -526,7 +526,7 @@ dispatch_agent_command() {
                 
                 if [[ $init_retries -eq 0 ]]; then
                     log_warn "${AGENT_DISPLAY_NAME} initialization taking longer than expected."
-                    echo "Check logs with: ./polis.sh ${agent} logs"
+                    echo "Check logs with: ./cli/polis.sh ${agent} logs"
                     exit 1
                 fi
                 
@@ -656,14 +656,14 @@ Options:
   --no-cache            Build without Docker cache
 
 Examples:
-  ./polis.sh init                           # First-time setup (openclaw)
-  ./polis.sh init --agent=openclaw --local  # Build from source
-  ./polis.sh openclaw connect               # Pair a device
-  ./polis.sh openclaw help                  # Show all openclaw commands
-  ./polis.sh openclaw token                 # Get access token
-  ./polis.sh openclaw logs 100              # View last 100 log lines
-  ./polis.sh agents list                    # List available agents
-  ./polis.sh agent scaffold myagent         # Create new agent
+  ./cli/polis.sh init                           # First-time setup (openclaw)
+  ./cli/polis.sh init --agent=openclaw --local  # Build from source
+  ./cli/polis.sh openclaw connect               # Pair a device
+  ./cli/polis.sh openclaw help                  # Show all openclaw commands
+  ./cli/polis.sh openclaw token                 # Get access token
+  ./cli/polis.sh openclaw logs 100              # View last 100 log lines
+  ./cli/polis.sh agents list                    # List available agents
+  ./cli/polis.sh agent scaffold myagent         # Create new agent
 
 EOF
 }

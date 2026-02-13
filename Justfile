@@ -6,7 +6,7 @@ default:
 
 # Build all containers
 build:
-    ./tools/polis.sh build
+    ./cli/polis.sh build
 
 # Build a specific service
 build-service service:
@@ -26,15 +26,15 @@ test-rust:
 
 # Start all services
 up:
-    ./tools/polis.sh up
+    ./cli/polis.sh up
 
 # Stop all services
 down:
-    ./tools/polis.sh down
+    ./cli/polis.sh down
 
 # Show service status
 status:
-    ./tools/polis.sh status
+    ./cli/polis.sh status
 
 # Generate Valkey certs
 setup-valkey-certs dir="./certs/valkey":
@@ -46,4 +46,4 @@ setup-valkey-secrets dir="./secrets":
 
 # Setup CA certificates
 setup-ca:
-    ./tools/polis.sh setup-ca
+    ./cli/polis.sh setup-ca

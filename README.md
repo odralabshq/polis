@@ -65,10 +65,10 @@ cd ~/polis
 nano .env  # Add ANTHROPIC_API_KEY or OPENAI_API_KEY
 
 # Initialize and start Polis
-./tools/polis.sh init --agent=openclaw
+./cli/polis.sh init --agent=openclaw
 
 # Initialize the agent and get your access token
-./tools/polis.sh openclaw init
+./cli/polis.sh openclaw init
 ```
 
 Access the agent UI at `http://<VM_IP>:18789` (get IP with `multipass info polis-vm`).
@@ -77,7 +77,10 @@ Access the agent UI at `http://<VM_IP>:18789` (get IP with `multipass info polis
 
 ## 🛠️ Quick Start for Developers
 
-Edit code locally, build and run in VM. Fully automated via `polis-dev.sh`:
+Edit code locally, build and run in VM. Fully automated via scripts:
+
+- **Linux/macOS**: `./tools/polis-dev.sh`
+- **Windows**: `.\tools\polis-dev.ps1`
 
 ### 1. Install Multipass
 
@@ -85,28 +88,47 @@ Same as above (Windows/macOS/Linux instructions).
 
 ### 2. Clone Repository and Create Dev VM
 
+**Linux/macOS:**
+
 ```bash
 # Clone on your host machine
 git clone --recursive https://github.com/OdraLabsHQ/polis.git
 cd polis
 
-# Make script executable (if not already)
+# Make script executable
 chmod +x tools/polis-dev.sh
 
-# Create development VM (installs Docker, Sysbox, mounts local directory)
+# Create development VM
 ./tools/polis-dev.sh create
-
-# This will:
-# - Launch Ubuntu VM with cloud-init (polis-dev.yaml)
-# - Install Docker + Sysbox automatically
-# - Mount your local polis directory at ~/polis in VM
 ```
+
+**Windows (PowerShell):**
+
+```powershell
+# Clone on your host machine
+git clone --recursive https://github.com/OdraLabsHQ/polis.git
+cd polis
+
+# Create development VM
+.\tools\polis-dev.ps1 create
+```
+
+This will:
+
+- Launch Ubuntu VM with cloud-init (polis-dev.yaml)
+- Install Docker + Sysbox automatically
+- Mount your local polis directory at ~/polis in VM
 
 ### 3. Build and Run from Local Source
 
+**From your host terminal:**
+
 ```bash
-# Enter the VM
+# Linux/macOS
 ./tools/polis-dev.sh shell
+
+# Windows
+.\tools\polis-dev.ps1 shell
 
 # Configure API keys
 cd ~/polis
@@ -114,10 +136,10 @@ cp agents/openclaw/config/env.example .env
 nano .env  # Add your API keys
 
 # Build from local source and start
-./tools/polis.sh init --agent=openclaw --local
+./cli/polis.sh init --agent=openclaw --local
 
 # Get access token
-./tools/polis.sh openclaw init
+./cli/polis.sh openclaw init
 ```
 
 **Development Workflow:**
@@ -127,13 +149,13 @@ nano .env  # Add your API keys
 # Changes are instantly reflected in the VM
 
 # Rebuild after changes (from host)
-./tools/polis-dev.sh rebuild
+./tools/polis-dev.sh rebuild     # Linux/macOS
+.\tools\polis-dev.ps1 rebuild    # Windows
 
-# Or manually in VM
-./tools/polis-dev.sh shell
+# Or manually in VM shell
 cd ~/polis
-./tools/polis.sh down
-./tools/polis.sh init --local --no-cache
+./cli/polis.sh down
+./cli/polis.sh init --local --no-cache
 ```
 
 **Why No Permission Issues?**
@@ -146,14 +168,28 @@ The VM's `ubuntu` user is configured with UID/GID 1000:1000 (matching most host 
 
 **Useful Commands:**
 
+*Linux/macOS:*
+
 ```bash
 ./tools/polis-dev.sh create    # Create dev VM
 ./tools/polis-dev.sh shell     # Enter VM shell
-./tools/polis-dev.sh rebuild   # Rebuild Polis from source
+./tools/polis-dev.sh rebuild   # Rebuild from source
 ./tools/polis-dev.sh stop      # Stop VM
 ./tools/polis-dev.sh start     # Start VM
 ./tools/polis-dev.sh status    # Show VM info
 ./tools/polis-dev.sh delete    # Delete VM
+```
+
+*Windows (PowerShell):*
+
+```powershell
+.\tools\polis-dev.ps1 create   # Create dev VM
+.\tools\polis-dev.ps1 shell    # Enter VM shell
+.\tools\polis-dev.ps1 rebuild  # Rebuild from source
+.\tools\polis-dev.ps1 stop     # Stop VM
+.\tools\polis-dev.ps1 start    # Start VM
+.\tools\polis-dev.ps1 status   # Show VM info
+.\tools\polis-dev.ps1 delete   # Delete VM
 ```
 
 **If You Still Have Permission Issues:**
@@ -192,7 +228,7 @@ cd polis
 # Configure and start
 cp agents/openclaw/config/env.example .env
 nano .env  # Add your API keys
-./tools/polis.sh init --agent=openclaw
+./cli/polis.sh init --agent=openclaw
 ```
 
 ## 🏗️ Architecture
@@ -379,7 +415,7 @@ docker info | grep sysbox
 **Gateway unhealthy / "not found" errors** — CRLF line endings (Windows/WSL2):
 
 ```bash
-dos2unix tools/polis.sh scripts/*.sh agents/openclaw/**/*.sh
+dos2unix cli/polis.sh scripts/*.sh agents/openclaw/**/*.sh
 ```
 
 **Full reset:**

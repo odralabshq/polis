@@ -8,4 +8,4 @@
 /lib/                 @OdraLabsHQ/core
 /agents/              @OdraLabsHQ/agents
 /docker-compose.yml   @OdraLabsHQ/core
-/tools/polis.sh       @OdraLabsHQ/core
+/cli/polis.sh       @OdraLabsHQ/core
