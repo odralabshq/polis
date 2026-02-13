@@ -71,7 +71,7 @@ compose_up() {
     local timeout=180 elapsed=0
     while [[ $elapsed -lt $timeout ]]; do
         local ok=true
-        for c in polis-dns polis-gateway polis-icap; do
+        for c in polis-resolver polis-gate polis-sentinel polis-scanner polis-state; do
             local h
             h=$(docker inspect --format '{{.State.Health.Status}}' "$c" 2>/dev/null || echo "missing")
             [[ "$h" == "healthy" ]] || { ok=false; break; }
@@ -114,17 +114,19 @@ run_tests() {
     local dirs=()
 
     case "$TARGET" in
-        all)          dirs=(unit integration e2e) ;;
-        unit)         dirs=(unit) ;;
-        integration)  dirs=(integration) ;;
-        e2e)          dirs=(e2e) ;;
+        all)          dirs=("${SCRIPT_DIR}/unit" "${SCRIPT_DIR}/integration" "${SCRIPT_DIR}/e2e" "${PROJECT_ROOT}/services" "${PROJECT_ROOT}/agents") ;;
+        unit)         dirs=("${SCRIPT_DIR}/unit" "${PROJECT_ROOT}/services"/*"/tests/unit" "${PROJECT_ROOT}/agents"/*"/tests/unit") ;;
+        integration)  dirs=("${SCRIPT_DIR}/integration" "${PROJECT_ROOT}/services"/*"/tests/integration" "${PROJECT_ROOT}/agents"/*"/tests/integration") ;;
+        e2e)          dirs=("${SCRIPT_DIR}/e2e") ;;
         *)
             if [[ -f "${SCRIPT_DIR}/${TARGET}" ]]; then
-                dirs=("${TARGET}")
+                dirs=("${SCRIPT_DIR}/${TARGET}")
             elif [[ -f "${SCRIPT_DIR}/${TARGET}.bats" ]]; then
-                dirs=("${TARGET}.bats")
+                dirs=("${SCRIPT_DIR}/${TARGET}.bats")
             elif [[ -d "${SCRIPT_DIR}/${TARGET}" ]]; then
-                dirs=("${TARGET}")
+                dirs=("${SCRIPT_DIR}/${TARGET}")
+            elif [[ -f "${PROJECT_ROOT}/${TARGET}" ]]; then
+                dirs=("${PROJECT_ROOT}/${TARGET}")
             else
                 log_error "Not found: ${TARGET}"; exit 1
             fi ;;
@@ -133,11 +135,21 @@ run_tests() {
     export BATS_LIB_PATH="${BATS_DIR}"
     export PROJECT_ROOT SCRIPT_DIR
 
-    cd "${SCRIPT_DIR}"
-    log_info "Running: ${dirs[*]}"
+    # Filter out non-existent directories or those without .bats files
+    local final_dirs=()
+    for d in "${dirs[@]}"; do
+        if [[ -d "$d" ]]; then
+            # Only add if it contains or might contain .bats files recursively
+            final_dirs+=("$d")
+        elif [[ -f "$d" ]]; then
+            final_dirs+=("$d")
+        fi
+    done
+
+    log_info "Running: ${final_dirs[*]}"
     echo ""
     # shellcheck disable=SC2086
-    ${bats} --recursive ${BATS_OPTS} "${dirs[@]}"
+    ${bats} --recursive ${BATS_OPTS} "${final_dirs[@]}"
 }
 
 main() {

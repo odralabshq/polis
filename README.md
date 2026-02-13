@@ -1,7 +1,7 @@
 # Polis - Secure Workspace for AI Coding Agents
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.3-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](CHANGELOG.md)
 
 Polis is a secure runtime for AI coding agents. It wraps any AI agent in an isolated container where all network traffic is intercepted, inspected for malware, and audited — without modifying the agent itself.
 
@@ -73,12 +73,15 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 
 ### Key Components
 
-| Component | Purpose | Runtime |
-|-----------|---------|---------|
-| **Gateway** | TLS-intercepting proxy (g3proxy), domain filtering, traffic routing | runc (NET_ADMIN) |
-| **ICAP** | Content inspection server (c-icap), request/response analysis | runc |
-| **ClamAV** | Real-time malware scanning of all HTTP responses | runc |
-| **Workspace** | Isolated dev environment with Docker-in-Docker, systemd | Sysbox |
+| Component | Purpose | Location |
+|-----------|---------|----------|
+| **Resolver** | DNS entry point (CoreDNS), domain filtering | `services/resolver` |
+| **Gateway** | TLS-intercepting proxy (g3proxy), traffic routing | `services/gate` |
+| **Sentinel** | Content inspection logic (c-icap), DLP, approvals | `services/sentinel` |
+| **Scanner** | Real-time malware scanning (ClamAV) | `services/scanner` |
+| **Toolbox** | MCP tools | `services/toolbox` |
+| **State** | Redis-compatible data store (Valkey) | `services/state` |
+| **Workspace** | Isolated environment (Sysbox) | `services/workspace` |
 
 ## 🔐 What We Address
 
@@ -203,11 +206,12 @@ After changing API keys, rebuild:
 polis down && polis init --agent=openclaw
 ```
 
-Proxy configuration lives in `config/g3proxy.yaml` (TLS inspection, ICAP routing, DNS resolvers). Network isolation is defined in `docker-compose.yml`.
+Proxy configuration lives in `services/gate/config/g3proxy.yaml`. Sentinel logic is in `services/sentinel/config/c-icap.conf`. Global settings are in `config/polis.yaml`. Network isolation is defined in `docker-compose.yml`.
 
 ## 🔧 Troubleshooting
 
 **Sysbox not detected** — Start services manually, then restart Docker:
+
 ```bash
 sudo systemctl stop docker docker.socket
 sudo systemctl restart sysbox-mgr sysbox-fs
@@ -216,11 +220,13 @@ docker info | grep sysbox
 ```
 
 **Gateway unhealthy / "not found" errors** — CRLF line endings (Windows/WSL2):
+
 ```bash
 dos2unix tools/polis.sh scripts/*.sh agents/openclaw/**/*.sh
 ```
 
 **Full reset:**
+
 ```bash
 polis down
 docker rmi $(docker images --filter "reference=polis-*" -q) 2>/dev/null

@@ -406,7 +406,7 @@ setup_valkey() {
         log_success "Valkey TLS certificates already exist."
     else
         echo "Generating Valkey TLS certificates..."
-        if ! bash "${PROJECT_ROOT}/scripts/generate-valkey-certs.sh" \
+        if ! bash "${PROJECT_ROOT}/services/state/scripts/generate-certs.sh" \
             "${VALKEY_CERTS_DIR}"; then
             log_error "Failed to generate Valkey TLS certificates"
             return 1
@@ -430,7 +430,7 @@ setup_valkey() {
         log_success "Valkey secrets already exist."
     else
         echo "Generating Valkey secrets..."
-        if ! bash "${PROJECT_ROOT}/scripts/generate-valkey-secrets.sh" \
+        if ! bash "${PROJECT_ROOT}/services/state/scripts/generate-secrets.sh" \
             "${VALKEY_SECRETS_DIR}" "${PROJECT_ROOT}"; then
             log_error "Failed to generate Valkey secrets"
             return 1
@@ -756,7 +756,7 @@ case "${1:-}" in
             
             # Build base workspace image
             docker build $NO_CACHE \
-                -f "${PROJECT_ROOT}/build/workspace/Dockerfile" \
+                -f "${PROJECT_ROOT}/services/workspace/Dockerfile" \
                 -t "polis-workspace-oss:latest" \
                 "${PROJECT_ROOT}"
             
@@ -767,7 +767,7 @@ case "${1:-}" in
             echo "=== Checking images at GitHub Container Registry ==="
             REGISTRY="${POLIS_REGISTRY:-ghcr.io/odralabshq}"
             
-            IMAGES="polis-gateway-oss:latest polis-icap-oss:latest polis-workspace-oss:latest"
+            IMAGES="polis-gate-oss:latest polis-sentinel-oss:latest polis-workspace-oss:latest"
             
             missing_images=false
             for img in $IMAGES; do
@@ -781,7 +781,7 @@ case "${1:-}" in
                 log_info "Some images not in registry. Building from source..."
                 LOCAL_BUILD="true"
                 docker build $NO_CACHE \
-                    -f "${PROJECT_ROOT}/build/workspace/Dockerfile" \
+                    -f "${PROJECT_ROOT}/services/workspace/Dockerfile" \
                     -t "polis-workspace-oss:latest" \
                     "${PROJECT_ROOT}"
                 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build $NO_CACHE
@@ -824,8 +824,17 @@ case "${1:-}" in
         echo "=== Polis: Building images ==="
         EFFECTIVE_AGENT="${AGENT_NAME:-base}"
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
-        SERVICE="${2:-}"
-        if [[ -n "$SERVICE" ]] && [[ "$SERVICE" != "--no-cache" ]]; then
+        
+        # Find first non-flag argument after 'build'
+        SERVICE=""
+        for arg in "${@:2}"; do
+            if [[ "$arg" != --* ]]; then
+                SERVICE="$arg"
+                break
+            fi
+        done
+
+        if [[ -n "$SERVICE" ]]; then
             log_info "Building service: $SERVICE"
             # shellcheck disable=SC2086
             docker compose $COMPOSE_FLAGS build $NO_CACHE "$SERVICE"

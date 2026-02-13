@@ -1,0 +1,11 @@
+# Service ownership
+/services/gate/       @OdraLabsHQ/network
+/services/sentinel/   @OdraLabsHQ/security
+/services/toolbox/    @OdraLabsHQ/platform
+/services/state/      @OdraLabsHQ/platform
+/services/workspace/  @OdraLabsHQ/runtime
+/services/resolver/   @OdraLabsHQ/network
+/lib/                 @OdraLabsHQ/core
+/agents/              @OdraLabsHQ/agents
+/docker-compose.yml   @OdraLabsHQ/core
+/tools/polis.sh       @OdraLabsHQ/core

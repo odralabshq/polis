@@ -39,6 +39,7 @@ jobs:
           chmod +x ./tools/*.sh
           chmod +x ./tests/run-tests.sh
           chmod +x ./scripts/*.sh
+          chmod +x ./services/*/scripts/*.sh
           chmod +x ./agents/openclaw/install.sh
           chmod +x ./agents/openclaw/scripts/*.sh
 
@@ -47,7 +48,7 @@ jobs:
 
       - name: Setup Valkey TLS certificates
         run: |
-          ./scripts/generate-valkey-certs.sh ./certs/valkey
+          ./services/state/scripts/generate-certs.sh ./certs/valkey
           # Multiple containers (valkey uid:999, icap c-icap, mcp-agent polis)
           # mount the same cert directory. Make all files world-readable so
           # every container user can access them.
@@ -56,7 +57,7 @@ jobs:
       - name: Setup Valkey secrets
         run: |
           touch .env
-          ./scripts/generate-valkey-secrets.sh ./secrets .
+          ./services/state/scripts/generate-secrets.sh ./secrets .
           # Ensure ACL file is readable by Docker daemon for secret injection
           chmod 644 ./secrets/valkey_users.acl
 

@@ -1119,11 +1119,21 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
- "polis-mcp-common",
+ "polis-common",
  "predicates",
  "redis",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "polis-common"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1137,7 +1147,7 @@ dependencies = [
  "fred",
  "futures",
  "percent-encoding",
- "polis-mcp-common",
+ "polis-common",
  "rmcp",
  "rustls",
  "rustls-pemfile",
@@ -1147,16 +1157,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "polis-mcp-common"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
 ]
 
 [[package]]
