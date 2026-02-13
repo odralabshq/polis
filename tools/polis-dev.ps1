@@ -20,6 +20,7 @@ if (-not $Disk) { $Disk = "50G" }
 $UbuntuVersion = "24.04"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
+$Invocation  = if ($MyInvocation.InvocationName -ne '.') { $MyInvocation.InvocationName } else { ".\tools\polis-dev.ps1" }
 
 # Colors for output
 function Write-Info { 
@@ -46,7 +47,7 @@ function Show-Usage {
     Write-Host @"
 Polis Developer Environment Setup (Windows)
 
-Usage: .\polis-dev.ps1 <command> [options]
+Usage: $Invocation <command> [options]
 
 Commands:
   create        Create a new development VM
@@ -73,11 +74,11 @@ Environment Variables:
   POLIS_DEV_DISK       Override disk size
 
 Examples:
-  .\polis-dev.ps1 create                    # Create VM with defaults
-  .\polis-dev.ps1 create -Cpus 8 -Memory 16G  # Create with custom resources
-  .\polis-dev.ps1 shell                     # Access VM shell
-  .\polis-dev.ps1 rebuild                   # Rebuild Polis in VM
-  .\polis-dev.ps1 fix-perms                 # Fix file permissions
+  $Invocation create                    # Create VM with defaults
+  $Invocation create -Cpus 8 -Memory 16G  # Create with custom resources
+  $Invocation shell                     # Access VM shell
+  $Invocation rebuild                   # Rebuild Polis in VM
+  $Invocation fix-perms                 # Fix file permissions
 "@
 }
 
@@ -148,9 +149,9 @@ function New-VM {
     Write-Success "Development VM is ready!"
     Write-Host ""
     Write-Host "Next steps:"
-    Write-Host "  1. Enter VM:        .\polis-dev.ps1 shell"
+    Write-Host "  1. Enter VM:        $Invocation shell"
     Write-Host "  2. Configure keys:  cd ~/polis && nano .env"
-    Write-Host "  3. Build & start:   .\polis-dev.ps1 rebuild"
+    Write-Host "  3. Build & start:   $Invocation rebuild"
     Write-Host ""
     Write-Host "Or manually:"
     Write-Host "  multipass shell $Name"
@@ -160,7 +161,7 @@ function New-VM {
 
 function Start-VM {
     if (-not (Test-VMExists)) {
-        Write-Error-Custom "VM '$Name' does not exist. Create it first with: .\polis-dev.ps1 create"
+        Write-Error-Custom "VM '$Name' does not exist. Create it first with: $Invocation create"
         return
     }
     
@@ -194,7 +195,7 @@ function Remove-VM {
 
 function Enter-Shell {
     if (-not (Test-VMExists)) {
-        Write-Error-Custom "VM '$Name' does not exist. Create it first with: .\polis-dev.ps1 create"
+        Write-Error-Custom "VM '$Name' does not exist. Create it first with: $Invocation create"
         return
     }
     
@@ -250,7 +251,7 @@ function Rebuild-Polis {
     
     Write-Success "Rebuild complete!"
     Write-Host ""
-    Write-Host "Get access token with: .\polis-dev.ps1 shell"
+    Write-Host "Get access token with: $Invocation shell"
     Write-Host "Then run: ./cli/polis.sh openclaw init"
 }
 
