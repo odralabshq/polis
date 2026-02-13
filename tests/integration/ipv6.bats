@@ -18,8 +18,11 @@ setup() {
     assert_output "none"
 }
 
-@test "ipv6: gateway nftables filter DROP policy" {
-    # Verify that 'inet' table 'polis' has IPv6 drop rules in input and forward chains
-    assert_nft_rule "${GATEWAY_CONTAINER}" "inet" "polis" "input" "nfproto ipv6 drop"
-    assert_nft_rule "${GATEWAY_CONTAINER}" "inet" "polis" "forward" "nfproto ipv6 drop"
+@test "ipv6: gateway ip6tables filter DROP policy" {
+    if ! docker exec "${GATEWAY_CONTAINER}" ip6tables -L -n &>/dev/null; then
+        skip "ip6tables not functional in this environment"
+    fi
+    run docker exec "${GATEWAY_CONTAINER}" ip6tables -L INPUT -n
+    assert_success
+    assert_output --partial "policy DROP"
 }

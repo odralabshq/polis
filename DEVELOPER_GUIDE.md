@@ -42,6 +42,36 @@ services/<name>/
 
 ## Development Workflows
 
+### 0. Customizing VM Resources (CPU/Memory)
+
+By default, the development VM is created with 4 CPUs and 16GB of RAM. You can change these resources without losing your data by using the `multipass set` command while the VM is stopped.
+
+**Instructions:**
+
+1. **Stop the VM**:
+
+   ```bash
+   multipass stop polis-dev
+   ```
+
+2. **Set the new resources**:
+
+   ```bash
+   # Set CPUs (e.g., to 8)
+   multipass set local.polis-dev.cpus=8
+
+   # Set Memory (e.g., to 16GB)
+   multipass set local.polis-dev.memory=16G
+   ```
+
+3. **Start the VM**:
+
+   ```bash
+   multipass start polis-dev
+   ```
+
+*Note: You can verify the changes by running `multipass info polis-dev` after starting.*
+
 ### 1. Adding a New Service
 
 1. Create a new directory in `services/`.
