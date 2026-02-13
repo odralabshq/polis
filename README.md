@@ -11,31 +11,189 @@ AI agents make HTTP requests, download packages, and execute code autonomously. 
 
 Polis solves this by routing all agent traffic through a TLS-intercepting proxy with real-time malware scanning. The agent runs normally; Polis handles security transparently.
 
-## ⚡️ Get Started
+## ⚡️ Quick Start for Users
 
-```bash
-# Install Polis (clones repo to ~/.polis, creates `polis` command)
-curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
+Run Polis in a fully automated VM. Everything is pre-configured via cloud-init:
 
-# Clone with test dependencies (if developing/testing)
-git clone --recursive https://github.com/OdraLabsHQ/polis.git
-# Or if already cloned:
-git submodule update --init --recursive
+### 1. Install Multipass
 
-# Configure your API key (at least one required)
-cp ~/.polis/agents/openclaw/config/env.example ~/.polis/.env
-nano ~/.polis/.env
+**Windows:**
 
-# Initialize and start (installs Sysbox, generates certs, pulls images)
-polis init --agent=openclaw
-
-# Initialize the agent and get your access token
-polis openclaw init
+```powershell
+winget install Canonical.Multipass
 ```
 
-`init` handles everything: Docker checks, Sysbox runtime, TLS certificates, image builds, and container startup. Takes a few minutes on first run.
+**macOS:**
 
-> On WSL2, start Docker first: `sudo service docker start`
+```bash
+brew install multipass
+```
+
+**Linux:**
+
+```bash
+sudo snap install multipass
+```
+
+### 2. Create and Start Polis VM
+
+```bash
+# Download cloud-init config
+wget https://raw.githubusercontent.com/OdraLabsHQ/polis/main/polis-vm.yaml
+
+# Launch VM (takes 5-10 minutes to provision)
+multipass launch \
+  --name polis-vm \
+  --cpus 4 \
+  --memory 8G \
+  --disk 50G \
+  --cloud-init polis-vm.yaml \
+  24.04
+
+# Wait for cloud-init to complete
+multipass exec polis-vm -- cloud-init status --wait
+```
+
+### 3. Configure and Start
+
+```bash
+# Access the VM
+multipass shell polis-vm
+
+# Configure your API key (at least one required)
+cd ~/polis
+nano .env  # Add ANTHROPIC_API_KEY or OPENAI_API_KEY
+
+# Initialize and start Polis
+./tools/polis.sh init --agent=openclaw
+
+# Initialize the agent and get your access token
+./tools/polis.sh openclaw init
+```
+
+Access the agent UI at `http://<VM_IP>:18789` (get IP with `multipass info polis-vm`).
+
+---
+
+## 🛠️ Quick Start for Developers
+
+Edit code locally, build and run in VM. Fully automated via `polis-dev.sh`:
+
+### 1. Install Multipass
+
+Same as above (Windows/macOS/Linux instructions).
+
+### 2. Clone Repository and Create Dev VM
+
+```bash
+# Clone on your host machine
+git clone --recursive https://github.com/OdraLabsHQ/polis.git
+cd polis
+
+# Make script executable (if not already)
+chmod +x tools/polis-dev.sh
+
+# Create development VM (installs Docker, Sysbox, mounts local directory)
+./tools/polis-dev.sh create
+
+# This will:
+# - Launch Ubuntu VM with cloud-init (polis-dev.yaml)
+# - Install Docker + Sysbox automatically
+# - Mount your local polis directory at ~/polis in VM
+```
+
+### 3. Build and Run from Local Source
+
+```bash
+# Enter the VM
+./tools/polis-dev.sh shell
+
+# Configure API keys
+cd ~/polis
+cp agents/openclaw/config/env.example .env
+nano .env  # Add your API keys
+
+# Build from local source and start
+./tools/polis.sh init --agent=openclaw --local
+
+# Get access token
+./tools/polis.sh openclaw init
+```
+
+**Development Workflow:**
+
+```bash
+# Edit files on your host machine (with your IDE)
+# Changes are instantly reflected in the VM
+
+# Rebuild after changes (from host)
+./tools/polis-dev.sh rebuild
+
+# Or manually in VM
+./tools/polis-dev.sh shell
+cd ~/polis
+./tools/polis.sh down
+./tools/polis.sh init --local --no-cache
+```
+
+**Why No Permission Issues?**
+
+The VM's `ubuntu` user is configured with UID/GID 1000:1000 (matching most host systems). This means:
+
+- Files you create on your host are owned by UID 1000
+- Files created in the VM are also owned by UID 1000
+- Both contexts can read/write seamlessly
+
+**Useful Commands:**
+
+```bash
+./tools/polis-dev.sh create    # Create dev VM
+./tools/polis-dev.sh shell     # Enter VM shell
+./tools/polis-dev.sh rebuild   # Rebuild Polis from source
+./tools/polis-dev.sh stop      # Stop VM
+./tools/polis-dev.sh start     # Start VM
+./tools/polis-dev.sh status    # Show VM info
+./tools/polis-dev.sh delete    # Delete VM
+```
+
+**If You Still Have Permission Issues:**
+
+On rare systems where your host UID is not 1000:
+
+```bash
+# Check your host UID
+id -u
+
+# If not 1000, fix permissions manually
+./tools/polis-dev.sh fix-perms
+```
+
+---
+
+## 🐧 Native Linux Installation
+
+For bare-metal Ubuntu/Debian systems:
+
+```bash
+# Install Docker and Docker Compose
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2
+
+# Install Sysbox
+SYSBOX_VERSION="0.6.4"
+wget https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
+sudo apt-get install -y ./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
+sudo systemctl restart docker
+
+# Clone Polis
+git clone --recursive https://github.com/OdraLabsHQ/polis.git
+cd polis
+
+# Configure and start
+cp agents/openclaw/config/env.example .env
+nano .env  # Add your API keys
+./tools/polis.sh init --agent=openclaw
+```
 
 ## 🏗️ Architecture
 
@@ -111,10 +269,9 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| Debian/Ubuntu + Sysbox | ✅ Supported | Recommended for production |
-| WSL2 (Debian/Ubuntu) + Sysbox | ✅ Supported | Auto-configured by `polis init` |
+| **Native Linux** (Ubuntu/Debian) | ✅ **Recommended** | Best performance, full Sysbox support |
+| **Multipass VM** (Windows/macOS/Linux) | ✅ **Recommended** | Cross-platform, consistent environment |
 | Other Linux distros | 🔜 Coming soon | RHEL, Fedora, Arch |
-| macOS | 🔜 Coming soon | Requires Sysbox (Linux-only) |
 
 ## 📋 Command Reference
 

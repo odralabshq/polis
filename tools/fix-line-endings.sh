@@ -1,9 +1,9 @@
 #!/bin/bash
 # fix-line-endings.sh — Convert CRLF → LF for all shell scripts and config
-# files that WSL/Linux needs to execute or parse.
+# files that Linux needs to execute or parse.
 #
-# Run from WSL:  bash /mnt/c/Users/adam/Desktop/startup/polis/polis/tools/fix-line-endings.sh
-# Or from the polis/tools directory:  bash fix-line-endings.sh
+# Run from project root:  bash tools/fix-line-endings.sh
+# Or from tools directory: bash fix-line-endings.sh
 
 set -euo pipefail
 

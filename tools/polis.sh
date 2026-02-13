@@ -75,10 +75,6 @@ detect_arch() {
     esac
 }
 
-# Check if running in WSL
-is_wsl() {
-    grep -qi microsoft /proc/version 2>/dev/null
-}
 
 # Check Docker version compatibility
 check_docker_version() {
@@ -93,13 +89,8 @@ check_docker_version() {
     if ! docker info &>/dev/null; then
         log_error "Docker is not running or not accessible."
         echo ""
-        if is_wsl; then
-            echo "In WSL, make sure Docker Desktop is running or start Docker service:"
-            echo "  sudo service docker start"
-        else
-            echo "Start Docker with:"
-            echo "  sudo systemctl start docker"
-        fi
+        echo "Start Docker with:"
+        echo "  sudo systemctl start docker"
         return 1
     fi
     
@@ -126,7 +117,7 @@ check_sysbox() {
     return 0
 }
 
-# Ensure sysbox services are running (needed after WSL/PC restart)
+# Ensure sysbox services are running
 ensure_sysbox_running() {
     # Check if systemctl is available
     if ! command -v systemctl &>/dev/null; then
@@ -253,8 +244,8 @@ configure_docker_sysbox() {
         echo "$sysbox_config" | sudo tee "$daemon_json" > /dev/null
     fi
     
-    # Full stop/start cycle is required (especially on WSL2) for Docker to
-    # pick up new runtimes from daemon.json. A simple restart often doesn't work.
+    # Full stop/start cycle is required for Docker to pick up new runtimes
+    # from daemon.json. A simple restart often doesn't work.
     log_info "Stopping Docker daemon..."
     if command -v systemctl &>/dev/null; then
         sudo systemctl stop docker docker.socket 2>/dev/null || true
@@ -309,7 +300,7 @@ setup_sysbox() {
     echo "=== Sysbox Runtime Setup ==="
     echo ""
     
-    # Ensure sysbox services are running (WSL2 may not auto-start them)
+    # Ensure sysbox services are running
     if command -v sysbox-runc &>/dev/null; then
         if ! ensure_sysbox_running; then
             return 1
@@ -697,11 +688,6 @@ case "${1:-}" in
         # Step 0: Environment checks
         log_step "Checking environment..."
         
-        if is_wsl; then
-            log_info "Running in WSL (Windows Subsystem for Linux)"
-        else
-            log_info "Running on native Linux"
-        fi
         
         if ! check_docker_version; then
             exit 1

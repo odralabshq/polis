@@ -14,7 +14,7 @@ if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
     sysctl -w net.ipv6.conf.default.disable_ipv6=1 || true
 fi
 
-# Disable rp_filter (Required for TPROXY, especially on WSL2/Docker)
+# Disable rp_filter (Required for TPROXY in bridge/NAT environments)
 echo "[gate-init] Disabling rp_filter..."
 for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
     echo 0 > "$f" || true
@@ -76,14 +76,14 @@ iptables -t mangle -A G3TPROXY -p tcp -j TPROXY --on-port 18080 --tproxy-mark 0x
 iptables -t mangle -D PREROUTING -p tcp -j G3TPROXY 2>/dev/null || true
 iptables -t mangle -A PREROUTING -p tcp -j G3TPROXY
 
-# 5. Fix Checksums (Crucial for TPROXY on WSL2/Docker)
-echo "[gate-init] Enabling checksum fill (WSL2 Fix)..."
-iptables -t mangle -D POSTROUTING -p tcp -j CHECKSUM --checksum-fill 2>/dev/null || true
-iptables -t mangle -A POSTROUTING -p tcp -j CHECKSUM --checksum-fill
 
 # 6. Enable routing to localnet (Needed for some TPROXY setups)
 sysctl -w net.ipv4.conf.all.route_localnet=1 || true
-sysctl -w net.ipv4.conf.eth1.route_localnet=1 || true
+sysctl -w net.ipv4.conf.default.route_localnet=1 || true
+if [ -n "$INTERNAL_IF" ]; then
+    sysctl -w "net.ipv4.conf.$INTERNAL_IF.route_localnet=1" || true
+    sysctl -w "net.ipv4.conf.$INTERNAL_IF.rp_filter=0" || true
+fi
 
 # 7. DNS Redirection
 echo "[gate-init] Redirecting DNS to resolver (10.30.1.10)..."
