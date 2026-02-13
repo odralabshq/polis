@@ -12,7 +12,7 @@ setup() {
 # =============================================================================
 
 @test "gateway: container exists" {
-    run docker ps -a --filter "name=${GATEWAY_CONTAINER}" --format '{{.Names}}'
+    run docker ps -a --filter "name=^${GATEWAY_CONTAINER}$" --format '{{.Names}}'
     assert_success
     assert_output "${GATEWAY_CONTAINER}"
 }
@@ -82,8 +82,8 @@ setup() {
 }
 
 @test "gateway: init script completed successfully" {
-    # Check that iptables rules are configured (indicates init completed)
-    run docker exec "${GATEWAY_CONTAINER}" iptables -t mangle -L G3TPROXY -n
+    # Check that nftables rules are configured (indicates init completed)
+    run docker exec "${GATEWAY_CONTAINER}" nft list table inet polis
     assert_success
 }
 
@@ -166,8 +166,8 @@ setup() {
 # Network Tools Tests
 # =============================================================================
 
-@test "gateway: iptables is available" {
-    run docker exec "${GATEWAY_CONTAINER}" which iptables
+@test "gateway: nft is available" {
+    run docker exec "${GATEWAY_CONTAINER}" which nft
     assert_success
 }
 

@@ -283,9 +283,9 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 |--------|-----|
 | Agent exfiltrates API keys or credentials over HTTPS | TLS interception — all encrypted traffic is decrypted and inspected by g3proxy |
 | Malicious packages or downloads | ClamAV scans every HTTP response via ICAP before it reaches the agent |
-| Agent connects to unauthorized services | Only HTTP/HTTPS (80/443) allowed outbound; all other ports blocked via iptables |
+| Agent connects to unauthorized services | Only HTTP/HTTPS (80/443) allowed outbound; all other ports blocked via nftables |
 | Container escape to host system | Sysbox runtime provides VM-like isolation without privileged mode |
-| IPv6 bypass of proxy controls | IPv6 disabled at Docker network level and via sysctl/ip6tables in containers |
+| IPv6 bypass of proxy controls | IPv6 disabled at Docker network level and via sysctl/nftables in containers |
 | Agent accesses Docker socket or host resources | No Docker socket mounted; only read-only CA cert and init scripts bind-mounted |
 | DNS tunneling exfiltration | All traffic forced through proxy; non-HTTP ports blocked |
 | Cloud metadata service access (169.254.169.254) | Blocked by network isolation — workspace has no route to metadata endpoint |
@@ -412,11 +412,6 @@ sudo systemctl start docker
 docker info | grep sysbox
 ```
 
-**Gateway unhealthy / "not found" errors** — CRLF line endings (Windows/WSL2):
-
-```bash
-dos2unix cli/polis.sh scripts/*.sh agents/openclaw/**/*.sh
-```
 
 **Full reset:**
 

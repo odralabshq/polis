@@ -177,9 +177,32 @@ assert_iptables_rule() {
     assert_output --partial "${pattern}"
 }
 
+# =============================================================================
+# nftables Assertions
+# =============================================================================
+
 assert_ip_rule() {
     local container="$1" pattern="$2"
     run docker exec "${container}" ip rule show
+    assert_success
+    assert_output --partial "${pattern}"
+}
+
+assert_nft_table_exists() {
+    local container="$1" family="$2" table="$3"
+    run docker exec "${container}" nft list table "${family}" "${table}"
+    assert_success
+}
+
+assert_nft_chain_exists() {
+    local container="$1" family="$2" table="$3" chain="$4"
+    run docker exec "${container}" nft list chain "${family}" "${table}" "${chain}"
+    assert_success
+}
+
+assert_nft_rule() {
+    local container="$1" family="$2" table="$3" chain="$4" pattern="$5"
+    run docker exec "${container}" nft list chain "${family}" "${table}" "${chain}"
     assert_success
     assert_output --partial "${pattern}"
 }

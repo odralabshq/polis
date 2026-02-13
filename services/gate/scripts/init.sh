@@ -40,11 +40,11 @@ validate_certificates() {
 validate_certificates
 
 # Wait for ICAP service to be ready (TCP port check)
-# Hostname 'sentinel' is resolved via Docker DNS
-echo "[gateway] Waiting for ICAP service..."
+# We use fixed IP 10.30.1.5 to avoid DNS dependency during early boot
+echo "[gateway] Waiting for ICAP service at 10.30.1.5..."
 for i in {1..30}; do
-    if timeout 1 bash -c "echo > /dev/tcp/sentinel/1344" 2>/dev/null; then
-        echo "[gateway] ICAP service ready at sentinel:1344"
+    if timeout 1 bash -c "echo > /dev/tcp/10.30.1.5/1344" 2>/dev/null; then
+        echo "[gateway] ICAP service ready at 10.30.1.5:1344"
         break
     fi
     sleep 1
