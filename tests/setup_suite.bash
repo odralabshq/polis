@@ -10,9 +10,9 @@ export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BATS_TEST_FILENAME}")/..
 export COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
 
 # Container names (must match common.bash)
-export DNS_CONTAINER="polis-dns"
-export GATEWAY_CONTAINER="polis-gateway"
-export ICAP_CONTAINER="polis-icap"
+export DNS_CONTAINER="polis-resolver"
+export GATEWAY_CONTAINER="polis-gate"
+export ICAP_CONTAINER="polis-sentinel"
 export WORKSPACE_CONTAINER="polis-workspace"
 
 # Track whether we started containers (for teardown decision)

@@ -152,7 +152,7 @@ setup() {
 }
 
 @test "e2e-hardening: gateway can reach ICAP service" {
-    run docker exec "$GATEWAY_CONTAINER" nc -zv icap 1344
+    run docker exec "$GATEWAY_CONTAINER" nc -zv sentinel 1344
     assert_success
 }
 
@@ -179,7 +179,7 @@ setup() {
 }
 
 @test "e2e-hardening: ICAP can reach ClamAV on internal network" {
-    run docker exec "$ICAP_CONTAINER" sh -c "echo 'PING' | nc clamav 3310"
+    run docker exec "$ICAP_CONTAINER" sh -c "echo 'PING' | nc scanner 3310"
     assert_success
     assert_output "PONG"
 }
