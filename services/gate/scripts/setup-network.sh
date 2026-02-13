@@ -14,6 +14,12 @@ if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
     sysctl -w net.ipv6.conf.default.disable_ipv6=1 || true
 fi
 
+# Disable rp_filter (Required for TPROXY, especially on WSL2/Docker)
+echo "[gate-init] Disabling rp_filter..."
+for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
+    echo 0 > "$f" || true
+done
+
 # Block IPv6 via iptables regardless (defense in depth)
 ip6tables -P INPUT DROP 2>/dev/null || true
 ip6tables -P FORWARD DROP 2>/dev/null || true
@@ -32,35 +38,54 @@ fi
 echo "[gate-init] Detected internal interface: $INTERNAL_IF"
 
 # 3. Transparent Proxy (TPROXY) Routing
-echo "[gate-init] Configuring policy routing..."
-# Use table 100 for TPROXY
-# Some kernels/ip versions prefer 'table' and might fail if not careful
-ip rule del fwmark 0x1 table 100 2>/dev/null || true
-ip rule add fwmark 0x1 table 100
-
-ip route flush table 100 2>/dev/null || true
-ip route add local default dev lo table 100
+echo "[gate-init] Configuring policy routing (Table 102, Mark 0x2)..."
+ip rule del fwmark 0x2 table 102 2>/dev/null || true
+ip rule add fwmark 0x2 table 102
+ip route flush table 102 2>/dev/null || true
+ip route add local default dev lo table 102
 
 # 4. TPROXY Iptables Rules
-echo "[gate-init] Configuring TPROXY nftables/iptables..."
+echo "[gate-init] Configuring Universal TPROXY Interceptor..."
 
 # Create G3TPROXY chain in mangle table
 iptables -t mangle -N G3TPROXY 2>/dev/null || true
 iptables -t mangle -F G3TPROXY
 
-# 1. MARK established connections to bypass TPROXY
-iptables -t mangle -A G3TPROXY -m socket --transparent -j MARK --set-xmark 0x1/0xffffffff
-iptables -t mangle -A G3TPROXY -m socket --transparent -j RETURN
+# 1. Skip local gate traffic (don't proxy g3proxy's own outbound traffic)
+# We skip all IPs assigned to this container's interfaces
+for ip in $(ip -4 addr show | grep inet | awk '{print $2}' | cut -d/ -f1); do
+    iptables -t mangle -A G3TPROXY -s "$ip" -j RETURN
+done
 
-# 2. TPROXY redirect for HTTP/HTTPS (10.10.1.0/24 -> any)
-# Redirect to g3proxy on port 18080
-iptables -t mangle -A G3TPROXY -p tcp -j TPROXY --on-port 18080 --tproxy-mark 0x1/0xffffffff
+# 2. Skip loopback
+iptables -t mangle -A G3TPROXY -d 127.0.0.0/8 -j RETURN
 
-# Apply G3TPROXY to incoming traffic from internal subnet
-iptables -t mangle -D PREROUTING -i "$INTERNAL_IF" -s 10.10.1.0/24 -p tcp -j G3TPROXY 2>/dev/null || true
-iptables -t mangle -A PREROUTING -i "$INTERNAL_IF" -s 10.10.1.0/24 -p tcp -j G3TPROXY
+# 3. Skip already marked packets (avoid loops)
+iptables -t mangle -A G3TPROXY -m mark --mark 0x2 -j RETURN
 
-# 5. DNS Redirection
+# 4. Skip internal service subnets (gateway-bridge and external-bridge)
+# Traffic to ICAP/Sentinal (10.30.x.x) should NOT be intercepted by the proxy
+iptables -t mangle -A G3TPROXY -d 10.30.1.0/24 -j RETURN
+iptables -t mangle -A G3TPROXY -d 10.20.1.0/24 -j RETURN
+
+# 5. TPROXY Interception
+# Redirect ALL remaining TCP traffic to g3proxy
+iptables -t mangle -A G3TPROXY -p tcp -j TPROXY --on-port 18080 --tproxy-mark 0x2/0xffffffff
+
+# Apply Universal Interception to ALL PREROUTING traffic
+iptables -t mangle -D PREROUTING -p tcp -j G3TPROXY 2>/dev/null || true
+iptables -t mangle -A PREROUTING -p tcp -j G3TPROXY
+
+# 5. Fix Checksums (Crucial for TPROXY on WSL2/Docker)
+echo "[gate-init] Enabling checksum fill (WSL2 Fix)..."
+iptables -t mangle -D POSTROUTING -p tcp -j CHECKSUM --checksum-fill 2>/dev/null || true
+iptables -t mangle -A POSTROUTING -p tcp -j CHECKSUM --checksum-fill
+
+# 6. Enable routing to localnet (Needed for some TPROXY setups)
+sysctl -w net.ipv4.conf.all.route_localnet=1 || true
+sysctl -w net.ipv4.conf.eth1.route_localnet=1 || true
+
+# 7. DNS Redirection
 echo "[gate-init] Redirecting DNS to resolver (10.30.1.10)..."
 iptables -t nat -D PREROUTING -i "$INTERNAL_IF" -p udp --dport 53 -j DNAT --to-destination 10.30.1.10 2>/dev/null || true
 iptables -t nat -A PREROUTING -i "$INTERNAL_IF" -p udp --dport 53 -j DNAT --to-destination 10.30.1.10

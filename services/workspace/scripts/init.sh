@@ -85,24 +85,29 @@ protect_sensitive_paths() {
 
 disable_ipv6 "workspace" || exit 1
 
-# Detect gateway IP dynamically via DNS
-GATEWAY_IP=$(getent hosts gateway | awk '{print $1}')
+# Configure default route to gate for TPROXY
+# Note: Docker doesn't configure gateways for internal networks, so we must do it manually
+echo "[workspace] Resolving gate IP..."
+GATE_IP=$(getent hosts gate | awk '{print $1}')
 
-if [[ -z "$GATEWAY_IP" ]]; then
-    # Fallback: detect gateway from routing table
-    GATEWAY_IP=$(ip route | grep default | awk '{print $3}')
-fi
-
-if [[ -z "$GATEWAY_IP" ]]; then
-    echo "[workspace] ERROR: Could not determine gateway IP"
+if [[ -z "$GATE_IP" ]]; then
+    echo "[workspace] ERROR: Could not resolve 'gate' service"
     exit 1
 fi
 
-echo "[workspace] Gateway IP: $GATEWAY_IP"
+echo "[workspace] Configuring default route via gate (${GATE_IP})..."
 
-# Configure routing
+# Remove any existing default route
 ip route del default 2>/dev/null || true
-ip route add default via $GATEWAY_IP
+
+# Add default route through gate
+if ip route add default via $GATE_IP; then
+    echo "[workspace] Default route configured successfully"
+    ip route show
+else
+    echo "[workspace] ERROR: Failed to configure default route"
+    exit 1
+fi
 
 # Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
 protect_sensitive_paths
@@ -131,3 +136,4 @@ for agent_dir in /tmp/agents/*/; do
 done
 
 echo "[workspace] Initialization complete"
+exit 0

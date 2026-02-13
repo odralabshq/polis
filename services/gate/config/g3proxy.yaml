@@ -9,7 +9,7 @@ resolver:
   - name: default
     type: c-ares
     server:
-      - 10.30.1.10
+      - 127.0.0.11
 
 # ===========================================
 # Auditor - TLS MITM + ICAP
