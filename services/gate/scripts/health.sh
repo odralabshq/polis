@@ -14,8 +14,10 @@ if ! pgrep -x g3fcgen > /dev/null; then
 fi
 
 # Check ICAP echo service via OPTIONS request (verifies ICAP protocol, not just TCP)
+# head -1 closes the pipe after reading the first line, causing nc to exit via SIGPIPE
+# || true prevents set -e from aborting if nc/head pipeline fails
 ICAP_ECHO=$(printf 'OPTIONS icap://sentinel:1344/echo ICAP/1.0\r\nHost: sentinel\r\n\r\n' | \
-            timeout 3 nc sentinel 1344 2>/dev/null | head -1)
+            timeout 3 nc sentinel 1344 2>/dev/null | head -1 || true)
 if [[ "$ICAP_ECHO" != *"200"* ]]; then
     echo "UNHEALTHY: ICAP echo service not responding"
     exit 1
@@ -23,9 +25,15 @@ fi
 
 # Check ICAP squidclamav service via OPTIONS (verifies ClamAV integration)
 ICAP_AV=$(printf 'OPTIONS icap://sentinel:1344/squidclamav ICAP/1.0\r\nHost: sentinel\r\n\r\n' | \
-          timeout 5 nc sentinel 1344 2>/dev/null | head -1)
+          timeout 3 nc sentinel 1344 2>/dev/null | head -1 || true)
 if [[ "$ICAP_AV" != *"200"* ]]; then
     echo "UNHEALTHY: ICAP squidclamav service not responding (ClamAV may be down)"
+    exit 1
+fi
+
+# Check nftables ruleset is loaded
+if ! nft list ruleset > /dev/null 2>&1; then
+    echo "UNHEALTHY: nftables ruleset not functional"
     exit 1
 fi
 

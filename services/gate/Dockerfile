@@ -46,7 +46,7 @@ FROM debian:trixie
 # Install runtime dependencies (util-linux provides setpriv for privilege dropping with ambient caps)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
-    iptables \
+    nftables \
     openssl \
     ca-certificates \
     curl \
@@ -80,7 +80,8 @@ RUN mkdir -p /etc/g3proxy /var/lib/g3proxy/ssl /tmp/g3 && \
 # Verify binaries
 RUN which g3proxy && which g3fcgen && \
     g3proxy --version && g3fcgen --version && \
-    setcap 'cap_net_admin,cap_net_raw+ep' /usr/bin/g3proxy
+    setcap 'cap_net_admin,cap_net_raw+ep' /usr/bin/g3proxy && \
+    setcap 'cap_net_admin+ep' /usr/sbin/nft
 
 # Copy scripts
 COPY services/gate/scripts/init.sh /init.sh

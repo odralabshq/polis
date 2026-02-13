@@ -54,8 +54,8 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    security_opt:
-      - seccomp=./services/gate/config/seccomp/gateway.json
+    # security_opt:
+    #   - seccomp=./services/gate/config/seccomp/gateway.json
     networks:
       internal-bridge:
         ipv4_address: 10.10.1.10
@@ -87,7 +87,7 @@ services:
     healthcheck:
       test: ["CMD", "/scripts/health-check.sh"]
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 3
       start_period: 30s
     restart: unless-stopped
@@ -124,7 +124,8 @@ services:
     cap_add:
       - CHOWN
     networks:
-      gateway-bridge: {}
+      gateway-bridge:
+        ipv4_address: 10.30.1.5
     volumes:
       - ./services/sentinel/config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
       - ./services/scanner/config/squidclamav.conf:/etc/squidclamav.conf:ro
@@ -231,6 +232,11 @@ services:
     sysctls:
       - net.ipv4.conf.all.rp_filter=0
       - net.ipv4.conf.default.rp_filter=0
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
+      - net.ipv4.ip_forward=0
+      - net.ipv4.conf.all.send_redirects=0
+      - net.ipv4.conf.default.send_redirects=0
     dns:
       - 10.10.1.2
     depends_on:
@@ -280,6 +286,18 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    cap_drop:
+      - ALL
+    security_opt:
+      - seccomp=./services/workspace/config/seccomp.json
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+        reservations:
+          memory: 1G
     restart: unless-stopped
     logging:
       driver: json-file
@@ -301,6 +319,7 @@ services:
     entrypoint: []
     cap_add:
       - NET_ADMIN
+    privileged: true
     depends_on:
       - gate
     volumes:
@@ -402,8 +421,10 @@ services:
     image: polis-toolbox-oss:latest
     container_name: polis-toolbox
     networks:
-      internal-bridge: {}
-      gateway-bridge: {}
+      internal-bridge:
+        ipv4_address: 10.10.1.20
+      gateway-bridge:
+        ipv4_address: 10.30.1.20
     environment:
       - RUST_LOG=debug
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
@@ -441,6 +462,9 @@ networks:
   internal-bridge:
     enable_ipv6: false
     driver: bridge
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
     ipam:
       driver: default
       config:

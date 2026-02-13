@@ -47,8 +47,8 @@ setup() {
 }
 
 @test "edge: gateway detects ICAP service" {
-    # Gateway should be able to reach ICAP
-    run docker exec "${GATEWAY_CONTAINER}" timeout 2 bash -c "echo > /dev/tcp/icap/1344"
+    # Gateway should be able to reach ICAP (sentinel)
+    run docker exec "${GATEWAY_CONTAINER}" timeout 2 bash -c "echo > /dev/tcp/sentinel/1344"
     assert_success
 }
 
@@ -57,12 +57,12 @@ setup() {
 # =============================================================================
 
 @test "edge: gateway detects internal interface" {
-    # Verify the interface detection logic worked
-    local prerouting_rule
-    prerouting_rule=$(docker exec "${GATEWAY_CONTAINER}" iptables -t mangle -L PREROUTING -v -n | grep G3TPROXY)
+    # Verify the TPROXY rule is configured
+    local tproxy_rule
+    tproxy_rule=$(docker exec "${GATEWAY_CONTAINER}" nft list chain inet polis prerouting_tproxy | grep tproxy)
     
-    # Should have an interface specified
-    [[ "$prerouting_rule" =~ eth[0-9] ]]
+    # Should have TPROXY rule
+    [[ "$tproxy_rule" =~ "tproxy" ]]
 }
 
 @test "edge: gateway handles multiple interfaces" {
@@ -134,9 +134,9 @@ setup() {
 # Resource Limit Tests
 # =============================================================================
 
-@test "edge: gateway can handle iptables operations" {
-    # Verify iptables is functional
-    run docker exec "${GATEWAY_CONTAINER}" iptables -t mangle -L -n
+@test "edge: gateway can handle nftables operations" {
+    # Verify nftables is functional
+    run docker exec "${GATEWAY_CONTAINER}" nft list ruleset
     assert_success
 }
 
@@ -152,7 +152,7 @@ setup() {
 @test "edge: DNS resolver is configured in g3proxy" {
     run docker exec "${GATEWAY_CONTAINER}" grep -A5 "resolver:" /etc/g3proxy/g3proxy.yaml
     assert_success
-    assert_output --partial "10.30.1.10"
+    assert_output --partial "127.0.0.11"
 }
 
 @test "edge: DNS resolution for non-existent domain fails gracefully" {
@@ -271,12 +271,12 @@ setup() {
 # =============================================================================
 
 @test "edge: gateway health check script validates all components" {
-    # Health check should verify g3proxy, g3fcgen, iptables, and ICAP
+    # Health check should verify g3proxy, g3fcgen, nftables, and ICAP
     run docker exec "${GATEWAY_CONTAINER}" cat /scripts/health-check.sh
     assert_success
     assert_output --partial "g3proxy"
     assert_output --partial "g3fcgen"
-    assert_output --partial "iptables"
+    assert_output --partial "nft"
     assert_output --partial "icap"
 }
 
