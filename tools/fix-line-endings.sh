@@ -107,8 +107,8 @@ for f in "${PROJECT_ROOT}"/tests/unit/*.bats "${PROJECT_ROOT}"/tests/integration
     fix_file "$f"
 done
 
-# 9b. BATS framework/vendor files (loaded by tests; CRLF here breaks sourcing)
-find "${PROJECT_ROOT}/tests/bats" -type f \( -name "*.bash" -o -name "*.bats" -o -name "*.sh" \) 2>/dev/null | while read -r f; do
+# 9b. BATS framework/vendor files (loaded/executed by tests; some launchers have no extension)
+find "${PROJECT_ROOT}/tests/bats" -type f 2>/dev/null | while read -r f; do
     fix_file "$f"
 done
 
