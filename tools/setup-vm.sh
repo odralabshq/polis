@@ -3,10 +3,10 @@
 
 set -e
 
-NAME="polis-dev"
-CPUS="4"
-MEMORY="8G"
-DISK="50G"
+NAME="${POLIS_NAME:-polis-dev}"
+CPUS="${POLIS_CPUS:-4}"
+MEMORY="${POLIS_MEMORY:-16G}"
+DISK="${POLIS_DISK:-50G}"
 
 log_step() { echo -e "\n\033[0;36m[STEP] $1\033[0m"; }
 log_info() { echo -e "\033[0;34m[INFO] $1\033[0m"; }

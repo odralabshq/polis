@@ -2,10 +2,10 @@
 # This script creates the development VM and authorizes your local SSH key for IDE access.
 
 param(
-    [string]$Name = "polis-dev",
-    [string]$Cpus = "4",
-    [string]$Memory = "8G",
-    [string]$Disk = "50G"
+    [string]$Name = ($env:POLIS_NAME ?? "polis-dev"),
+    [string]$Cpus = ($env:POLIS_CPUS ?? "4"),
+    [string]$Memory = ($env:POLIS_MEMORY ?? "16G"),
+    [string]$Disk = ($env:POLIS_DISK ?? "50G")
 )
 
 $ErrorActionPreference = "Stop"
