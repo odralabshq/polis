@@ -77,131 +77,75 @@ Access the agent UI at `http://<VM_IP>:18789` (get IP with `multipass info polis
 
 ## 🛠️ Quick Start for Developers
 
-Edit code locally, build and run in VM. Fully automated via scripts:
-
-- **Linux/macOS**: `./tools/polis-dev.sh`
-- **Windows**: `.\tools\polis-dev.ps1`
+For the best experience (and to avoid filesystem permission issues on Windows), we recommend cloning the repository **directly inside the VM**.
 
 ### 1. Install Multipass
 
-Same as above (Windows/macOS/Linux instructions).
+See instructions in the **User Quick Start** above.
 
-### 2. Clone Repository and Create Dev VM
+### 2. Create and Setup Development VM
 
-**Linux/macOS:**
-
-```bash
-# Clone on your host machine
-git clone --recursive https://github.com/OdraLabsHQ/polis.git
-cd polis
-
-# Make script executable
-chmod +x tools/polis-dev.sh
-
-# Create development VM
-./tools/polis-dev.sh create
-```
+The automated setup script will create the VM, authorize your SSH key, and provide the configuration for VS Code.
 
 **Windows (PowerShell):**
 
 ```powershell
-# Clone on your host machine
-git clone --recursive https://github.com/OdraLabsHQ/polis.git
-cd polis
-
-# Create development VM
-.\tools\polis-dev.ps1 create
+.\tools\setup-vm.ps1
 ```
 
-This will:
-
-- Launch Ubuntu VM with cloud-init (polis-dev.yaml)
-- Install Docker + Sysbox automatically
-- Mount your local polis directory at ~/polis in VM
-
-### 3. Build and Run from Local Source
-
-**From your host terminal:**
+**Linux/macOS (Bash):**
 
 ```bash
-# Linux/macOS
-./tools/polis-dev.sh shell
-
-# Windows
-.\tools\polis-dev.ps1 shell
-
-# Configure API keys
-cd ~/polis
-cp agents/openclaw/config/env.example .env
-nano .env  # Add your API keys
-
-# Build from local source and start
-./cli/polis.sh init --agent=openclaw --local
-
-# Get access token
-./cli/polis.sh openclaw init
+chmod +x tools/setup-vm.sh
+./tools/setup-vm.sh
 ```
 
-**Development Workflow:**
+This script handles:
+
+- Checking for (or generating) your local SSH key.
+- Initializing the `polis-dev` VM with the correct specs.
+- Injecting your public key into the VM's `authorized_keys`.
+- Providing the exact config block for VS Code.
+
+### 3. Connect and Start Polis
+
+To edit code with your local IDE:
+
+1. Install the **Remote - SSH** extension in VS Code.
+2. **Paste Config**: Use the SSH config block provided by the setup script output (press `F1` -> `Remote-SSH: Open SSH Configuration File...`).
+3. **Connect**: Press `F1`, select **"Remote-SSH: Connect to Host..."**, choose `polis-dev`, and open the `~/polis` folder.
+4. **Init**: Open a terminal in VS Code and run: `./cli/polis.sh init --local`
+
+---
+
+## 🖥️ VM Management Commands
+
+Since you are running Polis inside a Multipass VM, here are the most useful commands to manage your environment:
+
+| Description | Command |
+| :--- | :--- |
+| **Enter VM Shell** | `multipass shell polis-dev` |
+| **Stop VM** | `multipass stop polis-dev` |
+| **Start VM** | `multipass start polis-dev` |
+| **Delete VM** | `multipass delete --purge polis-dev` |
+| **Show VM Info** | `multipass info polis-dev` |
+
+### Internal Maintenance (Inside VM)
+
+Once inside the VM (`multipass shell polis-dev`), you manage the Polis stack using the CLI:
 
 ```bash
-# Edit files on your host machine (with your IDE)
-# Changes are instantly reflected in the VM
-
-# Rebuild after changes (from host)
-./tools/polis-dev.sh rebuild     # Linux/macOS
-.\tools\polis-dev.ps1 rebuild    # Windows
-
-# Or manually in VM shell
 cd ~/polis
+
+# Update code
+git pull && git submodule update --init --recursive
+
+# Rebuild and restart from source
 ./cli/polis.sh down
 ./cli/polis.sh init --local --no-cache
-```
 
-**Why No Permission Issues?**
-
-The VM's `ubuntu` user is configured with UID/GID 1000:1000 (matching most host systems). This means:
-
-- Files you create on your host are owned by UID 1000
-- Files created in the VM are also owned by UID 1000
-- Both contexts can read/write seamlessly
-
-**Useful Commands:**
-
-*Linux/macOS:*
-
-```bash
-./tools/polis-dev.sh create    # Create dev VM
-./tools/polis-dev.sh shell     # Enter VM shell
-./tools/polis-dev.sh rebuild   # Rebuild from source
-./tools/polis-dev.sh stop      # Stop VM
-./tools/polis-dev.sh start     # Start VM
-./tools/polis-dev.sh status    # Show VM info
-./tools/polis-dev.sh delete    # Delete VM
-```
-
-*Windows (PowerShell):*
-
-```powershell
-.\tools\polis-dev.ps1 create   # Create dev VM
-.\tools\polis-dev.ps1 shell    # Enter VM shell
-.\tools\polis-dev.ps1 rebuild  # Rebuild from source
-.\tools\polis-dev.ps1 stop     # Stop VM
-.\tools\polis-dev.ps1 start    # Start VM
-.\tools\polis-dev.ps1 status   # Show VM info
-.\tools\polis-dev.ps1 delete   # Delete VM
-```
-
-**If You Still Have Permission Issues:**
-
-On rare systems where your host UID is not 1000:
-
-```bash
-# Check your host UID
-id -u
-
-# If not 1000, fix permissions manually
-./tools/polis-dev.sh fix-perms
+# View all containers status
+./cli/polis.sh status
 ```
 
 ---
@@ -235,7 +179,7 @@ nano .env  # Add your API keys
 
 Polis routes all workspace traffic through a TLS-intercepting proxy with ICAP-based content inspection:
 
-```
+```text
   Browser ──► http://localhost:18789 (Agent UI)
                       │
   ┌───────────────────┼────────────────────────────┐
@@ -365,7 +309,7 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 
 Polis is agent-agnostic. OpenClaw is the default, but any agent can be packaged as a plugin under `agents/<name>/`:
 
-```
+```bash
 agents/openclaw/
 ├── agent.conf              # Metadata and required env vars
 ├── install.sh              # Runs during image build
@@ -442,6 +386,32 @@ Apache 2.0 - See [LICENSE](LICENSE) for details.
 ## ⚠️ Disclaimer
 
 Polis provides defense-in-depth security but is not a silver bullet. Always review agent outputs before deployment, keep secrets out of workspaces, and monitor audit logs.
+
+## ❓ Known Problems & Workarounds
+
+### 1. Permission Denied for Scripts (Mounts only)
+
+On Windows hosts, files mounted into the Multipass VM often lose their Linux "execute" bit.
+
+- **Recommended Fix:** Clone the repository directly inside the VM to use the native Linux filesystem.
+- **Workaround:** If you must use a mount, prefix the script call with the shell: `bash ./cli/polis.sh ...`
+
+### 2. OCI Runtime Error: Permission Denied (`init.sh`)
+
+When starting containers, you might see an error like `exec: "/init.sh": permission denied`. This is the same execute-bit issue affecting the scripts mounted inside the container.
+
+- **Fix:** We have patched the `docker-compose.yml` to use `bash` explicitly. If you add new services, follow the `entrypoint: ["/bin/bash", "/script.sh"]` pattern.
+
+### 3. Folder `~/polis` is Empty in VM
+
+If you are seeing an empty `~/polis` folder, it means the `git clone` command failed during VM creation.
+
+- **Fix:** Enter the VM shell and run the clone manually:
+
+    ```bash
+    multipass shell polis-dev
+    git clone --recursive https://github.com/OdraLabsHQ/polis.git ~/polis
+    ```
 
 ---
 
