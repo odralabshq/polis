@@ -1,0 +1,12 @@
+.git
+.github
+target
+tests
+docs
+*.md
+!README.md
+# Cargo.lock included for reproducible builds
+.env
+certs/ca/*.key
+secrets/
+tools/fix-line-endings.sh

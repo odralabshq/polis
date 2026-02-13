@@ -1,9 +1,9 @@
 #!/bin/bash
 # fix-line-endings.sh — Convert CRLF → LF for all shell scripts and config
-# files that WSL/Linux needs to execute or parse.
+# files that Linux needs to execute or parse.
 #
-# Run from WSL:  bash /mnt/c/Users/adam/Desktop/startup/polis/polis/tools/fix-line-endings.sh
-# Or from the polis/tools directory:  bash fix-line-endings.sh
+# Run from project root:  bash tools/fix-line-endings.sh
+# Or from tools directory: bash fix-line-endings.sh
 
 set -euo pipefail
 
@@ -30,7 +30,7 @@ fix_file() {
         # Remove BOM: skip first 3 bytes
         tail -c +4 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
         echo -e "  ${YELLOW}bom${NC}    $f"
-        bom_fixed=$((bom_fixed + 1))
+        ((bom_fixed++))
         changed=1
     fi
 
@@ -38,12 +38,12 @@ fix_file() {
     if grep -qP '\r$' "$f" 2>/dev/null; then
         sed -i 's/\r$//' "$f"
         echo -e "  ${GREEN}crlf${NC}   $f"
-        converted=$((converted + 1))
+        ((converted++))
         changed=1
     fi
 
     if [[ $changed -eq 0 ]]; then
-        skipped=$((skipped + 1))
+        ((skipped++))
     fi
 }
 
@@ -52,10 +52,12 @@ echo "Project root: ${PROJECT_ROOT}"
 echo ""
 
 # 1. Main CLI script
-fix_file "${PROJECT_ROOT}/tools/polis.sh"
+fix_file "${PROJECT_ROOT}/cli/polis.sh"
 
-# 2. All scripts in polis/scripts/
-for f in "${PROJECT_ROOT}"/scripts/*.sh; do
+# 2. All scripts in polis/scripts/, lib/shell/, and services/*/scripts/
+for f in "${PROJECT_ROOT}"/scripts/*.sh \
+         "${PROJECT_ROOT}"/lib/shell/*.sh \
+         "${PROJECT_ROOT}"/services/*/scripts/*.sh; do
     fix_file "$f"
 done
 
@@ -73,14 +75,17 @@ for agent_dir in "${PROJECT_ROOT}"/agents/*/; do
     done
 done
 
-# 4. Dockerfiles (heredoc scripts inside get built, but good to fix anyway)
-for f in "${PROJECT_ROOT}"/build/*/Dockerfile "${PROJECT_ROOT}"/build/*/Dockerfile.*; do
+# 4. Dockerfiles
+for f in "${PROJECT_ROOT}"/services/*/Dockerfile; do
     fix_file "$f"
 done
 
 # 5. Config files parsed by Linux tools
 for f in "${PROJECT_ROOT}"/config/*.conf "${PROJECT_ROOT}"/config/*.yaml \
-         "${PROJECT_ROOT}"/config/*.yml; do
+         "${PROJECT_ROOT}"/config/*.yml \
+         "${PROJECT_ROOT}"/services/*/config/*.conf \
+         "${PROJECT_ROOT}"/services/*/config/*.yaml \
+         "${PROJECT_ROOT}"/services/*/config/*.yml; do
     fix_file "$f"
 done
 
@@ -113,12 +118,13 @@ find "${PROJECT_ROOT}/tests/bats" -type f 2>/dev/null | while read -r f; do
 done
 
 # 10. C source files (ICAP modules)
-for f in "${PROJECT_ROOT}"/build/icap/*.c; do
+for f in "${PROJECT_ROOT}"/services/sentinel/modules/**/*.c \
+         "${PROJECT_ROOT}"/tests/native/sentinel/*.c; do
     fix_file "$f"
 done
 
-# 11. Rust source files (MCP agent, CLI)
-find "${PROJECT_ROOT}/crates" -type f \( -name "*.rs" -o -name "*.toml" \) 2>/dev/null | while read -r f; do
+# 11. Rust source files (MCP agent, CLI, shared)
+find "${PROJECT_ROOT}/services/toolbox/crates" "${PROJECT_ROOT}/lib/crates" -type f \( -name "*.rs" -o -name "*.toml" \) 2>/dev/null | while read -r f; do
     fix_file "$f"
 done
 

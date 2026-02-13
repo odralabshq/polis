@@ -1,18 +1,18 @@
 # agents/openclaw/compose.override.yaml
 # Merged via: docker compose -f docker-compose.yml -f agents/openclaw/compose.override.yaml
-# All relative paths resolve relative to the first -f file (repository root).
+# All relative paths resolve relative to deploy/ (first -f file), NOT this file.
 services:
   workspace:
     ports:
       - "${OPENCLAW_HOST_PORT:-18789}:18789"
     env_file:
-      - ./.env
+      - ../.env
     environment:
       - OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}
     volumes:
-      - ./agents/openclaw/:/tmp/agents/openclaw/:ro
-      - ./agents/openclaw/config/openclaw.service:/etc/systemd/system/openclaw.service:ro
-      - ./.env:/run/openclaw-env:ro
+      - ../agents/openclaw/:/tmp/agents/openclaw/:ro
+      - ../agents/openclaw/config/openclaw.service:/etc/systemd/system/openclaw.service:ro
+      - ../.env:/run/openclaw-env:ro
     healthcheck:
       # REPLACES the base healthcheck entirely.
       # Always include polis-init.service AND ip route checks.
