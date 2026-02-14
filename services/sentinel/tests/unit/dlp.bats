@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,sentinel
 # DLP Module Unit Tests
 # Tests for srv_polis_dlp c-ICAP service presence and configuration
 
@@ -42,23 +43,22 @@ setup() {
     run docker exec "${ICAP_CONTAINER}" grep -c "^pattern\." /etc/c-icap/polis_dlp.conf
     assert_success
     # Should have at least 5 patterns
-    [[ "$output" -ge 5 ]]
+    assert [ "$output" -ge 5 ]
 }
 
 @test "dlp: config contains allow rules" {
     run docker exec "${ICAP_CONTAINER}" grep -c "^allow\." /etc/c-icap/polis_dlp.conf
     assert_success
-    [[ "$output" -ge 4 ]]
+    assert [ "$output" -ge 4 ]
 }
 
 @test "dlp: config contains always-block actions" {
     run docker exec "${ICAP_CONTAINER}" grep -c "^action\." /etc/c-icap/polis_dlp.conf
     assert_success
-    [[ "$output" -ge 3 ]]
+    assert [ "$output" -ge 3 ]
 }
 
 @test "dlp: g3proxy is routing REQMOD to credcheck" {
-    GATEWAY_CONTAINER="polis-gateway"
     run docker exec "${GATEWAY_CONTAINER}" grep "icap://sentinel:1344/credcheck" /etc/g3proxy/g3proxy.yaml
     assert_success
 }
@@ -79,5 +79,5 @@ setup() {
     # Verify the config has patterns (if no patterns, module would refuse to start)
     run docker exec "${ICAP_CONTAINER}" grep -c "^pattern\." /etc/c-icap/polis_dlp.conf
     assert_success
-    [[ "$output" -ge 1 ]]
+    assert [ "$output" -ge 1 ]
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,security
 # Hardening Verification Tests
 # Ensures that workspace isolation, capabilities, and seccomp are correctly applied
 

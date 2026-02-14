@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=unit,cli
 # Polis Management Script Tests — Manifest-driven Plugin System
 
 setup() {
@@ -267,6 +268,24 @@ setup() {
 @test "polis-script: .gitignore includes audit log" {
     run grep -q 'polis-audit.log' "${PROJECT_ROOT}/.gitignore"
     assert_success
+}
+
+# ── Execution tests ────────────────────────────────────────────────────────
+
+@test "polis-script: passes bash syntax check" {
+    run bash -n "${POLIS_SCRIPT}"
+    assert_success
+}
+
+@test "polis-script: --help prints usage" {
+    run bash "${POLIS_SCRIPT}" --help
+    assert_success
+    assert_output --partial "Usage:"
+}
+
+@test "polis-script: unknown command exits non-zero" {
+    run bash "${POLIS_SCRIPT}" nonexistent-command
+    assert_failure
 }
 
 # ── init.sh integrity verification ─────────────────────────────────────────

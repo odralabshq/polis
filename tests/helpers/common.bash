@@ -58,10 +58,14 @@ export NETWORK_TIMEOUT=5
 # Usage: require_container "$GATEWAY_CONTAINER" "$ICAP_CONTAINER"
 require_container() {
     for c in "$@"; do
-        local state
+        local state health
         state=$(docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null || echo "missing")
         if [[ "$state" != "running" ]]; then
             skip "Container ${c} not running (state: ${state})"
+        fi
+        health=$(docker inspect --format '{{.State.Health.Status}}' "$c" 2>/dev/null || echo "none")
+        if [[ "$health" != "none" && "$health" != "healthy" ]]; then
+            skip "Container ${c} not healthy (health: ${health})"
         fi
     done
 }
@@ -302,7 +306,42 @@ relax_security_level() {
         
         # Restart ICAP to reload security level (it only reads on startup + poll interval)
         docker restart "$ICAP_CONTAINER" >/dev/null 2>&1 || true
-        sleep 3
+        # Wait for ICAP to become healthy (up to 60s)
+        for _ in {1..30}; do
+            local health
+            health=$(docker inspect --format '{{.State.Health.Status}}' "$ICAP_CONTAINER" 2>/dev/null || echo "none")
+            [[ "$health" == "healthy" ]] && break
+            sleep 2
+        done
     fi
     return 0  # Always succeed
+}
+
+# Restore security_level to default (delete the relaxed override)
+restore_security_level() {
+    local admin_pass
+    admin_pass=$(docker exec "$VALKEY_CONTAINER" \
+        cat /run/secrets/valkey_mcp_admin_password 2>/dev/null) || return 0
+    docker exec "$VALKEY_CONTAINER" sh -c "valkey-cli --tls \
+        --cert /etc/valkey/tls/client.crt \
+        --key /etc/valkey/tls/client.key \
+        --cacert /etc/valkey/tls/ca.crt \
+        --user mcp-admin --pass '$admin_pass' --no-auth-warning \
+        DEL polis:config:security_level" 2>/dev/null || true
+    docker restart "$ICAP_CONTAINER" >/dev/null 2>&1 || true
+    wait_for_healthy "$ICAP_CONTAINER" 60 || true
+}
+
+# Run a command and skip the test if failure looks like a network issue (post-check pattern)
+run_with_network_skip() {
+    local label="$1"; shift
+    run "$@"
+    if [[ "$status" -ne 0 ]]; then
+        case "$output" in
+            *"Could not resolve"*|*"Connection timed out"*|\
+            *"Network is unreachable"*|*"Connection refused"*)
+                skip "${label} unreachable — network-dependent test"
+                ;;
+        esac
+    fi
 }

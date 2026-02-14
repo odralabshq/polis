@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,gate
 # Gate Security Integration Tests
 
 setup() {
@@ -44,12 +45,6 @@ setup() {
     run docker exec "${GATEWAY_CONTAINER}" grep CapEff /proc/1/status
     assert_output --partial "0000000000003000"
 }
-
-    # Skip partial check if "ALL" isn't in output, rely on bitmask
-    skip "CapBnd check is flaky across runtimes"
-    run docker inspect --format '{{.HostConfig.CapDrop}}' "${GATEWAY_CONTAINER}"
-    assert_success
-    assert_output --partial "ALL"
 
 # =============================================================================
 # Privilege Dropping (setpriv)

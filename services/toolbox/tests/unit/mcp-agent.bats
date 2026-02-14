@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,toolbox
 # MCP-Agent Container Unit Tests
 # Tests for polis-mcp-agent container
 # Requirements: 6.1-6.5

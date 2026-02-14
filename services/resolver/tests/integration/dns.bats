@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,resolver
 # DNS Integration Tests — CoreDNS blocklist filtering (needs dns container)
 
 setup() {

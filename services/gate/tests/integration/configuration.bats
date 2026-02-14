@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,gate
 # Gate Configuration Integration Tests
 
 setup() {
@@ -10,10 +11,12 @@ setup() {
 # g3proxy.yaml Configuration Tests
 # =============================================================================
 
-@test "config: g3proxy resolver uses CoreDNS at 10.30.1.10" {
+@test "config: g3proxy resolver uses Docker embedded DNS" {
+    # g3proxy uses Docker's embedded DNS (127.0.0.11) for service discovery
+    # Docker DNS then forwards external queries to CoreDNS resolver
     run docker exec "${GATEWAY_CONTAINER}" cat /etc/g3proxy/g3proxy.yaml
     assert_success
-    assert_output --partial "10.30.1.10"
+    assert_output --partial "127.0.0.11"
 }
 
 @test "config: g3proxy ICAP reqmod service configured" {

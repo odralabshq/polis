@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,network
 # Global Network Isolation Tests
 
 setup() {

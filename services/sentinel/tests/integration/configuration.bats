@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,sentinel
 # Sentinel Configuration Integration Tests
 
 setup() {

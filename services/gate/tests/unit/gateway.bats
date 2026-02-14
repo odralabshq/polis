@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,gate
 # Gateway Container Unit Tests
 # Tests for polis-gateway container
 
@@ -143,7 +144,7 @@ setup() {
     cert_hash=$(docker exec "${GATEWAY_CONTAINER}" openssl x509 -noout -modulus -in /etc/g3proxy/ssl/ca.pem | openssl sha256)
     key_hash=$(docker exec "${GATEWAY_CONTAINER}" openssl rsa -noout -modulus -in /etc/g3proxy/ssl/ca.key | openssl sha256)
     
-    [[ "$cert_hash" == "$key_hash" ]]
+    assert [ "$cert_hash" = "$key_hash" ]
 }
 
 # =============================================================================

@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,sentinel
 # ICAP Security Hardening Tests
 # Tests for Linear Issue #12 - ICAP Large File Scanning Hardening
 #
@@ -302,10 +303,10 @@ setup() {
     assert_output "true"
 }
 
-@test "icap-hardening: clamav-db volume exists" {
-    run docker volume ls --format '{{.Name}}' --filter name=polis-clamav-db
+@test "icap-hardening: scanner-db volume exists" {
+    run docker volume ls --format '{{.Name}}' --filter name=polis-scanner-db
     assert_success
-    assert_output "polis-clamav-db"
+    assert_output "polis-scanner-db"
 }
 
 # =============================================================================

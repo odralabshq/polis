@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,gate
 # Gate Networking Integration Tests (TProxy & Routing)
 
 setup() {
@@ -10,21 +11,6 @@ setup() {
 # TPROXY Rule Tests
 # =============================================================================
 
-@test "tproxy: G3TPROXY chain exists in mangle table" {
-    # Skip iptables check for non-root containers as they cannot list rules
-    skip "Cannot list iptables rules as non-root user"
-    run docker exec "${GATEWAY_CONTAINER}" iptables -t mangle -L G3TPROXY -n
-    assert_success
-}
-
-@test "tproxy: TPROXY redirects to port 18080" {
-    # Skip iptables check for non-root containers as they cannot list rules
-    skip "Cannot list iptables rules as non-root user"
-    run docker exec "${GATEWAY_CONTAINER}" iptables -t mangle -L G3TPROXY -n -v
-    assert_success
-    assert_output --partial "18080"
-}
-
 @test "tproxy: g3proxy listening on port 18080" {
     run docker exec "${GATEWAY_CONTAINER}" ss -tln
     assert_success
@@ -35,14 +21,14 @@ setup() {
 # Policy Routing Tests
 # =============================================================================
 
-@test "tproxy: ip rule for fwmark 0x1 exists" {
+@test "tproxy: ip rule for fwmark 0x2 exists" {
     run docker exec "${GATEWAY_CONTAINER}" ip rule show
     assert_success
-    assert_output --partial "fwmark 0x1"
+    assert_output --partial "fwmark 0x2"
 }
 
-@test "tproxy: routing table 100 has local route" {
-    run docker exec "${GATEWAY_CONTAINER}" ip route show table 100
+@test "tproxy: routing table 102 has local route" {
+    run docker exec "${GATEWAY_CONTAINER}" ip route show table 102
     assert_success
     assert_output --partial "local"
 }

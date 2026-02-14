@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,gate
 # Gateway IPv6 Configuration Tests
 # Tests for IPv6 disabling behavior with runtime capability detection
 
@@ -108,25 +109,28 @@ ipv6_disabled() {
 
 # =============================================================================
 # Init Script Log Verification Tests
+# IPv6 disabling is performed by gate-init container (runs setup-network.sh as root)
 # =============================================================================
 
 @test "gateway-ipv6: init logs show IPv6 disable attempt" {
-    run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    # IPv6 disabling happens in gate-init container, not gateway
+    run docker logs polis-gate-init 2>&1
     assert_success
     assert_output --partial "Disabling IPv6"
 }
 
 @test "gateway-ipv6: init logs do not show CRITICAL errors" {
-    run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    run docker logs polis-gate-init 2>&1
     assert_success
     refute_output --partial "CRITICAL: IPv6 addresses still present"
     refute_output --partial "Aborting - TPROXY bypass risk"
 }
 
 @test "gateway-ipv6: init logs show completion message" {
-    run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    # gate-init logs "Networking setup complete" not "IPv6 disable/check completed"
+    run docker logs polis-gate-init 2>&1
     assert_success
-    assert_output --partial "IPv6 disable/check completed"
+    assert_output --partial "Networking setup complete"
 }
 
 # =============================================================================
@@ -142,11 +146,10 @@ ipv6_disabled() {
         skip "sysctl not functional in this environment"
     fi
 
-    run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    # Check gate-init logs for IPv6 disable messages
+    run docker logs polis-gate-init 2>&1
     assert_success
-    [[ "$output" == *"IPv6 disabled via sysctl"* ]] || \
-    [[ "$output" == *"WARNING: sysctl IPv6 disable failed"* ]] || \
-    [[ "$output" == *"Disabling IPv6"* ]]
+    assert_output --partial "Disabling IPv6"
 }
 
 # =============================================================================

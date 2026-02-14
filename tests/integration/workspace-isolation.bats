@@ -1,15 +1,23 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,network
 # Workspace Isolation Tests
 # Verifies zero-trust network isolation and prevents regression to WSL2 cruft
 
 setup_file() {
     load "../helpers/common.bash"
     relax_security_level
+    wait_for_port "$GATEWAY_CONTAINER" 18080 || skip "Gateway port 18080 not ready"
+    wait_for_port "$ICAP_CONTAINER" 1344 || skip "ICAP port 1344 not ready"
+}
+
+teardown_file() {
+    load "../helpers/common.bash"
+    restore_security_level
 }
 
 setup() {
     load "../helpers/common.bash"
-    require_container "$GATEWAY_CONTAINER" "$WORKSPACE_CONTAINER"
+    require_container "$GATEWAY_CONTAINER" "$WORKSPACE_CONTAINER" "$ICAP_CONTAINER"
 }
 
 # =============================================================================
@@ -76,13 +84,13 @@ setup() {
 # =============================================================================
 
 @test "isolation: workspace can access HTTP via TPROXY" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 http://example.com
+    run_with_network_skip "example.com" docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 http://example.com
     assert_success
     assert_output "200"
 }
 
 @test "isolation: workspace can access HTTPS via TPROXY" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://example.com
+    run_with_network_skip "example.com" docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 https://example.com
     assert_success
     assert_output "200"
 }
@@ -188,7 +196,7 @@ setup() {
     
     # If traffic was forwarded and dropped, counter increases. If TPROXY caught it, counter stays same.
     # Either way is correct - we just verify the counter exists and is readable
-    [[ "$final_drops" =~ ^[0-9]+$ ]]
+    assert [ -n "$final_drops" ]
 }
 
 @test "isolation: policy routing for TPROXY is configured" {

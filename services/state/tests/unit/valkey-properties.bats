@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=unit,state
 # Valkey Property-Based Tests
 # Parameterized tests validating correctness properties from the design doc.
 # Since bats has no native PBT library, properties are tested via loops
@@ -29,12 +30,11 @@ valkey_cli_as() {
         "$@"
 }
 
-# Helper: read a password from Docker secret file
-# Usage: get_password <secret_filename>
+# Helper: read a password from Docker secret inside the container
+# Usage: get_password <secret_name>
 get_password() {
-    local secret_file="$1"
-    # Read from host filesystem (tests run on host, not in container)
-    cat "${PROJECT_ROOT}/secrets/${secret_file}" 2>/dev/null || echo ""
+    local secret_name="$1"
+    docker exec "${VALKEY_CONTAINER}" cat "/run/secrets/${secret_name}" 2>/dev/null || echo ""
 }
 
 # =============================================================================
@@ -50,7 +50,7 @@ get_password() {
 
 @test "property 1: all 11 dangerous commands return error" {
     local admin_pass
-    admin_pass="$(get_password valkey_mcp_admin_password.txt)"
+    admin_pass="$(get_password valkey_mcp_admin_password)"
 
     # Full set of dangerous commands that must be disabled
     local dangerous_commands=(
@@ -93,7 +93,7 @@ get_password() {
 
 @test "property 2: mcp-agent denied access to unauthorized keys" {
     local agent_pass
-    agent_pass="$(get_password valkey_mcp_agent_password.txt)"
+    agent_pass="$(get_password valkey_mcp_agent_password)"
 
     # Keys outside the allowed patterns
     local denied_keys=(
@@ -120,7 +120,7 @@ get_password() {
 
 @test "property 2: mcp-agent denied DEL and UNLINK on allowed keys" {
     local agent_pass
-    agent_pass="$(get_password valkey_mcp_agent_password.txt)"
+    agent_pass="$(get_password valkey_mcp_agent_password)"
 
     # DEL and UNLINK must be denied even on allowed key patterns
     local denied_commands=("DEL" "UNLINK")
@@ -152,7 +152,7 @@ get_password() {
 
 @test "property 3: mcp-admin denied dangerous commands" {
     local admin_pass
-    admin_pass="$(get_password valkey_mcp_admin_password.txt)"
+    admin_pass="$(get_password valkey_mcp_admin_password)"
 
     # Dangerous commands that mcp-admin must be denied
     local denied_commands=(
@@ -190,7 +190,7 @@ get_password() {
 
 @test "property 4: log-writer denied non-allowed commands" {
     local lw_pass
-    lw_pass="$(get_password valkey_log_writer_password.txt)"
+    lw_pass="$(get_password valkey_log_writer_password)"
 
     # Commands that log-writer must NOT be able to run
     local denied_commands=(
@@ -220,7 +220,7 @@ get_password() {
 
 @test "property 4: log-writer denied access to non-allowed keys" {
     local lw_pass
-    lw_pass="$(get_password valkey_log_writer_password.txt)"
+    lw_pass="$(get_password valkey_log_writer_password)"
 
     # Keys outside the allowed pattern
     local denied_keys=(
@@ -257,7 +257,7 @@ get_password() {
 
 @test "property 5: healthcheck denied non-allowed commands" {
     local hc_pass
-    hc_pass="$(get_password valkey_password.txt)"
+    hc_pass="$(get_password valkey_password)"
 
     # Commands that healthcheck must NOT be able to run
     local denied_commands=(
@@ -287,7 +287,7 @@ get_password() {
 
 @test "property 5: healthcheck denied key access" {
     local hc_pass
-    hc_pass="$(get_password valkey_password.txt)"
+    hc_pass="$(get_password valkey_password)"
 
     # Any key access should be denied for healthcheck
     local test_keys=(
@@ -324,26 +324,17 @@ get_password() {
 # =============================================================================
 
 @test "property 6: all .key files have permission 600" {
-    # Skip on Windows/MSYS — mktemp paths conflict with MSYS_NO_PATHCONV
-    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
-        skip "Skipped on Windows/MSYS (MSYS_NO_PATHCONV path conflict)"
-    fi
-
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-
     # Generate certificates into a temp directory
-    run bash "${CERT_SCRIPT}" "${tmpdir}"
+    run bash "${CERT_SCRIPT}" "${BATS_TEST_TMPDIR}"
     assert_success
 
     # Define the full set of expected key files
     local key_files=("ca.key" "server.key" "client.key")
 
     for key_file in "${key_files[@]}"; do
-        local filepath="${tmpdir}/${key_file}"
+        local filepath="${BATS_TEST_TMPDIR}/${key_file}"
         # Verify the file exists
         [ -f "${filepath}" ] || {
-            rm -rf "${tmpdir}"
             fail "Expected key file not found: ${key_file}"
         }
         # Get octal permissions (last 3 digits)
@@ -351,35 +342,24 @@ get_password() {
         perms="$(stat -c '%a' "${filepath}" 2>/dev/null \
               || stat -f '%Lp' "${filepath}" 2>/dev/null)"
         if [[ "${perms}" != "600" ]]; then
-            rm -rf "${tmpdir}"
             fail "${key_file} has permission ${perms}, expected 600"
         fi
     done
 
-    rm -rf "${tmpdir}"
 }
 
 @test "property 6: all .crt files have permission 644" {
-    # Skip on Windows/MSYS — mktemp paths conflict with MSYS_NO_PATHCONV
-    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
-        skip "Skipped on Windows/MSYS (MSYS_NO_PATHCONV path conflict)"
-    fi
-
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-
     # Generate certificates into a temp directory
-    run bash "${CERT_SCRIPT}" "${tmpdir}"
+    run bash "${CERT_SCRIPT}" "${BATS_TEST_TMPDIR}"
     assert_success
 
     # Define the full set of expected certificate files
     local crt_files=("ca.crt" "server.crt" "client.crt")
 
     for crt_file in "${crt_files[@]}"; do
-        local filepath="${tmpdir}/${crt_file}"
+        local filepath="${BATS_TEST_TMPDIR}/${crt_file}"
         # Verify the file exists
         [ -f "${filepath}" ] || {
-            rm -rf "${tmpdir}"
             fail "Expected cert file not found: ${crt_file}"
         }
         # Get octal permissions (last 3 digits)
@@ -387,12 +367,10 @@ get_password() {
         perms="$(stat -c '%a' "${filepath}" 2>/dev/null \
               || stat -f '%Lp' "${filepath}" 2>/dev/null)"
         if [[ "${perms}" != "644" ]]; then
-            rm -rf "${tmpdir}"
             fail "${crt_file} has permission ${perms}, expected 644"
         fi
     done
 
-    rm -rf "${tmpdir}"
 }
 
 # =============================================================================
@@ -405,18 +383,10 @@ get_password() {
 # =============================================================================
 
 @test "property 7: all four passwords are exactly 32 characters" {
-    # Skip on Windows/MSYS — mktemp paths conflict with MSYS_NO_PATHCONV
-    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
-        skip "Skipped on Windows/MSYS (MSYS_NO_PATHCONV path conflict)"
-    fi
-
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-
     SECRETS_SCRIPT="${PROJECT_ROOT}/services/state/scripts/generate-secrets.sh"
 
     # Generate secrets into a temp directory
-    run bash "${SECRETS_SCRIPT}" "${tmpdir}"
+    run bash "${SECRETS_SCRIPT}" "${BATS_TEST_TMPDIR}"
     assert_success
 
     # Check password files directly
@@ -428,36 +398,25 @@ get_password() {
     )
 
     for file in "${password_files[@]}"; do
-        local filepath="${tmpdir}/${file}"
+        local filepath="${BATS_TEST_TMPDIR}/${file}"
         [ -f "${filepath}" ] || {
-            rm -rf "${tmpdir}"
             fail "${file} not found"
         }
         local password
         password="$(cat "${filepath}")"
         local len="${#password}"
         if [[ "${len}" -ne 32 ]]; then
-            rm -rf "${tmpdir}"
             fail "${file} has length ${len}, expected 32"
         fi
     done
 
-    rm -rf "${tmpdir}"
 }
 
 @test "property 7: all four passwords are mutually unique" {
-    # Skip on Windows/MSYS — mktemp paths conflict with MSYS_NO_PATHCONV
-    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
-        skip "Skipped on Windows/MSYS (MSYS_NO_PATHCONV path conflict)"
-    fi
-
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-
     SECRETS_SCRIPT="${PROJECT_ROOT}/services/state/scripts/generate-secrets.sh"
 
     # Generate secrets into a temp directory
-    run bash "${SECRETS_SCRIPT}" "${tmpdir}"
+    run bash "${SECRETS_SCRIPT}" "${BATS_TEST_TMPDIR}"
     assert_success
 
     # Read passwords from secret files
@@ -470,9 +429,8 @@ get_password() {
 
     local passwords=()
     for file in "${password_files[@]}"; do
-        local filepath="${tmpdir}/${file}"
+        local filepath="${BATS_TEST_TMPDIR}/${file}"
         [ -f "${filepath}" ] || {
-            rm -rf "${tmpdir}"
             fail "${file} not found"
         }
         local password
@@ -485,13 +443,11 @@ get_password() {
     for ((i = 0; i < count; i++)); do
         for ((j = i + 1; j < count; j++)); do
             if [[ "${passwords[$i]}" == "${passwords[$j]}" ]]; then
-                rm -rf "${tmpdir}"
                 fail "Password ${i} and ${j} are identical"
             fi
         done
     done
 
-    rm -rf "${tmpdir}"
 }
 
 # =============================================================================
@@ -505,24 +461,15 @@ get_password() {
 # =============================================================================
 
 @test "property 8: ACL hashes match SHA-256 of plaintext passwords" {
-    # Skip on Windows/MSYS — mktemp paths conflict with MSYS_NO_PATHCONV
-    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
-        skip "Skipped on Windows/MSYS (MSYS_NO_PATHCONV path conflict)"
-    fi
-
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-
     SECRETS_SCRIPT="${PROJECT_ROOT}/services/state/scripts/generate-secrets.sh"
 
     # Generate secrets into a temp directory
-    run bash "${SECRETS_SCRIPT}" "${tmpdir}"
+    run bash "${SECRETS_SCRIPT}" "${BATS_TEST_TMPDIR}"
     assert_success
 
-    local acl_file="${tmpdir}/valkey_users.acl"
+    local acl_file="${BATS_TEST_TMPDIR}/valkey_users.acl"
 
     [ -f "${acl_file}" ] || {
-        rm -rf "${tmpdir}"
         fail "valkey_users.acl not found"
     }
 
@@ -540,7 +487,7 @@ get_password() {
 
         # Get plaintext password from secret file
         local plaintext
-        plaintext="$(cat "${tmpdir}/${pass_file}")"
+        plaintext="$(cat "${BATS_TEST_TMPDIR}/${pass_file}")"
 
         # Compute expected SHA-256 hash
         local expected_hash
@@ -554,14 +501,12 @@ get_password() {
                   | sed 's/^#//')"
 
         if [[ "${expected_hash}" != "${acl_hash}" ]]; then
-            rm -rf "${tmpdir}"
             fail "Hash mismatch for ${acl_user}: " \
                  "expected=${expected_hash}, " \
                  "acl=${acl_hash}"
         fi
     done
 
-    rm -rf "${tmpdir}"
 }
 
 # =============================================================================
@@ -574,18 +519,10 @@ get_password() {
 # =============================================================================
 
 @test "property 9: all generated secret files have permission 644" {
-    # Skip on Windows/MSYS — mktemp paths conflict with MSYS_NO_PATHCONV
-    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
-        skip "Skipped on Windows/MSYS (MSYS_NO_PATHCONV path conflict)"
-    fi
-
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-
     SECRETS_SCRIPT="${PROJECT_ROOT}/services/state/scripts/generate-secrets.sh"
 
     # Generate secrets into a temp directory
-    run bash "${SECRETS_SCRIPT}" "${tmpdir}"
+    run bash "${SECRETS_SCRIPT}" "${BATS_TEST_TMPDIR}"
     assert_success
 
     # Define the full set of expected secret files
@@ -600,10 +537,9 @@ get_password() {
     )
 
     for secret_file in "${secret_files[@]}"; do
-        local filepath="${tmpdir}/${secret_file}"
+        local filepath="${BATS_TEST_TMPDIR}/${secret_file}"
         # Verify the file exists
         [ -f "${filepath}" ] || {
-            rm -rf "${tmpdir}"
             fail "Expected secret file not found: ${secret_file}"
         }
         # Get octal permissions (last 3 digits)
@@ -611,26 +547,22 @@ get_password() {
         perms="$(stat -c '%a' "${filepath}" 2>/dev/null \
               || stat -f '%Lp' "${filepath}" 2>/dev/null)"
         if [[ "${perms}" != "644" ]]; then
-            rm -rf "${tmpdir}"
             fail "${secret_file} has permission ${perms}, expected 644"
         fi
     done
 
     # Check ACL file has 644
-    local acl_file="${tmpdir}/valkey_users.acl"
+    local acl_file="${BATS_TEST_TMPDIR}/valkey_users.acl"
     [ -f "${acl_file}" ] || {
-        rm -rf "${tmpdir}"
         fail "valkey_users.acl not found"
     }
     local acl_perms
     acl_perms="$(stat -c '%a' "${acl_file}" 2>/dev/null \
               || stat -f '%Lp' "${acl_file}" 2>/dev/null)"
     if [[ "${acl_perms}" != "644" ]]; then
-        rm -rf "${tmpdir}"
         fail "valkey_users.acl has permission ${acl_perms}, expected 644"
     fi
 
-    rm -rf "${tmpdir}"
 }
 
 # =============================================================================

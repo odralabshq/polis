@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,network
 # Global IPv6 Security Tests
 
 setup() {

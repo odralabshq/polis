@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,toolbox
 # Approval System Integration Tests
 # Tests for C-ICAP modules, configuration, and security controls
 

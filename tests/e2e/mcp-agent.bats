@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=e2e,toolbox
 # MCP-Agent E2E Tests
 # Tests for MCP tool functionality through the Streamable HTTP transport.
 # Verifies report_block, check_request_status, get_security_status,
@@ -12,6 +13,11 @@ setup() {
 
     MCP_ENDPOINT="http://localhost:8080/mcp"
     CREDENTIALS_FILE="${PROJECT_ROOT}/.env"
+}
+
+teardown() {
+    cleanup_valkey_key "polis:blocked:req-e2e${BATS_TEST_NUMBER}" 2>/dev/null || true
+    cleanup_valkey_key "polis:approved:req-e2e${BATS_TEST_NUMBER}" 2>/dev/null || true
 }
 
 # Helper: run a valkey-cli command inside the Valkey container

@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,workspace
 # Workspace Container Unit Tests
 # Tests for polis-workspace container
 

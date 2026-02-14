@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,scanner
 # Scanner Configuration Integration Tests
 
 setup() {

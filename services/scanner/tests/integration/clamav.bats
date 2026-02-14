@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,scanner
 # ClamAV Integration Tests
 # Tests for ClamAV malware scanning via SquidClamav
 
@@ -31,9 +32,10 @@ setup() {
 }
 
 @test "clamav: uses correct image version" {
+    # Polis uses custom scanner image built from services/scanner/Dockerfile
     run docker inspect --format '{{.Config.Image}}' "${CLAMAV_CONTAINER}"
     assert_success
-    assert_output --partial "clamav/clamav:1.5"
+    assert_output --partial "polis-scanner"
 }
 
 # =============================================================================
@@ -136,14 +138,14 @@ setup() {
     run docker inspect --format '{{.HostConfig.Memory}}' "${CLAMAV_CONTAINER}"
     assert_success
     # 3GB = 3221225472 bytes
-    [[ "$output" -eq 3221225472 ]]
+    assert [ "$output" -eq 3221225472 ]
 }
 
 @test "clamav: has memory reservation configured" {
     run docker inspect --format '{{.HostConfig.MemoryReservation}}' "${CLAMAV_CONTAINER}"
     assert_success
     # 1GB = 1073741824 bytes
-    [[ "$output" -eq 1073741824 ]]
+    assert [ "$output" -eq 1073741824 ]
 }
 
 # =============================================================================
@@ -258,7 +260,7 @@ setup() {
     clamav_start=$(docker inspect --format '{{.State.StartedAt}}' "${CLAMAV_CONTAINER}")
     
     # ICAP should start after ClamAV
-    [[ "$icap_start" > "$clamav_start" ]]
+    assert [ "$icap_start" > "$clamav_start" ]
 }
 
 # =============================================================================

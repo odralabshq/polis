@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,state
 # Valkey Container Unit Tests
 # Tests for polis-v2-valkey container
 # Requirements: 1.1–1.8, 2.1–2.4, 7.1–7.4, 8.1–8.5
@@ -176,10 +177,10 @@ setup() {
     assert_success
 }
 
-@test "valkey: valkey-data volume is mounted at /data" {
+@test "valkey: state-data volume is mounted at /data" {
     run docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${VALKEY_CONTAINER}"
     assert_success
-    assert_output "polis-valkey-data"
+    assert_output "polis-state-data"
 }
 
 @test "valkey: /data directory is writable" {
@@ -224,13 +225,15 @@ setup() {
 
 @test "valkey: mcp-agent ACL is tightened (no config access)" {
     # Verify mcp-agent user cannot set security level
-    local mcp_pass=$(cat "${PROJECT_ROOT}/secrets/valkey_mcp_agent_password.txt")
+    local mcp_pass
+    mcp_pass=$(docker exec "${VALKEY_CONTAINER}" cat /run/secrets/valkey_mcp_agent_password 2>/dev/null)
     run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user mcp-agent --pass "$mcp_pass" SET polis:config:security_level strict
     assert_output --partial "NOPERM"
 }
 
 @test "valkey: dlp-reader ACL is restricted (read-only level)" {
-    local dlp_pass=$(cat "${PROJECT_ROOT}/secrets/valkey_dlp_password.txt")
+    local dlp_pass
+    dlp_pass=$(docker exec "${VALKEY_CONTAINER}" cat /run/secrets/valkey_dlp_password 2>/dev/null)
     
     # Verify dlp-reader can GET security level
     run docker exec "${VALKEY_CONTAINER}" valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user dlp-reader --pass "$dlp_pass" GET polis:config:security_level

@@ -1,15 +1,16 @@
 #!/usr/bin/env bats
-# Agent System E2E Tests
+# bats file_tags=e2e,agents
+# Agent System E2E Tests — Manifest-driven Plugin System
 
 setup() {
     load '../helpers/common.bash'
     load '../bats/bats-file/load.bash'
 }
 
-# --- Agent contract tests (depend on Issue 01 only) ---
+# --- Agent manifest contract tests ---
 
-@test "agents: openclaw agent.conf exists" {
-    assert_file_exist "${PROJECT_ROOT}/agents/openclaw/agent.conf"
+@test "agents: openclaw agent.yaml exists" {
+    assert_file_exist "${PROJECT_ROOT}/agents/openclaw/agent.yaml"
 }
 
 @test "agents: openclaw install.sh exists and is executable" {
@@ -20,33 +21,34 @@ setup() {
 
 @test "agents: openclaw has required scripts" {
     assert_file_exist "${PROJECT_ROOT}/agents/openclaw/scripts/init.sh"
-    assert_file_exist "${PROJECT_ROOT}/agents/openclaw/config/openclaw.service"
-}
-
-@test "agents: openclaw compose.override.yaml exists" {
-    assert_file_exist "${PROJECT_ROOT}/agents/openclaw/compose.override.yaml"
 }
 
 @test "agents: template directory exists" {
-    assert_file_exist "${PROJECT_ROOT}/agents/_template/agent.conf"
+    assert_file_exist "${PROJECT_ROOT}/agents/_template/agent.yaml"
     assert_file_exist "${PROJECT_ROOT}/agents/_template/install.sh"
-    assert_file_exist "${PROJECT_ROOT}/agents/_template/config/agent.service"
 }
 
-@test "agents: template service requires polis-init" {
-    run grep -q 'Requires=polis-init.service' "${PROJECT_ROOT}/agents/_template/config/agent.service"
+@test "agents: openclaw agent.yaml has required fields" {
+    local manifest="${PROJECT_ROOT}/agents/openclaw/agent.yaml"
+    run grep -q 'apiVersion:' "$manifest"
     assert_success
-    run grep -q 'After=.*polis-init.service' "${PROJECT_ROOT}/agents/_template/config/agent.service"
+    run grep -q 'kind: AgentPlugin' "$manifest"
+    assert_success
+    run grep -q 'metadata:' "$manifest"
+    assert_success
+    run grep -q 'name: openclaw' "$manifest"
+    assert_success
+    run grep -q 'spec:' "$manifest"
     assert_success
 }
 
-@test "agents: openclaw agent.conf has required fields" {
-    local conf="${PROJECT_ROOT}/agents/openclaw/agent.conf"
-    run grep -q '^AGENT_NAME=' "$conf"
+@test "agents: openclaw manifest has runtime command" {
+    run grep -q 'command:' "${PROJECT_ROOT}/agents/openclaw/agent.yaml"
     assert_success
-    run grep -q '^AGENT_SERVICE_NAME=' "$conf"
-    assert_success
-    run grep -q '^AGENT_CONTAINER_PORT=' "$conf"
+}
+
+@test "agents: openclaw manifest has health check" {
+    run grep -q 'health:' "${PROJECT_ROOT}/agents/openclaw/agent.yaml"
     assert_success
 }
 

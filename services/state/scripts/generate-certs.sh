@@ -129,10 +129,10 @@ rm -f "${OUTPUT_DIR}/ca.srl"
 echo ""
 echo "--- Setting file permissions ---"
 
-# Private keys: 644 (readable for Docker bind mounts)
-chmod 644 "${OUTPUT_DIR}/ca.key"
-chmod 644 "${OUTPUT_DIR}/server.key"
-chmod 644 "${OUTPUT_DIR}/client.key"
+# Private keys: 600 (owner read/write only - security best practice)
+chmod 600 "${OUTPUT_DIR}/ca.key"
+chmod 600 "${OUTPUT_DIR}/server.key"
+chmod 600 "${OUTPUT_DIR}/client.key"
 
 # Certificates: 644 (owner read/write, group/other read)
 chmod 644 "${OUTPUT_DIR}/ca.crt"

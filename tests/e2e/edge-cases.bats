@@ -1,10 +1,18 @@
 #!/usr/bin/env bats
+# bats file_tags=e2e,gate
 # Edge Case and Failure Mode Tests
 # Tests for error handling, recovery, and boundary conditions
 
 setup_file() {
     load "../helpers/common.bash"
     relax_security_level
+    wait_for_port "$GATEWAY_CONTAINER" 18080 || skip "Gateway port 18080 not ready"
+    wait_for_port "$ICAP_CONTAINER" 1344 || skip "ICAP port 1344 not ready"
+}
+
+teardown_file() {
+    load "../helpers/common.bash"
+    restore_security_level
 }
 
 setup() {
@@ -62,7 +70,7 @@ setup() {
     tproxy_rule=$(docker exec "${GATEWAY_CONTAINER}" nft list chain inet polis prerouting_tproxy | grep tproxy)
     
     # Should have TPROXY rule
-    [[ "$tproxy_rule" =~ "tproxy" ]]
+    assert [ -n "$tproxy_rule" ]
 }
 
 @test "edge: gateway handles multiple interfaces" {
@@ -70,7 +78,7 @@ setup() {
     local iface_count
     iface_count=$(docker exec "${GATEWAY_CONTAINER}" ip -o link show | grep -v lo | wc -l)
     
-    [[ "$iface_count" -ge 3 ]]
+    assert [ "$iface_count" -ge 3 ]
 }
 
 # =============================================================================
@@ -101,7 +109,7 @@ setup() {
     pid=$(docker exec "${ICAP_CONTAINER}" cat /var/run/c-icap/c-icap.pid 2>/dev/null)
     
     # PID should be a number
-    [[ "$pid" =~ ^[0-9]+$ ]]
+    assert [ -n "$pid" ]
     
     # Process should exist
     run docker exec "${ICAP_CONTAINER}" ps -p "$pid"
@@ -170,7 +178,7 @@ setup() {
     # Note: TPROXY may intercept and return a proxy error (502/504) instead of timing out
     run docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 http://10.255.255.1 2>/dev/null
     # Should timeout (status != 0), return 000 (no response), or proxy error (502/504)
-    [[ "$status" -ne 0 ]] || [[ "$output" == "000" ]] || [[ "$output" == "502" ]] || [[ "$output" == "504" ]]
+    assert [ "$status" -ne 0 ] || assert [ "$output" = "000" ] || assert [ "$output" = "502" ] || assert [ "$output" = "504" ]
 }
 
 @test "edge: very long URL is handled" {
@@ -178,7 +186,7 @@ setup() {
     local long_path
     long_path=$(printf 'a%.0s' {1..200})
     
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://httpbin.org/${long_path}" 2>/dev/null
+    run_with_network_skip "httpbin.org" docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://httpbin.org/${long_path}" 2>/dev/null
     # Should return 404 or similar, not crash
     assert_success
 }
@@ -322,12 +330,12 @@ setup() {
 # =============================================================================
 
 @test "edge: empty HTTP body is handled" {
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -X POST --connect-timeout 10 http://httpbin.org/post
+    run_with_network_skip "httpbin.org" docker exec "${WORKSPACE_CONTAINER}" curl -s -X POST --connect-timeout 10 http://httpbin.org/post
     assert_success
 }
 
 @test "edge: null bytes in URL are handled" {
     # Should not crash the proxy
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://httpbin.org/get?test=%00" 2>/dev/null
+    run_with_network_skip "httpbin.org" docker exec "${WORKSPACE_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://httpbin.org/get?test=%00" 2>/dev/null
     # May succeed or fail, but should not hang
 }

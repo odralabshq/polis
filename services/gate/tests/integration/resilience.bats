@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,gate
 # Gate Resilience Integration Tests
 
 setup() {
@@ -52,5 +53,5 @@ setup() {
     assert_success
     local g3fcgen_line=$(docker exec "${GATEWAY_CONTAINER}" grep -n "g3fcgen" /init.sh | head -1 | cut -d: -f1)
     local g3proxy_line=$(docker exec "${GATEWAY_CONTAINER}" grep -n "g3proxy.yaml" /init.sh | cut -d: -f1)
-    [[ "$g3fcgen_line" -lt "$g3proxy_line" ]]
+    assert [ "$g3fcgen_line" -lt "$g3proxy_line" ]
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=integration,sentinel
 # Sentinel Security Integration Tests
 
 setup() {
@@ -15,10 +16,8 @@ setup() {
 @test "security: icap has minimal added capabilities" {
     run docker inspect --format '{{.HostConfig.CapAdd}}' "${ICAP_CONTAINER}"
     assert_success
+    # Only CHOWN needed - container starts as sentinel user directly (no privilege dropping)
     assert_output --partial "CHOWN"
-    # SETUID removed
-    # assert_output --partial "SETUID"
-    assert_output --partial "SETGID"
     refute_output --partial "SYS_ADMIN"
 }
 

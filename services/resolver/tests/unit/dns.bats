@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# bats file_tags=unit,resolver
 # DNS Unit Tests — static config validation (no containers needed)
 
 setup() {
@@ -10,19 +11,19 @@ setup() {
 # =============================================================================
 
 @test "dns-unit: Corefile exists" {
-    [[ -f "${PROJECT_ROOT}/services/resolver/config/Corefile" ]]
+    assert [ -f "${PROJECT_ROOT}/services/resolver/config/Corefile" ]
 }
 
 @test "dns-unit: blocklist.txt exists" {
-    [[ -f "${PROJECT_ROOT}/services/resolver/config/blocklist.txt" ]]
+    assert [ -f "${PROJECT_ROOT}/services/resolver/config/blocklist.txt" ]
 }
 
 @test "dns-unit: Dockerfile exists" {
-    [[ -f "${PROJECT_ROOT}/services/resolver/Dockerfile" ]]
+    assert [ -f "${PROJECT_ROOT}/services/resolver/Dockerfile" ]
 }
 
 @test "dns-unit: validate-blocklist.sh script exists" {
-    [[ -x "${PROJECT_ROOT}/services/sentinel/scripts/validate-blocklist.sh" ]]
+    assert [ -x "${PROJECT_ROOT}/services/sentinel/scripts/validate-blocklist.sh" ]
 }
 
 # =============================================================================
