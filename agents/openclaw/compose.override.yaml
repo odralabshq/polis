@@ -16,6 +16,13 @@ services:
     volumes:
       - ./agents/openclaw/:/tmp/agents/openclaw/:ro
       - ./agents/openclaw/config/openclaw.service:/etc/systemd/system/openclaw.service:ro
+      - ./agents/openclaw/config/SOUL.md:/usr/local/share/openclaw/SOUL.md:ro
+      - ./agents/openclaw/scripts/polis-mcp-call.sh:/usr/local/share/openclaw/scripts/polis-mcp-call.sh:ro
+      - ./agents/openclaw/scripts/polis-report-block.sh:/usr/local/share/openclaw/scripts/polis-report-block.sh:ro
+      - ./agents/openclaw/scripts/polis-check-status.sh:/usr/local/share/openclaw/scripts/polis-check-status.sh:ro
+      - ./agents/openclaw/scripts/polis-list-pending.sh:/usr/local/share/openclaw/scripts/polis-list-pending.sh:ro
+      - ./agents/openclaw/scripts/polis-security-status.sh:/usr/local/share/openclaw/scripts/polis-security-status.sh:ro
+      - ./agents/openclaw/scripts/polis-security-log.sh:/usr/local/share/openclaw/scripts/polis-security-log.sh:ro
       - ./.env:/run/openclaw-env:ro
     healthcheck:
       # REPLACES the base healthcheck entirely.

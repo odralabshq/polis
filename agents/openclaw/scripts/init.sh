@@ -182,10 +182,40 @@ CONFIGEOF
         chmod 644 "$SOUL_DST"
         echo "[openclaw-init] Installed SOUL.md (HITL security instructions)"
     fi
+
+    # Install polis security CLI wrappers (bridge to MCP toolbox server)
+    POLIS_SCRIPTS_SRC="/usr/local/share/openclaw/scripts"
+    POLIS_BIN_DIR="/home/polis/.local/bin"
+    mkdir -p "$POLIS_BIN_DIR"
+    if [[ -d "$POLIS_SCRIPTS_SRC" ]]; then
+        for script in polis-mcp-call.sh polis-report-block.sh polis-check-status.sh \
+                      polis-list-pending.sh polis-security-status.sh polis-security-log.sh; do
+            if [[ -f "${POLIS_SCRIPTS_SRC}/${script}" ]]; then
+                cp "${POLIS_SCRIPTS_SRC}/${script}" "${POLIS_BIN_DIR}/${script}"
+                chmod 755 "${POLIS_BIN_DIR}/${script}"
+            fi
+        done
+        echo "[openclaw-init] Installed polis security CLI wrappers to ${POLIS_BIN_DIR}"
+    fi
     
 else
     echo "[openclaw-init] Already initialized, checking config..."
-    
+
+    # Re-install polis security CLI wrappers (they live in tmpfs, lost on restart)
+    POLIS_SCRIPTS_SRC="/usr/local/share/openclaw/scripts"
+    POLIS_BIN_DIR="/home/polis/.local/bin"
+    mkdir -p "$POLIS_BIN_DIR"
+    if [[ -d "$POLIS_SCRIPTS_SRC" ]]; then
+        for script in polis-mcp-call.sh polis-report-block.sh polis-check-status.sh \
+                      polis-list-pending.sh polis-security-status.sh polis-security-log.sh; do
+            if [[ -f "${POLIS_SCRIPTS_SRC}/${script}" ]]; then
+                cp "${POLIS_SCRIPTS_SRC}/${script}" "${POLIS_BIN_DIR}/${script}"
+                chmod 755 "${POLIS_BIN_DIR}/${script}"
+            fi
+        done
+        echo "[openclaw-init] Re-installed polis security CLI wrappers"
+    fi
+
     # Read existing token from file
     if [[ -f "$TOKEN_FILE" ]]; then
         GATEWAY_TOKEN=$(cat "$TOKEN_FILE")

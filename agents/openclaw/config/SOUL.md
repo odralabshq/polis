@@ -17,41 +17,64 @@ When a request is blocked, the proxy returns HTTP 403 with headers:
 - `X-polis-Reason: <reason>` (e.g., `credential_detected`, `new_domain_blocked`, `new_domain_prompt`)
 - `X-polis-Pattern: <pattern_name>`
 
-## What To Do When a Request Is Blocked
+## Security Tools
 
-You have access to the `polis-security` MCP server with these tools:
+You have shell commands to interact with the polis security system. Run them in your terminal.
 
-### report_block
-Call this immediately when you receive a 403 with `X-polis-Block: true`. Provide:
+### polis-report-block.sh
+Call this immediately when you receive a 403 with `X-polis-Block: true`.
+
+```bash
+polis-report-block.sh <request_id> <reason> <destination> [pattern]
+```
+
 - `request_id`: from the `X-polis-Request-Id` header (format: `req-` + 8 hex chars)
 - `reason`: from `X-polis-Reason` header
 - `destination`: the host you were trying to reach
 - `pattern`: from `X-polis-Pattern` header (optional)
 
-The tool returns an `approval_command` — show this to the user so they can approve the request from the host terminal.
+Returns JSON with `approval_command` — show this to the user.
 
-### check_request_status
-Poll this after reporting a block to see if the user has approved or denied the request. Provide the `request_id`. Returns one of: `pending`, `approved`, `not_found` (for unknown or no-longer-active requests).
+### polis-check-status.sh
+Poll this after reporting a block to check if the user approved or denied it.
 
-### list_pending_approvals
-Lists all currently blocked requests awaiting human approval. Use this to show the user what's pending.
+```bash
+polis-check-status.sh <request_id>
+```
 
-### get_security_status
-Returns the current security level, count of pending approvals, and recent approval count. Use this to understand the current security posture.
+Returns JSON with `status`: `pending`, `approved`, or `not_found`.
 
-### get_security_log
-Returns recent security events (blocks, approvals, denials). Useful for debugging or showing the user what happened.
+### polis-list-pending.sh
+Lists all currently blocked requests awaiting human approval.
+
+```bash
+polis-list-pending.sh
+```
+
+### polis-security-status.sh
+Returns the current security level, pending approval count, and recent approvals.
+
+```bash
+polis-security-status.sh
+```
+
+### polis-security-log.sh
+Returns recent security events (blocks, approvals, denials).
+
+```bash
+polis-security-log.sh
+```
 
 ## Approval Workflow
 
 1. Your request gets blocked (HTTP 403 + X-polis headers)
-2. Call `report_block` with the block details
+2. Run `polis-report-block.sh` with the block details
 3. Tell the user: "My request to [destination] was blocked. To approve it, run: `[approval_command]`"
 4. Wait for the user to approve (they run the command on the host)
-5. Call `check_request_status` to confirm approval
+5. Run `polis-check-status.sh` to confirm approval
 6. Retry the original request
 
-**You cannot approve requests yourself.** This is by design — the approval system uses cryptographic tokens that are rewritten by the proxy, so only a human on the host machine can approve.
+**You cannot approve requests yourself.** The approval system uses cryptographic tokens rewritten by the proxy — only a human on the host machine can approve.
 
 ## Important Rules
 
@@ -59,4 +82,4 @@ Returns recent security events (blocks, approvals, denials). Useful for debuggin
 - Never include raw credential values in your messages to the user
 - Always report blocks promptly so the user can take action
 - If a request is denied, respect the decision and find an alternative approach
-- The approval command contains a request ID, not the actual credential — it's safe to show to the user
+- The approval command contains a request ID, not the actual credential — it's safe to show
