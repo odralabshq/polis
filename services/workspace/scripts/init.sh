@@ -94,6 +94,7 @@ fi
 protect_sensitive_paths
 
 # Bootstrap mounted agents (fault-isolated from core init)
+agent_services=()
 for agent_dir in /tmp/agents/*/; do
     [ -d "$agent_dir" ] || continue
     name=$(basename "$agent_dir")
@@ -107,14 +108,32 @@ for agent_dir in /tmp/agents/*/; do
         fi
     fi
 
-    # Enable + start the agent service (if service file was mounted)
+    # Collect services to enable (generated .service file is mounted by compose override)
     svc="/etc/systemd/system/${name}.service"
     if [ -f "$svc" ]; then
-        systemctl daemon-reload
-        systemctl enable --now "${name}.service" || \
-            echo "[workspace] WARNING: failed to enable ${name}.service"
+        # Verify .service file integrity (hash generated at polis init time)
+        hash_file="/etc/systemd/system/${name}.service.sha256"
+        if [ -f "$hash_file" ]; then
+            expected=$(cat "$hash_file")
+            actual=$(sha256sum "$svc" | cut -d' ' -f1)
+            if [ "$expected" != "$actual" ]; then
+                echo "[workspace] CRITICAL: ${name}.service integrity check failed. Skipping."
+                continue
+            fi
+            echo "[workspace] ${name}.service integrity verified"
+        fi
+        agent_services+=("${name}.service")
     fi
 done
+
+# Single daemon-reload, then enable all collected services
+if [ ${#agent_services[@]} -gt 0 ]; then
+    systemctl daemon-reload
+    for svc in "${agent_services[@]}"; do
+        systemctl enable --now "$svc" || \
+            echo "[workspace] WARNING: failed to enable ${svc}"
+    done
+fi
 
 echo "[workspace] Initialization complete"
 exit 0

@@ -433,14 +433,449 @@ setup_valkey() {
 }
 
 # =============================================================================
-# Agent Plugin System
+# Agent Plugin System (Manifest-driven v1)
 # =============================================================================
+
+# Reserved platform ports — agents must not use these
+RESERVED_PORTS="18080 1344 53 8080 6379"
+
+# Check yq dependency
+check_yq() {
+    if ! command -v yq &>/dev/null; then
+        log_error "yq v4+ is required. Install: https://github.com/mikefarah/yq#install"
+        exit 1
+    fi
+    local yq_ver
+    yq_ver=$(yq --version 2>/dev/null | grep -oP '\d+' | head -1)
+    if [[ "${yq_ver:-0}" -lt 4 ]]; then
+        log_error "yq v4+ is required (found v${yq_ver}). Install: https://github.com/mikefarah/yq#install"
+        exit 1
+    fi
+}
+
+# Structured audit log (JSON, one per line)
+audit_log() {
+    local event="$1" agent="${2:-}" result="${3:-ok}" detail="${4:-}"
+    local ts
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    printf '{"ts":"%s","event":"%s","agent":"%s","result":"%s","detail":"%s"}\n' \
+        "$ts" "$event" "$agent" "$result" "$detail" \
+        >> "${PROJECT_ROOT}/.polis-audit.log"
+}
+
+# Parse agent.yaml and export variables
+load_agent_yaml() {
+    local agent="$1"
+    local manifest="${PROJECT_ROOT}/agents/${agent}/agent.yaml"
+    if [[ ! -f "$manifest" ]]; then
+        log_error "Manifest not found: ${manifest}"
+        exit 1
+    fi
+    AGENT_NAME=$(yq '.metadata.name' "$manifest")
+    AGENT_DISPLAY_NAME=$(yq '.metadata.displayName' "$manifest")
+    AGENT_VERSION=$(yq '.metadata.version' "$manifest")
+    AGENT_DESCRIPTION=$(yq '.metadata.description' "$manifest")
+    AGENT_INSTALL=$(yq '.spec.install // ""' "$manifest")
+    AGENT_COMMAND=$(yq '.spec.runtime.command' "$manifest")
+    AGENT_HEALTH_CMD=$(yq '.spec.health.command' "$manifest")
+    AGENT_INIT=$(yq '.spec.init // ""' "$manifest")
+    AGENT_SERVICE_NAME="$AGENT_NAME"
+    audit_log "manifest_parsed" "$agent"
+}
+
+# Security validation of manifest fields
+validate_manifest_security() {
+    local agent="$1"
+    local manifest="${PROJECT_ROOT}/agents/${agent}/agent.yaml"
+    local errors=()
+
+    # metadata.name format
+    local name
+    name=$(yq '.metadata.name' "$manifest")
+    if [[ ! "$name" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+        errors+=("metadata.name '${name}' is invalid. Must be lowercase alphanumeric with hyphens, 1-63 chars, no leading/trailing hyphen.")
+    fi
+
+    # runtime.command must start with absolute path
+    local cmd
+    cmd=$(yq '.spec.runtime.command' "$manifest")
+    if [[ "$cmd" != /* ]]; then
+        errors+=("runtime.command must start with an absolute path: ${cmd}")
+    fi
+
+    # Shell metacharacter check for runtime.command
+    local meta_re='[;|&`$()]'
+    if [[ "$cmd" =~ $meta_re ]]; then
+        errors+=("runtime.command contains shell metacharacters (injection risk)")
+    fi
+
+    # Shell metacharacter check for health.command
+    local hcmd
+    hcmd=$(yq '.spec.health.command' "$manifest")
+    if [[ "$hcmd" =~ $meta_re ]]; then
+        errors+=("health.command contains shell metacharacters (injection risk)")
+    fi
+
+    # runtime.user must not be root
+    local user
+    user=$(yq '.spec.runtime.user // "polis"' "$manifest")
+    if [[ "$user" == "root" ]]; then
+        errors+=("runtime.user 'root' is privileged. Agents must run as unprivileged user (UID >= 1000).")
+    fi
+
+    # runtime.envFile must be under /home/polis/
+    local envfile
+    envfile=$(yq '.spec.runtime.envFile // ""' "$manifest")
+    if [[ -n "$envfile" ]] && [[ "$envfile" != /home/polis/* ]]; then
+        errors+=("runtime.envFile must be under /home/polis/: ${envfile}")
+    fi
+
+    # Path traversal checks for install, init, commands
+    local field val
+    for field in '.spec.install' '.spec.init' '.spec.commands'; do
+        val=$(yq "${field} // \"\"" "$manifest")
+        if [[ -n "$val" ]] && [[ "$val" == *..* ]]; then
+            errors+=("${field} escapes agent directory (path traversal): ${val}")
+        fi
+    done
+
+    # readWritePaths must be under allowed prefixes
+    local rwcount
+    rwcount=$(yq '.spec.security.readWritePaths | length // 0' "$manifest")
+    for ((i = 0; i < rwcount; i++)); do
+        local rwp
+        rwp=$(yq ".spec.security.readWritePaths[${i}]" "$manifest")
+        if [[ "$rwp" != /home/polis/* ]] && [[ "$rwp" != /tmp/* ]] && \
+           [[ "$rwp" != /var/lib/* ]] && [[ "$rwp" != /var/log/* ]]; then
+            errors+=("readWritePaths '${rwp}' is outside allowed prefixes.")
+        fi
+    done
+
+    # runtime.env key validation
+    local envcount
+    envcount=$(yq '.spec.runtime.env | length // 0' "$manifest")
+    if [[ "$envcount" -gt 0 ]]; then
+        while IFS= read -r key; do
+            if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                errors+=("runtime.env key '${key}' invalid")
+            fi
+            local val
+            val=$(yq ".spec.runtime.env.\"${key}\"" "$manifest")
+            if [[ "$val" == *$'\n'* ]]; then
+                errors+=("runtime.env value for '${key}' contains newline (injection risk)")
+            fi
+        done < <(yq '.spec.runtime.env | keys | .[]' "$manifest" 2>/dev/null)
+    fi
+
+    # Port conflict check
+    local portcount
+    portcount=$(yq '.spec.ports | length // 0' "$manifest")
+    for ((i = 0; i < portcount; i++)); do
+        local port
+        port=$(yq ".spec.ports[${i}].default" "$manifest")
+        for rp in $RESERVED_PORTS; do
+            if [[ "$port" == "$rp" ]]; then
+                errors+=("Port ${port} conflicts with a platform service. Choose a different port.")
+            fi
+        done
+    done
+
+    # memoryMax vs memoryLimit warning
+    local memmax memlimit
+    memmax=$(yq '.spec.security.memoryMax // ""' "$manifest")
+    memlimit=$(yq '.spec.resources.memoryLimit // "4G"' "$manifest")
+    if [[ -n "$memmax" ]] && [[ -n "$memlimit" ]]; then
+        # Simple numeric comparison (strip unit suffix)
+        local max_num="${memmax//[^0-9]/}" lim_num="${memlimit//[^0-9]/}"
+        if [[ -n "$max_num" ]] && [[ -n "$lim_num" ]] && [[ "$max_num" -gt "$lim_num" ]]; then
+            log_warn "memoryMax (${memmax}) exceeds Docker memoryLimit (${memlimit}). Docker will OOM-kill before systemd limit is reached."
+        fi
+    fi
+
+    if [[ ${#errors[@]} -gt 0 ]]; then
+        log_error "Manifest security validation failed for '${agent}':"
+        for e in "${errors[@]}"; do
+            echo "  - $e" >&2
+        done
+        audit_log "security_validated" "$agent" "fail" "${errors[0]}"
+        exit 1
+    fi
+    audit_log "security_validated" "$agent" "ok"
+}
+
+# Generate compose.override.yaml from agent.yaml
+generate_compose_override() {
+    local agent="$1"
+    local manifest="${PROJECT_ROOT}/agents/${agent}/agent.yaml"
+    local outdir="${PROJECT_ROOT}/agents/${agent}/.generated"
+    local outfile="${outdir}/compose.override.yaml"
+    mkdir -p "$outdir"
+
+    local name health_cmd health_int health_to health_ret health_sp mem_lim mem_res
+    name=$(yq '.metadata.name' "$manifest")
+    health_cmd=$(yq '.spec.health.command' "$manifest")
+    health_int=$(yq '.spec.health.interval // "30s"' "$manifest")
+    health_to=$(yq '.spec.health.timeout // "10s"' "$manifest")
+    health_ret=$(yq '.spec.health.retries // 5' "$manifest")
+    health_sp=$(yq '.spec.health.startPeriod // "120s"' "$manifest")
+    mem_lim=$(yq '.spec.resources.memoryLimit // "4G"' "$manifest")
+    mem_res=$(yq '.spec.resources.memoryReservation // "1G"' "$manifest")
+
+    # Start building the file
+    cat > "$outfile" << HEADER
+# Platform-generated from agents/${name}/agent.yaml
+# DO NOT EDIT — regenerated on every polis init
+services:
+  workspace:
+HEADER
+
+    # Ports
+    local portcount
+    portcount=$(yq '.spec.ports | length // 0' "$manifest")
+    if [[ "$portcount" -gt 0 ]]; then
+        echo "    ports:" >> "$outfile"
+        for ((i = 0; i < portcount; i++)); do
+            local cport henv hdef
+            cport=$(yq ".spec.ports[${i}].container" "$manifest")
+            henv=$(yq ".spec.ports[${i}].hostEnv" "$manifest")
+            hdef=$(yq ".spec.ports[${i}].default" "$manifest")
+            echo "      - \"\${${henv}:-${hdef}}:${cport}\"" >> "$outfile"
+        done
+    fi
+
+    # env_file + volumes
+    cat >> "$outfile" << VOLS
+    env_file:
+      - ../.env
+    volumes:
+      - ../agents/${name}/:/tmp/agents/${name}/:ro
+      - ../agents/${name}/.generated/${name}.service:/etc/systemd/system/${name}.service:ro
+      - ../agents/${name}/.generated/${name}.service.sha256:/etc/systemd/system/${name}.service.sha256:ro
+      - ../agents/${name}/.generated/${name}.env:/run/${name}-env:ro
+VOLS
+
+    # Persistence volumes
+    local perscount
+    perscount=$(yq '.spec.persistence | length // 0' "$manifest")
+    for ((i = 0; i < perscount; i++)); do
+        local vname vpath
+        vname=$(yq ".spec.persistence[${i}].name" "$manifest")
+        vpath=$(yq ".spec.persistence[${i}].containerPath" "$manifest")
+        echo "      - polis-agent-${name}-${vname}:${vpath}" >> "$outfile"
+    done
+
+    # Healthcheck
+    cat >> "$outfile" << HEALTH
+    healthcheck:
+      test: ["CMD-SHELL", "systemctl is-active polis-init.service && systemctl is-active ${name}.service && ${health_cmd} && ip route | grep -q default"]
+      interval: ${health_int}
+      timeout: ${health_to}
+      retries: ${health_ret}
+      start_period: ${health_sp}
+HEALTH
+
+    # Deploy resources
+    cat >> "$outfile" << DEPLOY
+    deploy:
+      resources:
+        limits:
+          memory: ${mem_lim}
+        reservations:
+          memory: ${mem_res}
+DEPLOY
+
+    # Named volumes section
+    if [[ "$perscount" -gt 0 ]]; then
+        echo "" >> "$outfile"
+        echo "volumes:" >> "$outfile"
+        for ((i = 0; i < perscount; i++)); do
+            local vname
+            vname=$(yq ".spec.persistence[${i}].name" "$manifest")
+            echo "  polis-agent-${name}-${vname}:" >> "$outfile"
+            echo "    name: polis-agent-${name}-${vname}" >> "$outfile"
+        done
+    fi
+
+    audit_log "compose_generated" "$agent"
+}
+
+# Generate <name>.service systemd unit from agent.yaml
+generate_systemd_unit() {
+    local agent="$1"
+    local manifest="${PROJECT_ROOT}/agents/${agent}/agent.yaml"
+    local outdir="${PROJECT_ROOT}/agents/${agent}/.generated"
+    mkdir -p "$outdir"
+
+    local name disp_name cmd workdir user envfile init_script
+    name=$(yq '.metadata.name' "$manifest")
+    disp_name=$(yq '.metadata.displayName' "$manifest")
+    cmd=$(yq '.spec.runtime.command' "$manifest")
+    workdir=$(yq ".spec.runtime.workdir // \"/opt/agents/${name}\"" "$manifest")
+    user=$(yq '.spec.runtime.user // "polis"' "$manifest")
+    envfile=$(yq '.spec.runtime.envFile // ""' "$manifest")
+    init_script=$(yq '.spec.init // ""' "$manifest")
+
+    local protect_sys protect_home no_new_priv priv_tmp mem_max cpu_quota
+    protect_sys=$(yq '.spec.security.protectSystem // "strict"' "$manifest")
+    protect_home=$(yq '.spec.security.protectHome // "read-only"' "$manifest")
+    no_new_priv=$(yq '.spec.security.noNewPrivileges // true' "$manifest")
+    priv_tmp=$(yq '.spec.security.privateTmp // true' "$manifest")
+    mem_max=$(yq '.spec.security.memoryMax // ""' "$manifest")
+    cpu_quota=$(yq '.spec.security.cpuQuota // ""' "$manifest")
+
+    # Collect readWritePaths
+    local rwpaths=""
+    local rwcount
+    rwcount=$(yq '.spec.security.readWritePaths | length // 0' "$manifest")
+    for ((i = 0; i < rwcount; i++)); do
+        local p
+        p=$(yq ".spec.security.readWritePaths[${i}]" "$manifest")
+        rwpaths="${rwpaths}${rwpaths:+ }${p}"
+    done
+
+    local outfile="${outdir}/${name}.service"
+    cat > "$outfile" << UNIT_HEADER
+# Platform-generated from agents/${name}/agent.yaml
+# DO NOT EDIT — regenerated on every polis init
+[Unit]
+Description=${disp_name}
+After=network-online.target polis-init.service
+Wants=network-online.target
+Requires=polis-init.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=${user}
+Group=${user}
+WorkingDirectory=${workdir}
+UNIT_HEADER
+
+    # EnvironmentFile
+    if [[ -n "$envfile" ]]; then
+        echo "EnvironmentFile=-${envfile}" >> "$outfile"
+    fi
+
+    # Platform-injected CA trust
+    cat >> "$outfile" << CA_ENV
+
+# Platform-injected CA trust
+Environment="NODE_EXTRA_CA_CERTS=/etc/ssl/certs/polis-ca.pem"
+Environment="SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+Environment="REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt"
+CA_ENV
+
+    # User-defined env vars
+    local envcount
+    envcount=$(yq '.spec.runtime.env | length // 0' "$manifest")
+    if [[ "$envcount" -gt 0 ]]; then
+        echo "" >> "$outfile"
+        echo "# User-defined env vars from manifest" >> "$outfile"
+        while IFS= read -r key; do
+            local val
+            val=$(yq ".spec.runtime.env.\"${key}\"" "$manifest")
+            echo "Environment=\"${key}=${val}\"" >> "$outfile"
+        done < <(yq '.spec.runtime.env | keys | .[]' "$manifest" 2>/dev/null)
+    fi
+
+    # ExecStartPre (init script)
+    if [[ -n "$init_script" ]]; then
+        echo "" >> "$outfile"
+        echo "ExecStartPre=/tmp/agents/${name}/${init_script}" >> "$outfile"
+    fi
+
+    # ExecStart + stop/restart
+    cat >> "$outfile" << EXEC
+
+ExecStart=${cmd}
+
+ExecStop=/bin/kill -SIGTERM \$MAINPID
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+EXEC
+
+    # Security hardening
+    cat >> "$outfile" << SEC
+
+# Security hardening
+NoNewPrivileges=${no_new_priv}
+ProtectSystem=${protect_sys}
+ProtectHome=${protect_home}
+SEC
+
+    if [[ -n "$rwpaths" ]]; then
+        echo "ReadWritePaths=${rwpaths}" >> "$outfile"
+    fi
+    echo "PrivateTmp=${priv_tmp}" >> "$outfile"
+
+    # BindReadOnlyPaths — always present (PrivateTmp hides /tmp)
+    echo "BindReadOnlyPaths=/tmp/agents/${name}" >> "$outfile"
+
+    if [[ -n "$mem_max" ]]; then
+        echo "MemoryMax=${mem_max}" >> "$outfile"
+    fi
+    if [[ -n "$cpu_quota" ]]; then
+        echo "CPUQuota=${cpu_quota}" >> "$outfile"
+    fi
+
+    # Logging + Install
+    cat >> "$outfile" << TAIL
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=${name}
+
+[Install]
+WantedBy=multi-user.target
+TAIL
+
+    # Generate SHA-256 hash
+    sha256sum "$outfile" | cut -d' ' -f1 > "${outdir}/${name}.service.sha256"
+
+    audit_log "systemd_generated" "$agent"
+}
+
+# Generate per-agent env file (only declared variables)
+generate_agent_env() {
+    local agent="$1"
+    local manifest="${PROJECT_ROOT}/agents/${agent}/agent.yaml"
+    local outdir="${PROJECT_ROOT}/agents/${agent}/.generated"
+    local name
+    name=$(yq '.metadata.name' "$manifest")
+    local outfile="${outdir}/${name}.env"
+    mkdir -p "$outdir"
+
+    : > "$outfile"
+
+    local env_file="${PROJECT_ROOT}/.env"
+    [[ -f "$env_file" ]] || return 0
+
+    # Collect declared variable names from envOneOf + envOptional
+    local vars=()
+    while IFS= read -r v; do
+        [[ -n "$v" ]] && vars+=("$v")
+    done < <(yq '.spec.requirements.envOneOf // [] | .[]' "$manifest" 2>/dev/null)
+    while IFS= read -r v; do
+        [[ -n "$v" ]] && vars+=("$v")
+    done < <(yq '.spec.requirements.envOptional // [] | .[]' "$manifest" 2>/dev/null)
+
+    for var in "${vars[@]}"; do
+        local line
+        line=$(grep "^${var}=" "$env_file" 2>/dev/null | head -1 || true)
+        if [[ -n "$line" ]]; then
+            echo "$line" >> "$outfile"
+        fi
+    done
+    chmod 600 "$outfile"
+}
 
 discover_agents() {
     local agents_dir="${PROJECT_ROOT}/agents"
     for agent_dir in "$agents_dir"/*/; do
         [[ "$(basename "$agent_dir")" == "_template" ]] && continue
-        if [[ -f "$agent_dir/agent.conf" ]]; then
+        if [[ -f "$agent_dir/agent.yaml" ]]; then
             basename "$agent_dir"
         fi
     done
@@ -449,36 +884,56 @@ discover_agents() {
 validate_agent() {
     local agent="$1"
     local agent_dir="${PROJECT_ROOT}/agents/${agent}"
-    if [[ ! -f "$agent_dir/agent.conf" ]]; then
+    local manifest="${agent_dir}/agent.yaml"
+
+    if [[ ! -f "$manifest" ]]; then
         log_error "Unknown agent: ${agent}"
         log_info "Available agents:"
         discover_agents | sed 's/^/  - /'
         exit 1
     fi
-    if [[ ! -f "$agent_dir/install.sh" ]]; then
-        log_error "Agent '${agent}' is missing install.sh"
+
+    check_yq
+
+    # Required fields check
+    local missing=()
+    for field in '.apiVersion' '.kind' '.metadata.name' '.spec.packaging' '.spec.runtime.command' '.spec.health.command'; do
+        local val
+        val=$(yq "${field} // \"\"" "$manifest")
+        if [[ -z "$val" || "$val" == "null" ]]; then
+            missing+=("$field")
+        fi
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "agent.yaml missing required fields: ${missing[*]}"
+        audit_log "validation_failed" "$agent" "fail" "missing: ${missing[*]}"
         exit 1
     fi
-    [[ -x "$agent_dir/install.sh" ]] || log_warn "install.sh is not executable"
 
-    local override="$agent_dir/compose.override.yaml"
-    if [[ -f "$override" ]] && [[ -f "$ENV_FILE" ]]; then
-        docker compose -f "$COMPOSE_FILE" -f "$override" config --quiet 2>/dev/null \
-            || log_warn "compose.override.yaml validation failed (non-fatal, continuing)"
+    # Packaging check (Phase 1: script only)
+    local pkg
+    pkg=$(yq '.spec.packaging' "$manifest")
+    if [[ "$pkg" != "script" ]]; then
+        log_error "Unsupported packaging type: ${pkg}. Only 'script' is supported."
+        exit 1
     fi
-}
 
-load_agent_conf() {
-    local agent="$1"
-    # shellcheck source=/dev/null
-    . "${PROJECT_ROOT}/agents/${agent}/agent.conf"
+    # Install script existence
+    local install_path
+    install_path=$(yq '.spec.install // ""' "$manifest")
+    if [[ -n "$install_path" ]] && [[ ! -f "${agent_dir}/${install_path}" ]]; then
+        log_error "Install script not found: ${agent_dir}/${install_path}"
+        exit 1
+    fi
+
+    validate_manifest_security "$agent"
 }
 
 build_compose_flags() {
     local agent="$1"
     local flags="-f ${COMPOSE_FILE} --env-file ${ENV_FILE}"
 
-    local override="${PROJECT_ROOT}/agents/${agent}/compose.override.yaml"
+    local override="${PROJECT_ROOT}/agents/${agent}/.generated/compose.override.yaml"
     if [[ -f "$override" ]]; then
         flags="${flags} -f ${override}"
     fi
@@ -492,7 +947,7 @@ dispatch_agent_command() {
     shift 2 || true
 
     validate_agent "$agent"
-    load_agent_conf "$agent"
+    load_agent_yaml "$agent"
 
     case "$subcmd" in
         init)
@@ -554,8 +1009,10 @@ dispatch_agent_command() {
             ;;
         *)
             # Try agent-specific commands.sh
-            local commands_script="${PROJECT_ROOT}/agents/${agent}/commands.sh"
-            if [[ -f "$commands_script" ]]; then
+            local cmd_path
+            cmd_path=$(yq '.spec.commands // ""' "${PROJECT_ROOT}/agents/${agent}/agent.yaml")
+            local commands_script="${PROJECT_ROOT}/agents/${agent}/${cmd_path}"
+            if [[ -n "$cmd_path" ]] && [[ -f "$commands_script" ]]; then
                 bash "$commands_script" "polis-workspace" "$subcmd" "$@"
             else
                 log_error "Unknown command: ${subcmd}"
@@ -581,17 +1038,19 @@ scaffold_agent() {
     fi
 
     cp -r "$template" "$target"
-    sed -i "s/CHANGEME/${name}/g" "$target/agent.conf" "$target/config/agent.service"
+    # Replace CHANGEME in agent.yaml and install.sh
+    sed -i "s/CHANGEME/${name}/g" "$target/agent.yaml" "$target/install.sh"
     chmod +x "$target/install.sh"
     log_success "Scaffolded agent '${name}' at ${target}"
-    log_info "Edit the files in ${target}/ then run: ./polis init --agent=${name} --local"
+    log_info "Edit agent.yaml in ${target}/ then run: ./polis init --agent=${name} --local"
 }
 
 validate_agent_env() {
     local agent="$1"
     local env_file="${PROJECT_ROOT}/.env"
+    local manifest="${PROJECT_ROOT}/agents/${agent}/agent.yaml"
 
-    load_agent_conf "$agent"
+    load_agent_yaml "$agent"
 
     # Create .env if missing
     if [[ ! -f "$env_file" ]]; then
@@ -599,18 +1058,22 @@ validate_agent_env() {
         chmod 600 "$env_file"
     fi
 
-    # Check AGENT_REQUIRED_ENV_ONE_OF
-    if [[ -n "${AGENT_REQUIRED_ENV_ONE_OF:-}" ]]; then
+    # Check requirements.envOneOf
+    local oneofcount
+    oneofcount=$(yq '.spec.requirements.envOneOf | length // 0' "$manifest")
+    if [[ "$oneofcount" -gt 0 ]]; then
         local found=false
-        for var in $AGENT_REQUIRED_ENV_ONE_OF; do
+        local varlist=""
+        while IFS= read -r var; do
+            varlist="${varlist}${varlist:+ }${var}"
             if grep -qE "^${var}=.+" "$env_file" 2>/dev/null; then
                 found=true
                 break
             fi
-        done
+        done < <(yq '.spec.requirements.envOneOf | .[]' "$manifest")
         if [[ "$found" == "false" ]]; then
             log_warn "No required API key configured for ${AGENT_DISPLAY_NAME}!"
-            echo "Edit ${env_file} and set one of: ${AGENT_REQUIRED_ENV_ONE_OF}"
+            echo "Edit ${env_file} and set one of: ${varlist}"
         fi
     fi
 }
@@ -681,7 +1144,7 @@ case "${1:-}" in
         EFFECTIVE_AGENT="${AGENT_NAME:-base}"
         if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
             validate_agent "$EFFECTIVE_AGENT"
-            load_agent_conf "$EFFECTIVE_AGENT"
+            load_agent_yaml "$EFFECTIVE_AGENT"
             log_info "Using agent: ${AGENT_DISPLAY_NAME} (${EFFECTIVE_AGENT})"
         fi
         
@@ -726,14 +1189,24 @@ case "${1:-}" in
             validate_agent_env "$EFFECTIVE_AGENT"
         fi
         
-        # Step 5: Clean up existing containers
+        # Step 5: Generate agent artifacts from manifest
+        if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
+            echo ""
+            log_step "Generating agent artifacts from manifest..."
+            generate_compose_override "$EFFECTIVE_AGENT"
+            generate_systemd_unit "$EFFECTIVE_AGENT"
+            generate_agent_env "$EFFECTIVE_AGENT"
+            log_success "Generated artifacts in agents/${EFFECTIVE_AGENT}/.generated/"
+        fi
+        
+        # Step 6: Clean up existing containers
         echo ""
         log_step "Cleaning up existing containers..."
         docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --volumes --remove-orphans 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
         log_success "Environment cleaned."
         
-        # Step 6: Build or pull images
+        # Step 7: Build or pull images
         COMPOSE_FLAGS=$(build_compose_flags "$EFFECTIVE_AGENT")
         
         if [[ "$LOCAL_BUILD" == "true" ]]; then
@@ -937,21 +1410,24 @@ case "${1:-}" in
             list)
                 echo "=== Available Agents ==="
                 for agent in $(discover_agents); do
-                    load_agent_conf "$agent"
+                    load_agent_yaml "$agent"
                     echo "  ${AGENT_NAME}: ${AGENT_DESCRIPTION}"
                 done
                 ;;
             info)
                 agent="${3:?Usage: polis agents info <name>}"
                 validate_agent "$agent"
-                load_agent_conf "$agent"
+                load_agent_yaml "$agent"
+                manifest="${PROJECT_ROOT}/agents/${agent}/agent.yaml"
+                mem_lim=$(yq '.spec.resources.memoryLimit // "4G"' "$manifest")
+                mem_res=$(yq '.spec.resources.memoryReservation // "1G"' "$manifest")
                 echo "=== Agent: ${AGENT_DISPLAY_NAME} ==="
                 echo "  Name:        ${AGENT_NAME}"
                 echo "  Version:     ${AGENT_VERSION}"
                 echo "  Description: ${AGENT_DESCRIPTION}"
                 echo "  Service:     ${AGENT_SERVICE_NAME}"
-                echo "  Port:        ${AGENT_CONTAINER_PORT}"
-                echo "  Memory:      ${AGENT_MEMORY_LIMIT} (reserved: ${AGENT_MEMORY_RESERVATION})"
+                echo "  Command:     ${AGENT_COMMAND}"
+                echo "  Memory:      ${mem_lim} (reserved: ${mem_res})"
                 ;;
             *)
                 echo "Usage: polis agents <list|info <name>>"
@@ -980,7 +1456,7 @@ case "${1:-}" in
     *)
         # Dynamic agent dispatch: if $1 matches a discovered agent, route to dispatch
         cmd="${1:-}"
-        if [[ -n "$cmd" ]] && [[ -f "${PROJECT_ROOT}/agents/${cmd}/agent.conf" ]]; then
+        if [[ -n "$cmd" ]] && [[ -f "${PROJECT_ROOT}/agents/${cmd}/agent.yaml" ]]; then
             shift
             dispatch_agent_command "$cmd" "$@"
         else
