@@ -846,10 +846,27 @@ int dlp_check_preview(char *preview_data, int preview_data_len,
     if (!data)
         return CI_MOD_CONTINUE;
 
-    /* If no body, allow through */
+    /* No body (e.g., GET requests) — still enforce domain policy.
+     * Without this check, bodyless requests to unknown domains bypass
+     * apply_security_policy() entirely because dlp_process() is only
+     * called when CI_MOD_CONTINUE is returned.
+     *
+     * We return CI_MOD_CONTINUE so c-ICAP proceeds to call
+     * dlp_process() (end_of_data handler), which already has the
+     * full blocking logic including apply_security_policy(). For
+     * no-body requests, c-ICAP will call dlp_process() immediately
+     * since there is no more data to read. */
     if (!ci_req_hasbody(req)) {
-        ci_debug_printf(5, "polis_dlp: No body, allowing request\n");
-        return CI_MOD_ALLOW204;
+        int policy = apply_security_policy(data->host, 0);
+        if (policy == 0) {
+            ci_debug_printf(5, "polis_dlp: No body, known domain "
+                               "'%s' — allowing\n", data->host);
+            return CI_MOD_ALLOW204;
+        }
+        ci_debug_printf(3, "polis_dlp: No body, new domain '%s' "
+                           "— deferring to end_of_data handler "
+                           "(policy=%d)\n", data->host, policy);
+        return CI_MOD_CONTINUE;
     }
 
     /* Accumulate preview data for scanning */
