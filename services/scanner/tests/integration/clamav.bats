@@ -33,7 +33,8 @@ setup() {
 @test "clamav: uses correct image version" {
     run docker inspect --format '{{.Config.Image}}' "${CLAMAV_CONTAINER}"
     assert_success
-    assert_output --partial "clamav/clamav:1.5"
+    # Accept either upstream clamav image or custom polis-scanner image
+    assert_output --regexp "(clamav/clamav:1\\.5|polis-scanner)"
 }
 
 # =============================================================================

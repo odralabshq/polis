@@ -179,7 +179,7 @@ setup() {
 @test "valkey: valkey-data volume is mounted at /data" {
     run docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${VALKEY_CONTAINER}"
     assert_success
-    assert_output "polis-valkey-data"
+    assert_output "polis-state-data"
 }
 
 @test "valkey: /data directory is writable" {

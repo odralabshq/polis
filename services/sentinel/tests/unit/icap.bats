@@ -107,19 +107,19 @@ setup() {
 # =============================================================================
 
 @test "icap: c-icap user exists" {
-    run docker exec "${ICAP_CONTAINER}" id c-icap
+    run docker exec "${ICAP_CONTAINER}" id sentinel
     assert_success
 }
 
 @test "icap: c-icap group exists" {
-    run docker exec "${ICAP_CONTAINER}" getent group c-icap
+    run docker exec "${ICAP_CONTAINER}" getent group sentinel
     assert_success
 }
 
-@test "icap: c-icap process runs as c-icap user" {
+@test "icap: c-icap process runs as sentinel user" {
     run docker exec "${ICAP_CONTAINER}" ps -o user= -p $(docker exec "${ICAP_CONTAINER}" pgrep -x c-icap | head -1)
     assert_success
-    assert_output "c-icap"
+    assert_output "sentinel"
 }
 
 # =============================================================================
@@ -131,10 +131,10 @@ setup() {
     assert_success
 }
 
-@test "icap: /var/run/c-icap owned by c-icap" {
+@test "icap: /var/run/c-icap owned by sentinel" {
     run docker exec "${ICAP_CONTAINER}" stat -c '%U' /var/run/c-icap
     assert_success
-    assert_output "c-icap"
+    assert_output "sentinel"
 }
 
 @test "icap: /etc/c-icap directory exists" {
@@ -187,7 +187,7 @@ setup() {
 # =============================================================================
 
 @test "icap: server log directory is writable" {
-    run docker exec -u c-icap "${ICAP_CONTAINER}" test -w /var/log/c-icap
+    run docker exec -u sentinel "${ICAP_CONTAINER}" test -w /var/log/c-icap
     assert_success
 }
 

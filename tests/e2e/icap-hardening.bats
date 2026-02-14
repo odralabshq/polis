@@ -73,7 +73,7 @@ setup() {
     # Verify the running ICAP service has maxsize configured
     run docker exec "$ICAP_CONTAINER" grep "^maxsize" /etc/squidclamav.conf
     assert_success
-    assert_output "maxsize 100M"
+    assert_output "maxsize 200M"
 }
 
 # =============================================================================

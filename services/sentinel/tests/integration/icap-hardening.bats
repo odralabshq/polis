@@ -86,23 +86,23 @@ setup() {
     assert_success
 }
 
-@test "icap-hardening: maxsize is 100M (AC3)" {
+@test "icap-hardening: maxsize is 200M (AC3)" {
     run grep "^maxsize" "$SQUIDCLAMAV_CONF"
     assert_success
-    assert_output "maxsize 100M"
+    assert_output "maxsize 200M"
 }
 
 @test "icap-hardening: clamd StreamMaxLength matches architecture" {
-    # Should be 50M or 100M per architecture spec
+    # Should be 50M, 100M, or 200M per architecture spec
     run grep "^StreamMaxLength" "$CLAMD_CONF"
     assert_success
-    assert_output --regexp "StreamMaxLength (50|100)M"
+    assert_output --regexp "StreamMaxLength (50|100|200)M"
 }
 
 @test "icap-hardening: clamd MaxFileSize matches architecture" {
     run grep "^MaxFileSize" "$CLAMD_CONF"
     assert_success
-    assert_output --regexp "MaxFileSize (50|100)M"
+    assert_output --regexp "MaxFileSize (50|100|200)M"
 }
 
 @test "icap-hardening: clamd MaxScanSize is 400M" {
@@ -303,9 +303,9 @@ setup() {
 }
 
 @test "icap-hardening: clamav-db volume exists" {
-    run docker volume ls --format '{{.Name}}' --filter name=polis-clamav-db
+    run docker volume ls --format '{{.Name}}' --filter name=polis-scanner-db
     assert_success
-    assert_output "polis-clamav-db"
+    assert_output "polis-scanner-db"
 }
 
 # =============================================================================

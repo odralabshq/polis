@@ -111,22 +111,41 @@ ipv6_disabled() {
 # =============================================================================
 
 @test "gateway-ipv6: init logs show IPv6 disable attempt" {
-    run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    # IPv6 disable is done by gate-init container (setup-network.sh), not the gateway container itself
+    # Check gate-init logs if available, otherwise check gateway logs
+    local init_container="polis-gate-init"
+    if docker ps -a --format '{{.Names}}' | grep -q "^${init_container}$"; then
+        run docker logs "${init_container}" 2>&1
+    else
+        run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    fi
     assert_success
     assert_output --partial "Disabling IPv6"
 }
 
 @test "gateway-ipv6: init logs do not show CRITICAL errors" {
-    run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    # Check both gate and gate-init containers for critical errors
+    local init_container="polis-gate-init"
+    if docker ps -a --format '{{.Names}}' | grep -q "^${init_container}$"; then
+        run docker logs "${init_container}" 2>&1
+    else
+        run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    fi
     assert_success
     refute_output --partial "CRITICAL: IPv6 addresses still present"
     refute_output --partial "Aborting - TPROXY bypass risk"
 }
 
 @test "gateway-ipv6: init logs show completion message" {
-    run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    # Networking setup completion is logged by gate-init container
+    local init_container="polis-gate-init"
+    if docker ps -a --format '{{.Names}}' | grep -q "^${init_container}$"; then
+        run docker logs "${init_container}" 2>&1
+    else
+        run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    fi
     assert_success
-    assert_output --partial "IPv6 disable/check completed"
+    assert_output --partial "Networking setup complete"
 }
 
 # =============================================================================
@@ -142,7 +161,13 @@ ipv6_disabled() {
         skip "sysctl not functional in this environment"
     fi
 
-    run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    # IPv6 disable is done by gate-init container
+    local init_container="polis-gate-init"
+    if docker ps -a --format '{{.Names}}' | grep -q "^${init_container}$"; then
+        run docker logs "${init_container}" 2>&1
+    else
+        run docker logs "${GATEWAY_CONTAINER}" 2>&1
+    fi
     assert_success
     [[ "$output" == *"IPv6 disabled via sysctl"* ]] || \
     [[ "$output" == *"WARNING: sysctl IPv6 disable failed"* ]] || \

@@ -16,9 +16,9 @@ setup() {
     run docker inspect --format '{{.HostConfig.CapAdd}}' "${ICAP_CONTAINER}"
     assert_success
     assert_output --partial "CHOWN"
-    # SETUID removed
+    # SETUID and SETGID removed — sentinel runs as fixed user
     # assert_output --partial "SETUID"
-    assert_output --partial "SETGID"
+    # assert_output --partial "SETGID"
     refute_output --partial "SYS_ADMIN"
 }
 

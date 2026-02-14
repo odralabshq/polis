@@ -127,6 +127,7 @@ echo ""
 echo "--- Setting file permissions ---"
 
 chmod 644 "${OUTPUT_DIR}"/valkey_*_password.txt
+chmod 644 "${OUTPUT_DIR}/valkey_password.txt"
 chmod 644 "${OUTPUT_DIR}/valkey_users.acl"
 
 echo "Permissions set: password files=644, ACL=644"

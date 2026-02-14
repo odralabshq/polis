@@ -58,7 +58,6 @@ setup() {
 }
 
 @test "dlp: g3proxy is routing REQMOD to credcheck" {
-    GATEWAY_CONTAINER="polis-gateway"
     run docker exec "${GATEWAY_CONTAINER}" grep "icap://sentinel:1344/credcheck" /etc/g3proxy/g3proxy.yaml
     assert_success
 }

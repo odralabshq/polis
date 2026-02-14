@@ -35,14 +35,14 @@ setup() {
 # Policy Routing Tests
 # =============================================================================
 
-@test "tproxy: ip rule for fwmark 0x1 exists" {
+@test "tproxy: ip rule for fwmark 0x2 exists" {
     run docker exec "${GATEWAY_CONTAINER}" ip rule show
     assert_success
-    assert_output --partial "fwmark 0x1"
+    assert_output --partial "fwmark 0x2"
 }
 
-@test "tproxy: routing table 100 has local route" {
-    run docker exec "${GATEWAY_CONTAINER}" ip route show table 100
+@test "tproxy: routing table 102 has local route" {
+    run docker exec "${GATEWAY_CONTAINER}" ip route show table 102
     assert_success
     assert_output --partial "local"
 }

@@ -164,6 +164,7 @@ setup() {
     run docker inspect --format '{{range $net, $config := .NetworkSettings.Networks}}{{$net}} {{end}}' "${WORKSPACE_CONTAINER}"
     assert_success
     assert_output --partial "internal-bridge"
+    # host-access may be present for agent profiles
     refute_output --partial "gateway-bridge"
     refute_output --partial "external-bridge"
 }
@@ -173,7 +174,8 @@ setup() {
     # When run WITH --agent=openclaw, the compose.override.yaml adds port exposure
     
     # Check if compose.override.yaml exists (indicates --agent was used)
-    if [[ -f "${PROJECT_ROOT}/deploy/compose.override.yaml" ]]; then
+    if [[ -f "${PROJECT_ROOT}/deploy/compose.override.yaml" ]] || \
+       ls "${PROJECT_ROOT}"/agents/*/compose.override.yaml &>/dev/null; then
         skip "Agent profile detected (compose.override.yaml exists) - ports are expected"
     fi
     

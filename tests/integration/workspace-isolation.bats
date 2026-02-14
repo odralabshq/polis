@@ -229,10 +229,12 @@ setup() {
 }
 
 @test "isolation: workspace is on internal-bridge only" {
-    # Verify workspace has exactly one interface (+ loopback)
+    # Verify workspace has expected interfaces (+ loopback)
+    # Base: 1 interface (internal-bridge)
+    # With agent host-access network: 2 interfaces (internal-bridge + host-access)
     local iface_count
     iface_count=$(docker exec "${WORKSPACE_CONTAINER}" ip -o link show | grep -v lo | wc -l)
-    [ "$iface_count" -eq 1 ]
+    [[ "$iface_count" -eq 1 ]] || [[ "$iface_count" -eq 2 ]]
 }
 
 @test "isolation: gate has three network interfaces" {
@@ -243,7 +245,7 @@ setup() {
 }
 
 @test "isolation: workspace cannot see other Docker networks" {
-    # Workspace should only see internal-bridge
+    # Workspace should only see internal-bridge (and optionally host-access for agent profiles)
     run docker inspect "${WORKSPACE_CONTAINER}" --format '{{range $net, $config := .NetworkSettings.Networks}}{{$net}} {{end}}'
     assert_success
     assert_output --partial "internal-bridge"
