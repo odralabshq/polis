@@ -107,12 +107,32 @@ for agent_dir in /tmp/agents/*/; do
         fi
     fi
 
-    # Enable + start the agent service (if service file was mounted)
+    # Enable the agent service (if service file was mounted).
+    # NOTE: We use "enable" without "--now" because this init script runs as
+    # polis-init.service (Type=oneshot). Agent services declare
+    # Requires=polis-init.service + After=polis-init.service, so starting them
+    # here would deadlock (systemd waits for polis-init to finish first).
+    # Instead, we enable the service and start it explicitly after this loop.
     svc="/etc/systemd/system/${name}.service"
     if [ -f "$svc" ]; then
         systemctl daemon-reload
-        systemctl enable --now "${name}.service" || \
+        systemctl enable "${name}.service" || \
             echo "[workspace] WARNING: failed to enable ${name}.service"
+    fi
+done
+
+# Start agent services that were enabled above.
+# polis-init.service is about to exit, so systemd will consider it "active (exited)"
+# and the After=polis-init.service dependency will be satisfied.
+for agent_dir in /tmp/agents/*/; do
+    [ -d "$agent_dir" ] || continue
+    name=$(basename "$agent_dir")
+    svc="/etc/systemd/system/${name}.service"
+    if [ -f "$svc" ] && systemctl is-enabled "${name}.service" &>/dev/null; then
+        echo "[workspace] Queuing start for ${name}.service (will start after init completes)"
+        # Use --no-block so we don't wait for the service to fully start
+        systemctl start --no-block "${name}.service" || \
+            echo "[workspace] WARNING: failed to queue ${name}.service start"
     fi
 done
 

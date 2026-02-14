@@ -96,8 +96,8 @@ detect_model() {
         echo "anthropic/claude-sonnet-4-20250514"
         echo "[openclaw-init] Detected ANTHROPIC_API_KEY, using Claude" >&2
     elif [[ -n "$openai_key" ]]; then
-        echo "openai/gpt-4o"
-        echo "[openclaw-init] Detected OPENAI_API_KEY, using GPT-4o" >&2
+        echo "openai/gpt-5.1-codex-mini"
+        echo "[openclaw-init] Detected OPENAI_API_KEY, using GPT-5.1-codex-mini" >&2
     elif [[ -n "$openrouter_key" ]]; then
         echo "openrouter/anthropic/claude-sonnet-4-20250514"
         echo "[openclaw-init] Detected OPENROUTER_API_KEY, using OpenRouter" >&2
@@ -127,18 +127,30 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
     # Create OpenClaw configuration with the token
     # Note: allowInsecureAuth enables token-only auth for HTTP access (no device identity)
     # This is required for Docker container access where HTTPS is not available
+    # dangerouslyDisableDeviceAuth: allows Control UI access without device pairing
+    # gateway.mode=local: skip Tailscale/cloud setup
+    # chatCompletions: enables /v1/chat/completions HTTP endpoint for API access
     cat > "$CONFIG_FILE" << CONFIGEOF
 {
   "gateway": {
     "bind": "lan",
     "port": 18789,
+    "mode": "local",
     "auth": {
       "mode": "token",
       "token": "${GATEWAY_TOKEN}"
     },
     "controlUi": {
       "enabled": true,
-      "allowInsecureAuth": true
+      "allowInsecureAuth": true,
+      "dangerouslyDisableDeviceAuth": true
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
     }
   },
   "agents": {
