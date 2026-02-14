@@ -86,6 +86,90 @@ get_container_env_early() {
     echo "$val"
 }
 
+# Inject polis security instructions into workspace SOUL.md (idempotent)
+# OpenClaw loads SOUL.md from the workspace dir as the agent's system prompt.
+# We append our security tool docs so the agent knows how to use them.
+inject_polis_soul() {
+    local ws_soul="${CONFIG_DIR}/workspace/SOUL.md"
+    local marker="## Polis Security Workspace"
+    
+    mkdir -p "${CONFIG_DIR}/workspace"
+    
+    # Skip if already injected
+    if [[ -f "$ws_soul" ]] && grep -qF "$marker" "$ws_soul" 2>/dev/null; then
+        echo "[openclaw-init] Polis security section already in workspace SOUL.md"
+        return 0
+    fi
+    
+    # Append polis security section (works whether file exists or not)
+    cat >> "$ws_soul" << 'POLIS_SOUL'
+
+---
+
+## Polis Security Workspace
+
+You are running inside a Polis secure workspace. Your outbound network traffic is monitored by a DLP (Data Loss Prevention) system that protects against credential exfiltration and unauthorized data transfers.
+
+### How the Security System Works
+
+All your HTTP requests pass through a transparent proxy with DLP inspection. The DLP module may **block** a request for two reasons:
+
+1. **Credential detected** — The request body contains a credential pattern (API key, private key, etc.) heading to an unauthorized destination.
+2. **New domain** — The request targets a domain not in the known-good list. Behavior depends on the active security level:
+   - `relaxed` — new domains are auto-allowed
+   - `balanced` (default) — new domains require human approval
+   - `strict` — new domains are blocked outright
+
+When a request is blocked, the proxy returns HTTP 403 with headers:
+- `X-polis-Block: true`
+- `X-polis-Reason: <reason>`
+- `X-polis-Pattern: <pattern_name>`
+
+### Security Shell Commands
+
+You have these shell commands available. Run them with your exec tool.
+
+**/home/polis/.local/bin/polis-report-block.sh** — Call immediately when you receive a 403 with X-polis-Block header:
+```
+/home/polis/.local/bin/polis-report-block.sh <request_id> <reason> <destination> [pattern]
+```
+
+**/home/polis/.local/bin/polis-check-status.sh** — Poll after reporting a block to check approval status:
+```
+/home/polis/.local/bin/polis-check-status.sh <request_id>
+```
+
+**/home/polis/.local/bin/polis-list-pending.sh** — List all blocked requests awaiting human approval:
+```
+/home/polis/.local/bin/polis-list-pending.sh
+```
+
+**/home/polis/.local/bin/polis-security-status.sh** — Get current security level and pending counts:
+```
+/home/polis/.local/bin/polis-security-status.sh
+```
+
+**/home/polis/.local/bin/polis-security-log.sh** — Get recent security events:
+```
+/home/polis/.local/bin/polis-security-log.sh
+```
+
+### Approval Workflow
+
+1. Your request gets blocked (HTTP 403 + X-polis headers)
+2. Run `polis-report-block.sh` with the block details
+3. Tell the user: "My request to [destination] was blocked. To approve, run: [approval_command]"
+4. Wait for the user to approve (they run the command on the host)
+5. Run `polis-check-status.sh` to confirm approval
+6. Retry the original request
+
+**You cannot approve requests yourself.** Only a human on the host machine can approve.
+POLIS_SOUL
+    
+    chmod 644 "$ws_soul"
+    echo "[openclaw-init] Injected polis security section into workspace SOUL.md"
+}
+
 # Auto-detect available API key and select appropriate model
 detect_model() {
     local anthropic_key=$(get_container_env_early "ANTHROPIC_API_KEY")
@@ -195,6 +279,11 @@ CONFIGEOF
         echo "[openclaw-init] Installed SOUL.md (HITL security instructions)"
     fi
 
+    # Inject polis security section into workspace SOUL.md
+    # OpenClaw loads bootstrap files from the workspace dir, not the agent dir.
+    # We append our security instructions so the agent knows about its tools.
+    inject_polis_soul
+
     # Install polis security CLI wrappers (bridge to MCP toolbox server)
     POLIS_SCRIPTS_SRC="/usr/local/share/openclaw/scripts"
     POLIS_BIN_DIR="/home/polis/.local/bin"
@@ -227,6 +316,9 @@ else
         done
         echo "[openclaw-init] Re-installed polis security CLI wrappers"
     fi
+
+    # Re-inject polis security section into workspace SOUL.md (idempotent)
+    inject_polis_soul
 
     # Read existing token from file
     if [[ -f "$TOKEN_FILE" ]]; then
