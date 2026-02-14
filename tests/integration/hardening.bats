@@ -5,6 +5,7 @@
 
 setup() {
     load "../helpers/common.bash"
+    require_container "$WORKSPACE_CONTAINER" "$GATEWAY_CONTAINER" "$ICAP_CONTAINER"
 }
 
 @test "hardening: workspace configuration has CAP_DROP=ALL" {
@@ -60,7 +61,8 @@ setup() {
 
 @test "hardening: traffic to internet is inspected and forced through proxy" {
     # Verify traffic goes through the gate (Via: ICAP)
-    run docker exec "${WORKSPACE_CONTAINER}" curl -s -D - -o /dev/null --connect-timeout 5 http://1.1.1.1
+    run_with_network_skip "1.1.1.1" docker exec "${WORKSPACE_CONTAINER}" \
+        curl -s -D - -o /dev/null --connect-timeout 5 --max-time 15 http://1.1.1.1
     assert_success
     assert_output --partial "Via: ICAP"
 }
