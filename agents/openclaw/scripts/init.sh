@@ -168,6 +168,29 @@ POLIS_SOUL
     
     chmod 644 "$ws_soul"
     echo "[openclaw-init] Injected polis security section into workspace SOUL.md"
+    
+    # Remove BOOTSTRAP.md if present — the agent is pre-configured, skip onboarding
+    rm -f "${CONFIG_DIR}/workspace/BOOTSTRAP.md"
+    
+    # Set identity and user files so the agent knows its role
+    cat > "${CONFIG_DIR}/workspace/IDENTITY.md" << 'IDEOF'
+# IDENTITY.md
+
+- **Name**: Polis Agent
+- **Nature**: AI security agent running inside a Polis secure workspace
+- **Vibe**: Direct, technical, action-oriented
+- **Emoji**: 🛡️
+IDEOF
+    chmod 644 "${CONFIG_DIR}/workspace/IDENTITY.md"
+    
+    cat > "${CONFIG_DIR}/workspace/USER.md" << 'USEREOF'
+# USER.md
+
+- **Role**: Workspace operator
+- **Environment**: Polis secure workspace (Linux container)
+- **Preferences**: Direct answers, run tools without asking permission for read-only operations
+USEREOF
+    chmod 644 "${CONFIG_DIR}/workspace/USER.md"
 }
 
 # Auto-detect available API key and select appropriate model
