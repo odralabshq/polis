@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 022
 
 # =============================================================================
 # Valkey Secrets Generator
