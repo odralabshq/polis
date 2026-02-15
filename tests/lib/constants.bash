@@ -49,3 +49,9 @@ export PORT_G3FCGEN=2999
 # All long-running containers (for iteration)
 export ALL_CONTAINERS=("$CTR_RESOLVER" "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE")
 export ALL_INIT_CONTAINERS=("$CTR_GATE_INIT" "$CTR_SCANNER_INIT" "$CTR_STATE_INIT")
+
+# Test profile containers
+export CTR_HTTPBIN="polis-httpbin"
+export HTTPBIN_HOST="10.20.1.100:8080"
+# Gate HTTP proxy — used to route workspace traffic through g3proxy→ICAP to httpbin
+export HTTP_PROXY_VIA_GATE="http://${IP_GATE_INT}:8080"

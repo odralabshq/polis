@@ -39,3 +39,16 @@ restore_security_level() {
 reset_test_state() {
     restore_security_level
 }
+
+run_with_network_skip() {
+    local label="$1"; shift
+    run "$@"
+    if [[ "$status" -ne 0 ]]; then
+        case "$output" in
+            *"Could not resolve"*|*"Connection timed out"*|\
+            *"Network is unreachable"*|*"Connection refused"*)
+                skip "${label} unreachable — network-dependent test"
+                ;;
+        esac
+    fi
+}

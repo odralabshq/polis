@@ -462,6 +462,27 @@ services:
     labels:
       service: "polis-toolbox"
 
+  # =========================================================
+  # HTTPBIN (Test Profile — local HTTP target)
+  # =========================================================
+  httpbin:
+    image: mccutchen/go-httpbin
+    container_name: polis-httpbin
+    profiles: ["test"]
+    networks:
+      external-bridge:
+        ipv4_address: 10.20.1.100
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+    restart: "no"
+
 networks:
   internal-bridge:
     enable_ipv6: false
