@@ -51,7 +51,8 @@ setup() {
 }
 
 @test "compose config: no profiles directives on core services" {
-    run grep "profiles:" "$COMPOSE"
+    # httpbin is a test-only service with profiles: ["test"] — exclude it
+    run bash -c "sed '/httpbin:/,/^  [^ ]/d' '$COMPOSE' | grep 'profiles:'"
     assert_failure
 }
 
