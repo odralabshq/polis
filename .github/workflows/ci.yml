@@ -11,25 +11,51 @@ on:
 
 env:
   SYSBOX_VERSION: "0.6.7"
+  POLIS_IMAGES: >-
+    polis-resolver-oss:latest
+    polis-gate-oss:latest
+    polis-sentinel-oss:latest
+    polis-scanner-oss:latest
+    polis-workspace-oss:latest
+    polis-toolbox-oss:latest
 
 jobs:
-  unit-tests:
+  # ── Stage 1: Compile Rust workspace + C native tests ──────────────
+  build-code:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Generate secrets for ACL structure tests
-        run: |
-          chmod +x ./services/state/scripts/generate-secrets.sh
-          touch .env
-          ./services/state/scripts/generate-secrets.sh ./secrets .
-      - name: Run unit tests
-        run: ./tests/run-tests.sh unit
 
-  integration-tests:
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test (compile + unit tests)
+        run: cargo test --workspace
+
+      - name: Compile and run C native tests
+        run: |
+          for src in tests/native/sentinel/test_*.c; do
+            bin="${src%.c}"
+            gcc -Wall -Werror -o "$bin" "$src"
+            "$bin"
+          done
+
+  # ── Stage 2a: Build all Docker images, export as artifact ─────────
+  build-containers:
     runs-on: ubuntu-24.04
-    needs: unit-tests
+    needs: build-code
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +64,56 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          platforms: linux/amd64
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Build images (compose + buildx GHA cache)
+        run: |
+          docker buildx bake \
+            --set '*.cache-from=type=gha' \
+            --set '*.cache-to=type=gha,mode=max' \
+            --load \
+            -f docker-compose.yml
+
+      - name: Save and compress images
+        run: |
+          docker save ${{ env.POLIS_IMAGES }} | zstd -T0 -3 -o polis-images.tar.zst
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: polis-images
+          path: polis-images.tar.zst
+          retention-days: 1
+          compression-level: 0  # already zstd-compressed
+
+  # ── Stage 2b: BATS unit tests (no Docker needed) ─────────────────
+  unit-tests:
+    runs-on: ubuntu-24.04
+    needs: build-code
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Generate secrets for ACL structure tests
+        run: |
+          chmod +x ./services/state/scripts/generate-secrets.sh
+          touch .env
+          ./services/state/scripts/generate-secrets.sh ./secrets .
+
+      - name: Run unit tests
+        run: ./tests/run-tests.sh unit
+
+  # ── Stage 3: Integration tests (load pre-built images) ───────────
+  integration-tests:
+    runs-on: ubuntu-24.04
+    needs: [build-containers, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install sysbox
         run: |
@@ -49,23 +124,27 @@ jobs:
           echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
 
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst --stdout | docker load
+
       - name: Setup certificates and secrets
         run: |
           chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
           ./cli/polis.sh setup-ca
           ./services/state/scripts/generate-certs.sh ./certs/valkey
-          # Certs need 644 for cross-UID bind-mount access
           chmod 644 ./certs/valkey/*.crt
-          # Keys: add read for container UIDs (bind-mount); CI-only — production should use per-service secrets
           chmod a+r ./certs/valkey/*.key
           touch .env
           ./services/state/scripts/generate-secrets.sh ./secrets .
           chmod 644 ./secrets/valkey_users.acl
 
-      - name: Build and start containers
-        run: |
-          ./cli/polis.sh build
-          ./cli/polis.sh up
+      - name: Start containers
+        run: ./cli/polis.sh up
 
       - name: Wait for healthy
         run: |
@@ -95,6 +174,7 @@ jobs:
           done
           docker ps -a
 
+  # ── Stage 4: E2E tests (push to main/develop only) ───────────────
   e2e-tests:
     runs-on: ubuntu-24.04
     needs: integration-tests
@@ -103,11 +183,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          platforms: linux/amd64
 
       - name: Install sysbox
         run: |
@@ -118,22 +193,28 @@ jobs:
           echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
 
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst --stdout | docker load
+
       - name: Setup certificates and secrets
         run: |
           chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
           ./cli/polis.sh setup-ca
           ./services/state/scripts/generate-certs.sh ./certs/valkey
-          # Certs need 644 for cross-UID bind-mount access
           chmod 644 ./certs/valkey/*.crt
-          # Keys: add read for container UIDs (bind-mount); CI-only — production should use per-service secrets
           chmod a+r ./certs/valkey/*.key
           touch .env
           ./services/state/scripts/generate-secrets.sh ./secrets .
           chmod 644 ./secrets/valkey_users.acl
 
-      - name: Build and start containers
+      - name: Start containers
         run: |
-          ./cli/polis.sh build
+          docker compose --profile test up -d httpbin 2>/dev/null || true
           ./cli/polis.sh up
 
       - name: Wait for healthy
