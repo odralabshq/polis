@@ -99,7 +99,7 @@ static pthread_mutex_t valkey_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* --- OTT rewrite additions --- */
 static regex_t approve_pattern;           /* /polis-approve req-* regex */
-static int time_gate_secs = 15;           /* Time-gate delay (seconds) */
+static int time_gate_secs = 5;            /* Time-gate delay (seconds) */
 static int ott_ttl_secs = 600;            /* OTT key TTL in Valkey */
 static redisContext *valkey_gov_ctx = NULL;/* governance-reqmod connection */
 static pthread_mutex_t gov_valkey_mutex = PTHREAD_MUTEX_INITIALIZER;
