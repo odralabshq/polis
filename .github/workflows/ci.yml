@@ -70,6 +70,7 @@ jobs:
 
       - name: Build images (compose + buildx GHA cache)
         run: |
+          touch .env
           docker buildx bake \
             --set '*.cache-from=type=gha' \
             --set '*.cache-to=type=gha,mode=max' \
