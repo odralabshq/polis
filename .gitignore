@@ -40,3 +40,6 @@ agents/*/.generated/
 
 # Audit log
 .polis-audit.log
+
+# IDE / AI assistant working files
+.kiro/

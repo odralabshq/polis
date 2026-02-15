@@ -132,7 +132,10 @@ setup() {
 }
 
 @test "no containers expose ports to host" {
+    # Workspace is excluded: agent overrides (e.g. openclaw) legitimately
+    # publish ports for external access. All other containers must not.
     for ctr in "${ALL_CONTAINERS[@]}"; do
+        [[ "$ctr" != "$CTR_WORKSPACE" ]] || continue
         local ports
         ports=$(docker port "$ctr" 2>/dev/null || true)
         [[ -z "$ports" ]] || fail "$ctr exposes ports: $ports"

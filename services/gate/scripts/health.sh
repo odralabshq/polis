@@ -23,11 +23,11 @@ if [[ "$ICAP_ECHO" != *"200"* ]]; then
     exit 1
 fi
 
-# Check ICAP squidclamav service via OPTIONS (verifies ClamAV integration)
-ICAP_AV=$(printf 'OPTIONS icap://sentinel:1344/squidclamav ICAP/1.0\r\nHost: sentinel\r\n\r\n' | \
-          timeout 3 nc sentinel 1344 2>/dev/null | head -1 || true)
-if [[ "$ICAP_AV" != *"200"* ]]; then
-    echo "UNHEALTHY: ICAP squidclamav service not responding (ClamAV may be down)"
+# Check ICAP sentinel_respmod service via OPTIONS (verifies RESPMOD path)
+ICAP_RESP=$(printf 'OPTIONS icap://sentinel:1344/sentinel_respmod ICAP/1.0\r\nHost: sentinel\r\n\r\n' | \
+            timeout 3 nc sentinel 1344 2>/dev/null | head -1 || true)
+if [[ "$ICAP_RESP" != *"200"* ]]; then
+    echo "UNHEALTHY: ICAP sentinel_respmod service not responding"
     exit 1
 fi
 

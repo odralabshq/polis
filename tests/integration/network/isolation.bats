@@ -28,11 +28,13 @@ setup() {
     assert_output --partial "$IP_GATE_INT"
 }
 
-@test "workspace: has exactly 1 interface plus lo" {
+@test "workspace: has at most 2 interfaces plus lo" {
+    # Base: 1 interface (internal-bridge). Agent overrides (e.g. openclaw)
+    # may add a host-access network → 2 interfaces. Never more than 2.
     require_container "$CTR_WORKSPACE"
     run docker exec "$CTR_WORKSPACE" sh -c "ip -o link show | grep -cv lo"
     assert_success
-    assert_output "1"
+    [[ "$output" -ge 1 && "$output" -le 2 ]] || fail "Expected 1-2 interfaces, got $output"
 }
 
 @test "workspace: cannot reach cloud metadata" {
