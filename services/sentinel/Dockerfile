@@ -73,6 +73,15 @@ RUN gcc -shared -fPIC -Wall -Werror \
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
     -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lz
 
+# Copy and compile merged Sentinel RESPMOD module (ClamAV + OTT)
+COPY services/sentinel/modules/merged/srv_polis_sentinel_resp.c /build/
+RUN gcc -shared -fPIC -Wall -Werror \
+    -o /build/srv_polis_sentinel_resp.so \
+    /build/srv_polis_sentinel_resp.c \
+    -I/build/c-icap-server-C_ICAP_0.6.4 \
+    -I/build/c-icap-server-C_ICAP_0.6.4/include \
+    -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lpthread -lz
+
 # Runtime image
 FROM debian:trixie
 ENV DEBIAN_FRONTEND=noninteractive
@@ -97,6 +106,9 @@ COPY --from=builder /build/srv_polis_dlp.so /usr/lib/c_icap/
 # Copy approval modules
 COPY --from=builder /build/srv_polis_approval_rewrite.so /usr/lib/c_icap/
 COPY --from=builder /build/srv_polis_approval.so /usr/lib/c_icap/
+
+# Copy merged Sentinel RESPMOD module
+COPY --from=builder /build/srv_polis_sentinel_resp.so /usr/lib/c_icap/
 
 # Create dedicated c-icap user and group
 # Create dedicated sentinel user and group (uid/gid 101 matches sentinel tmpfs in compose)

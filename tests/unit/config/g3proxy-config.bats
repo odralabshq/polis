@@ -3,7 +3,7 @@
 # g3proxy configuration validation
 
 setup() {
-    load "../../helpers/common.bash"
+    load "../../lib/test_helper.bash"
     CONFIG="$PROJECT_ROOT/services/gate/config/g3proxy.yaml"
 }
 

@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 022
 
 # =============================================================================
 # Valkey Secrets Generator
@@ -90,9 +91,9 @@ echo "--- Creating valkey_users.acl ---"
 
 cat > "${OUTPUT_DIR}/valkey_users.acl" <<EOF
 user default off
-user governance-reqmod on #${HASH_GOV_REQMOD} ~polis:ott:* ~polis:blocked:* ~polis:log:* -@all +get +set +setnx +exists +zadd
+user governance-reqmod on #${HASH_GOV_REQMOD} ~polis:ott:* ~polis:blocked:* ~polis:approved:* ~polis:log:* -@all +get +set +setnx +exists +zadd
 user governance-respmod on #${HASH_GOV_RESPMOD} ~polis:ott:* ~polis:blocked:* ~polis:approved:* ~polis:log:* -@all +get +del +setex +exists +zadd
-user mcp-agent on #${HASH_MCP_AGENT} ~polis:blocked:* ~polis:approved:* -@all +GET +SET +SETEX +MGET +EXISTS +SCAN +PING +TTL (~polis:config:security_level -@all +GET +PING) (~polis:log:events -@all +RPUSH +LTRIM +LRANGE +PING)
+user mcp-agent on #${HASH_MCP_AGENT} ~polis:blocked:* ~polis:approved:* -@all +GET +SET +SETEX +MGET +EXISTS +SCAN +PING +TTL (~polis:config:security_level -@all +GET +PING) (~polis:log:events -@all +ZADD +ZREMRANGEBYRANK +ZREVRANGE +ZCARD +PING)
 user mcp-admin on #${HASH_MCP_ADMIN} ~polis:* +@all -@dangerous -FLUSHALL -FLUSHDB -DEBUG -CONFIG -SHUTDOWN
 user log-writer on #${HASH_LOG_WRITER} ~polis:log:events -@all +ZADD +ZRANGEBYSCORE +ZCARD +PING
 user healthcheck on #${HASH_HEALTHCHECK} -@all +PING +INFO
@@ -118,23 +119,6 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 echo ".env cleaned (passwords removed, now using Docker secrets)"
-
-# =============================================================================
-# Set File Permissions
-# =============================================================================
-
-echo ""
-echo "--- Setting file permissions ---"
-
-chmod 644 "${OUTPUT_DIR}"/valkey_*_password.txt
-chmod 644 "${OUTPUT_DIR}/valkey_password.txt"
-chmod 644 "${OUTPUT_DIR}/valkey_users.acl"
-
-echo "Permissions set: password files=644, ACL=644"
-# =============================================================================
-
-echo ""
-echo "--- Setting file permissions ---"
 
 echo ""
 echo "=== Secrets generation complete ==="

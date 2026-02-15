@@ -16,6 +16,7 @@ When a request is blocked, the proxy returns HTTP 403 with headers:
 - `X-polis-Block: true`
 - `X-polis-Reason: <reason>` (e.g., `credential_detected`, `new_domain_blocked`, `new_domain_prompt`)
 - `X-polis-Pattern: <pattern_name>`
+- `X-polis-Request-Id: <request_id>` (format: `req-` + 8 hex chars)
 
 ## Security Tools
 
@@ -33,7 +34,7 @@ polis-report-block.sh <request_id> <reason> <destination> [pattern]
 - `destination`: the host you were trying to reach
 - `pattern`: from `X-polis-Pattern` header (optional)
 
-Returns JSON with `approval_command` — show this to the user.
+This registers the block in the approval queue so the user can approve it.
 
 ### polis-check-status.sh
 Poll this after reporting a block to check if the user approved or denied it.
@@ -67,19 +68,41 @@ polis-security-log.sh
 
 ## Approval Workflow
 
-1. Your request gets blocked (HTTP 403 + X-polis headers)
-2. Run `polis-report-block.sh` with the block details
-3. Tell the user: "My request to [destination] was blocked. To approve it, run: `[approval_command]`"
-4. Wait for the user to approve (they run the command on the host)
-5. Run `polis-check-status.sh` to confirm approval
-6. Retry the original request
+When your request gets blocked (HTTP 403 + X-polis headers), follow this flow:
 
-**You cannot approve requests yourself.** The approval system uses cryptographic tokens rewritten by the proxy — only a human on the host machine can approve.
+1. Run `polis-report-block.sh` with the block details to register it in the approval queue.
+2. **Send the approval command as a message to the user**: Include `/polis-approve <request_id>` in your response. For example: "My request to httpbin.org was blocked. To approve, send: `/polis-approve req-abc12345`"
+3. The proxy automatically rewrites the request_id into a one-time token (OTT) before it reaches the user. The user will see something like `/polis-approve ott-x7k9m2p4` instead of the original request_id.
+4. **Tell the user to wait ~5 seconds** before typing the OTT code back. The system has a short security delay to prevent auto-approval — if the user sends it back too quickly, it won't register.
+5. The user types the OTT code back in the chat to approve the request.
+6. Poll `polis-check-status.sh <request_id>` to confirm the approval went through.
+7. Retry the original request once approved.
 
-## Important Rules
+### What to tell the user
 
-- Never try to bypass the DLP system or proxy
-- Never include raw credential values in your messages to the user
-- Always report blocks promptly so the user can take action
-- If a request is denied, respect the decision and find an alternative approach
-- The approval command contains a request ID, not the actual credential — it's safe to show
+When presenting the approval code, always include these instructions:
+- They will see a rewritten code starting with `ott-` — that's normal and expected.
+- They must **copy and send that `ott-` code back** in the chat to complete the approval.
+- They should **wait about 5 seconds** after seeing the code before sending it back. If they send it too fast, the system will silently reject it as a security measure.
+
+Example message:
+> My request to httpbin.org was blocked under request ID `req-abc12345`. To approve it, send `/polis-approve req-abc12345`. You'll see a rewritten code starting with `ott-` — wait about 5 seconds, then send that code back to complete the approval.
+
+### Handling "still pending" after user sent the OTT
+
+If the user says they already sent the OTT code but `polis-check-status.sh` still shows `pending`:
+
+1. **Do NOT send `/polis-approve req-...` again.** That generates a new OTT code, which wastes the one the user already has and creates confusion.
+2. **Ask the user to resend the same `ott-` code** they already have. The OTT is still valid (it lasts 10 minutes) — they just need to send it again.
+3. **Remind them about the 5-second wait.** The most common reason for "still pending" is that they sent the code back too quickly after seeing it. Tell them: "You may have sent it too quickly — wait about 5 seconds and resend the same `ott-` code."
+4. Only after 2-3 failed retries with the same OTT should you consider generating a new one.
+
+### Key rules
+
+- **You MUST include `/polis-approve <request_id>` as text in your chat message.** Do NOT tell the user to run shell commands. The approval happens through the chat — the proxy intercepts and secures the flow automatically.
+- **You cannot approve requests yourself.** The approval system uses cryptographic tokens rewritten by the proxy — only a human can complete the approval by typing the OTT code back.
+- Never try to bypass the DLP system or proxy.
+- Never include raw credential values in your messages to the user.
+- Always report blocks promptly so the user can take action.
+- If a request is denied, respect the decision and find an alternative approach.
+- The approval command contains a request ID, not the actual credential — it's safe to show.

@@ -42,6 +42,20 @@ else
     echo "[openclaw-init] WARNING: Polis CA not found at ${POLIS_CA}"
 fi
 
+# =============================================================================
+# Patch OpenClaw WebSocket auth: grant operator scopes to no-device connections
+# =============================================================================
+# OpenClaw clears scopes to [] when dangerouslyDisableDeviceAuth is enabled
+# (no device identity). This causes "missing scope: operator.write" errors.
+# We patch the gateway JS to grant operator.read + operator.write instead.
+GATEWAY_JS=$(find /app/dist -name 'gateway-cli-*.js' -exec grep -l 'scopes = \[\];' {} \; 2>/dev/null | head -1)
+if [[ -n "$GATEWAY_JS" ]]; then
+    sed -i 's/scopes = \[\];/scopes = ["operator.read", "operator.write"];/' "$GATEWAY_JS"
+    echo "[openclaw-init] Patched WebSocket auth in ${GATEWAY_JS}: operator scopes granted"
+else
+    echo "[openclaw-init] WebSocket auth patch already applied or gateway JS not found"
+fi
+
 # Ensure directories exist with correct permissions
 mkdir -p "${CONFIG_DIR}/workspace" \
          "${CONFIG_DIR}/agents" \
@@ -124,6 +138,7 @@ When a request is blocked, the proxy returns HTTP 403 with headers:
 - `X-polis-Block: true`
 - `X-polis-Reason: <reason>`
 - `X-polis-Pattern: <pattern_name>`
+- `X-polis-Request-Id: <request_id>` (format: `req-` + 8 hex chars)
 
 ### Security Shell Commands
 
@@ -157,13 +172,31 @@ You have these shell commands available. Run them with your exec tool.
 ### Approval Workflow
 
 1. Your request gets blocked (HTTP 403 + X-polis headers)
-2. Run `polis-report-block.sh` with the block details
-3. Tell the user: "My request to [destination] was blocked. To approve, run: [approval_command]"
-4. Wait for the user to approve (they run the command on the host)
-5. Run `polis-check-status.sh` to confirm approval
-6. Retry the original request
+2. Run `polis-report-block.sh` with the block details to register it in the approval queue
+3. **Send the approval command as a message to the user**: Include `/polis-approve <request_id>` in your response.
+4. The proxy rewrites the request_id into a one-time token (OTT) before it reaches the user. The user sees something like `/polis-approve ott-x7k9m2p4`.
+5. **Tell the user to wait ~5 seconds** before sending the OTT code back. The system has a short security delay — if they send it too quickly, it won't register.
+6. The user types the OTT code back in the chat to approve.
+7. Poll `polis-check-status.sh <request_id>` to confirm approval.
+8. Retry the original request once approved.
 
-**You cannot approve requests yourself.** Only a human on the host machine can approve.
+**When presenting the approval code, always tell the user:**
+- They will see a rewritten code starting with `ott-` — that's normal.
+- They must copy and send that `ott-` code back in the chat.
+- They should wait about 5 seconds after seeing the code before sending it back.
+
+**Example message:**
+> My request to httpbin.org was blocked under request ID `req-abc12345`. To approve it, send `/polis-approve req-abc12345`. You'll see a rewritten code starting with `ott-` — wait about 5 seconds, then send that code back to complete the approval.
+
+**If status is still "pending" after the user sent the OTT:**
+1. Do NOT send `/polis-approve req-...` again — that generates a new OTT and wastes the existing one.
+2. Ask the user to resend the same `ott-` code. It's still valid (lasts 10 minutes).
+3. Remind them about the 5-second wait — they likely sent it too quickly.
+4. Only generate a new code after 2-3 failed retries with the same OTT.
+
+**Critical: Include `/polis-approve <request_id>` as text in your chat message.** Do NOT tell the user to run shell commands on the host. The approval happens through the chat — the proxy intercepts and secures the flow automatically.
+
+**You cannot approve requests yourself.** Only a human can complete the approval by typing the OTT code back.
 POLIS_SOUL
     
     chmod 644 "$ws_soul"

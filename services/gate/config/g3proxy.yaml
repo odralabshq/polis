@@ -49,9 +49,9 @@ auditor:
     icap_reqmod_service:
       url: icap://sentinel:1344/credcheck
       no_preview: true
-    # RESPMOD: SquidClamav malware scanning
+    # RESPMOD: Merged ClamAV + OTT approval scanning (sentinel_respmod)
     icap_respmod_service:
-      url: icap://sentinel:1344/squidclamav
+      url: icap://sentinel:1344/sentinel_respmod
       no_preview: true
     # Audit all traffic
     task_audit_ratio: 1.0

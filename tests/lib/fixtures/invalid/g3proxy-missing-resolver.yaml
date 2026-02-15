@@ -1,0 +1,37 @@
+# Polis - g3proxy Configuration (INVALID FIXTURE — resolver section removed)
+# Used for negative testing only.
+
+# ===========================================
+# Auditor - TLS MITM + ICAP
+# ===========================================
+auditor:
+  - name: default
+    protocol_inspection: {}
+    tls_cert_agent:
+      query_peer_addr: 127.0.0.1:2999
+      query_wait_timeout: 4s
+    icap_reqmod_service:
+      url: icap://sentinel:1344/credcheck
+      no_preview: true
+    icap_respmod_service:
+      url: icap://sentinel:1344/squidclamav
+      no_preview: true
+    task_audit_ratio: 1.0
+
+# ===========================================
+# Escapers
+# ===========================================
+escaper:
+  - name: direct
+    type: direct_fixed
+    resolver: default
+
+# ===========================================
+# Servers
+# ===========================================
+server:
+  - name: transparent
+    type: tcp_tproxy
+    listen: 0.0.0.0:18080
+    escaper: direct
+    auditor: default
