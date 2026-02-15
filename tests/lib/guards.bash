@@ -25,6 +25,12 @@ relax_security_level() {
             --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
             --user mcp-admin --no-auth-warning \
             SET polis:config:security_level relaxed EX $ttl" 2>/dev/null || true
+    # Warmup: wait for proxy to stabilise after security level change
+    for _i in 1 2 3; do
+        docker exec "$CTR_WORKSPACE" curl -sf -o /dev/null --connect-timeout 5 \
+            --proxy "http://${IP_GATE_INT}:8080" "http://${HTTPBIN_HOST}/get" 2>/dev/null && return
+        sleep 1
+    done
 }
 
 restore_security_level() {
