@@ -119,22 +119,6 @@ fi
 
 echo ".env cleaned (passwords removed, now using Docker secrets)"
 
-# =============================================================================
-# Set File Permissions
-# =============================================================================
-
-echo ""
-echo "--- Setting file permissions ---"
-
-chmod 644 "${OUTPUT_DIR}"/valkey_*.txt
-chmod 644 "${OUTPUT_DIR}/valkey_users.acl"
-
-echo "Permissions set: password files=644, ACL=644"
-# =============================================================================
-
-echo ""
-echo "--- Setting file permissions ---"
-
 echo ""
 echo "=== Secrets generation complete ==="
 echo "Files created in: ${OUTPUT_DIR}"
