@@ -83,18 +83,7 @@ for agent_dir in /tmp/agents/*/; do
         fi
     fi
 
-    # Enable the agent service (if service file was mounted).
-    # NOTE: We use "enable" without "--now" because this init script runs as
-    # polis-init.service (Type=oneshot). Agent services declare
-    # Requires=polis-init.service + After=polis-init.service, so starting them
-    # here would deadlock (systemd waits for polis-init to finish first).
-    # Instead, we enable the service and start it explicitly after this loop.
-    svc="/etc/systemd/system/${name}.service"
-    if [ -f "$svc" ]; then
-        systemctl daemon-reload
-        systemctl enable "${name}.service" || \
-            echo "[workspace] WARNING: failed to enable ${name}.service"
-    fi
+    # Service enablement is handled after routing is configured (with integrity checks)
 done
 
 # Configure default route to gate for TPROXY
@@ -124,20 +113,39 @@ fi
 # Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
 protect_sensitive_paths
 
-# Start agent services that were enabled above.
-# polis-init.service is about to exit, so systemd will consider it "active (exited)"
-# and the After=polis-init.service dependency will be satisfied.
+# Collect and start agent services (with integrity verification from manifest system).
+# install.sh already ran above (before routing), so we only handle .service files here.
+agent_services=()
 for agent_dir in /tmp/agents/*/; do
     [ -d "$agent_dir" ] || continue
     name=$(basename "$agent_dir")
+
+    # Collect services to enable (generated .service file is mounted by compose override)
     svc="/etc/systemd/system/${name}.service"
-    if [ -f "$svc" ] && systemctl is-enabled "${name}.service" &>/dev/null; then
-        echo "[workspace] Queuing start for ${name}.service (will start after init completes)"
-        # Use --no-block so we don't wait for the service to fully start
-        systemctl start --no-block "${name}.service" || \
-            echo "[workspace] WARNING: failed to queue ${name}.service start"
+    if [ -f "$svc" ]; then
+        # Verify .service file integrity (hash generated at polis init time)
+        hash_file="/etc/systemd/system/${name}.service.sha256"
+        if [ -f "$hash_file" ]; then
+            expected=$(cat "$hash_file")
+            actual=$(sha256sum "$svc" | cut -d' ' -f1)
+            if [ "$expected" != "$actual" ]; then
+                echo "[workspace] CRITICAL: ${name}.service integrity check failed. Skipping."
+                continue
+            fi
+            echo "[workspace] ${name}.service integrity verified"
+        fi
+        agent_services+=("${name}.service")
     fi
 done
+
+# Single daemon-reload, then enable all collected services
+if [ ${#agent_services[@]} -gt 0 ]; then
+    systemctl daemon-reload
+    for svc in "${agent_services[@]}"; do
+        systemctl enable --now "$svc" || \
+            echo "[workspace] WARNING: failed to enable ${svc}"
+    done
+fi
 
 echo "[workspace] Initialization complete"
 exit 0

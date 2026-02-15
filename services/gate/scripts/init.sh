@@ -54,10 +54,14 @@ done
 # Directory /tmp/g3 is owned by g3proxy from Dockerfile
 rm -rf /tmp/g3/*
 
-# Start g3fcgen (background)
+# Start g3fcgen as gate user (background, no special caps needed)
 echo "[gateway] Starting g3fcgen..."
-g3fcgen -c /etc/g3proxy/g3fcgen.yaml &
+setpriv --reuid gate --regid gate --init-groups -- g3fcgen -c /etc/g3proxy/g3fcgen.yaml &
 
-# Start g3proxy (replaces current process)
+# Start g3proxy with ambient capabilities (replaces current process)
+# no-new-privileges blocks file caps from setcap, so we use ambient caps instead
 echo "[gateway] Starting g3proxy..."
-exec g3proxy -c /etc/g3proxy/g3proxy.yaml
+exec setpriv --reuid gate --regid gate --init-groups \
+  --inh-caps +net_admin,+net_raw \
+  --ambient-caps +net_admin,+net_raw \
+  -- g3proxy -c /etc/g3proxy/g3proxy.yaml

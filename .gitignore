@@ -34,3 +34,9 @@ certs/valkey/
 # Rust build artifacts
 target/
 .grepai/
+
+# Generated agent artifacts (compose overrides, systemd units, env files)
+agents/*/.generated/
+
+# Audit log
+.polis-audit.log
