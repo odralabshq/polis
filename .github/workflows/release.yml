@@ -80,7 +80,7 @@ jobs:
             description: Polis Gateway (g3proxy)
           - image: icap
             dockerfile: services/sentinel/Dockerfile
-            description: Polis ICAP (c-icap + SquidClamav)
+            description: Polis ICAP (c-icap + DLP + Sentinel)
           - image: workspace
             dockerfile: services/workspace/Dockerfile
             description: Polis Workspace (base)

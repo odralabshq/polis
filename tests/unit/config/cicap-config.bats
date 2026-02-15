@@ -26,11 +26,6 @@ setup() {
     assert_success
 }
 
-@test "cicap config: squidclamav service loaded" {
-    run grep "Service squidclamav squidclamav.so" "$CONFIG"
-    assert_success
-}
-
 @test "cicap config: DLP module loaded" {
     run grep "Service polis_dlp srv_polis_dlp.so" "$CONFIG"
     assert_success
@@ -41,10 +36,13 @@ setup() {
     assert_success
 }
 
-@test "cicap config: approval modules loaded" {
-    run grep "polis_approval_rewrite" "$CONFIG"
+@test "cicap config: sentinel RESPMOD module loaded" {
+    run grep "polis_sentinel_resp" "$CONFIG"
     assert_success
-    run grep "polis_approval" "$CONFIG"
+}
+
+@test "cicap config: sentinel_respmod alias configured" {
+    run grep "ServiceAlias sentinel_respmod" "$CONFIG"
     assert_success
 }
 
@@ -56,4 +54,15 @@ setup() {
 @test "cicap config: access log path set" {
     run grep "AccessLog /var/log/c-icap/access.log" "$CONFIG"
     assert_success
+}
+
+@test "cicap config: no dead modules loaded" {
+    run grep "squidclamav" "$CONFIG"
+    assert_failure
+    run grep "url_check" "$CONFIG"
+    assert_failure
+    run grep "polis_approval_rewrite" "$CONFIG"
+    assert_failure
+    run grep "polis_approval " "$CONFIG"
+    assert_failure
 }

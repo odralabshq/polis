@@ -71,18 +71,13 @@ setup() {
     assert_success
 }
 
-@test "sentinel: squidclamav module exists" {
-    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/squidclamav.so
-    assert_success
-}
-
 @test "sentinel: DLP module exists" {
     run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_dlp.so
     assert_success
 }
 
-@test "sentinel: approval modules exist" {
-    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_approval.so
+@test "sentinel: sentinel RESPMOD module exists" {
+    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_sentinel_resp.so
     assert_success
 }
 

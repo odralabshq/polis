@@ -132,10 +132,8 @@ services:
         ipv4_address: 10.30.1.5
     volumes:
       - ./services/sentinel/config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
-      - ./services/scanner/config/squidclamav.conf:/etc/squidclamav.conf:ro
       - ./services/sentinel/config/blocklist.txt:/etc/c-icap/blocklist.txt:ro
       - ./services/sentinel/config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
-      - ./services/sentinel/config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
       - ./certs/valkey:/etc/valkey/tls:ro
       - scanner-db:/var/lib/clamav:ro
     environment:

@@ -10,31 +10,36 @@ setup() {
 }
 
 # =============================================================================
-# ICAP modules
+# ICAP modules — active pipeline
 # =============================================================================
 
-@test "e2e: REQMOD approval rewriter module exists" {
+@test "e2e: DLP REQMOD module exists (credcheck)" {
+    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_dlp.so
+    assert_success
+}
+
+@test "e2e: Sentinel RESPMOD module exists (ClamAV + OTT)" {
+    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_sentinel_resp.so
+    assert_success
+}
+
+@test "e2e: credcheck REQMOD service responds" {
+    run docker exec "$CTR_SENTINEL" \
+        c-icap-client -i 127.0.0.1 -p 1344 -s credcheck -f /dev/null
+    assert_success
+}
+
+@test "e2e: sentinel_respmod RESPMOD service responds" {
+    run docker exec "$CTR_SENTINEL" \
+        c-icap-client -i 127.0.0.1 -p 1344 -s sentinel_respmod -f /dev/null
+    assert_success
+}
+
+@test "e2e: dead modules removed from image" {
     run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_approval_rewrite.so
-    assert_success
-}
-
-@test "e2e: RESPMOD approval scanner module exists" {
+    assert_failure
     run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_approval.so
-    assert_success
-}
-
-@test "e2e: REQMOD approval service responds" {
-    # c-icap-client returns 204 (no modification needed) for empty request
-    run docker exec "$CTR_SENTINEL" \
-        c-icap-client -i 127.0.0.1 -p 1344 -s polis_approval_rewrite -f /dev/null
-    assert_success
-}
-
-@test "e2e: RESPMOD approval service responds" {
-    run docker exec "$CTR_SENTINEL" \
-        c-icap-client -i 127.0.0.1 -p 1344 -s polis_approval
-    assert_success
-    assert_output --partial "200 OK"
+    assert_failure
 }
 
 # =============================================================================
