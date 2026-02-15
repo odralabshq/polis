@@ -206,16 +206,27 @@ impl AppState {
 
     pub async fn log_security_event(&self, entry: &SecurityLogEntry) -> Result<()> {
         let json = serde_json::to_string(entry)?;
+        let score = entry.timestamp.timestamp() as f64;
 
-        self.client.rpush::<(), _, _>(keys::EVENT_LOG, json).await?;
-        self.client.ltrim::<(), _>(keys::EVENT_LOG, -1000, -1).await?;
+        self.client.zadd::<(), _, _>(
+            keys::EVENT_LOG, None, None, false, false,
+            (score, json.as_str()),
+        ).await?;
+
+        // Trim to last 1000 entries (remove oldest by rank)
+        let count: i64 = self.client.zcard(keys::EVENT_LOG).await?;
+        if count > 1000 {
+            self.client.zremrangebyrank::<(), _>(
+                keys::EVENT_LOG, 0, count - 1001,
+            ).await?;
+        }
 
         Ok(())
     }
 
     pub async fn get_security_log(&self, limit: usize) -> Result<Vec<SecurityLogEntry>> {
         let entries: Vec<String> = self.client
-            .lrange(keys::EVENT_LOG, -(limit as i64), -1)
+            .zrevrange(keys::EVENT_LOG, 0, (limit as i64) - 1, false)
             .await?;
 
         let mut results = Vec::with_capacity(entries.len());

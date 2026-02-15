@@ -66,34 +66,10 @@ protect_sensitive_paths() {
 
 disable_ipv6 "workspace" || exit 1
 
-# Configure default route to gate for TPROXY
-# Note: Docker doesn't configure gateways for internal networks, so we must do it manually
-echo "[workspace] Resolving gate IP..."
-GATE_IP=$(getent hosts gate | awk '{print $1}')
-
-if [[ -z "$GATE_IP" ]]; then
-    echo "[workspace] ERROR: Could not resolve 'gate' service"
-    exit 1
-fi
-
-echo "[workspace] Configuring default route via gate (${GATE_IP})..."
-
-# Remove any existing default route
-ip route del default 2>/dev/null || true
-
-# Add default route through gate
-if ip route add default via $GATE_IP; then
-    echo "[workspace] Default route configured successfully"
-    ip route show
-else
-    echo "[workspace] ERROR: Failed to configure default route"
-    exit 1
-fi
-
-# Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
-protect_sensitive_paths
-
-# Bootstrap mounted agents (fault-isolated from core init)
+# Bootstrap mounted agents BEFORE routing through the proxy.
+# Agent install scripts (install.sh) need raw internet access to fetch packages
+# (apt-get, npm, git clone, etc.). The transparent proxy intercepts and may block
+# plain HTTP traffic, causing install failures (403 Forbidden from TPROXY).
 for agent_dir in /tmp/agents/*/; do
     [ -d "$agent_dir" ] || continue
     name=$(basename "$agent_dir")
@@ -120,6 +96,33 @@ for agent_dir in /tmp/agents/*/; do
             echo "[workspace] WARNING: failed to enable ${name}.service"
     fi
 done
+
+# Configure default route to gate for TPROXY
+# Note: Docker doesn't configure gateways for internal networks, so we must do it manually
+echo "[workspace] Resolving gate IP..."
+GATE_IP=$(getent hosts gate | awk '{print $1}')
+
+if [[ -z "$GATE_IP" ]]; then
+    echo "[workspace] ERROR: Could not resolve 'gate' service"
+    exit 1
+fi
+
+echo "[workspace] Configuring default route via gate (${GATE_IP})..."
+
+# Remove any existing default route
+ip route del default 2>/dev/null || true
+
+# Add default route through gate
+if ip route add default via $GATE_IP; then
+    echo "[workspace] Default route configured successfully"
+    ip route show
+else
+    echo "[workspace] ERROR: Failed to configure default route"
+    exit 1
+fi
+
+# Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
+protect_sensitive_paths
 
 # Start agent services that were enabled above.
 # polis-init.service is about to exit, so systemd will consider it "active (exited)"

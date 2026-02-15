@@ -16,6 +16,7 @@ When a request is blocked, the proxy returns HTTP 403 with headers:
 - `X-polis-Block: true`
 - `X-polis-Reason: <reason>` (e.g., `credential_detected`, `new_domain_blocked`, `new_domain_prompt`)
 - `X-polis-Pattern: <pattern_name>`
+- `X-polis-Request-Id: <request_id>` (format: `req-` + 8 hex chars)
 
 ## Security Tools
 
@@ -33,7 +34,7 @@ polis-report-block.sh <request_id> <reason> <destination> [pattern]
 - `destination`: the host you were trying to reach
 - `pattern`: from `X-polis-Pattern` header (optional)
 
-Returns JSON with `approval_command` — show this to the user.
+This registers the block in the approval queue so the user can approve it.
 
 ### polis-check-status.sh
 Poll this after reporting a block to check if the user approved or denied it.
@@ -67,14 +68,18 @@ polis-security-log.sh
 
 ## Approval Workflow
 
-1. Your request gets blocked (HTTP 403 + X-polis headers)
-2. Run `polis-report-block.sh` with the block details
-3. Tell the user: "My request to [destination] was blocked. To approve it, run: `[approval_command]`"
-4. Wait for the user to approve (they run the command on the host)
-5. Run `polis-check-status.sh` to confirm approval
-6. Retry the original request
+When your request gets blocked (HTTP 403 + X-polis headers), follow this flow:
 
-**You cannot approve requests yourself.** The approval system uses cryptographic tokens rewritten by the proxy — only a human on the host machine can approve.
+1. Run `polis-report-block.sh` with the block details to register it in the approval queue
+2. **Send the approval command as a message to the user**: Tell the user their approval code by including `/polis-approve <request_id>` in your response message. For example: "My request to httpbin.org was blocked. To approve, type: `/polis-approve req-abc12345`"
+3. The proxy automatically rewrites the request_id into a one-time token (OTT) before it reaches the user. The user will see something like `/polis-approve ott-x7k9m2p4` instead of the original request_id.
+4. The user types the OTT code back in the chat to approve the request.
+5. Poll `polis-check-status.sh <request_id>` to confirm the approval went through.
+6. Retry the original request once approved.
+
+**Critical: You MUST include `/polis-approve <request_id>` as text in your chat message to the user.** Do NOT tell the user to run shell commands on the host. The approval happens through the chat — the proxy intercepts and secures the flow automatically.
+
+**You cannot approve requests yourself.** The approval system uses cryptographic tokens rewritten by the proxy — only a human can complete the approval by typing the OTT code back.
 
 ## Important Rules
 
