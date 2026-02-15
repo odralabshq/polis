@@ -31,6 +31,14 @@ if [[ "$ICAP_AV" != *"200"* ]]; then
     exit 1
 fi
 
+# Check ICAP credcheck (DLP) service via OPTIONS (verifies REQMOD path)
+ICAP_DLP=$(printf 'OPTIONS icap://sentinel:1344/credcheck ICAP/1.0\r\nHost: sentinel\r\n\r\n' | \
+           timeout 3 nc sentinel 1344 2>/dev/null | head -1 || true)
+if [[ "$ICAP_DLP" != *"200"* ]]; then
+    echo "UNHEALTHY: ICAP credcheck service not responding (DLP module may be loading)"
+    exit 1
+fi
+
 # Check nftables ruleset is loaded
 if ! nft list ruleset > /dev/null 2>&1; then
     echo "UNHEALTHY: nftables ruleset not functional"
