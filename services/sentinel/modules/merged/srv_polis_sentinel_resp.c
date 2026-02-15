@@ -1730,7 +1730,7 @@ static int process_ott_exception(const char *ott_code,
     redisReply *reply = NULL;
     char ott_key[64];
     char blocked_key[64];
-    char exception_key[128];
+    char exception_key[512];
     char *blocked_json = NULL;
 
     /* Parsed fields from BlockedRequest JSON */
@@ -1911,8 +1911,8 @@ static int process_ott_exception(const char *ott_code,
     now = time(NULL);
 
     {
-        char exception_json[512];
-        char log_entry[512];
+        char exception_json[1024];
+        char log_entry[1024];
         double now_score = (double)now;
 
         snprintf(exception_json, sizeof(exception_json),
