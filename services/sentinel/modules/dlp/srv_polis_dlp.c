@@ -513,12 +513,15 @@ static int is_new_domain(const char *host)
         ".api.openai.com",
         ".api.github.com",
         ".github.com",
+        ".githubusercontent.com",
         ".amazonaws.com",
         ".api.telegram.org",
         ".discord.com",
         ".api.slack.com",
         ".deb.debian.org",
+        ".deb.nodesource.com",
         ".registry.npmjs.org",
+        ".bun.sh",
         NULL
     };
     size_t hlen, dlen;

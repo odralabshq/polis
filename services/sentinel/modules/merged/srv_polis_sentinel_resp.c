@@ -39,7 +39,7 @@
 
 /* Constants */
 #define CLAMD_CHUNK_SIZE    16384   /* 16KB chunks (matches squidclamav) */
-#define CLAMD_TIMEOUT_SECS  5       /* Socket read/write timeout */
+#define CLAMD_TIMEOUT_SECS  30      /* Socket read/write timeout */
 #define CLAMD_MAX_RESPONSE  1024    /* Max response line length */
 #define MAX_BODY_SIZE       (2 * 1024 * 1024)  /* 2MB body accumulation limit */
 #define APPROVAL_TTL_SECS   300     /* Approval key TTL: 5 minutes */
@@ -1079,6 +1079,55 @@ static void clamd_cb_record_failure(void)
  *
  * Validates: Requirements 2.6, 2.7, 2.15
  */
+
+/*
+ * is_known_package_registry() — Check if host is a known package registry.
+ *
+ * Used to decide fail-open vs fail-closed when ClamAV times out.
+ * Known package registries are trusted sources where a ClamAV timeout
+ * should not block the download (fail-open), while unknown domains
+ * remain fail-closed for security.
+ */
+static int is_known_package_registry(const char *host)
+{
+    static const char *registries[] = {
+        ".registry.npmjs.org",
+        ".deb.nodesource.com",
+        ".deb.debian.org",
+        ".bun.sh",
+        ".github.com",
+        ".githubusercontent.com",
+        ".pypi.org",
+        ".files.pythonhosted.org",
+        ".crates.io",
+        ".static.crates.io",
+        ".rubygems.org",
+        NULL
+    };
+    size_t hlen;
+    int i;
+
+    if (host == NULL || host[0] == '\0')
+        return 0;
+
+    hlen = strlen(host);
+
+    for (i = 0; registries[i] != NULL; i++) {
+        size_t dlen = strlen(registries[i]);
+
+        /* Suffix match */
+        if (hlen >= dlen &&
+            strcasecmp(host + (hlen - dlen), registries[i]) == 0)
+            return 1;
+
+        /* Exact match without leading dot */
+        if (strcasecmp(host, registries[i] + 1) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
 static int is_allowed_domain(const char *host)
 {
     int i;
@@ -2188,40 +2237,48 @@ static int sentinel_resp_process(ci_request_t *req)
 
     } else if (scan_ret == -1) {
         /* ---------------------------------------------------------- */
-        /* ClamAV scan failed — fail closed (return 403)              */
+        /* ClamAV scan failed — fail-open for known package registries */
+        /* (timeout on large tarballs), fail-closed for everything else */
         /* ---------------------------------------------------------- */
-        ci_debug_printf(1, "sentinel_resp: ERROR: "
-            "ClamAV scan failed — failing closed\n");
+        if (is_known_package_registry(data->host)) {
+            ci_debug_printf(1, "sentinel_resp: WARNING: "
+                "ClamAV scan failed for known registry '%s' — "
+                "failing open (package download)\n", data->host);
+            /* Fall through to OTT scan / pass-through */
+        } else {
+            ci_debug_printf(1, "sentinel_resp: ERROR: "
+                "ClamAV scan failed — failing closed\n");
 
-        /* Create error page */
-        data->error_page = ci_membuf_new_sized(4096);
-        if (data->error_page) {
-            const char *error_html =
-                "HTTP/1.1 403 Forbidden\r\n"
-                "Content-Type: text/html\r\n"
-                "Connection: close\r\n"
-                "\r\n"
-                "<!DOCTYPE html>\n"
-                "<html><head><title>Scanner Unavailable</title></head>\n"
-                "<body>\n"
-                "<h1>403 Forbidden - Scanner Unavailable</h1>\n"
-                "<p>The antivirus scanner is temporarily unavailable.</p>\n"
-                "<p>Please try again later.</p>\n"
-                "</body></html>\n";
+            /* Create error page */
+            data->error_page = ci_membuf_new_sized(4096);
+            if (data->error_page) {
+                const char *error_html =
+                    "HTTP/1.1 403 Forbidden\r\n"
+                    "Content-Type: text/html\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "<!DOCTYPE html>\n"
+                    "<html><head><title>Scanner Unavailable</title></head>\n"
+                    "<body>\n"
+                    "<h1>403 Forbidden - Scanner Unavailable</h1>\n"
+                    "<p>The antivirus scanner is temporarily unavailable.</p>\n"
+                    "<p>Please try again later.</p>\n"
+                    "</body></html>\n";
 
-            ci_membuf_write(data->error_page, error_html,
-                           strlen(error_html), 0);
+                ci_membuf_write(data->error_page, error_html,
+                               strlen(error_html), 0);
+            }
+
+            /* Modify response to 403 */
+            ci_http_response_reset_headers(req);
+            ci_http_response_create(req, 1, 1);
+            ci_http_response_add_header(req, "HTTP/1.1 403 Forbidden");
+            ci_http_response_add_header(req, "Content-Type: text/html");
+            ci_http_response_add_header(req, "Connection: close");
+
+            data->virus_found = 1;  /* Treat as virus to use error page path */
+            return CI_MOD_DONE;
         }
-
-        /* Modify response to 403 */
-        ci_http_response_reset_headers(req);
-        ci_http_response_create(req, 1, 1);
-        ci_http_response_add_header(req, "HTTP/1.1 403 Forbidden");
-        ci_http_response_add_header(req, "Content-Type: text/html");
-        ci_http_response_add_header(req, "Connection: close");
-
-        data->virus_found = 1;  /* Treat as virus to use error page path */
-        return CI_MOD_DONE;
     }
 
     /* ---------------------------------------------------------- */

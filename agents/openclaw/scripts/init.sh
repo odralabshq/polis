@@ -48,7 +48,7 @@ fi
 # OpenClaw clears scopes to [] when dangerouslyDisableDeviceAuth is enabled
 # (no device identity). This causes "missing scope: operator.write" errors.
 # We patch the gateway JS to grant operator.read + operator.write instead.
-GATEWAY_JS=$(find /app/dist -name 'gateway-cli-*.js' -exec grep -l 'scopes = \[\];' {} \; 2>/dev/null | head -1)
+GATEWAY_JS=$(find /app/dist -name 'gateway-cli-*.js' -exec grep -l 'scopes = \[\];' {} \; 2>/dev/null | head -1 || true)
 if [[ -n "$GATEWAY_JS" ]]; then
     sed -i 's/scopes = \[\];/scopes = ["operator.read", "operator.write"];/' "$GATEWAY_JS"
     echo "[openclaw-init] Patched WebSocket auth in ${GATEWAY_JS}: operator scopes granted"

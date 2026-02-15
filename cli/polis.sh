@@ -749,7 +749,7 @@ StartLimitBurst=5
 Type=simple
 User=${user}
 Group=${user}
-WorkingDirectory=${workdir}
+WorkingDirectory=-${workdir}
 UNIT_HEADER
 
     # EnvironmentFile
@@ -779,10 +779,10 @@ CA_ENV
         done < <(yq '.spec.runtime.env | keys | .[]' "$manifest" 2>/dev/null)
     fi
 
-    # ExecStartPre (init script)
+    # ExecStartPre (init script — runs as root via '+' prefix for directory setup)
     if [[ -n "$init_script" ]]; then
         echo "" >> "$outfile"
-        echo "ExecStartPre=/tmp/agents/${name}/${init_script}" >> "$outfile"
+        echo "ExecStartPre=+/tmp/agents/${name}/${init_script}" >> "$outfile"
     fi
 
     # ExecStart + stop/restart
@@ -1196,6 +1196,8 @@ case "${1:-}" in
             generate_compose_override "$EFFECTIVE_AGENT"
             generate_systemd_unit "$EFFECTIVE_AGENT"
             generate_agent_env "$EFFECTIVE_AGENT"
+            # Ensure agent scripts are executable (systemd returns 203/EXEC otherwise)
+            find "${PROJECT_ROOT}/agents/${EFFECTIVE_AGENT}" -name '*.sh' -exec chmod +x {} \;
             log_success "Generated artifacts in agents/${EFFECTIVE_AGENT}/.generated/"
         fi
         
@@ -1263,6 +1265,21 @@ case "${1:-}" in
         log_info "Waiting for services to initialize..."
         sleep 5
         
+        # Temporarily relax DLP security level during bootstrap so agent
+        # install scripts can download packages (apt, npm, bun) without
+        # being blocked by the HITL prompt for new domains. The TTL
+        # auto-expires after 5 minutes, restoring balanced mode.
+        if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
+            log_info "Setting DLP to relaxed mode for bootstrap (5 min TTL)..."
+            docker exec polis-state sh -c "
+                REDISCLI_AUTH=\$(cat /run/secrets/valkey_mcp_admin_password) \
+                valkey-cli --tls --cert /etc/valkey/tls/client.crt \
+                    --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
+                    --user mcp-admin --no-auth-warning \
+                    SET polis:config:security_level relaxed EX 300" 2>/dev/null || \
+                log_warn "Could not set DLP to relaxed mode — agent install may fail"
+        fi
+        
         # shellcheck disable=SC2086
         docker compose $COMPOSE_FLAGS ps
         
@@ -1273,7 +1290,7 @@ case "${1:-}" in
             echo ""
             echo "════════════════════════════════════════════════════════════════"
             echo ""
-            echo "  Next: ./polis.sh ${EFFECTIVE_AGENT} init"
+            echo "  Next: ./cli/polis.sh ${EFFECTIVE_AGENT} init"
             echo ""
             echo "════════════════════════════════════════════════════════════════"
         fi
