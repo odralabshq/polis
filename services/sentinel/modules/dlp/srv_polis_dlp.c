@@ -24,6 +24,9 @@
 #include <hiredis/hiredis.h>
 #include <hiredis/hiredis_ssl.h>
 
+/* OpenSSL for SHA-256 credential hashing */
+#include <openssl/evp.h>
+
 /* Constants */
 #define MAX_PATTERNS    32
 #define MAX_PATTERN_LEN 256
@@ -59,6 +62,9 @@ typedef struct {
     char matched_pattern[64];   /* Name of the pattern that matched */
     int eof;                    /* End of data received */
     size_t error_page_sent;     /* Bytes of error page already sent */
+    char credential_hash[65];   /* SHA-256 hex of matched credential (64 + null) */
+    char credential_prefix[5];  /* First 4 chars of credential (4 + null) */
+    int has_credential_hash;    /* Whether credential_hash is populated */
 } dlp_req_data_t;
 
 /* Static pattern storage - loaded from config at service init */
@@ -252,6 +258,105 @@ static int is_new_domain(const char *host)
     }
 
     return 1;  /* new domain */
+}
+
+/*
+ * compute_sha256 - Compute SHA-256 hash of a credential value.
+ *
+ * Uses OpenSSL EVP interface for SHA-256 computation.
+ * Writes the 64-char lowercase hex digest to out_hex (must be >= 65 bytes).
+ * Returns 0 on success, -1 on failure.
+ */
+static int compute_sha256(const char *data, size_t data_len,
+                          char *out_hex)
+{
+    EVP_MD_CTX *ctx;
+    unsigned char digest[32];
+    unsigned int digest_len = 0;
+    int i;
+
+    ctx = EVP_MD_CTX_new();
+    if (!ctx) return -1;
+
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
+        EVP_DigestUpdate(ctx, data, data_len) != 1 ||
+        EVP_DigestFinal_ex(ctx, digest, &digest_len) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return -1;
+    }
+    EVP_MD_CTX_free(ctx);
+
+    for (i = 0; i < 32; i++)
+        snprintf(out_hex + (i * 2), 3, "%02x", digest[i]);
+    out_hex[64] = '\0';
+    return 0;
+}
+
+/*
+ * check_value_exception - Check if a credential hash has an exception
+ * for the given destination host.
+ *
+ * Checks two keys in Valkey:
+ *   1. polis:exception:value:{prefix}:{host} (specific host)
+ *   2. polis:exception:value:{prefix}:* (wildcard, CLI only)
+ *
+ * Performs full 64-char hash comparison against the stored record
+ * to prevent prefix collision false positives.
+ *
+ * Returns 1 if exception found (allow), 0 if no exception (block).
+ */
+static int check_value_exception(const char *credential_hash,
+                                 const char *host)
+{
+    char key[256];
+    char prefix[17];
+    redisReply *reply;
+    int found = 0;
+
+    if (!valkey_level_ctx || !credential_hash || !host)
+        return 0;
+
+    /* Extract 16-char hex prefix */
+    strncpy(prefix, credential_hash, 16);
+    prefix[16] = '\0';
+
+    /* Check specific host exception */
+    snprintf(key, sizeof(key),
+             "polis:exception:value:%s:%s", prefix, host);
+
+    pthread_mutex_lock(&valkey_mutex);
+    reply = redisCommand(valkey_level_ctx, "GET %s", key);
+    pthread_mutex_unlock(&valkey_mutex);
+
+    if (reply && reply->type == REDIS_REPLY_STRING &&
+        reply->str) {
+        /* Verify full hash match (not just prefix) */
+        if (strstr(reply->str, credential_hash) != NULL)
+            found = 1;
+        freeReplyObject(reply);
+        if (found) return 1;
+    } else if (reply) {
+        freeReplyObject(reply);
+    }
+
+    /* Check wildcard exception */
+    snprintf(key, sizeof(key),
+             "polis:exception:value:%s:*", prefix);
+
+    pthread_mutex_lock(&valkey_mutex);
+    reply = redisCommand(valkey_level_ctx, "GET %s", key);
+    pthread_mutex_unlock(&valkey_mutex);
+
+    if (reply && reply->type == REDIS_REPLY_STRING &&
+        reply->str) {
+        if (strstr(reply->str, credential_hash) != NULL)
+            found = 1;
+        freeReplyObject(reply);
+    } else if (reply) {
+        freeReplyObject(reply);
+    }
+
+    return found;
 }
 
 /*
@@ -555,7 +660,7 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
                 continue;
             }
             if (regcomp(&patterns[pattern_count].regex, value,
-                        REG_EXTENDED | REG_NOSUB) != 0) {
+                        REG_EXTENDED) != 0) {
                 ci_debug_printf(1, "polis_dlp: ERROR: Failed to compile "
                                    "regex for pattern '%s'\n", name);
                 continue;
@@ -699,6 +804,9 @@ void *dlp_init_request_data(ci_request_t *req)
     data->matched_pattern[0] = '\0';
     data->eof = 0;
     data->error_page_sent = 0;
+    data->credential_hash[0] = '\0';
+    data->credential_prefix[0] = '\0';
+    data->has_credential_hash = 0;
     memset(data->tail, 0, TAIL_SCAN_SIZE);
 
     /* Extract Host header from the HTTP request */
@@ -769,19 +877,20 @@ static int check_patterns(const char *body, int body_len,
                           dlp_req_data_t *data)
 {
     int i;
+    regmatch_t match[1];
 
     (void)body_len; /* body is null-terminated from ci_membuf */
 
     for (i = 0; i < pattern_count; i++) {
-        /* Test this pattern against the body */
-        if (regexec(&patterns[i].regex, body, 0, NULL, 0) != 0)
+        /* Test this pattern against the body (with match position) */
+        if (regexec(&patterns[i].regex, body, 1, match, 0) != 0)
             continue;
 
         /* Pattern matched - check blocking rules */
         ci_debug_printf(3, "polis_dlp: Pattern '%s' matched\n",
                         patterns[i].name);
 
-        /* Always-block patterns (e.g., private keys) */
+        /* Always-block patterns (e.g., private keys) — no exceptions */
         if (patterns[i].always_block) {
             data->blocked = 1;
             strncpy(data->matched_pattern, patterns[i].name,
@@ -793,38 +902,59 @@ static int check_patterns(const char *body, int body_len,
             return 1;
         }
 
-        /* Pattern has a pre-compiled allow_domain - check host against it */
+        /* Pattern has a pre-compiled allow_domain - check host */
         if (patterns[i].allow_compiled) {
             if (regexec(&patterns[i].allow_regex, data->host,
                         0, NULL, 0) == 0) {
-                /* Host matches allow rule - credential going to
-                   expected destination, continue scanning */
                 ci_debug_printf(3, "polis_dlp: Pattern '%s' "
                                    "allowed for host '%s'\n",
                                patterns[i].name, data->host);
                 continue;
             }
-            /* Host does NOT match allow rule - block */
-            data->blocked = 1;
-            strncpy(data->matched_pattern, patterns[i].name,
-                    sizeof(data->matched_pattern) - 1);
-            data->matched_pattern[
-                sizeof(data->matched_pattern) - 1] = '\0';
-            ci_debug_printf(3, "polis_dlp: Blocked pattern '%s' - "
-                               "host '%s' not in allow list\n",
-                           patterns[i].name, data->host);
-            return 1;
         }
 
-        /* No allow_domain set and not always_block - block by default */
+        /*
+         * Credential going to unexpected destination (or no allow rule).
+         * Compute SHA-256 and check exception store before blocking.
+         */
+        {
+            size_t cred_len = match[0].rm_eo - match[0].rm_so;
+            const char *cred_ptr = body + match[0].rm_so;
+            char hash_hex[65];
+
+            if (compute_sha256(cred_ptr, cred_len, hash_hex) == 0) {
+                /* Store hash and prefix for BlockedRequest */
+                strncpy(data->credential_hash, hash_hex, 64);
+                data->credential_hash[64] = '\0';
+                if (cred_len >= 4) {
+                    memcpy(data->credential_prefix, cred_ptr, 4);
+                    data->credential_prefix[4] = '\0';
+                } else {
+                    data->credential_prefix[0] = '\0';
+                }
+                data->has_credential_hash = 1;
+
+                /* Check value-based exception store */
+                if (check_value_exception(hash_hex, data->host)) {
+                    ci_debug_printf(3, "polis_dlp: Pattern '%s' "
+                        "has value exception for host '%s' "
+                        "— allowing\n",
+                        patterns[i].name, data->host);
+                    continue;
+                }
+            }
+        }
+
+        /* No exception found — block */
         data->blocked = 1;
         strncpy(data->matched_pattern, patterns[i].name,
                 sizeof(data->matched_pattern) - 1);
         data->matched_pattern[
             sizeof(data->matched_pattern) - 1] = '\0';
         ci_debug_printf(3, "polis_dlp: Blocked pattern '%s' - "
-                           "no allow rule configured\n",
-                       patterns[i].name);
+                           "host '%s' not in allow list, "
+                           "no exception found\n",
+                       patterns[i].name, data->host);
         return 1;
     }
 
@@ -1025,6 +1155,22 @@ int dlp_process(ci_request_t *req)
         snprintf(hdr_buf, sizeof(hdr_buf),
                  "X-polis-Pattern: %s", data->matched_pattern);
         ci_http_response_add_header(req, hdr_buf);
+
+        /* Include credential hash headers if available (for
+         * value-based exception support in BlockedRequest) */
+        if (data->has_credential_hash) {
+            snprintf(hdr_buf, sizeof(hdr_buf),
+                     "X-polis-Credential-Hash: %s",
+                     data->credential_hash);
+            ci_http_response_add_header(req, hdr_buf);
+
+            if (data->credential_prefix[0] != '\0') {
+                snprintf(hdr_buf, sizeof(hdr_buf),
+                         "X-polis-Credential-Prefix: %s",
+                         data->credential_prefix);
+                ci_http_response_add_header(req, hdr_buf);
+            }
+        }
 
         ci_debug_printf(3, "polis_dlp: BLOCKED request to "
                            "'%s' - pattern '%s' matched\n",

@@ -23,7 +23,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use polis_common::{
-    redis_keys::approval::approval_command,
+    redis_keys::approval::{approval_command, exception_command},
     validate_request_id, BlockedRequest, RequestStatus,
     SecurityLogEntry,
 };
@@ -46,6 +46,14 @@ pub struct ReportBlockInput {
     /// Optional DLP pattern that triggered the block.
     /// Stored in Valkey for admin use but **never** returned to the agent.
     pub pattern: Option<String>,
+    /// SHA-256 hash of the matched credential value (64 hex chars).
+    /// Provided by the DLP module via X-polis-Credential-Hash header.
+    #[serde(default)]
+    pub credential_hash: Option<String>,
+    /// First 4 chars of the credential for display (e.g., "sk-a").
+    /// Provided by the DLP module via X-polis-Credential-Prefix header.
+    #[serde(default)]
+    pub credential_prefix: Option<String>,
 }
 
 /// Input parameters for the `check_request_status` tool.
@@ -70,6 +78,10 @@ pub struct ReportBlockOutput {
     pub requires_approval: bool,
     /// CLI command the user can run to approve the request.
     pub approval_command: String,
+    /// CLI command the user can run to create a persistent exception.
+    /// Only present when a credential hash is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception_command: Option<String>,
 }
 
 /// Output returned by the `get_security_status` tool.
@@ -178,6 +190,8 @@ impl PolisAgentTools {
             pattern: input.pattern.clone(),
             blocked_at: chrono::Utc::now(),
             status: RequestStatus::Pending,
+            credential_hash: input.credential_hash.clone(),
+            credential_prefix: input.credential_prefix.clone(),
         };
 
         // Store in Valkey (SETEX with 1h TTL).
@@ -199,6 +213,12 @@ impl PolisAgentTools {
             .map_err(|e| format!("Failed to log event: {e}"))?;
 
         // Build agent-facing output — pattern is REDACTED (CWE-200).
+        let except_cmd = if input.credential_hash.is_some() {
+            Some(exception_command(&input.request_id))
+        } else {
+            None
+        };
+
         let output = ReportBlockOutput {
             message: format!(
                 "Request {} to {} has been blocked (reason: {}). \
@@ -208,6 +228,7 @@ impl PolisAgentTools {
             request_id: input.request_id.clone(),
             requires_approval: true,
             approval_command: approval_command(&input.request_id),
+            exception_command: except_cmd,
         };
 
         serde_json::to_string(&output)

@@ -37,6 +37,7 @@
 /* Constants */
 #define MAX_BODY_SCAN       2097152   /* 2MB body scan limit (CWE-400) */
 #define APPROVAL_TTL_SECS   300       /* Approval key TTL: 5 minutes */
+#define EXCEPTION_TTL_SECS  2592000   /* Exception key TTL: 30 days */
 #define MAX_DOMAINS         16        /* Maximum entries in domain allowlist */
 #define OTT_LEN             12        /* "ott-" + 8 alphanumeric chars */
 
@@ -90,6 +91,9 @@ int approval_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
 static int is_allowed_domain(const char *host);
 static int process_ott_approval(const char *ott_code,
                                 const char *resp_host);
+static int process_ott_exception(const char *ott_code,
+                                 const char *resp_host,
+                                 const char *request_id);
 static int ensure_valkey_connected(void);
 
 /*
@@ -547,6 +551,7 @@ static int process_ott_approval(const char *ott_code,
     /* Parsed fields from OTT mapping JSON */
     char parsed_request_id[32];
     char parsed_origin_host[256];
+    char parsed_action[8];       /* "approve" or "except" */
     long parsed_armed_after = 0;
 
     time_t now;
@@ -677,6 +682,29 @@ static int process_ott_approval(const char *ott_code,
         len = (size_t)(end - p);
         memcpy(parsed_origin_host, p, len);
         parsed_origin_host[len] = '\0';
+
+        /* Extract action (optional, defaults to "approve") */
+        p = strstr(ott_json, "\"action\":\"");
+        if (p != NULL) {
+            p += strlen("\"action\":\"");
+            end = strchr(p, '"');
+            if (end != NULL &&
+                (size_t)(end - p) < sizeof(parsed_action)) {
+                len = (size_t)(end - p);
+                memcpy(parsed_action, p, len);
+                parsed_action[len] = '\0';
+            } else {
+                /* Malformed action — default to approve */
+                strncpy(parsed_action, "approve",
+                        sizeof(parsed_action) - 1);
+                parsed_action[sizeof(parsed_action) - 1] = '\0';
+            }
+        } else {
+            /* No action field — backward compat, default approve */
+            strncpy(parsed_action, "approve",
+                    sizeof(parsed_action) - 1);
+            parsed_action[sizeof(parsed_action) - 1] = '\0';
+        }
     }
 
     /* OTT JSON no longer needed after parsing */
@@ -685,9 +713,10 @@ static int process_ott_approval(const char *ott_code,
 
     ci_debug_printf(3, "polis_approval: "
         "OTT '%s' → request_id='%s', origin_host='%s', "
-        "armed_after=%ld\n",
+        "armed_after=%ld, action='%s'\n",
         ott_code, parsed_request_id,
-        parsed_origin_host, parsed_armed_after);
+        parsed_origin_host, parsed_armed_after,
+        parsed_action);
 
     /* ---------------------------------------------------------- */
     /* Step 2: Check time-gate — now >= armed_after (Req 2.7)     */
@@ -721,6 +750,14 @@ static int process_ott_approval(const char *ott_code,
     ci_debug_printf(3, "polis_approval: "
         "OTT '%s' passed time-gate and context binding\n",
         ott_code);
+
+    /* ---------------------------------------------------------- */
+    /* Route: If action is "except", delegate to exception flow   */
+    /* ---------------------------------------------------------- */
+    if (strcmp(parsed_action, "except") == 0) {
+        return process_ott_exception(ott_code, resp_host,
+                                     parsed_request_id);
+    }
 
     /* ---------------------------------------------------------- */
     /* Step 4: Check blocked request exists                       */
@@ -947,6 +984,312 @@ static int process_ott_approval(const char *ott_code,
         "via proxy (origin: %s)\n",
         ott_code, parsed_request_id,
         parsed_origin_host);
+
+    return 1;
+}
+
+/*
+ * process_ott_exception() — Create a persistent value-based exception.
+ *
+ * Called when an OTT with action="except" passes time-gate and context
+ * binding. Reads the BlockedRequest from Valkey, extracts the
+ * credential_hash and destination, and creates an exception key.
+ *
+ * Uses MULTI/EXEC for atomic state mutation:
+ *   1. SETEX exception key (30-day TTL)
+ *   2. ZADD audit log entry
+ *   3. DEL blocked key
+ *   4. DEL OTT key
+ *
+ * Fail-closed: If credential_hash is missing from the BlockedRequest,
+ * the exception is NOT created (returns 0).
+ *
+ * @param ott_code    The OTT code being processed
+ * @param resp_host   The response host (for context binding)
+ * @param request_id  The request_id from the OTT mapping
+ * @return 1 on success, 0 on skip/not-found, -1 on error
+ */
+static int process_ott_exception(const char *ott_code,
+                                 const char *resp_host,
+                                 const char *request_id)
+{
+    redisReply *reply = NULL;
+    char ott_key[64];
+    char blocked_key[64];
+    char exception_key[128];
+    char *blocked_json = NULL;
+
+    /* Parsed fields from BlockedRequest JSON */
+    char parsed_cred_hash[65];
+    char parsed_cred_prefix[8];
+    char parsed_destination[256];
+    char hash_prefix[17];
+
+    time_t now;
+
+    snprintf(ott_key, sizeof(ott_key),
+             "polis:ott:%s", ott_code);
+    snprintf(blocked_key, sizeof(blocked_key),
+             "polis:blocked:%s", request_id);
+
+    /* ---------------------------------------------------------- */
+    /* Step 1: GET blocked request — extract credential_hash      */
+    /* ---------------------------------------------------------- */
+    reply = redisCommand(valkey_ctx, "GET %s", blocked_key);
+    if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
+        ci_debug_printf(1, "polis_approval: "
+            "exception: Valkey GET failed for '%s'%s%s\n",
+            blocked_key,
+            reply ? ": " : "",
+            reply ? reply->str : "");
+        if (reply) freeReplyObject(reply);
+        return -1;
+    }
+
+    if (reply->type == REDIS_REPLY_NIL || reply->str == NULL) {
+        ci_debug_printf(3, "polis_approval: "
+            "exception: Blocked request '%s' not found — "
+            "OTT '%s' stale or already processed\n",
+            request_id, ott_code);
+        freeReplyObject(reply);
+        return 0;
+    }
+
+    blocked_json = strdup(reply->str);
+    freeReplyObject(reply);
+    reply = NULL;
+
+    if (blocked_json == NULL) {
+        ci_debug_printf(0, "polis_approval: CRITICAL: "
+            "strdup failed for blocked JSON\n");
+        return -1;
+    }
+
+    /* ---------------------------------------------------------- */
+    /* Step 2: Parse credential_hash from BlockedRequest JSON     */
+    /* Fail closed if credential_hash is missing                  */
+    /* ---------------------------------------------------------- */
+    {
+        const char *p;
+        const char *end;
+        size_t len;
+
+        /* Extract credential_hash */
+        p = strstr(blocked_json, "\"credential_hash\":\"");
+        if (p == NULL) {
+            ci_debug_printf(1, "polis_approval: "
+                "exception: BlockedRequest '%s' has no "
+                "credential_hash — fail closed, "
+                "cannot create exception\n", request_id);
+            free(blocked_json);
+            return 0;
+        }
+        p += strlen("\"credential_hash\":\"");
+        end = strchr(p, '"');
+        if (end == NULL || (size_t)(end - p) != 64) {
+            ci_debug_printf(1, "polis_approval: "
+                "exception: Malformed credential_hash in "
+                "BlockedRequest '%s'\n", request_id);
+            free(blocked_json);
+            return 0;
+        }
+        memcpy(parsed_cred_hash, p, 64);
+        parsed_cred_hash[64] = '\0';
+
+        /* Extract credential_prefix (optional, for display) */
+        parsed_cred_prefix[0] = '\0';
+        p = strstr(blocked_json, "\"credential_prefix\":\"");
+        if (p != NULL) {
+            p += strlen("\"credential_prefix\":\"");
+            end = strchr(p, '"');
+            if (end != NULL &&
+                (size_t)(end - p) < sizeof(parsed_cred_prefix)) {
+                len = (size_t)(end - p);
+                memcpy(parsed_cred_prefix, p, len);
+                parsed_cred_prefix[len] = '\0';
+            }
+        }
+
+        /* Extract destination */
+        parsed_destination[0] = '\0';
+        p = strstr(blocked_json, "\"destination\":\"");
+        if (p != NULL) {
+            p += strlen("\"destination\":\"");
+            end = strchr(p, '"');
+            if (end != NULL &&
+                (size_t)(end - p) <
+                    sizeof(parsed_destination)) {
+                len = (size_t)(end - p);
+                memcpy(parsed_destination, p, len);
+                parsed_destination[len] = '\0';
+            }
+        }
+    }
+
+    free(blocked_json);
+    blocked_json = NULL;
+
+    /* Validate credential_hash is 64 lowercase hex chars */
+    {
+        int i;
+        int valid = 1;
+        for (i = 0; i < 64; i++) {
+            char c = parsed_cred_hash[i];
+            if (!((c >= '0' && c <= '9') ||
+                  (c >= 'a' && c <= 'f'))) {
+                valid = 0;
+                break;
+            }
+        }
+        if (!valid) {
+            ci_debug_printf(1, "polis_approval: "
+                "exception: Invalid credential_hash format "
+                "in BlockedRequest '%s'\n", request_id);
+            return 0;
+        }
+    }
+
+    /* ---------------------------------------------------------- */
+    /* Step 3: Build exception key                                */
+    /* Key: polis:exception:value:{hash_prefix_16}:{host}         */
+    /* ---------------------------------------------------------- */
+    memcpy(hash_prefix, parsed_cred_hash, 16);
+    hash_prefix[16] = '\0';
+
+    /* Use destination from blocked request as the host.
+     * Strip protocol prefix if present (e.g., "https://") */
+    {
+        const char *host = parsed_destination;
+        if (strncmp(host, "https://", 8) == 0)
+            host += 8;
+        else if (strncmp(host, "http://", 7) == 0)
+            host += 7;
+        /* Strip trailing path if present */
+        {
+            const char *slash = strchr(host, '/');
+            size_t hlen = slash
+                ? (size_t)(slash - host)
+                : strlen(host);
+            if (hlen >= sizeof(parsed_destination))
+                hlen = sizeof(parsed_destination) - 1;
+            memmove(parsed_destination, host, hlen);
+            parsed_destination[hlen] = '\0';
+        }
+    }
+
+    snprintf(exception_key, sizeof(exception_key),
+             "polis:exception:value:%s:%s",
+             hash_prefix, parsed_destination);
+
+    ci_debug_printf(3, "polis_approval: "
+        "exception: Creating exception key '%s' "
+        "for request '%s'\n",
+        exception_key, request_id);
+
+    /* ---------------------------------------------------------- */
+    /* Step 4: MULTI/EXEC atomic exception creation               */
+    /*   1. SETEX exception key (30-day TTL)                      */
+    /*   2. ZADD audit log                                        */
+    /*   3. DEL blocked key                                       */
+    /*   4. DEL OTT key                                           */
+    /* ---------------------------------------------------------- */
+    now = time(NULL);
+
+    {
+        char exception_json[512];
+        char log_entry[512];
+        double now_score = (double)now;
+
+        /* Build exception value JSON */
+        snprintf(exception_json, sizeof(exception_json),
+            "{\"credential_hash\":\"%s\","
+            "\"credential_prefix\":\"%s\","
+            "\"destination\":\"%s\","
+            "\"pattern_name\":\"\","
+            "\"created_at\":%ld,"
+            "\"source\":\"proxy_interception\","
+            "\"ttl_secs\":%d}",
+            parsed_cred_hash,
+            parsed_cred_prefix,
+            parsed_destination,
+            (long)now,
+            EXCEPTION_TTL_SECS);
+
+        /* Build audit log entry */
+        snprintf(log_entry, sizeof(log_entry),
+            "{\"event\":\"exception_created_via_proxy\","
+            "\"request_id\":\"%s\","
+            "\"ott_code\":\"%s\","
+            "\"exception_key\":\"%s\","
+            "\"credential_prefix\":\"%s\","
+            "\"destination\":\"%s\","
+            "\"ttl_secs\":%d,"
+            "\"timestamp\":%ld}",
+            request_id, ott_code,
+            exception_key,
+            parsed_cred_prefix,
+            parsed_destination,
+            EXCEPTION_TTL_SECS,
+            (long)now);
+
+        /* Execute MULTI/EXEC transaction */
+        reply = redisCommand(valkey_ctx, "MULTI");
+        if (reply == NULL ||
+            reply->type == REDIS_REPLY_ERROR) {
+            ci_debug_printf(1, "polis_approval: "
+                "exception: MULTI failed%s%s\n",
+                reply ? ": " : "",
+                reply ? reply->str : "");
+            if (reply) freeReplyObject(reply);
+            return -1;
+        }
+        freeReplyObject(reply);
+
+        /* 1. SETEX exception key */
+        reply = redisCommand(valkey_ctx,
+            "SETEX %s %d %s",
+            exception_key, EXCEPTION_TTL_SECS,
+            exception_json);
+        if (reply) freeReplyObject(reply);
+
+        /* 2. ZADD audit log */
+        reply = redisCommand(valkey_ctx,
+            "ZADD polis:log:events %f %s",
+            now_score, log_entry);
+        if (reply) freeReplyObject(reply);
+
+        /* 3. DEL blocked key */
+        reply = redisCommand(valkey_ctx,
+            "DEL %s", blocked_key);
+        if (reply) freeReplyObject(reply);
+
+        /* 4. DEL OTT key */
+        reply = redisCommand(valkey_ctx,
+            "DEL %s", ott_key);
+        if (reply) freeReplyObject(reply);
+
+        /* Execute the transaction */
+        reply = redisCommand(valkey_ctx, "EXEC");
+        if (reply == NULL ||
+            reply->type == REDIS_REPLY_NIL ||
+            reply->type == REDIS_REPLY_ERROR) {
+            ci_debug_printf(1, "polis_approval: "
+                "exception: EXEC failed for '%s'%s%s — "
+                "blocked key remains, user can retry\n",
+                request_id,
+                reply ? ": " : "",
+                reply ? reply->str : "");
+            if (reply) freeReplyObject(reply);
+            return 0;
+        }
+        freeReplyObject(reply);
+    }
+
+    ci_debug_printf(3, "polis_approval: "
+        "exception: Created exception '%s' for "
+        "request '%s' (TTL=%ds, prefix=%s)\n",
+        exception_key, request_id,
+        EXCEPTION_TTL_SECS, parsed_cred_prefix);
 
     return 1;
 }

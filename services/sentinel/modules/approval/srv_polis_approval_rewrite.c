@@ -2,9 +2,10 @@
  * srv_polis_approval_rewrite.c - c-ICAP REQMOD approval code rewriter
  *
  * REQMOD service that scans outbound HTTP request bodies for
- * /polis-approve req-* commands and rewrites the request_id with
- * a random OTT (One-Time Token) code. The OTT is stored in Valkey
- * with a time-gate and origin_host for context binding.
+ * /polis-approve or /polis-except req-* commands and rewrites the
+ * request_id with a random OTT (One-Time Token) code. The OTT is
+ * stored in Valkey with a time-gate, origin_host for context binding,
+ * and an action field ("approve" or "except").
  *
  * Security mitigations:
  *   - OTT generation via /dev/urandom only (no PRNG fallback, CWE-330)
@@ -39,7 +40,7 @@
 /* Static configuration — loaded at service init */
 static int time_gate_secs = 15;   /* Default time-gate delay */
 static int ott_ttl_secs   = 600;  /* OTT key TTL in Valkey */
-static regex_t approve_pattern;   /* Compiled regex for /polis-approve */
+static regex_t approve_pattern;   /* Compiled regex for /polis-approve|except */
 static redisContext *valkey_ctx = NULL;  /* Valkey connection */
 
 /*
@@ -218,21 +219,23 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
     }
 
     /* ---------------------------------------------------------- */
-    /* Step 2: Compile approve pattern regex                      */
+    /* Step 2: Compile approve/except pattern regex               */
+    /* Group 1: command ("approve" or "except")                   */
+    /* Group 2: request_id ("req-" + 8 hex chars)                 */
     /* ---------------------------------------------------------- */
     rc = regcomp(&approve_pattern,
-                 "/polis-approve[[:space:]]+(req-[a-f0-9]{8})",
+                 "/polis-(approve|except)[[:space:]]+(req-[a-f0-9]{8})",
                  REG_EXTENDED);
     if (rc != 0) {
         char errbuf[128];
         regerror(rc, &approve_pattern, errbuf, sizeof(errbuf));
         ci_debug_printf(0, "polis_approval_rewrite: CRITICAL: "
-            "Failed to compile approve pattern regex: %s\n",
+            "Failed to compile approve/except pattern regex: %s\n",
             errbuf);
         return CI_ERROR;
     }
     ci_debug_printf(3, "polis_approval_rewrite: "
-                       "Approve pattern regex compiled\n");
+                       "Approve/except pattern regex compiled\n");
 
     /* ---------------------------------------------------------- */
     /* Step 3: Connect to Valkey with TLS + ACL                   */
@@ -459,12 +462,14 @@ static int ensure_valkey_connected(void)
 int rewrite_process(ci_request_t *req)
 {
     rewrite_req_data_t *data = ci_service_data(req);
-    regmatch_t matches[2];
+    regmatch_t matches[3];     /* 0=full, 1=command, 2=request_id */
     char *body_raw;
     char req_id[16];       /* "req-" + 8 hex + '\0' = 13 chars */
     char ott_buf[OTT_LEN + 1];  /* "ott-" + 8 alnum + '\0' */
     char valkey_key[64];
+    char action_str[8];    /* "approve" or "except" */
     size_t req_id_len;
+    size_t cmd_len;
     int i;
 
     if (!data || !data->body)
@@ -492,23 +497,36 @@ int rewrite_process(ci_request_t *req)
     }
 
     /* -------------------------------------------------------------- */
-    /* Step 2: Regex scan for /polis-approve req-{hex8} (Req 1.2)    */
+    /* Step 2: Regex scan for /polis-(approve|except) req-{hex8}     */
+    /*         Group 1 = command, Group 2 = request_id (Req 1.2)     */
     /* -------------------------------------------------------------- */
-    if (regexec(&approve_pattern, body_raw, 2, matches, 0) != 0) {
+    if (regexec(&approve_pattern, body_raw, 3, matches, 0) != 0) {
         ci_debug_printf(5, "polis_approval_rewrite: "
-            "No /polis-approve pattern found in body\n");
+            "No /polis-approve or /polis-except pattern "
+            "found in body\n");
         return CI_MOD_ALLOW204;
     }
 
-    /* Extract the captured request_id (group 1) */
-    req_id_len = (size_t)(matches[1].rm_eo - matches[1].rm_so);
+    /* Extract the command type (group 1: "approve" or "except") */
+    cmd_len = (size_t)(matches[1].rm_eo - matches[1].rm_so);
+    if (cmd_len == 0 || cmd_len >= sizeof(action_str)) {
+        ci_debug_printf(3, "polis_approval_rewrite: "
+            "Captured command has invalid length %zu\n",
+            cmd_len);
+        return CI_MOD_ALLOW204;
+    }
+    memcpy(action_str, body_raw + matches[1].rm_so, cmd_len);
+    action_str[cmd_len] = '\0';
+
+    /* Extract the captured request_id (group 2) */
+    req_id_len = (size_t)(matches[2].rm_eo - matches[2].rm_so);
     if (req_id_len == 0 || req_id_len >= sizeof(req_id)) {
         ci_debug_printf(3, "polis_approval_rewrite: "
             "Captured request_id has invalid length %zu\n",
             req_id_len);
         return CI_MOD_ALLOW204;
     }
-    memcpy(req_id, body_raw + matches[1].rm_so, req_id_len);
+    memcpy(req_id, body_raw + matches[2].rm_so, req_id_len);
     req_id[req_id_len] = '\0';
 
     /* -------------------------------------------------------------- */
@@ -643,9 +661,11 @@ int rewrite_process(ci_request_t *req)
                 "{\"ott_code\":\"%s\","
                 "\"request_id\":\"%s\","
                 "\"armed_after\":%ld,"
-                "\"origin_host\":\"%s\"}",
+                "\"origin_host\":\"%s\","
+                "\"action\":\"%s\"}",
                 ott_buf, req_id,
-                (long)armed_after, data->host);
+                (long)armed_after, data->host,
+                action_str);
 
             snprintf(valkey_key, sizeof(valkey_key),
                      "polis:ott:%s", ott_buf);
@@ -708,9 +728,11 @@ int rewrite_process(ci_request_t *req)
                 "\"ott_code\":\"%s\","
                 "\"request_id\":\"%s\","
                 "\"origin_host\":\"%s\","
+                "\"action\":\"%s\","
                 "\"armed_after\":%ld,"
                 "\"timestamp\":%ld}",
                 ott_buf, req_id, data->host,
+                action_str,
                 (long)armed_after, (long)time(NULL));
 
             reply = redisCommand(valkey_ctx,
@@ -749,7 +771,7 @@ int rewrite_process(ci_request_t *req)
         }
 
         /* Overwrite request_id with OTT in the body buffer */
-        memcpy(body_raw + matches[1].rm_so,
+        memcpy(body_raw + matches[2].rm_so,
                ott_buf, OTT_LEN);
 
         ci_debug_printf(3, "polis_approval_rewrite: "
@@ -763,7 +785,8 @@ int rewrite_process(ci_request_t *req)
      * No HTTP response is created; this is REQMOD, not RESPMOD. */
     ci_debug_printf(3, "polis_approval_rewrite: "
         "OTT rewrite complete for '%s' → '%s' "
-        "(host=%s)\n", req_id, ott_buf, data->host);
+        "(host=%s, action=%s)\n",
+        req_id, ott_buf, data->host, action_str);
 
     return CI_MOD_DONE;
 }

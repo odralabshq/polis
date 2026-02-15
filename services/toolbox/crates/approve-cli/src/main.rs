@@ -55,6 +55,50 @@ enum Commands {
         /// Action to take: allow, prompt, or block
         action: String,
     },
+    /// Manage persistent value-based exceptions
+    Exception {
+        #[command(subcommand)]
+        subcmd: ExceptionCommands,
+    },
+}
+
+/// Subcommands for managing value-based exceptions.
+#[derive(Subcommand, Debug)]
+enum ExceptionCommands {
+    /// Create an exception from a blocked request
+    Add {
+        /// The request ID to create an exception from
+        /// (format: req-[a-f0-9]{8}). Mutually exclusive with --hash.
+        #[arg(conflicts_with_all = ["hash", "dest"])]
+        request_id: Option<String>,
+        /// SHA-256 hash of the credential (64 hex chars).
+        /// Use with --dest for manual exception creation.
+        #[arg(long, requires = "dest")]
+        hash: Option<String>,
+        /// Destination host (or "*" for wildcard).
+        /// Required when using --hash.
+        #[arg(long)]
+        dest: Option<String>,
+        /// TTL in days (default: 30)
+        #[arg(long, default_value = "30")]
+        ttl: u64,
+        /// Create a permanent exception (no TTL)
+        #[arg(long, conflicts_with = "ttl")]
+        permanent: bool,
+    },
+    /// List all active exceptions
+    List,
+    /// Remove a specific exception by its key suffix
+    /// (format: {hash_prefix_16}:{host})
+    Remove {
+        /// Exception ID (hash_prefix:host)
+        exception_id: String,
+    },
+    /// Show the credential hash for a blocked request
+    Inspect {
+        /// The request ID to inspect (format: req-[a-f0-9]{8})
+        request_id: String,
+    },
 }
 
 /// Parse a string into a [`SecurityLevel`], case-insensitive.
@@ -301,7 +345,342 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
+        Commands::Exception { ref subcmd } => {
+            handle_exception_command(subcmd, &mut con).await
+        }
     }
+}
+
+/// Handle exception subcommands.
+async fn handle_exception_command(
+    subcmd: &ExceptionCommands,
+    con: &mut redis::aio::MultiplexedConnection,
+) -> Result<()> {
+    match subcmd {
+        ExceptionCommands::Add {
+            request_id,
+            hash,
+            dest,
+            ttl,
+            permanent,
+        } => {
+            let (cred_hash, cred_prefix, destination) =
+                if let Some(req_id) = request_id {
+                    // Create from blocked request
+                    polis_common::validate_request_id(req_id)
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                    let blocked_key =
+                        polis_common::blocked_key(req_id);
+                    let data: Option<String> = con
+                        .get(&blocked_key)
+                        .await
+                        .context("failed to GET blocked request")?;
+                    let data = data.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no blocked request found for {}",
+                            req_id
+                        )
+                    })?;
+                    let blocked: serde_json::Value =
+                        serde_json::from_str(&data)
+                            .context("failed to parse blocked JSON")?;
+                    let ch = blocked["credential_hash"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "blocked request {} has no credential_hash",
+                                req_id
+                            )
+                        })?
+                        .to_string();
+                    let cp = blocked["credential_prefix"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    let dst = blocked["destination"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    // Strip protocol prefix
+                    let dst = dst
+                        .strip_prefix("https://")
+                        .or_else(|| dst.strip_prefix("http://"))
+                        .unwrap_or(&dst)
+                        .split('/')
+                        .next()
+                        .unwrap_or(&dst)
+                        .to_string();
+                    (ch, cp, dst)
+                } else if let (Some(h), Some(d)) = (hash, dest) {
+                    // Manual creation
+                    polis_common::validate_credential_hash(h)
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                    (h.clone(), String::new(), d.clone())
+                } else {
+                    bail!(
+                        "provide either a request_id or --hash + --dest"
+                    );
+                };
+
+            // Validate hash format
+            polis_common::validate_credential_hash(&cred_hash)
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            // Enforce max exception count (1000)
+            let count = count_exceptions(con).await?;
+            if count >= 1000 {
+                bail!(
+                    "maximum exception count (1000) reached — \
+                     remove existing exceptions first"
+                );
+            }
+
+            // Build exception key
+            let hash_prefix = &cred_hash[..16];
+            let exception_key =
+                polis_common::exception_value_key(
+                    hash_prefix, &destination,
+                );
+
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .context("system clock error")?
+                .as_secs();
+
+            let ttl_secs = if *permanent {
+                None
+            } else {
+                Some(*ttl * 86400) // days to seconds
+            };
+
+            let exception_json = serde_json::json!({
+                "credential_hash": cred_hash,
+                "credential_prefix": cred_prefix,
+                "destination": destination,
+                "pattern_name": "",
+                "created_at": now,
+                "source": "cli",
+                "ttl_secs": ttl_secs,
+            });
+
+            // Store exception
+            if let Some(secs) = ttl_secs {
+                let _: () = con
+                    .set_ex(&exception_key, exception_json.to_string(), secs)
+                    .await
+                    .context("failed to SETEX exception")?;
+            } else {
+                let _: () = con
+                    .set(&exception_key, exception_json.to_string())
+                    .await
+                    .context("failed to SET permanent exception")?;
+            }
+
+            // Audit log
+            let audit = serde_json::json!({
+                "event_type": "exception_created_via_cli",
+                "exception_key": exception_key,
+                "credential_prefix": cred_prefix,
+                "destination": destination,
+                "permanent": permanent,
+                "ttl_days": ttl,
+                "timestamp": now,
+            });
+            let _: () = con
+                .zadd(
+                    polis_common::keys::EVENT_LOG,
+                    audit.to_string(),
+                    now as f64,
+                )
+                .await
+                .context("failed to ZADD audit log")?;
+
+            println!(
+                "exception created: {} (prefix={}, dest={}, {})",
+                exception_key,
+                if cred_prefix.is_empty() { "n/a" } else { &cred_prefix },
+                destination,
+                if *permanent {
+                    "permanent".to_string()
+                } else {
+                    format!("ttl={}d", ttl)
+                }
+            );
+            Ok(())
+        }
+        ExceptionCommands::List => {
+            let pattern = format!("{}:*", polis_common::keys::EXCEPTION_VALUE);
+            let mut cursor: u64 = 0;
+            let mut found = 0u64;
+
+            loop {
+                let (next_cursor, batch): (u64, Vec<String>) =
+                    redis::cmd("SCAN")
+                        .arg(cursor)
+                        .arg("MATCH")
+                        .arg(&pattern)
+                        .arg("COUNT")
+                        .arg(100)
+                        .query_async(con)
+                        .await
+                        .context("failed to SCAN exception keys")?;
+
+                for key in &batch {
+                    let value: Option<String> =
+                        con.get(key).await.context("failed to GET exception")?;
+                    let ttl: i64 = redis::cmd("TTL")
+                        .arg(key)
+                        .query_async(con)
+                        .await
+                        .unwrap_or(-1);
+
+                    if let Some(data) = value {
+                        let v: serde_json::Value =
+                            serde_json::from_str(&data).unwrap_or_default();
+                        let prefix = v["credential_prefix"]
+                            .as_str()
+                            .unwrap_or("?");
+                        let dest = v["destination"]
+                            .as_str()
+                            .unwrap_or("?");
+                        let source = v["source"]
+                            .as_str()
+                            .unwrap_or("?");
+                        let ttl_str = if ttl == -1 {
+                            "permanent".to_string()
+                        } else if ttl == -2 {
+                            "expired".to_string()
+                        } else {
+                            let days = ttl / 86400;
+                            let hours = (ttl % 86400) / 3600;
+                            format!("{}d {}h remaining", days, hours)
+                        };
+                        println!(
+                            "  {} prefix={} dest={} source={} ttl={}",
+                            key, prefix, dest, source, ttl_str
+                        );
+                        found += 1;
+                    }
+                }
+
+                cursor = next_cursor;
+                if cursor == 0 {
+                    break;
+                }
+            }
+
+            if found == 0 {
+                println!("no active exceptions");
+            } else {
+                println!("\n{} exception(s) found", found);
+            }
+            Ok(())
+        }
+        ExceptionCommands::Remove { ref exception_id } => {
+            let key = format!(
+                "{}:{}",
+                polis_common::keys::EXCEPTION_VALUE,
+                exception_id
+            );
+
+            let existed: bool = con
+                .del(&key)
+                .await
+                .context("failed to DEL exception key")?;
+
+            if !existed {
+                bail!("exception '{}' not found", exception_id);
+            }
+
+            // Audit log
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .context("system clock error")?
+                .as_secs();
+            let audit = serde_json::json!({
+                "event_type": "exception_removed_via_cli",
+                "exception_key": key,
+                "timestamp": now,
+            });
+            let _: () = con
+                .zadd(
+                    polis_common::keys::EVENT_LOG,
+                    audit.to_string(),
+                    now as f64,
+                )
+                .await
+                .context("failed to ZADD audit log")?;
+
+            println!("removed exception: {}", key);
+            Ok(())
+        }
+        ExceptionCommands::Inspect { ref request_id } => {
+            polis_common::validate_request_id(request_id)
+                .map_err(|e| anyhow::anyhow!(e))?;
+
+            let blocked_key =
+                polis_common::blocked_key(request_id);
+            let data: Option<String> = con
+                .get(&blocked_key)
+                .await
+                .context("failed to GET blocked request")?;
+
+            let data = match data {
+                Some(d) => d,
+                None => bail!(
+                    "no blocked request found for {}",
+                    request_id
+                ),
+            };
+
+            let blocked: serde_json::Value =
+                serde_json::from_str(&data)
+                    .context("failed to parse blocked JSON")?;
+
+            let hash = blocked["credential_hash"]
+                .as_str()
+                .unwrap_or("(none)");
+            let prefix = blocked["credential_prefix"]
+                .as_str()
+                .unwrap_or("(none)");
+            let dest = blocked["destination"]
+                .as_str()
+                .unwrap_or("(none)");
+
+            println!("request_id:        {}", request_id);
+            println!("credential_hash:   {}", hash);
+            println!("credential_prefix: {}", prefix);
+            println!("destination:       {}", dest);
+            Ok(())
+        }
+    }
+}
+
+/// Count active exceptions via SCAN.
+async fn count_exceptions(
+    con: &mut redis::aio::MultiplexedConnection,
+) -> Result<u64> {
+    let pattern = format!("{}:*", polis_common::keys::EXCEPTION_VALUE);
+    let mut cursor: u64 = 0;
+    let mut count: u64 = 0;
+    loop {
+        let (next_cursor, batch): (u64, Vec<String>) =
+            redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(con)
+                .await
+                .context("failed to SCAN exception keys")?;
+        count += batch.len() as u64;
+        cursor = next_cursor;
+        if cursor == 0 {
+            break;
+        }
+    }
+    Ok(count)
 }
 
 /// Build a Valkey connection URL with ACL credentials embedded.

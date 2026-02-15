@@ -33,6 +33,12 @@ pub mod keys {
     /// Value: JSON-serialized OttMapping
     /// TTL: 600 seconds (10 minutes — generous window for user to respond)
     pub const OTT_MAPPING: &str = "polis:ott";
+
+    /// Value-based exceptions (persistent credential→destination allowlist)
+    /// Format: polis:exception:value:{sha256_hex_prefix_16}:{host}
+    /// Value: JSON-serialized ValueException
+    /// TTL: 2592000 seconds (30 days) default, or permanent (CLI only)
+    pub const EXCEPTION_VALUE: &str = "polis:exception:value";
 }
 
 /// TTL constants
@@ -48,6 +54,9 @@ pub mod ttl {
 
     /// Event log retention (24 hours)
     pub const EVENT_LOG_SECS: u64 = 86400;
+
+    /// Default value-based exception TTL (30 days)
+    pub const EXCEPTION_DEFAULT_SECS: u64 = 2592000;
 }
 
 /// Approval command constants and OTT (One-Time Token) configuration
@@ -57,6 +66,9 @@ pub mod approval {
 
     /// Prefix for the deny command
     pub const DENY_PREFIX: &str = "/polis-deny";
+
+    /// Prefix for the exception command (creates persistent value-based exception)
+    pub const EXCEPT_PREFIX: &str = "/polis-except";
 
     /// Default time-gate duration in seconds.
     /// OTT codes are not valid until this many seconds after REQMOD rewriting.
@@ -85,6 +97,11 @@ pub mod approval {
     pub fn approval_command(request_id: &str) -> String {
         format!("{} {}", APPROVE_PREFIX, request_id)
     }
+
+    /// Generate the exception command for a given request_id
+    pub fn exception_command(request_id: &str) -> String {
+        format!("{} {}", EXCEPT_PREFIX, request_id)
+    }
 }
 
 /// Helper functions for key construction
@@ -102,6 +119,24 @@ pub fn auto_approve_key(pattern: &str) -> String {
 
 pub fn ott_key(ott_code: &str) -> String {
     format!("{}:{}", keys::OTT_MAPPING, ott_code)
+}
+
+/// Build exception key from 16-char hash prefix and host.
+/// Format: polis:exception:value:{hash_prefix_16}:{host}
+pub fn exception_value_key(hash_prefix_16: &str, host: &str) -> String {
+    format!("{}:{}:{}", keys::EXCEPTION_VALUE, hash_prefix_16, host)
+}
+
+/// Build wildcard exception key (CLI only).
+/// Format: polis:exception:value:{hash_prefix_16}:*
+pub fn exception_value_wildcard_key(hash_prefix_16: &str) -> String {
+    format!("{}:{}:*", keys::EXCEPTION_VALUE, hash_prefix_16)
+}
+
+/// Extract the 16-char hex prefix from a full 64-char SHA-256 hash.
+/// Returns the first 16 characters of the hash string.
+pub fn hash_prefix_16(full_hash: &str) -> &str {
+    &full_hash[..16.min(full_hash.len())]
 }
 
 /// Validate that a request_id matches the expected format: req-[a-f0-9]{8}
@@ -132,6 +167,19 @@ pub fn validate_ott_code(ott_code: &str) -> Result<(), &'static str> {
     }
     if !ott_code[4..].chars().all(|c| c.is_ascii_alphanumeric()) {
         return Err("OTT code suffix must be alphanumeric [a-zA-Z0-9]");
+    }
+    Ok(())
+}
+
+/// Validate that a credential hash matches the expected format: 64 lowercase hex chars.
+/// Returns Ok(()) if valid, Err with description if invalid.
+/// SECURITY: Always call before constructing Valkey keys from untrusted input.
+pub fn validate_credential_hash(hash: &str) -> Result<(), &'static str> {
+    if hash.len() != 64 {
+        return Err("credential hash must be exactly 64 hex characters");
+    }
+    if !hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
+        return Err("credential hash must be lowercase hex [a-f0-9]");
     }
     Ok(())
 }
@@ -252,5 +300,59 @@ mod tests {
     #[test]
     fn validate_ott_code_rejects_too_short() {
         assert!(validate_ott_code("ott-abc").is_err());
+    }
+
+    // --- exception key helper tests ---
+
+    #[test]
+    fn exception_value_key_format() {
+        assert_eq!(
+            exception_value_key("abcdef0123456789", "api.openai.com"),
+            "polis:exception:value:abcdef0123456789:api.openai.com"
+        );
+    }
+
+    #[test]
+    fn exception_value_wildcard_key_format() {
+        assert_eq!(
+            exception_value_wildcard_key("abcdef0123456789"),
+            "polis:exception:value:abcdef0123456789:*"
+        );
+    }
+
+    #[test]
+    fn hash_prefix_16_extracts_first_16() {
+        let full = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        assert_eq!(hash_prefix_16(full), "abcdef0123456789");
+    }
+
+    // --- validate_credential_hash tests ---
+
+    #[test]
+    fn validate_credential_hash_accepts_valid() {
+        let hash = "a".repeat(64);
+        assert!(validate_credential_hash(&hash).is_ok());
+    }
+
+    #[test]
+    fn validate_credential_hash_rejects_too_short() {
+        assert!(validate_credential_hash("abcdef").is_err());
+    }
+
+    #[test]
+    fn validate_credential_hash_rejects_uppercase() {
+        let hash = "A".repeat(64);
+        assert!(validate_credential_hash(&hash).is_err());
+    }
+
+    #[test]
+    fn validate_credential_hash_rejects_non_hex() {
+        let mut hash = "g".repeat(64);
+        assert!(validate_credential_hash(&hash).is_err());
+    }
+
+    #[test]
+    fn validate_credential_hash_rejects_empty() {
+        assert!(validate_credential_hash("").is_err());
     }
 }
