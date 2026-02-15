@@ -1,0 +1,544 @@
+services:
+  # =========================================================
+  # RESOLVER (COREDNS / DNS Filtering)
+  # Blocks resolution of malicious domains
+  # =========================================================
+  resolver:
+    build:
+      context: .
+      dockerfile: services/resolver/Dockerfile
+    image: polis-resolver-oss:latest
+    container_name: polis-resolver
+    user: "200:200"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      gateway-bridge:
+        ipv4_address: 10.30.1.10
+      internal-bridge:
+        ipv4_address: 10.10.1.2
+      external-bridge: {}
+    volumes:
+      - ./services/resolver/config/Corefile:/etc/coredns/Corefile:ro
+      - ./services/resolver/config/blocklist.txt:/etc/coredns/blocklist.txt:ro
+    healthcheck:
+      test: ["CMD", "nslookup", "github.com", "127.0.0.1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-resolver"
+
+  # =========================================================
+  # GATE (G3PROXY / Tier 1 Entry Point)
+  # =========================================================
+  gate:
+    build:
+      context: .
+      dockerfile: services/gate/Dockerfile
+    image: polis-gate-oss:latest
+    container_name: polis-gate
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    user: root
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./services/gate/config/seccomp/gateway.json
+    networks:
+      internal-bridge:
+        ipv4_address: 10.10.1.10
+      gateway-bridge:
+        ipv4_address: 10.30.1.6
+      external-bridge:
+        ipv4_address: 10.20.1.3
+    volumes:
+      - ./services/gate/config/g3proxy.yaml:/etc/g3proxy/g3proxy.yaml:ro
+      - ./services/gate/config/g3fcgen.yaml:/etc/g3proxy/g3fcgen.yaml:ro
+      - ./services/gate/scripts/init.sh:/init.sh:ro
+      - ./certs/ca:/etc/g3proxy/ssl:ro
+      - ./services/gate/scripts/health.sh:/scripts/health-check.sh:ro
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.ip_nonlocal_bind=1
+      - net.ipv4.conf.all.rp_filter=0
+      - net.ipv4.conf.default.rp_filter=0
+      - net.ipv4.conf.all.route_localnet=1
+      - net.ipv4.conf.default.route_localnet=1
+    depends_on:
+      sentinel:
+        condition: service_healthy
+      state:
+        condition: service_healthy
+      resolver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/scripts/health-check.sh"]
+      interval: 10s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-gate"
+
+  # =========================================================
+  # SENTINEL (C-ICAP / Content Inspection)
+  # =========================================================
+  sentinel:
+    build:
+      context: .
+      dockerfile: services/sentinel/Dockerfile
+    image: polis-sentinel-oss:latest
+    container_name: polis-sentinel
+    user: sentinel
+    tmpfs:
+      - /tmp:size=2G,mode=1777
+      - /var/log:size=100M,mode=1777,uid=101,gid=101
+      - /run:size=10M,mode=755,uid=101,gid=101
+      - /var/run/c-icap:size=10M,mode=755,uid=101,gid=101
+    mem_limit: 3G
+    mem_reservation: 1G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    networks:
+      gateway-bridge:
+        ipv4_address: 10.30.1.5
+    volumes:
+      - ./services/sentinel/config/c-icap.conf:/etc/c-icap/c-icap.conf:ro
+      - ./services/scanner/config/squidclamav.conf:/etc/squidclamav.conf:ro
+      - ./services/sentinel/config/blocklist.txt:/etc/c-icap/blocklist.txt:ro
+      - ./services/sentinel/config/polis_dlp.conf:/etc/c-icap/polis_dlp.conf:ro
+      - ./services/sentinel/config/polis_approval.conf:/etc/c-icap/polis_approval.conf:ro
+      - ./certs/valkey:/etc/valkey/tls:ro
+      - scanner-db:/var/lib/clamav:ro
+    environment:
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
+      - polis_VALKEY_HOST=state
+    secrets:
+      - valkey_dlp_password
+      - valkey_reqmod_password
+      - valkey_respmod_password
+    depends_on:
+      scanner-init:
+        condition: service_completed_successfully
+      scanner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "c-icap-client", "-i", "localhost", "-p", "1344", "-s", "sentinel_respmod", "-f", "/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service"
+    labels:
+      service: "polis-sentinel"
+
+  # =========================================================
+  # SCANNER (CLAMAV Malware Scanning)
+  # =========================================================
+  scanner:
+    build:
+      context: .
+      dockerfile: services/scanner/Dockerfile
+    image: polis-scanner-oss:latest
+    container_name: polis-scanner
+    user: "100:101"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /var/log/clamav:size=50M,mode=755,uid=100,gid=101
+      - /run/clamav:size=10M,mode=755,uid=100,gid=101
+      - /var/lock:size=10M,mode=1777,uid=100,gid=101
+    networks:
+      gateway-bridge: {}
+      internet: {}
+    volumes:
+      - scanner-db:/var/lib/clamav
+      - ./services/scanner/config/freshclam.conf:/etc/clamav/freshclam.conf:ro
+      - ./services/scanner/config/clamd.conf:/etc/clamav/clamd.conf:ro
+    depends_on:
+      scanner-init:
+        condition: service_completed_successfully
+    environment:
+      - CLAMAV_NO_FRESHCLAMD=false
+      - CLAMAV_NO_MILTERD=true
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "3"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service"
+    labels:
+      service: "polis-scanner"
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations:
+          memory: 1G
+
+  # =========================================================
+  # WORKSPACE
+  # =========================================================
+  workspace:
+    build:
+      context: .
+      dockerfile: services/workspace/Dockerfile
+    image: polis-workspace-oss:latest
+    container_name: polis-workspace
+    runtime: sysbox-runc
+    sysctls:
+      - net.ipv4.conf.all.rp_filter=0
+      - net.ipv4.conf.default.rp_filter=0
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
+      - net.ipv4.ip_forward=0
+      - net.ipv4.conf.all.send_redirects=0
+      - net.ipv4.conf.default.send_redirects=0
+    dns:
+      - 10.10.1.2
+    depends_on:
+      resolver:
+        condition: service_healthy
+      gate:
+        condition: service_healthy
+    networks:
+      internal-bridge: {}
+    env_file:
+      - .env
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - ./certs/ca/ca.pem:/usr/local/share/ca-certificates/polis-ca.crt:ro
+      - ./services/workspace/scripts/init.sh:/usr/local/bin/polis-init.sh:ro
+      - ./services/workspace/config/polis-init.service:/etc/systemd/system/polis-init.service:ro
+      - type: tmpfs
+        target: /root/.ssh
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.aws
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.gnupg
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.config/gcloud
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.kube
+        tmpfs:
+          mode: 0000
+      - type: tmpfs
+        target: /root/.docker
+        tmpfs:
+          mode: 0000
+    healthcheck:
+      test: ["CMD-SHELL", "systemctl is-active polis-init.service && ip route | grep -q default"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    cap_drop:
+      - ALL
+    security_opt:
+      - seccomp=./services/workspace/config/seccomp.json
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+        reservations:
+          memory: 1G
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-workspace"
+
+  # =========================================================
+  # GATE INIT (Network setup for TPROXY)
+  # =========================================================
+  gate-init:
+    image: polis-gate-oss:latest
+    container_name: polis-gate-init
+    user: root
+    network_mode: service:gate
+    entrypoint: []
+    cap_add:
+      - NET_ADMIN
+    privileged: true
+    depends_on:
+      - gate
+    volumes:
+      - ./services/gate/scripts/setup-network.sh:/setup-network.sh:ro
+    command: ["/setup-network.sh"]
+    restart: "no"
+
+  # =========================================================
+  # SCANNER INIT (ClamAV Volume permission setup)
+  # =========================================================
+  scanner-init:
+    image: alpine
+    container_name: polis-scanner-init
+    volumes:
+      - scanner-db:/var/lib/clamav
+    command: chown -R 100:101 /var/lib/clamav
+    restart: "no"
+
+  # =========================================================
+  # STATE INIT (Valkey Volume permission setup)
+  # =========================================================
+  state-init:
+    image: alpine
+    container_name: polis-state-init
+    volumes:
+      - state-data:/data
+    command: chown -R 999:999 /data
+    restart: "no"
+
+  # =========================================================
+  # STATE (VALKEY / State Management)
+  # =========================================================
+  state:
+    image: valkey/valkey:8-alpine
+    container_name: polis-state
+    user: "999:999"
+    entrypoint: []
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    networks:
+      gateway-bridge: {}
+    depends_on:
+      state-init:
+        condition: service_completed_successfully
+    secrets:
+      - valkey_password
+      - source: valkey_acl
+        uid: "999"
+        gid: "999"
+        mode: 0440
+      - valkey_mcp_admin_password
+      - valkey_mcp_agent_password
+      - valkey_dlp_password
+      - valkey_log_writer_password
+    volumes:
+      - ./services/state/config/valkey.conf:/etc/valkey/valkey.conf:ro
+      - ./certs/valkey:/etc/valkey/tls:ro
+      - state-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "sh -c \"REDISCLI_AUTH=$$(cat /run/secrets/valkey_password) valkey-cli --tls --cert /etc/valkey/tls/client.crt --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt --user healthcheck ping\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M,mode=1777
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-state"
+    restart: unless-stopped
+
+  # =========================================================
+  # TOOLBOX (MCP-AGENT / AI Agent MCP Server)
+  # =========================================================
+  toolbox:
+    build:
+      context: .
+      dockerfile: services/toolbox/Dockerfile
+    image: polis-toolbox-oss:latest
+    container_name: polis-toolbox
+    networks:
+      internal-bridge:
+        ipv4_address: 10.10.1.20
+      gateway-bridge:
+        ipv4_address: 10.30.1.20
+    environment:
+      - RUST_LOG=debug
+      - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
+      - polis_AGENT_VALKEY_URL=rediss://state:6379
+      - polis_AGENT_VALKEY_USER=mcp-agent
+      - polis_AGENT_VALKEY_PASS_FILE=/run/secrets/valkey_mcp_agent_password
+    secrets:
+      - valkey_mcp_agent_password
+    volumes:
+      - ./certs/valkey:/etc/valkey/tls:ro
+    depends_on:
+      state:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service"
+    labels:
+      service: "polis-toolbox"
+
+  # =========================================================
+  # HTTPBIN (Test Profile — local HTTP target)
+  # =========================================================
+  httpbin:
+    image: mccutchen/go-httpbin
+    container_name: polis-httpbin
+    profiles: ["test"]
+    networks:
+      external-bridge:
+        ipv4_address: 10.20.1.100
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+    restart: "no"
+
+networks:
+  internal-bridge:
+    enable_ipv6: false
+    driver: bridge
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.10.1.0/24
+
+  gateway-bridge:
+    enable_ipv6: false
+    driver: bridge
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.30.1.0/24
+
+  external-bridge:
+    enable_ipv6: false
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.20.1.0/24
+
+  internet:
+    enable_ipv6: false
+    driver: bridge
+
+volumes:
+  scanner-db:
+    name: polis-scanner-db
+  state-data:
+    name: polis-state-data
+  # Uncomment to persist OpenClaw data across container restarts
+  # openclaw-data:
+  #   name: polis-openclaw-data
+
+secrets:
+  valkey_password:
+    file: ./secrets/valkey_password.txt
+  valkey_acl:
+    file: ./secrets/valkey_users.acl
+  valkey_dlp_password:
+    file: ./secrets/valkey_dlp_password.txt
+  valkey_mcp_agent_password:
+    file: ./secrets/valkey_mcp_agent_password.txt
+  valkey_mcp_admin_password:
+    file: ./secrets/valkey_mcp_admin_password.txt
+  valkey_log_writer_password:
+    file: ./secrets/valkey_log_writer_password.txt
+  valkey_reqmod_password:
+    file: ./secrets/valkey_reqmod_password.txt
+  valkey_respmod_password:
+    file: ./secrets/valkey_respmod_password.txt

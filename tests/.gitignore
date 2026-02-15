@@ -1,6 +1,3 @@
-# BATS testing framework (cloned by run-tests.sh)
-bats/
-
 # Test artifacts
 *.tap
 *.xml

@@ -30,7 +30,7 @@ fix_file() {
         # Remove BOM: skip first 3 bytes
         tail -c +4 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
         echo -e "  ${YELLOW}bom${NC}    $f"
-        ((bom_fixed++))
+        bom_fixed=$((bom_fixed + 1))
         changed=1
     fi
 
@@ -38,12 +38,12 @@ fix_file() {
     if grep -qP '\r$' "$f" 2>/dev/null; then
         sed -i 's/\r$//' "$f"
         echo -e "  ${GREEN}crlf${NC}   $f"
-        ((converted++))
+        converted=$((converted + 1))
         changed=1
     fi
 
     if [[ $changed -eq 0 ]]; then
-        ((skipped++))
+        skipped=$((skipped + 1))
     fi
 }
 
@@ -85,7 +85,7 @@ for f in "${PROJECT_ROOT}"/config/*.conf "${PROJECT_ROOT}"/config/*.yaml \
 done
 
 # 6. Docker compose
-fix_file "${PROJECT_ROOT}/deploy/docker-compose.yml"
+fix_file "${PROJECT_ROOT}/docker-compose.yml"
 
 # 7. .env file
 fix_file "${PROJECT_ROOT}/.env"
@@ -104,6 +104,11 @@ for f in "${PROJECT_ROOT}"/tests/helpers/*.bash; do
 done
 for f in "${PROJECT_ROOT}"/tests/unit/*.bats "${PROJECT_ROOT}"/tests/integration/*.bats \
          "${PROJECT_ROOT}"/tests/e2e/*.bats; do
+    fix_file "$f"
+done
+
+# 9b. BATS framework/vendor files (loaded/executed by tests; some launchers have no extension)
+find "${PROJECT_ROOT}/tests/bats" -type f 2>/dev/null | while read -r f; do
     fix_file "$f"
 done
 

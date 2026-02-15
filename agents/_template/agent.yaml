@@ -1,0 +1,36 @@
+apiVersion: polis.dev/v1
+kind: AgentPlugin
+
+metadata:
+  name: CHANGEME
+  displayName: "CHANGEME"
+  version: "0.1.0"
+  description: "CHANGEME"
+
+spec:
+  packaging: script
+  install: install.sh
+
+  runtime:
+    command: "/bin/echo CHANGEME: implement ExecStart"
+    workdir: /opt/agents/CHANGEME
+    user: polis
+
+  init: scripts/init.sh
+
+  health:
+    command: "curl -sf http://127.0.0.1:0/health"
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    startPeriod: 120s
+
+  security:
+    protectSystem: strict
+    protectHome: read-only
+    noNewPrivileges: true
+    privateTmp: true
+
+  resources:
+    memoryLimit: 2G
+    memoryReservation: 512M

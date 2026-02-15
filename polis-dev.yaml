@@ -1,0 +1,108 @@
+#cloud-config
+# Polis Developer VM Cloud-Init Configuration
+# This provisions a VM for development with Docker and Sysbox
+# The polis directory will be mounted from the host machine
+#
+# UID/GID Mapping Strategy (inspired by VS Code Dev Containers):
+# - Sets ubuntu user to UID/GID 1000:1000 (most common host user ID)
+# - Prevents permission issues with mounted directories
+# - Files created in container are owned by your host user
+
+package_update: true
+package_upgrade: true
+
+# Install required system packages
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - jq
+  - git
+  - build-essential
+
+# Configure system settings for Docker and Sysbox
+write_files:
+  # Docker daemon configuration for Sysbox
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "runtimes": {
+          "sysbox-runc": {
+            "path": "/usr/bin/sysbox-runc"
+          }
+        },
+        "default-address-pools": [
+          {
+            "base": "172.20.0.0/16",
+            "size": 24
+          }
+        ]
+      }
+    permissions: '0644'
+
+runcmd:
+  # 0. Set ubuntu user to UID/GID 1000:1000 for permission compatibility
+  # This matches the most common host user ID (first non-root user on Linux/macOS)
+  # Prevents "permission denied" errors when editing files from host
+  - |
+    # Check if ubuntu user already has UID 1000
+    current_uid=$(id -u ubuntu)
+    if [ "$current_uid" != "1000" ]; then
+      echo "Changing ubuntu user UID/GID to 1000:1000 for host compatibility..."
+      # Stop any processes running as ubuntu
+      pkill -u ubuntu || true
+      # Change UID/GID
+      usermod -u 1000 ubuntu
+      groupmod -g 1000 ubuntu
+      # Fix ownership of ubuntu's home directory
+      chown -R 1000:1000 /home/ubuntu
+      echo "ubuntu user UID/GID set to 1000:1000"
+    else
+      echo "ubuntu user already has UID 1000"
+    fi
+
+  # 1. Install Docker Engine
+  - |
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    
+  # 2. Install Sysbox (required for workspace isolation)
+  - |
+    SYSBOX_VERSION="0.6.4"
+    wget https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
+    apt-get install -y ./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
+    rm sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
+    
+  # 3. Restart Docker to pick up Sysbox runtime
+  - systemctl restart docker
+  
+  # 4. Add ubuntu user to docker group
+  - usermod -aG docker ubuntu
+  
+  # 5. Verify installation
+  - docker info | grep -i sysbox
+
+final_message: |
+  Polis Dev VM is ready!
+  
+  UID/GID Configuration:
+  - ubuntu user set to UID/GID 1000:1000
+  - This matches most host systems (prevents permission issues)
+  - Files you create on host will be editable in VM and vice versa
+  
+  Next steps:
+  1. Mount your local polis directory: multipass mount ./polis polis-dev:/home/ubuntu/polis
+  2. Access VM: multipass shell polis-dev
+  3. Configure API keys: cd ~/polis && nano .env
+  4. Build from source: ./cli/polis.sh init --local
+  
+  The VM has:
+  - Docker Engine with docker-compose
+  - Sysbox runtime (sysbox-runc)
+  - Ubuntu user (UID 1000) in docker group
+  
+  No permission issues expected with mounted directories!

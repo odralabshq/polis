@@ -1,103 +1,247 @@
-name: CI
+name: Test Suite
+
+permissions:
+  contents: read
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+
+env:
+  SYSBOX_VERSION: "0.6.7"
+  POLIS_IMAGES: >-
+    polis-resolver-oss:latest
+    polis-gate-oss:latest
+    polis-sentinel-oss:latest
+    polis-scanner-oss:latest
+    polis-workspace-oss:latest
+    polis-toolbox-oss:latest
 
 jobs:
-  test:
+  # ── Stage 1: Compile Rust workspace + C native tests ──────────────
+  build-code:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+
+      - name: Cargo test (compile + unit tests)
+        run: cargo test --workspace
+
+      - name: Compile and run C native tests
+        run: |
+          for src in tests/native/sentinel/test_*.c; do
+            bin="${src%.c}"
+            gcc -Wall -Werror -o "$bin" "$src"
+            "$bin"
+          done
+
+  # ── Stage 2a: Build all Docker images, export as artifact ─────────
+  build-containers:
+    runs-on: ubuntu-24.04
+    needs: build-code
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.12.0
+        uses: docker/setup-buildx-action@v3
         with:
-          platforms: linux/amd64
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
 
-      - name: Cleanup existing Docker containers
-        run: docker rm $(docker ps -a -q) -f || true
+      - name: Build images (compose + buildx GHA cache)
+        run: |
+          touch .env
+          docker buildx bake \
+            --set '*.cache-from=type=gha' \
+            --set '*.cache-to=type=gha,mode=max' \
+            --load \
+            -f docker-compose.yml
+
+      - name: Save and compress images
+        run: |
+          docker save ${{ env.POLIS_IMAGES }} | zstd -T0 -3 -o polis-images.tar.zst
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: polis-images
+          path: polis-images.tar.zst
+          retention-days: 1
+          compression-level: 0  # already zstd-compressed
+
+  # ── Stage 2b: BATS unit tests (no Docker needed) ─────────────────
+  unit-tests:
+    runs-on: ubuntu-24.04
+    needs: build-code
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Generate secrets for ACL structure tests
+        run: |
+          chmod +x ./services/state/scripts/generate-secrets.sh
+          touch .env
+          ./services/state/scripts/generate-secrets.sh ./secrets .
+
+      - name: Run unit tests
+        run: ./tests/run-tests.sh unit
+
+  # ── Stage 3: Integration tests (load pre-built images) ───────────
+  integration-tests:
+    runs-on: ubuntu-24.04
+    needs: [build-containers, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install sysbox
         run: |
-          wget https://downloads.nestybox.com/sysbox/releases/v0.6.7/sysbox-ce_0.6.7-0.linux_amd64.deb
-          sudo apt-get install -y jq ./sysbox-ce_0.6.7-0.linux_amd64.deb
-          
-          # Configure Docker to use sysbox runtime
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          wget -q "https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+          sudo apt-get install -y jq "./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
           sudo mkdir -p /etc/docker
           echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
-          
-          # Verify sysbox is available
-          docker info | grep -i sysbox
 
-      - name: Set script permissions
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst --stdout | docker load
+
+      - name: Setup certificates and secrets
         run: |
-          chmod +x ./tools/polis.sh
-          chmod +x ./tools/*.sh
-          chmod +x ./tests/run-tests.sh
-          chmod +x ./scripts/*.sh
-          chmod +x ./agents/openclaw/install.sh
-          chmod +x ./agents/openclaw/scripts/*.sh
-
-      - name: Setup CA certificates
-        run: ./tools/polis.sh setup-ca
-
-      - name: Setup Valkey TLS certificates
-        run: |
-          ./scripts/generate-valkey-certs.sh ./certs/valkey
-          # Multiple containers (valkey uid:999, icap c-icap, mcp-agent polis)
-          # mount the same cert directory. Make all files world-readable so
-          # every container user can access them.
-          chmod 644 ./certs/valkey/*
-
-      - name: Setup Valkey secrets
-        run: |
+          chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
+          ./cli/polis.sh setup-ca
+          ./services/state/scripts/generate-certs.sh ./certs/valkey
+          chmod 644 ./certs/valkey/*.crt
+          chmod a+r ./certs/valkey/*.key
           touch .env
-          ./scripts/generate-valkey-secrets.sh ./secrets .
-          # Ensure ACL file is readable by Docker daemon for secret injection
+          ./services/state/scripts/generate-secrets.sh ./secrets .
           chmod 644 ./secrets/valkey_users.acl
 
-      - name: Build containers
-        run: ./tools/polis.sh build
-
       - name: Start containers
-        run: ./tools/polis.sh up
+        run: ./cli/polis.sh up
 
       - name: Wait for healthy
         run: |
-          for i in {1..60}; do
+          for i in $(seq 1 60); do
             HEALTHY=$(docker ps --filter "health=healthy" --format "{{.Names}}" | sort)
-            echo "Healthy containers: $HEALTHY"
-            if echo "$HEALTHY" | grep -q "polis-gateway" && \
-               echo "$HEALTHY" | grep -q "polis-icap" && \
-               echo "$HEALTHY" | grep -q "polis-v2-valkey" && \
-               echo "$HEALTHY" | grep -q "polis-mcp-agent" && \
+            if echo "$HEALTHY" | grep -q "polis-gate" && \
+               echo "$HEALTHY" | grep -q "polis-sentinel" && \
+               echo "$HEALTHY" | grep -q "polis-state" && \
+               echo "$HEALTHY" | grep -q "polis-toolbox" && \
                echo "$HEALTHY" | grep -q "polis-workspace"; then
               echo "All containers healthy"
               exit 0
             fi
-            echo "Waiting for containers... ($i/60)"
+            echo "Waiting... ($i/60)"
             sleep 5
           done
-          echo "Timeout waiting for containers"
-          docker ps -a
-          docker logs polis-v2-valkey 2>&1 | tail -30 || true
-          docker logs polis-icap 2>&1 | tail -30 || true
-          docker logs polis-mcp-agent 2>&1 | tail -30 || true
-          exit 1
+          echo "Timeout" && docker ps -a && exit 1
 
-      - name: Run tests
-        run: ./tests/run-tests.sh --tap all
+      - name: Run integration tests
+        run: ./tests/run-tests.sh --ci integration
 
       - name: Show logs on failure
         if: failure()
         run: |
-          echo "=== Gateway ===" && docker logs polis-gateway 2>&1 | tail -50 || true
-          echo "=== ICAP ===" && docker logs polis-icap 2>&1 | tail -50 || true
-          echo "=== Valkey ===" && docker logs polis-v2-valkey 2>&1 | tail -50 || true
-          echo "=== MCP-Agent ===" && docker logs polis-mcp-agent 2>&1 | tail -50 || true
-          echo "=== Workspace ===" && docker logs polis-workspace 2>&1 | tail -50 || true
-          echo "=== Container Status ===" && docker ps -a
+          for c in polis-gate polis-sentinel polis-scanner polis-state polis-toolbox polis-workspace; do
+            echo "=== $c ===" && docker logs "$c" 2>&1 | tail -30 || true
+          done
+          docker ps -a
+
+  # ── Stage 4: E2E tests (push to main/develop only) ───────────────
+  e2e-tests:
+    runs-on: ubuntu-24.04
+    needs: integration-tests
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install sysbox
+        run: |
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          wget -q "https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+          sudo apt-get install -y jq "./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+          sudo mkdir -p /etc/docker
+          echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst --stdout | docker load
+
+      - name: Setup certificates and secrets
+        run: |
+          chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
+          ./cli/polis.sh setup-ca
+          ./services/state/scripts/generate-certs.sh ./certs/valkey
+          chmod 644 ./certs/valkey/*.crt
+          chmod a+r ./certs/valkey/*.key
+          touch .env
+          ./services/state/scripts/generate-secrets.sh ./secrets .
+          chmod 644 ./secrets/valkey_users.acl
+
+      - name: Start containers
+        run: |
+          docker compose --profile test up -d httpbin 2>/dev/null || true
+          ./cli/polis.sh up
+
+      - name: Wait for healthy
+        run: |
+          for i in $(seq 1 60); do
+            HEALTHY=$(docker ps --filter "health=healthy" --format "{{.Names}}" | sort)
+            if echo "$HEALTHY" | grep -q "polis-gate" && \
+               echo "$HEALTHY" | grep -q "polis-sentinel" && \
+               echo "$HEALTHY" | grep -q "polis-state" && \
+               echo "$HEALTHY" | grep -q "polis-toolbox" && \
+               echo "$HEALTHY" | grep -q "polis-workspace"; then
+              echo "All containers healthy"
+              exit 0
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 5
+          done
+          echo "Timeout" && docker ps -a && exit 1
+
+      - name: Run E2E tests
+        run: ./tests/run-tests.sh --ci e2e
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          for c in polis-gate polis-sentinel polis-scanner polis-state polis-toolbox polis-workspace; do
+            echo "=== $c ===" && docker logs "$c" 2>&1 | tail -30 || true
+          done
+          docker ps -a

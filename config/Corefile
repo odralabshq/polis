@@ -1,5 +1,0 @@
-. {
-    log
-    blocklist /etc/coredns/blocklist.txt
-    forward . 8.8.8.8 8.8.4.4
-}

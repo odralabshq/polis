@@ -123,9 +123,9 @@ install_polis() {
         if git pull --ff-only origin "${BRANCH}" 2>/dev/null; then
             log_success "Updated existing installation"
             # Skip clone, jump to symlink/permissions
-            chmod +x tools/polis.sh scripts/*.sh 2>/dev/null || true
+            chmod +x cli/polis.sh scripts/*.sh services/*/scripts/*.sh 2>/dev/null || true
             mkdir -p "$HOME/.local/bin"
-            ln -sf "${INSTALL_DIR}/tools/polis.sh" "$HOME/.local/bin/polis"
+            ln -sf "${INSTALL_DIR}/cli/polis.sh" "$HOME/.local/bin/polis"
             log_success "Polis updated successfully!"
             return 0
         else
@@ -171,12 +171,12 @@ install_polis() {
     fi
     
     # Make scripts executable
-    chmod +x tools/polis.sh scripts/*.sh 2>/dev/null || true
+    chmod +x cli/polis.sh scripts/*.sh services/*/scripts/*.sh 2>/dev/null || true
     
     # Create symlink for easy access
     log_info "Creating polis command..."
     mkdir -p "$HOME/.local/bin"
-    ln -sf "${INSTALL_DIR}/tools/polis.sh" "$HOME/.local/bin/polis"
+    ln -sf "${INSTALL_DIR}/cli/polis.sh" "$HOME/.local/bin/polis"
     
     # Check if ~/.local/bin is in PATH
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
@@ -199,7 +199,7 @@ install_polis() {
     echo "     # Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY"
     echo ""
     echo "  2. Initialize Polis:"
-    echo "     cd ${INSTALL_DIR} && ./tools/polis.sh init"
+    echo "     cd ${INSTALL_DIR} && ./cli/polis.sh init"
     echo ""
     echo "  The init command will:"
     echo "    - Check Docker compatibility"
@@ -222,31 +222,35 @@ download_files() {
     base_url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${encoded_branch}"
     
     # Create directory structure
-    mkdir -p tools scripts config deploy certs/ca build/workspace/scripts config/seccomp
+    mkdir -p tools scripts config deploy certs/ca lib/shell \
+             services/resolver/config \
+             services/gate/config services/gate/scripts \
+             services/sentinel/config \
+             services/workspace/config \
+             services/toolbox/crates \
+             services/state/scripts
     
     # Download essential files
-    download "${base_url}/tools/polis.sh" "tools/polis.sh" || exit 1
-    chmod +x tools/polis.sh
+    download "${base_url}/cli/polis.sh" "cli/polis.sh" || exit 1
+    chmod +x cli/polis.sh
     
-    download "${base_url}/deploy/docker-compose.yml" "deploy/docker-compose.yml" || exit 1
-    download "${base_url}/config/g3proxy.yaml" "config/g3proxy.yaml" || exit 1
-    download "${base_url}/config/g3fcgen.yaml" "config/g3fcgen.yaml" || exit 1
-    download "${base_url}/config/c-icap.conf" "config/c-icap.conf" || exit 1
-    download "${base_url}/config/squidclamav.conf" "config/squidclamav.conf" || exit 1
-    download "${base_url}/config/freshclam.conf" "config/freshclam.conf" || exit 1
-    download "${base_url}/config/polis-init.service" "config/polis-init.service" || exit 1
-    download "${base_url}/config/openclaw.service" "config/openclaw.service" || exit 1
-    download "${base_url}/config/openclaw.env.example" "config/openclaw.env.example" || exit 1
+    download "${base_url}/docker-compose.yml" "docker-compose.yml" || exit 1
+    download "${base_url}/config/polis.yaml" "config/polis.yaml" || exit 1
     
-    # Download seccomp profiles
-    download "${base_url}/config/seccomp/gateway.json" "config/seccomp/gateway.json" || exit 1
-    download "${base_url}/config/seccomp/icap.json" "config/seccomp/icap.json" || exit 1
+    download "${base_url}/services/gate/config/g3proxy.yaml" "services/gate/config/g3proxy.yaml" || exit 1
+    download "${base_url}/services/gate/config/g3fcgen.yaml" "services/gate/config/g3fcgen.yaml" || exit 1
+    download "${base_url}/services/gate/scripts/init.sh" "services/gate/scripts/init.sh" || exit 1
+    
+    download "${base_url}/services/sentinel/config/c-icap.conf" "services/sentinel/config/c-icap.conf" || exit 1
+    download "${base_url}/services/sentinel/config/polis_approval.conf" "services/sentinel/config/polis_approval.conf" || exit 1
+    download "${base_url}/services/sentinel/config/polis_dlp.conf" "services/sentinel/config/polis_dlp.conf" || exit 1
+    
+    download "${base_url}/services/workspace/config/polis-init.service" "services/workspace/config/polis-init.service" || exit 1
     
     # Download scripts
-    download "${base_url}/scripts/workspace-init.sh" "scripts/workspace-init.sh" || exit 1
-    download "${base_url}/scripts/g3proxy-init.sh" "scripts/g3proxy-init.sh" || exit 1
-    download "${base_url}/scripts/health-check.sh" "scripts/health-check.sh" || exit 1
-    chmod +x scripts/*.sh
+    download "${base_url}/services/workspace/scripts/workspace-init.sh" "services/workspace/scripts/workspace-init.sh" || exit 1
+    download "${base_url}/services/gate/scripts/health-check.sh" "services/gate/scripts/health-check.sh" || exit 1
+    chmod +x scripts/*.sh services/*/scripts/*.sh
     
     log_success "Files downloaded"
 }

@@ -1,0 +1,84 @@
+# Polis - g3proxy Configuration
+# Transparent proxy with TLS MITM and ICAP content inspection
+# All traffic (including AI APIs) routes directly to upstream
+
+# ===========================================
+# Resolver (DNS)
+# ===========================================
+resolver:
+  - name: default
+    type: c-ares
+    server:
+      - 127.0.0.11
+
+# ===========================================
+# Auditor - TLS MITM + ICAP
+# ===========================================
+auditor:
+  - name: default
+    protocol_inspection: {}
+    # TLS certificate generation for MITM - connects to g3fcgen on UDP 2999
+    tls_cert_agent:
+      query_peer_addr: 127.0.0.1:2999
+      query_wait_timeout: 4s
+      protective_cache_ttl: 10
+      maximum_cache_ttl: 300
+    # TLS interception client settings (for upstream connections)
+    tls_interception_client:
+      no_default_ca_certificate: false
+      handshake_timeout: 10s
+    # TLS interception server settings (for client connections)
+    tls_interception_server:
+      accept_timeout: 10s
+    # HTTP/1 interception
+    h1_interception:
+      pipeline_size: 10
+      req_header_recv_timeout: 30s
+      rsp_header_recv_timeout: 60s
+    # HTTP/2 interception
+    h2_interception: {}
+    # ICAP services - internal Docker network (gateway-bridge), no external exposure
+    # g3proxy v1.12 supports one ICAP service per direction (singular, not array).
+    # REQMOD: DLP credential scanning (credcheck service)
+    # NOTE: g3proxy v1.12 only supports ONE ICAP service per direction.
+    # For MVP, we use DLP (credcheck) for REQMOD. The approval_rewrite service
+    # is available but requires either:
+    #   a) A future g3proxy version with ICAP chaining support, or
+    #   b) Manual switching between credcheck and approval_rewrite based on use case
+    # To test approval system: change url to icap://icap:1344/approval_rewrite
+    icap_reqmod_service:
+      url: icap://sentinel:1344/credcheck
+      no_preview: true
+    # RESPMOD: Merged ClamAV + OTT approval scanning (sentinel_respmod)
+    icap_respmod_service:
+      url: icap://sentinel:1344/sentinel_respmod
+      no_preview: true
+    # Audit all traffic
+    task_audit_ratio: 1.0
+
+# ===========================================
+# Escapers - Upstream routing
+# ===========================================
+escaper:
+  # Direct internet access - used for everything
+  # g3proxy handles TLS MITM, then connects directly to upstream
+  - name: direct
+    type: direct_fixed
+    resolver: default
+
+# ===========================================
+# Servers
+# ===========================================
+server:
+  # HTTP proxy for explicit proxy mode (testing)
+  - name: http_proxy
+    type: http_proxy
+    listen: 0.0.0.0:8080
+    escaper: direct
+    auditor: default
+  # Main transparent proxy listener
+  - name: transparent
+    type: tcp_tproxy
+    listen: 0.0.0.0:18080
+    escaper: direct
+    auditor: default
