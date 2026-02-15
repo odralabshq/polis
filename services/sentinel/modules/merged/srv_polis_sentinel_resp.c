@@ -1183,6 +1183,9 @@ static int process_ott_approval(const char *ott_code,
     char *ott_json = NULL;
     char *blocked_data = NULL;
 
+    /* Destination host extracted from blocked request */
+    char blocked_dest_host[256];
+
     /* Parsed fields from OTT mapping JSON */
     char parsed_request_id[32];
     char parsed_origin_host[256];
@@ -1195,6 +1198,8 @@ static int process_ott_approval(const char *ott_code,
             "process_ott_approval: NULL parameter\n");
         return -1;
     }
+
+    blocked_dest_host[0] = '\0';
 
     /* Lazy reconnect if connection was lost or not yet established */
     if (!ensure_valkey_connected()) {
@@ -1426,6 +1431,48 @@ static int process_ott_approval(const char *ott_code,
         "Preserved blocked data for '%s' "
         "(audit trail)\n", parsed_request_id);
 
+    /* ---------------------------------------------------------- */
+    /* Step 5b: Extract destination host from blocked request      */
+    /* The blocked request JSON contains a "destination" field     */
+    /* with the URL that was blocked (e.g. https://httpbin.org/x). */
+    /* We parse the host from it for the host-based approval key.  */
+    /* ---------------------------------------------------------- */
+    {
+        const char *dp = strstr(blocked_data,
+                                "\"destination\":\"");
+        if (dp) {
+            const char *host_start;
+            const char *host_end;
+            size_t hlen;
+
+            dp += strlen("\"destination\":\"");
+
+            /* Skip scheme (https:// or http://) */
+            host_start = strstr(dp, "://");
+            if (host_start)
+                host_start += 3;
+            else
+                host_start = dp;
+
+            /* Find end of host: slash, colon, quote */
+            host_end = host_start;
+            while (*host_end && *host_end != '/' &&
+                   *host_end != ':' && *host_end != '"')
+                host_end++;
+
+            hlen = (size_t)(host_end - host_start);
+            if (hlen > 0 &&
+                hlen < sizeof(blocked_dest_host)) {
+                memcpy(blocked_dest_host,
+                       host_start, hlen);
+                blocked_dest_host[hlen] = '\0';
+                ci_debug_printf(3, "sentinel_resp: "
+                    "Blocked destination host: '%s'\n",
+                    blocked_dest_host);
+            }
+        }
+    }
+
     snprintf(approved_key, sizeof(approved_key),
              "polis:approved:%s", parsed_request_id);
 
@@ -1563,13 +1610,20 @@ static int process_ott_approval(const char *ott_code,
 
     /* ---------------------------------------------------------- */
     /* Step 7b: SETEX host-based approval key (Req 2.8)           */
-    /* Allows the DLP REQMOD module to check if a destination has */
-    /* been recently approved, so retries pass through.           */
+    /* Uses the blocked request's destination host so the DLP      */
+    /* REQMOD module can allow retries to the same host.           */
+    /* Falls back to origin_host if destination not available.     */
     /* ---------------------------------------------------------- */
     {
         char host_key[320];
+        const char *approval_host;
+
+        approval_host = (blocked_dest_host[0] != '\0')
+                        ? blocked_dest_host
+                        : parsed_origin_host;
+
         snprintf(host_key, sizeof(host_key),
-                 "polis:approved:host:%s", parsed_origin_host);
+                 "polis:approved:host:%s", approval_host);
 
         reply = redisCommand(valkey_ctx,
             "SETEX %s %d approved",
