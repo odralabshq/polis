@@ -12,17 +12,39 @@ build:
 build-service service:
     docker build -f services/{{service}}/Dockerfile .
 
+# Compile Rust workspace + run Rust tests
+build-code:
+    cargo test --workspace
+
+# Compile and run C native tests
+test-native:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for src in tests/native/sentinel/test_*.c; do
+        bin="${src%.c}"
+        gcc -Wall -Werror -o "$bin" "$src"
+        "$bin"
+    done
+
 # Run all tests
 test:
     ./tests/run-tests.sh all
 
-# Run unit tests only
+# Run unit tests only (BATS, no Docker)
 test-unit:
     ./tests/run-tests.sh unit
 
 # Run Rust tests
 test-rust:
     cargo test --workspace
+
+# Run integration tests (requires running containers)
+test-integration:
+    ./tests/run-tests.sh --ci integration
+
+# Run E2E tests (requires running containers)
+test-e2e:
+    ./tests/run-tests.sh --ci e2e
 
 # Start all services
 up:
