@@ -49,7 +49,7 @@ typedef struct {
  */
 typedef struct {
     ci_membuf_t *body;          /* Accumulated request body (first 1MB) */
-    ci_ring_buf_t *ring;        /* Ring buffer for body pass-through */
+    ci_cached_file_t *ring;     /* Cached file for body pass-through (mem → disk) */
     ci_membuf_t *error_page;    /* Error page body for blocked responses */
     char tail[TAIL_SCAN_SIZE];  /* Last 10KB ring buffer for tail scan */
     size_t tail_len;            /* Bytes currently in tail buffer */
@@ -59,6 +59,9 @@ typedef struct {
     char matched_pattern[64];   /* Name of the pattern that matched */
     int eof;                    /* End of data received */
     size_t error_page_sent;     /* Bytes of error page already sent */
+    int ott_rewritten;          /* OTT substitution was performed */
+    size_t ott_body_sent;       /* Bytes of OTT-rewritten body already sent */
+    char request_id[16];        /* Generated request ID for blocked requests */
 } dlp_req_data_t;
 
 /* Static pattern storage - loaded from config at service init */
@@ -94,6 +97,285 @@ static unsigned long current_poll_interval = LEVEL_POLL_INTERVAL;
  */
 static pthread_mutex_t valkey_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* --- OTT rewrite additions --- */
+static regex_t approve_pattern;           /* /polis-approve req-* regex */
+static int time_gate_secs = 5;            /* Time-gate delay (seconds) */
+static int ott_ttl_secs = 600;            /* OTT key TTL in Valkey */
+static redisContext *valkey_gov_ctx = NULL;/* governance-reqmod connection */
+static pthread_mutex_t gov_valkey_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* OTT generation constants */
+#define OTT_LEN         12        /* "ott-" + 8 alphanumeric chars */
+#define OTT_RANDOM_BYTES 8        /* Random bytes needed for 8 alphanumeric chars */
+
+/* 62-char alphanumeric alphabet for OTT code characters */
+static const char OTT_CHARSET[] =
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789";
+#define OTT_CHARSET_LEN 62  /* sizeof(OTT_CHARSET) - 1 */
+
+/*
+ * generate_ott - Generate a One-Time Token using /dev/urandom.
+ *
+ * Writes "ott-" followed by 8 alphanumeric characters into buf,
+ * null-terminated (requires buf_len >= OTT_LEN + 1 = 13).
+ *
+ * Security: Uses /dev/urandom exclusively. No PRNG fallback.
+ * Fail-closed: Returns -1 on any error; caller must abort rewrite.
+ *
+ * @param buf      Output buffer (must be >= OTT_LEN + 1 bytes)
+ * @param buf_len  Size of output buffer
+ * @return         0 on success, -1 on failure
+ */
+static int generate_ott(char *buf, size_t buf_len)
+{
+    FILE *fp;
+    unsigned char random_bytes[OTT_RANDOM_BYTES];
+    size_t nread;
+    int i;
+
+    /* Validate output buffer can hold "ott-" + 8 chars + '\0' */
+    if (buf == NULL || buf_len < (size_t)(OTT_LEN + 1)) {
+        ci_debug_printf(0,
+            "CRITICAL: generate_ott: buffer too small "
+            "(need %d, got %zu)\n",
+            OTT_LEN + 1, buf_len);
+        return -1;
+    }
+
+    /* Open /dev/urandom — fail closed if unavailable */
+    fp = fopen("/dev/urandom", "rb");
+    if (fp == NULL) {
+        ci_debug_printf(0,
+            "CRITICAL: generate_ott: cannot open /dev/urandom — "
+            "fail closed, no PRNG fallback (CWE-330)\n");
+        return -1;
+    }
+
+    /* Read 8 random bytes — fail closed on short read */
+    nread = fread(random_bytes, 1, OTT_RANDOM_BYTES, fp);
+    fclose(fp);
+
+    if (nread != OTT_RANDOM_BYTES) {
+        ci_debug_printf(0,
+            "CRITICAL: generate_ott: /dev/urandom short read "
+            "(%zu of %d bytes) — fail closed (CWE-457)\n",
+            nread, OTT_RANDOM_BYTES);
+        return -1;
+    }
+
+    /* Write "ott-" prefix */
+    buf[0] = 'o';
+    buf[1] = 't';
+    buf[2] = 't';
+    buf[3] = '-';
+
+    /* Map each random byte to alphanumeric charset */
+    for (i = 0; i < OTT_RANDOM_BYTES; i++) {
+        buf[4 + i] = OTT_CHARSET[random_bytes[i] % OTT_CHARSET_LEN];
+    }
+
+    /* Null-terminate */
+    buf[OTT_LEN] = '\0';
+
+    return 0;
+}
+
+/*
+ * gov_valkey_init - Initialize governance-reqmod Valkey connection.
+ *
+ * Establishes a TLS connection to Valkey as the governance-reqmod user
+ * for OTT storage and approval operations. This is a separate connection
+ * from the existing dlp-reader connection.
+ *
+ * Reads password from /run/secrets/valkey_reqmod_password.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+static int gov_valkey_init(void)
+{
+    const char *vk_host;
+    int vk_port = 6379;
+    redisSSLContext *ssl_ctx = NULL;
+    redisSSLContextError ssl_err;
+    redisReply *reply;
+    FILE *fp;
+    char password[256];
+    size_t pass_len;
+
+    /* Lock: all governance Valkey state modifications under mutex */
+    pthread_mutex_lock(&gov_valkey_mutex);
+
+    /* Read Valkey host from environment (default: "state") */
+    vk_host = getenv("polis_VALKEY_HOST");
+    if (!vk_host) vk_host = "state";
+
+    /* Initialize OpenSSL for hiredis TLS */
+    redisInitOpenSSL();
+
+    /* Create TLS context with client certificates for mTLS */
+    ssl_ctx = redisCreateSSLContext(
+        "/etc/valkey/tls/ca.crt",
+        NULL,   /* capath — not used, single CA file */
+        "/etc/valkey/tls/client.crt",
+        "/etc/valkey/tls/client.key",
+        NULL,   /* server_name — use default */
+        &ssl_err);
+    if (ssl_ctx == NULL) {
+        ci_debug_printf(1, "polis_dlp: WARNING: "
+            "Failed to create TLS context for governance-reqmod: %s — "
+            "OTT rewriting unavailable\n",
+            redisSSLContextGetError(ssl_err));
+        pthread_mutex_unlock(&gov_valkey_mutex);
+        return -1;
+    }
+
+    /* Establish TCP connection to Valkey */
+    valkey_gov_ctx = redisConnect(vk_host, vk_port);
+    if (valkey_gov_ctx == NULL ||
+        valkey_gov_ctx->err) {
+        ci_debug_printf(1, "polis_dlp: WARNING: "
+            "Cannot connect to Valkey at %s:%d for governance-reqmod%s%s — "
+            "OTT rewriting unavailable\n",
+            vk_host, vk_port,
+            valkey_gov_ctx ? ": " : "",
+            valkey_gov_ctx ? valkey_gov_ctx->errstr : "");
+        if (valkey_gov_ctx) {
+            redisFree(valkey_gov_ctx);
+            valkey_gov_ctx = NULL;
+        }
+        redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&gov_valkey_mutex);
+        return -1;
+    }
+
+    /* Initiate TLS handshake on the connection */
+    if (redisInitiateSSLWithContext(valkey_gov_ctx,
+                                    ssl_ctx) != REDIS_OK) {
+        ci_debug_printf(1, "polis_dlp: WARNING: "
+            "TLS handshake failed with Valkey for governance-reqmod: %s — "
+            "OTT rewriting unavailable\n",
+            valkey_gov_ctx->errstr);
+        redisFree(valkey_gov_ctx);
+        valkey_gov_ctx = NULL;
+        redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&gov_valkey_mutex);
+        return -1;
+    }
+
+    /* Read governance-reqmod password from Docker secret file */
+    fp = fopen("/run/secrets/valkey_reqmod_password", "r");
+    if (!fp) {
+        ci_debug_printf(1, "polis_dlp: WARNING: "
+            "Cannot open /run/secrets/valkey_reqmod_password — "
+            "OTT rewriting unavailable\n");
+        redisFree(valkey_gov_ctx);
+        valkey_gov_ctx = NULL;
+        redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&gov_valkey_mutex);
+        return -1;
+    }
+
+    memset(password, 0, sizeof(password));
+    if (fgets(password, sizeof(password), fp) == NULL) {
+        ci_debug_printf(1, "polis_dlp: WARNING: "
+            "Failed to read password from "
+            "/run/secrets/valkey_reqmod_password\n");
+        fclose(fp);
+        memset(password, 0, sizeof(password));
+        redisFree(valkey_gov_ctx);
+        valkey_gov_ctx = NULL;
+        redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&gov_valkey_mutex);
+        return -1;
+    }
+    fclose(fp);
+
+    /* Strip trailing newline from password */
+    pass_len = strlen(password);
+    while (pass_len > 0 &&
+           (password[pass_len - 1] == '\n' ||
+            password[pass_len - 1] == '\r')) {
+        password[--pass_len] = '\0';
+    }
+
+    /* Authenticate with ACL: AUTH governance-reqmod <password> */
+    reply = redisCommand(valkey_gov_ctx,
+        "AUTH governance-reqmod %s", password);
+
+    /* Scrub password from stack immediately after AUTH */
+    memset(password, 0, sizeof(password));
+
+    if (reply == NULL ||
+        reply->type == REDIS_REPLY_ERROR) {
+        ci_debug_printf(1, "polis_dlp: CRITICAL: "
+            "Valkey ACL auth failed as governance-reqmod%s%s — "
+            "OTT rewriting unavailable\n",
+            reply ? ": " : "",
+            reply ? reply->str : "");
+        if (reply) freeReplyObject(reply);
+        redisFree(valkey_gov_ctx);
+        valkey_gov_ctx = NULL;
+        redisFreeSSLContext(ssl_ctx);
+        pthread_mutex_unlock(&gov_valkey_mutex);
+        return -1;
+    }
+    freeReplyObject(reply);
+
+    ci_debug_printf(3, "polis_dlp: "
+        "Authenticated as governance-reqmod\n");
+
+    ci_debug_printf(3, "polis_dlp: "
+        "Connected to Valkey at %s:%d as governance-reqmod (TLS + ACL)\n",
+        vk_host, vk_port);
+
+    redisFreeSSLContext(ssl_ctx);
+
+    pthread_mutex_unlock(&gov_valkey_mutex);
+    return 0;
+}
+
+/*
+ * ensure_gov_valkey_connected - Lazy reconnect for governance-reqmod.
+ *
+ * Checks if valkey_gov_ctx is connected. If not, attempts reconnection
+ * via gov_valkey_init(). Thread-safe via gov_valkey_mutex.
+ *
+ * Returns 1 if connected, 0 if unavailable.
+ */
+static int ensure_gov_valkey_connected(void)
+{
+    int connected;
+
+    pthread_mutex_lock(&gov_valkey_mutex);
+
+    /* Check if context exists and is not in error state */
+    if (valkey_gov_ctx != NULL && valkey_gov_ctx->err == 0) {
+        /* Test connection with PING */
+        redisReply *reply = redisCommand(valkey_gov_ctx, "PING");
+        if (reply != NULL && reply->type != REDIS_REPLY_ERROR) {
+            freeReplyObject(reply);
+            pthread_mutex_unlock(&gov_valkey_mutex);
+            return 1;  /* Connected */
+        }
+        if (reply) freeReplyObject(reply);
+
+        /* PING failed — connection is stale, free it */
+        ci_debug_printf(2, "polis_dlp: "
+            "governance-reqmod connection stale, reconnecting\n");
+        redisFree(valkey_gov_ctx);
+        valkey_gov_ctx = NULL;
+    }
+
+    pthread_mutex_unlock(&gov_valkey_mutex);
+
+    /* Attempt reconnection (gov_valkey_init handles its own locking) */
+    connected = (gov_valkey_init() == 0);
+
+    return connected;
+}
+
 /*
  * find_pattern_by_name - Look up a loaded pattern by its name.
  * Returns pointer to the pattern, or NULL if not found.
@@ -107,6 +389,9 @@ static dlp_pattern_t *find_pattern_by_name(const char *name)
     }
     return NULL;
 }
+
+/* Forward declaration for lazy Valkey init from refresh_security_level */
+static int dlp_valkey_init_locked(void);
 
 /*
  * refresh_security_level - Poll Valkey for the current security level.
@@ -131,15 +416,24 @@ static void refresh_security_level(void)
     char stripped[64];
     size_t len;
 
-    /* No Valkey connection — skip polling entirely */
-    if (valkey_level_ctx == NULL)
-        return;
+    /* Lazy connect: if no Valkey connection, try to establish one.
+     * This handles the MPMT fork case where connections established
+     * in the main process are invalid in child processes. */
+    if (valkey_level_ctx == NULL) {
+        if (dlp_valkey_init_locked() != 0)
+            return;  /* Still can't connect */
+    }
 
     reply = redisCommand(valkey_level_ctx,
                          "GET polis:config:security_level");
 
-    /* Failure path: keep current level, backoff */
+    /* Failure path: free stale connection, try reconnect */
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
+        if (reply)
+            freeReplyObject(reply);
+        /* Connection is stale — free and try reconnect */
+        redisFree(valkey_level_ctx);
+        valkey_level_ctx = NULL;
         current_poll_interval *= 2;
         if (current_poll_interval > LEVEL_POLL_MAX)
             current_poll_interval = LEVEL_POLL_MAX;
@@ -148,8 +442,6 @@ static void refresh_security_level(void)
                            "%lu requests\n",
                        (int)current_level,
                        current_poll_interval);
-        if (reply)
-            freeReplyObject(reply);
         return;
     }
 
@@ -222,6 +514,11 @@ static int is_new_domain(const char *host)
         ".api.github.com",
         ".github.com",
         ".amazonaws.com",
+        ".api.telegram.org",
+        ".discord.com",
+        ".api.slack.com",
+        ".deb.debian.org",
+        ".registry.npmjs.org",
         NULL
     };
     size_t hlen, dlen;
@@ -321,7 +618,13 @@ static int apply_security_policy(const char *host, int has_credential)
  *
  * Requirements: 1.1, 1.2, 1.7, 1.8
  */
-static int dlp_valkey_init(void)
+/*
+ * dlp_valkey_init_locked - Inner function for dlp-reader Valkey connection.
+ *
+ * Same as dlp_valkey_init() but assumes valkey_mutex is already held.
+ * Used for lazy initialization from refresh_security_level().
+ */
+static int dlp_valkey_init_locked(void)
 {
     const char *vk_host;
     int vk_port = 6379;
@@ -332,8 +635,11 @@ static int dlp_valkey_init(void)
     char password[256];
     size_t pass_len;
 
-    /* Lock: all Valkey state modifications under mutex */
-    pthread_mutex_lock(&valkey_mutex);
+    /* Free stale connection if any */
+    if (valkey_level_ctx) {
+        redisFree(valkey_level_ctx);
+        valkey_level_ctx = NULL;
+    }
 
     /* Read Valkey host from environment (default: "state") */
     vk_host = getenv("polis_VALKEY_HOST");
@@ -345,17 +651,16 @@ static int dlp_valkey_init(void)
     /* Create TLS context with client certificates for mTLS */
     ssl_ctx = redisCreateSSLContext(
         "/etc/valkey/tls/ca.crt",
-        NULL,   /* capath — not used, single CA file */
+        NULL,
         "/etc/valkey/tls/client.crt",
         "/etc/valkey/tls/client.key",
-        NULL,   /* server_name — use default */
+        NULL,
         &ssl_err);
     if (ssl_ctx == NULL) {
         ci_debug_printf(1, "polis_dlp: WARNING: "
             "Failed to create TLS context: %s — "
             "Valkey connection unavailable\n",
             redisSSLContextGetError(ssl_err));
-        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
 
@@ -364,8 +669,7 @@ static int dlp_valkey_init(void)
     if (valkey_level_ctx == NULL ||
         valkey_level_ctx->err) {
         ci_debug_printf(1, "polis_dlp: WARNING: "
-            "Cannot connect to Valkey at %s:%d%s%s — "
-            "Valkey connection unavailable\n",
+            "Cannot connect to Valkey at %s:%d%s%s\n",
             vk_host, vk_port,
             valkey_level_ctx ? ": " : "",
             valkey_level_ctx ? valkey_level_ctx->errstr : "");
@@ -374,21 +678,18 @@ static int dlp_valkey_init(void)
             valkey_level_ctx = NULL;
         }
         redisFreeSSLContext(ssl_ctx);
-        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
 
-    /* Initiate TLS handshake on the connection */
+    /* Initiate TLS handshake */
     if (redisInitiateSSLWithContext(valkey_level_ctx,
                                     ssl_ctx) != REDIS_OK) {
         ci_debug_printf(1, "polis_dlp: WARNING: "
-            "TLS handshake failed with Valkey: %s — "
-            "Valkey connection unavailable\n",
+            "TLS handshake failed: %s\n",
             valkey_level_ctx->errstr);
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
         redisFreeSSLContext(ssl_ctx);
-        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
 
@@ -396,31 +697,27 @@ static int dlp_valkey_init(void)
     fp = fopen("/run/secrets/valkey_dlp_password", "r");
     if (!fp) {
         ci_debug_printf(1, "polis_dlp: WARNING: "
-            "Cannot open /run/secrets/valkey_dlp_password — "
-            "ACL authentication unavailable\n");
+            "Cannot open /run/secrets/valkey_dlp_password\n");
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
         redisFreeSSLContext(ssl_ctx);
-        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
 
     memset(password, 0, sizeof(password));
     if (fgets(password, sizeof(password), fp) == NULL) {
         ci_debug_printf(1, "polis_dlp: WARNING: "
-            "Failed to read password from "
-            "/run/secrets/valkey_dlp_password\n");
+            "Failed to read dlp-reader password\n");
         fclose(fp);
         memset(password, 0, sizeof(password));
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
         redisFreeSSLContext(ssl_ctx);
-        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
     fclose(fp);
 
-    /* Strip trailing newline from password */
+    /* Strip trailing newline */
     pass_len = strlen(password);
     while (pass_len > 0 &&
            (password[pass_len - 1] == '\n' ||
@@ -428,42 +725,30 @@ static int dlp_valkey_init(void)
         password[--pass_len] = '\0';
     }
 
-    /* Authenticate with ACL: AUTH dlp-reader <password> */
+    /* Authenticate with ACL */
     reply = redisCommand(valkey_level_ctx,
         "AUTH dlp-reader %s", password);
-
-    /* Scrub password from stack immediately after AUTH */
     memset(password, 0, sizeof(password));
 
     if (reply == NULL ||
         reply->type == REDIS_REPLY_ERROR) {
         ci_debug_printf(1, "polis_dlp: CRITICAL: "
-            "Valkey ACL auth failed as dlp-reader%s%s — "
-            "Valkey connection unavailable\n",
+            "Valkey ACL auth failed as dlp-reader%s%s\n",
             reply ? ": " : "",
             reply ? reply->str : "");
         if (reply) freeReplyObject(reply);
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
         redisFreeSSLContext(ssl_ctx);
-        pthread_mutex_unlock(&valkey_mutex);
         return -1;
     }
     freeReplyObject(reply);
 
-    ci_debug_printf(3, "polis_dlp: "
-        "Authenticated as dlp-reader\n");
-
-    ci_debug_printf(3, "polis_dlp: "
-        "Connected to Valkey at %s:%d (TLS + ACL)\n",
-        vk_host, vk_port);
+    ci_debug_printf(1, "polis_dlp: "
+        "Connected to Valkey at %s:%d as dlp-reader "
+        "(TLS + ACL)\n", vk_host, vk_port);
 
     redisFreeSSLContext(ssl_ctx);
-
-    /* Read initial security level from Valkey */
-    refresh_security_level();
-
-    pthread_mutex_unlock(&valkey_mutex);
     return 0;
 }
 
@@ -622,12 +907,53 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
         return CI_ERROR;
     }
 
-    /* Initialize Valkey connection for dynamic security levels (non-fatal) */
-    if (dlp_valkey_init() != 0) {
-        ci_debug_printf(2, "polis_dlp: WARNING: Valkey init failed — "
-                           "DLP will operate without dynamic security "
-                           "levels, defaulting to balanced\n");
+    /* Valkey connections are lazy-initialized on first use in child
+     * processes. c-ICAP uses MPMT (pre-fork) model — connections
+     * established here in the main process would be corrupted after
+     * fork because OpenSSL/TLS state is not fork-safe. */
+    ci_debug_printf(3, "polis_dlp: Valkey connections will be "
+                       "lazy-initialized on first use\n");
+
+    /* --- OTT rewrite initialization (Requirements 1.3, 1.9, 1.12) --- */
+    
+    /* Compile approve pattern regex: /polis-approve req-{hex8}
+     * Must match both plain text and URL-encoded bodies where
+     * spaces appear as '+' or '%20'. */
+    int rc = regcomp(&approve_pattern,
+                     "/polis-approve([[:space:]]|\\+|%20)+(req-[a-f0-9]{8})",
+                     REG_EXTENDED);
+    if (rc != 0) {
+        char errbuf[128];
+        regerror(rc, &approve_pattern, errbuf, sizeof(errbuf));
+        ci_debug_printf(0, "polis_dlp: CRITICAL: Failed to compile "
+                           "approve pattern regex: %s\n", errbuf);
+        return CI_ERROR;
     }
+    ci_debug_printf(3, "polis_dlp: Compiled approve pattern regex\n");
+
+    /* Load time-gate duration from environment (Requirement 1.12) */
+    const char *env_val = getenv("POLIS_APPROVAL_TIME_GATE_SECS");
+    if (env_val != NULL) {
+        int parsed = atoi(env_val);
+        if (parsed > 0) {
+            time_gate_secs = parsed;
+            ci_debug_printf(3, "polis_dlp: time_gate_secs set to %d from env\n",
+                            time_gate_secs);
+        } else {
+            ci_debug_printf(1, "polis_dlp: WARNING: invalid "
+                               "POLIS_APPROVAL_TIME_GATE_SECS='%s', "
+                               "using default %d\n", env_val, time_gate_secs);
+        }
+    } else {
+        ci_debug_printf(3, "polis_dlp: POLIS_APPROVAL_TIME_GATE_SECS not set, "
+                           "using default %d\n", time_gate_secs);
+    }
+
+    /* governance-reqmod Valkey is also lazy-initialized (see above) */
+
+    ci_debug_printf(3, "polis_dlp: OTT rewrite initialization complete "
+                       "(time_gate=%ds, ott_ttl=%ds)\n",
+                    time_gate_secs, ott_ttl_secs);
 
     return CI_OK;
 }
@@ -657,6 +983,18 @@ void dlp_close_service(void)
     }
     pthread_mutex_unlock(&valkey_mutex);
     pthread_mutex_destroy(&valkey_mutex);
+    
+    /* Tear down governance-reqmod Valkey connection */
+    pthread_mutex_lock(&gov_valkey_mutex);
+    if (valkey_gov_ctx) {
+        redisFree(valkey_gov_ctx);
+        valkey_gov_ctx = NULL;
+    }
+    pthread_mutex_unlock(&gov_valkey_mutex);
+    pthread_mutex_destroy(&gov_valkey_mutex);
+    
+    /* Free OTT regex */
+    regfree(&approve_pattern);
 }
 
 /*
@@ -682,8 +1020,12 @@ void *dlp_init_request_data(ci_request_t *req)
 
     /* Create memory buffer for body accumulation (up to 1MB) */
     data->body = ci_membuf_new_sized(MAX_BODY_SCAN);
-    /* Create ring buffer for body pass-through */
-    data->ring = ci_req_hasbody(req) ? ci_ring_buf_new(32768) : NULL;
+    /* Create cached file for body pass-through.
+     * Uses ci_cached_file_t: starts in memory (up to CI_BODY_MAX_MEM,
+     * typically 128KB), then spills to a temp file on disk for larger
+     * bodies. Handles arbitrarily large AI agent prompts without the
+     * fixed-size overflow problem of ci_ring_buf_t. */
+    data->ring = ci_req_hasbody(req) ? ci_cached_file_new(CI_BODY_MAX_MEM) : NULL;
     data->error_page = NULL;
     data->tail_len = 0;
     data->total_body_len = 0;
@@ -692,6 +1034,8 @@ void *dlp_init_request_data(ci_request_t *req)
     data->matched_pattern[0] = '\0';
     data->eof = 0;
     data->error_page_sent = 0;
+    data->ott_rewritten = 0;
+    data->ott_body_sent = 0;
     memset(data->tail, 0, TAIL_SCAN_SIZE);
 
     /* Extract Host header from the HTTP request */
@@ -726,7 +1070,7 @@ void dlp_release_request_data(void *data)
     }
 
     if (req_data->ring) {
-        ci_ring_buf_destroy(req_data->ring);
+        ci_cached_file_destroy(req_data->ring);
         req_data->ring = NULL;
     }
 
@@ -839,10 +1183,32 @@ int dlp_check_preview(char *preview_data, int preview_data_len,
     if (!data)
         return CI_MOD_CONTINUE;
 
-    /* If no body, allow through */
+    /* Initialize OTT fields (Requirement 1.1) */
+    data->ott_rewritten = 0;
+    data->ott_body_sent = 0;
+    data->request_id[0] = '\0';
+
+    /* No body (e.g., GET requests) — still enforce domain policy.
+     * Without this check, bodyless requests to unknown domains bypass
+     * apply_security_policy() entirely because dlp_process() is only
+     * called when CI_MOD_CONTINUE is returned.
+     *
+     * We return CI_MOD_CONTINUE so c-ICAP proceeds to call
+     * dlp_process() (end_of_data handler), which already has the
+     * full blocking logic including apply_security_policy(). For
+     * no-body requests, c-ICAP will call dlp_process() immediately
+     * since there is no more data to read. */
     if (!ci_req_hasbody(req)) {
-        ci_debug_printf(5, "polis_dlp: No body, allowing request\n");
-        return CI_MOD_ALLOW204;
+        int policy = apply_security_policy(data->host, 0);
+        if (policy == 0) {
+            ci_debug_printf(5, "polis_dlp: No body, known domain "
+                               "'%s' — allowing\n", data->host);
+            return CI_MOD_ALLOW204;
+        }
+        ci_debug_printf(3, "polis_dlp: No body, new domain '%s' "
+                           "— deferring to end_of_data handler "
+                           "(policy=%d)\n", data->host, policy);
+        return CI_MOD_CONTINUE;
     }
 
     /* Accumulate preview data for scanning */
@@ -964,11 +1330,55 @@ int dlp_process(ci_request_t *req)
         }
     }
 
+    /* If blocked, check if destination has a recent host-based approval.
+     * This allows retries to pass through after the user approved the
+     * original blocked request via the OTT approval flow. */
+    if (data->blocked == 1 && data->host[0] != '\0') {
+        if (ensure_gov_valkey_connected()) {
+            char host_key[320];
+            snprintf(host_key, sizeof(host_key),
+                     "polis:approved:host:%s", data->host);
+
+            pthread_mutex_lock(&gov_valkey_mutex);
+            redisReply *approved_reply = redisCommand(
+                valkey_gov_ctx, "EXISTS %s", host_key);
+
+            if (approved_reply &&
+                approved_reply->type == REDIS_REPLY_INTEGER &&
+                approved_reply->integer == 1) {
+                /* Host has been recently approved — allow through */
+                ci_debug_printf(3, "polis_dlp: "
+                    "Host '%s' has active approval — "
+                    "allowing blocked request through\n",
+                    data->host);
+                data->blocked = 0;
+                data->matched_pattern[0] = '\0';
+            }
+            if (approved_reply) freeReplyObject(approved_reply);
+            pthread_mutex_unlock(&gov_valkey_mutex);
+        }
+    }
+
     /* If blocked, create 403 response with body (like srv_url_check) */
     if (data->blocked == 1) {
         char body_buf[512];
         int body_len;
         char len_hdr[64];
+
+        /* Generate request_id for this block (req-[a-f0-9]{8}) */
+        {
+            FILE *fp = fopen("/dev/urandom", "rb");
+            if (fp) {
+                unsigned char rand_bytes[4];
+                if (fread(rand_bytes, 1, 4, fp) == 4) {
+                    snprintf(data->request_id, sizeof(data->request_id),
+                            "req-%02x%02x%02x%02x",
+                            rand_bytes[0], rand_bytes[1],
+                            rand_bytes[2], rand_bytes[3]);
+                }
+                fclose(fp);
+            }
+        }
 
         /* Build minimal HTML error page body */
         body_len = snprintf(body_buf, sizeof(body_buf),
@@ -1002,6 +1412,13 @@ int dlp_process(ci_request_t *req)
                  "X-polis-Pattern: %s", data->matched_pattern);
         ci_http_response_add_header(req, hdr_buf);
 
+        /* Add request ID header for approval workflow */
+        if (data->request_id[0] != '\0') {
+            snprintf(hdr_buf, sizeof(hdr_buf),
+                     "X-polis-Request-Id: %s", data->request_id);
+            ci_http_response_add_header(req, hdr_buf);
+        }
+
         ci_debug_printf(3, "polis_dlp: BLOCKED request to "
                            "'%s' - pattern '%s' matched\n",
                        data->host, data->matched_pattern);
@@ -1009,6 +1426,265 @@ int dlp_process(ci_request_t *req)
         data->eof = 1;
         ci_req_unlock_data(req);
         return CI_MOD_DONE;
+    }
+
+    /* --- OTT rewrite pass (Requirements 1.3-1.7, 1.10) --- */
+    /* Only scan for approve pattern if body passed DLP + security policy */
+    {
+        regmatch_t matches[3];
+        char *body_raw = (char *)ci_membuf_raw(data->body);
+
+        if (body_raw &&
+            regexec(&approve_pattern, body_raw, 3, matches, 0) == 0) {
+            /* Extract request_id from match group 2
+             * (group 1 is the space/+/%20 separator) */
+            int req_id_len = matches[2].rm_eo - matches[2].rm_so;
+            char request_id[32];
+            
+            if (req_id_len > 0 && req_id_len < (int)sizeof(request_id)) {
+                memcpy(request_id, body_raw + matches[2].rm_so, req_id_len);
+                request_id[req_id_len] = '\0';
+                
+                ci_debug_printf(3, "polis_dlp: Found approve pattern with "
+                               "request_id='%s'\n", request_id);
+                
+                /* Validate request_id format: req-[a-f0-9]{8} (CWE-116) */
+                if (req_id_len == 12 &&
+                    request_id[0] == 'r' && request_id[1] == 'e' &&
+                    request_id[2] == 'q' && request_id[3] == '-') {
+                    int valid = 1;
+                    int i;
+                    for (i = 4; i < 12; i++) {
+                        char c = request_id[i];
+                        if (!((c >= '0' && c <= '9') ||
+                              (c >= 'a' && c <= 'f'))) {
+                            valid = 0;
+                            break;
+                        }
+                    }
+                    
+                    if (valid) {
+                        /* Check Host header present (context binding) */
+                        if (data->host[0] == '\0') {
+                            ci_debug_printf(1, "polis_dlp: WARNING: "
+                                           "approve pattern found but no Host "
+                                           "header — skipping OTT rewrite\n");
+                        } else if (!ensure_gov_valkey_connected()) {
+                            /* Fail-closed: block if Valkey unavailable (H3) */
+                            ci_debug_printf(0, "CRITICAL: polis_dlp: "
+                                           "governance-reqmod Valkey down, "
+                                           "blocking /polis-approve to prevent "
+                                           "request_id leak (CWE-209)\n");
+                            
+                            /* Return 403 with retry message */
+                            ci_http_response_create(req, 1, 1);
+                            ci_http_response_add_header(req,
+                                "HTTP/1.1 403 Forbidden");
+                            ci_http_response_add_header(req,
+                                "X-polis-Block: approval_service_unavailable");
+                            ci_http_response_add_header(req,
+                                "Content-Type: text/plain");
+                            
+                            const char *err_msg = "Approval service temporarily "
+                                "unavailable. Please retry in a moment.\n";
+                            data->error_page = ci_membuf_new_sized(strlen(err_msg) + 1);
+                            ci_membuf_write(data->error_page, err_msg,
+                                          strlen(err_msg), 1);
+                            
+                            snprintf(hdr_buf, sizeof(hdr_buf),
+                                    "Content-Length: %zu", strlen(err_msg));
+                            ci_http_response_add_header(req, hdr_buf);
+                            
+                            data->blocked = 1;
+                            data->eof = 1;
+                            ci_req_unlock_data(req);
+                            return CI_MOD_DONE;
+                        } else {
+                            /* Proceed with OTT rewrite */
+                            ci_debug_printf(3, "polis_dlp: "
+                                           "Validated request_id format\n");
+                            
+                            /* Acquire OTT lock (H5: TOCTOU prevention) */
+                            pthread_mutex_lock(&gov_valkey_mutex);
+                            redisReply *lock_reply = redisCommand(valkey_gov_ctx,
+                                "SET polis:ott_lock:%s 1 NX EX 30", request_id);
+                            
+                            if (!lock_reply || lock_reply->type == REDIS_REPLY_NIL) {
+                                /* Lock contention — another thread processing */
+                                ci_debug_printf(2, "polis_dlp: OTT lock "
+                                               "contention for %s, skipping\n",
+                                               request_id);
+                                if (lock_reply) freeReplyObject(lock_reply);
+                                pthread_mutex_unlock(&gov_valkey_mutex);
+                            } else {
+                                freeReplyObject(lock_reply);
+                                
+                                /* NOTE: We no longer check EXISTS polis:blocked:{req-id}
+                                 * here. The blocked key is created by the MCP agent
+                                 * (toolbox) asynchronously, so it may not exist yet
+                                 * when the approval message passes through REQMOD.
+                                 * The RESPMOD module validates the blocked key in
+                                 * process_ott_approval() Step 4 before granting
+                                 * approval, so security is maintained. */
+                                
+                                    /* Generate OTT code */
+                                    char ott_code[OTT_LEN + 1];
+                                    if (generate_ott(ott_code, sizeof(ott_code)) != 0) {
+                                        ci_debug_printf(0, "CRITICAL: polis_dlp: "
+                                                       "OTT generation failed — "
+                                                       "skipping rewrite\n");
+                                        pthread_mutex_unlock(&gov_valkey_mutex);
+                                    } else {
+                                        /* Store OTT mapping in Valkey */
+                                        ci_debug_printf(3, "polis_dlp: "
+                                                       "Generated OTT: %s\n",
+                                                       ott_code);
+                                        
+                                        /* Build JSON payload */
+                                        time_t now = time(NULL);
+                                        time_t armed_after = now + time_gate_secs;
+                                        char json_payload[512];
+                                        snprintf(json_payload, sizeof(json_payload),
+                                                "{\"ott_code\":\"%s\","
+                                                "\"request_id\":\"%s\","
+                                                "\"armed_after\":%ld,"
+                                                "\"origin_host\":\"%s\"}",
+                                                ott_code, request_id,
+                                                (long)armed_after, data->host);
+                                        
+                                        /* Store with SET NX EX */
+                                        redisReply *set_reply = redisCommand(
+                                            valkey_gov_ctx,
+                                            "SET polis:ott:%s %s NX EX %d",
+                                            ott_code, json_payload, ott_ttl_secs);
+                                        
+                                        if (!set_reply ||
+                                            set_reply->type == REDIS_REPLY_NIL) {
+                                            /* OTT collision — retry once */
+                                            ci_debug_printf(1, "polis_dlp: "
+                                                           "OTT collision, "
+                                                           "retrying\n");
+                                            if (set_reply) freeReplyObject(set_reply);
+                                            
+                                            if (generate_ott(ott_code,
+                                                           sizeof(ott_code)) != 0) {
+                                                ci_debug_printf(0, "CRITICAL: "
+                                                               "OTT retry failed\n");
+                                                pthread_mutex_unlock(&gov_valkey_mutex);
+                                            } else {
+                                                /* Retry SET with new OTT */
+                                                snprintf(json_payload,
+                                                        sizeof(json_payload),
+                                                        "{\"ott_code\":\"%s\","
+                                                        "\"request_id\":\"%s\","
+                                                        "\"armed_after\":%ld,"
+                                                        "\"origin_host\":\"%s\"}",
+                                                        ott_code, request_id,
+                                                        (long)armed_after,
+                                                        data->host);
+                                                
+                                                set_reply = redisCommand(
+                                                    valkey_gov_ctx,
+                                                    "SET polis:ott:%s %s NX EX %d",
+                                                    ott_code, json_payload,
+                                                    ott_ttl_secs);
+                                                
+                                                if (!set_reply ||
+                                                    set_reply->type ==
+                                                    REDIS_REPLY_NIL) {
+                                                    ci_debug_printf(0,
+                                                        "CRITICAL: OTT retry "
+                                                        "collision — fail closed\n");
+                                                    if (set_reply)
+                                                        freeReplyObject(set_reply);
+                                                    pthread_mutex_unlock(
+                                                        &gov_valkey_mutex);
+                                                } else {
+                                                    /* Retry succeeded (continue) */
+                                                    freeReplyObject(set_reply);
+                                                }
+                                            }
+                                        } else {
+                                            freeReplyObject(set_reply);
+                                            /* OTT stored successfully */
+                                            
+                                            /* Perform length-preserving substitution */
+                                            /* Replace request_id with ott_code in membuf */
+                                            int sub_offset = matches[2].rm_so;
+                                            
+                                            /* Verify both are same length (12 chars) */
+                                            if (req_id_len == OTT_LEN) {
+                                                memcpy(body_raw + sub_offset,
+                                                      ott_code, OTT_LEN);
+                                                
+                                                /* Verify size match (H6) */
+                                                size_t modified_size =
+                                                    ci_membuf_size(data->body);
+                                                if (modified_size !=
+                                                    data->total_body_len + 1) {
+                                                    /* +1 for null terminator */
+                                                    ci_debug_printf(0,
+                                                        "polis_dlp: OTT "
+                                                        "substitution size "
+                                                        "mismatch: original=%zu "
+                                                        "modified=%zu — "
+                                                        "falling back\n",
+                                                        data->total_body_len + 1,
+                                                        modified_size);
+                                                    data->ott_rewritten = 0;
+                                                } else {
+                                                    data->ott_rewritten = 1;
+                                                    data->ott_body_sent = 0;
+                                                    
+                                                    ci_debug_printf(3,
+                                                        "polis_dlp: OTT rewrite "
+                                                        "complete: %s -> %s\n",
+                                                        request_id, ott_code);
+                                                    
+                                                    /* Log to audit (H8) */
+                                                    char audit_json[512];
+                                                    snprintf(audit_json,
+                                                            sizeof(audit_json),
+                                                            "{\"event\":\"ott_rewrite\","
+                                                            "\"request_id\":\"%s\","
+                                                            "\"ott_code\":\"%s\","
+                                                            "\"origin_host\":\"%s\","
+                                                            "\"timestamp\":%ld}",
+                                                            request_id, ott_code,
+                                                            data->host, (long)now);
+                                                    
+                                                    redisReply *log_reply =
+                                                        redisCommand(valkey_gov_ctx,
+                                                            "ZADD polis:log:events "
+                                                            "%ld %s",
+                                                            (long)now, audit_json);
+                                                    if (log_reply)
+                                                        freeReplyObject(log_reply);
+                                                }
+                                            } else {
+                                                ci_debug_printf(0, "CRITICAL: "
+                                                    "polis_dlp: request_id length "
+                                                    "mismatch (%d != %d)\n",
+                                                    req_id_len, OTT_LEN);
+                                            }
+                                            
+                                            pthread_mutex_unlock(&gov_valkey_mutex);
+                                        }
+                                    }
+                                }
+                            }
+                    } else {
+                        ci_debug_printf(1, "polis_dlp: WARNING: "
+                                       "request_id format invalid "
+                                       "(non-hex chars) — skipping\n");
+                    }
+                } else {
+                    ci_debug_printf(1, "polis_dlp: WARNING: "
+                                   "request_id length/prefix invalid — "
+                                   "skipping\n");
+                }
+            }
+        }
     }
 
     /* No credential detected or allowed - pass through unchanged */
@@ -1061,9 +1737,9 @@ int dlp_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
             }
         }
 
-        /* Also write to ring buffer for later pass-through if allowed */
+        /* Also write to cached file for later pass-through if allowed */
         if (data->ring) {
-            if (ci_ring_buf_write(data->ring, rbuf, *rlen) < 0)
+            if (ci_cached_file_write(data->ring, rbuf, *rlen, iseof) < 0)
                 ret = CI_ERROR;
         }
         data->total_body_len += *rlen;
@@ -1085,9 +1761,25 @@ int dlp_io(char *wbuf, int *wlen, char *rbuf, int *rlen,
             } else {
                 *wlen = CI_EOF;
             }
+        } else if (data->ott_rewritten && data->body) {
+            /* Stream from modified membuf (OTT-rewritten body) */
+            /* The membuf contains the body with req-id replaced by OTT.
+             * We can't use the cached file because it has the original
+             * unmodified body. Note: membuf has null terminator, so
+             * size is total_body_len + 1, but we only send total_body_len */
+            int avail = (int)data->total_body_len - (int)data->ott_body_sent;
+            if (avail > 0) {
+                int to_send = (avail < *wlen) ? avail : *wlen;
+                memcpy(wbuf, ci_membuf_raw(data->body) + data->ott_body_sent,
+                       to_send);
+                data->ott_body_sent += to_send;
+                *wlen = to_send;
+            } else {
+                *wlen = CI_EOF;
+            }
         } else if (data->ring) {
-            /* Normal pass-through from ring buffer */
-            *wlen = ci_ring_buf_read(data->ring, wbuf, *wlen);
+            /* Normal pass-through from cached file */
+            *wlen = ci_cached_file_read(data->ring, wbuf, *wlen);
             if (*wlen == 0)
                 *wlen = CI_EOF;
         } else {

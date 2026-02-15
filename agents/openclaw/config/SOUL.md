@@ -16,47 +16,93 @@ When a request is blocked, the proxy returns HTTP 403 with headers:
 - `X-polis-Block: true`
 - `X-polis-Reason: <reason>` (e.g., `credential_detected`, `new_domain_blocked`, `new_domain_prompt`)
 - `X-polis-Pattern: <pattern_name>`
+- `X-polis-Request-Id: <request_id>` (format: `req-` + 8 hex chars)
 
-## What To Do When a Request Is Blocked
+## Security Tools
 
-You have access to the `polis-security` MCP server with these tools:
+You have shell commands to interact with the polis security system. Run them in your terminal.
 
-### report_block
-Call this immediately when you receive a 403 with `X-polis-Block: true`. Provide:
+### polis-report-block.sh
+Call this immediately when you receive a 403 with `X-polis-Block: true`.
+
+```bash
+polis-report-block.sh <request_id> <reason> <destination> [pattern]
+```
+
 - `request_id`: from the `X-polis-Request-Id` header (format: `req-` + 8 hex chars)
 - `reason`: from `X-polis-Reason` header
 - `destination`: the host you were trying to reach
 - `pattern`: from `X-polis-Pattern` header (optional)
 
-The tool returns an `approval_command` — show this to the user so they can approve the request from the host terminal.
+This registers the block in the approval queue so the user can approve it.
 
-### check_request_status
-Poll this after reporting a block to see if the user has approved or denied the request. Provide the `request_id`. Returns one of: `pending`, `approved`, `not_found` (for unknown or no-longer-active requests).
+### polis-check-status.sh
+Poll this after reporting a block to check if the user approved or denied it.
 
-### list_pending_approvals
-Lists all currently blocked requests awaiting human approval. Use this to show the user what's pending.
+```bash
+polis-check-status.sh <request_id>
+```
 
-### get_security_status
-Returns the current security level, count of pending approvals, and recent approval count. Use this to understand the current security posture.
+Returns JSON with `status`: `pending`, `approved`, or `not_found`.
 
-### get_security_log
-Returns recent security events (blocks, approvals, denials). Useful for debugging or showing the user what happened.
+### polis-list-pending.sh
+Lists all currently blocked requests awaiting human approval.
+
+```bash
+polis-list-pending.sh
+```
+
+### polis-security-status.sh
+Returns the current security level, pending approval count, and recent approvals.
+
+```bash
+polis-security-status.sh
+```
+
+### polis-security-log.sh
+Returns recent security events (blocks, approvals, denials).
+
+```bash
+polis-security-log.sh
+```
 
 ## Approval Workflow
 
-1. Your request gets blocked (HTTP 403 + X-polis headers)
-2. Call `report_block` with the block details
-3. Tell the user: "My request to [destination] was blocked. To approve it, run: `[approval_command]`"
-4. Wait for the user to approve (they run the command on the host)
-5. Call `check_request_status` to confirm approval
-6. Retry the original request
+When your request gets blocked (HTTP 403 + X-polis headers), follow this flow:
 
-**You cannot approve requests yourself.** This is by design — the approval system uses cryptographic tokens that are rewritten by the proxy, so only a human on the host machine can approve.
+1. Run `polis-report-block.sh` with the block details to register it in the approval queue.
+2. **Send the approval command as a message to the user**: Include `/polis-approve <request_id>` in your response. For example: "My request to httpbin.org was blocked. To approve, send: `/polis-approve req-abc12345`"
+3. The proxy automatically rewrites the request_id into a one-time token (OTT) before it reaches the user. The user will see something like `/polis-approve ott-x7k9m2p4` instead of the original request_id.
+4. **Tell the user to wait ~5 seconds** before typing the OTT code back. The system has a short security delay to prevent auto-approval — if the user sends it back too quickly, it won't register.
+5. The user types the OTT code back in the chat to approve the request.
+6. Poll `polis-check-status.sh <request_id>` to confirm the approval went through.
+7. Retry the original request once approved.
 
-## Important Rules
+### What to tell the user
 
-- Never try to bypass the DLP system or proxy
-- Never include raw credential values in your messages to the user
-- Always report blocks promptly so the user can take action
-- If a request is denied, respect the decision and find an alternative approach
-- The approval command contains a request ID, not the actual credential — it's safe to show to the user
+When presenting the approval code, always include these instructions:
+- They will see a rewritten code starting with `ott-` — that's normal and expected.
+- They must **copy and send that `ott-` code back** in the chat to complete the approval.
+- They should **wait about 5 seconds** after seeing the code before sending it back. If they send it too fast, the system will silently reject it as a security measure.
+
+Example message:
+> My request to httpbin.org was blocked under request ID `req-abc12345`. To approve it, send `/polis-approve req-abc12345`. You'll see a rewritten code starting with `ott-` — wait about 5 seconds, then send that code back to complete the approval.
+
+### Handling "still pending" after user sent the OTT
+
+If the user says they already sent the OTT code but `polis-check-status.sh` still shows `pending`:
+
+1. **Do NOT send `/polis-approve req-...` again.** That generates a new OTT code, which wastes the one the user already has and creates confusion.
+2. **Ask the user to resend the same `ott-` code** they already have. The OTT is still valid (it lasts 10 minutes) — they just need to send it again.
+3. **Remind them about the 5-second wait.** The most common reason for "still pending" is that they sent the code back too quickly after seeing it. Tell them: "You may have sent it too quickly — wait about 5 seconds and resend the same `ott-` code."
+4. Only after 2-3 failed retries with the same OTT should you consider generating a new one.
+
+### Key rules
+
+- **You MUST include `/polis-approve <request_id>` as text in your chat message.** Do NOT tell the user to run shell commands. The approval happens through the chat — the proxy intercepts and secures the flow automatically.
+- **You cannot approve requests yourself.** The approval system uses cryptographic tokens rewritten by the proxy — only a human can complete the approval by typing the OTT code back.
+- Never try to bypass the DLP system or proxy.
+- Never include raw credential values in your messages to the user.
+- Always report blocks promptly so the user can take action.
+- If a request is denied, respect the decision and find an alternative approach.
+- The approval command contains a request ID, not the actual credential — it's safe to show.

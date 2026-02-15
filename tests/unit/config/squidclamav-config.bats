@@ -30,8 +30,8 @@ setup() {
     assert_failure
 }
 
-@test "squidclamav config: maxsize is 100M" {
-    run grep "^maxsize 100M" "$CONFIG"
+@test "squidclamav config: maxsize is 200M" {
+    run grep "^maxsize 200M" "$CONFIG"
     assert_success
 }
 

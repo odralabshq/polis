@@ -66,6 +66,26 @@ protect_sensitive_paths() {
 
 disable_ipv6 "workspace" || exit 1
 
+# Bootstrap mounted agents BEFORE routing through the proxy.
+# Agent install scripts (install.sh) need raw internet access to fetch packages
+# (apt-get, npm, git clone, etc.). The transparent proxy intercepts and may block
+# plain HTTP traffic, causing install failures (403 Forbidden from TPROXY).
+for agent_dir in /tmp/agents/*/; do
+    [ -d "$agent_dir" ] || continue
+    name=$(basename "$agent_dir")
+    echo "[workspace] Bootstrapping agent: ${name}"
+
+    # Run install.sh in a subshell so failures don't kill workspace init
+    if [ -x "${agent_dir}/install.sh" ]; then
+        if ! ("${agent_dir}/install.sh"); then
+            echo "[workspace] WARNING: ${name}/install.sh failed — agent may not work"
+            continue
+        fi
+    fi
+
+    # Service enablement is handled after routing is configured (with integrity checks)
+done
+
 # Configure default route to gate for TPROXY
 # Note: Docker doesn't configure gateways for internal networks, so we must do it manually
 echo "[workspace] Resolving gate IP..."
@@ -93,20 +113,12 @@ fi
 # Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
 protect_sensitive_paths
 
-# Bootstrap mounted agents (fault-isolated from core init)
+# Collect and start agent services (with integrity verification from manifest system).
+# install.sh already ran above (before routing), so we only handle .service files here.
 agent_services=()
 for agent_dir in /tmp/agents/*/; do
     [ -d "$agent_dir" ] || continue
     name=$(basename "$agent_dir")
-    echo "[workspace] Bootstrapping agent: ${name}"
-
-    # Run install.sh in a subshell so failures don't kill workspace init
-    if [ -x "${agent_dir}/install.sh" ]; then
-        if ! ("${agent_dir}/install.sh"); then
-            echo "[workspace] WARNING: ${name}/install.sh failed — agent may not work"
-            continue
-        fi
-    fi
 
     # Collect services to enable (generated .service file is mounted by compose override)
     svc="/etc/systemd/system/${name}.service"
