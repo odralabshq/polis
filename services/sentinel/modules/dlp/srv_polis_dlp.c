@@ -88,6 +88,13 @@ typedef enum {
 #define LEVEL_POLL_INTERVAL 1      /* Requests between Valkey polls */
 #define LEVEL_POLL_MAX      10000  /* Max backoff interval (requests) */
 
+/* --- Domain blocklist (merged from url_check module) --- */
+#define MAX_BLOCKLIST_DOMAINS 256
+#define BLOCKLIST_PATH "/etc/c-icap/blocklist.txt"
+
+static char blocklist_domains[MAX_BLOCKLIST_DOMAINS][256];
+static int blocklist_count = 0;
+
 /* Security level state — Valkey connection and polling */
 static redisContext *valkey_level_ctx = NULL;
 static security_level_t current_level = LEVEL_BALANCED;
@@ -555,6 +562,48 @@ static int is_new_domain(const char *host)
 }
 
 /*
+ * is_blocked_domain - Check if host matches the domain blocklist.
+ *
+ * Loaded from /etc/c-icap/blocklist.txt at init time (merged from
+ * the url_check module). Contains known-bad domains: data exfiltration
+ * endpoints, tunneling services, OOB platforms, typosquatting domains.
+ *
+ * Uses suffix matching with dot-boundary to prevent partial matches
+ * (e.g., "ngrok.io" matches "foo.ngrok.io" but not "xngrok.io").
+ *
+ * Returns 1 if blocked, 0 if allowed.
+ */
+static int is_blocked_domain(const char *host)
+{
+    int i;
+    size_t hlen, dlen;
+
+    if (host == NULL || host[0] == '\0' || blocklist_count == 0)
+        return 0;
+
+    hlen = strlen(host);
+
+    for (i = 0; i < blocklist_count; i++) {
+        dlen = strlen(blocklist_domains[i]);
+        if (dlen == 0) continue;
+
+        /* Exact match */
+        if (hlen == dlen &&
+            strcasecmp(host, blocklist_domains[i]) == 0)
+            return 1;
+
+        /* Suffix match with dot boundary: host ends with ".domain" */
+        if (hlen > dlen &&
+            host[hlen - dlen - 1] == '.' &&
+            strcasecmp(host + (hlen - dlen),
+                       blocklist_domains[i]) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
+/*
  * compute_sha256 - Compute SHA-256 hash of a credential value.
  *
  * Uses OpenSSL EVP interface for SHA-256 computation.
@@ -1004,6 +1053,44 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
     ci_debug_printf(3, "polis_dlp: Initialization complete, "
                        "%d patterns loaded\n", pattern_count);
 
+    /* --- Load domain blocklist (merged from url_check module) --- */
+    {
+        FILE *bl_fp;
+        char bl_line[256];
+
+        blocklist_count = 0;
+        bl_fp = fopen(BLOCKLIST_PATH, "r");
+        if (bl_fp) {
+            while (fgets(bl_line, sizeof(bl_line), bl_fp)) {
+                size_t blen = strlen(bl_line);
+                while (blen > 0 &&
+                       (bl_line[blen - 1] == '\n' ||
+                        bl_line[blen - 1] == '\r'))
+                    bl_line[--blen] = '\0';
+                if (blen == 0 || bl_line[0] == '#')
+                    continue;
+                if (blocklist_count >= MAX_BLOCKLIST_DOMAINS) {
+                    ci_debug_printf(1, "polis_dlp: WARNING: "
+                        "Blocklist full (%d), skipping '%s'\n",
+                        MAX_BLOCKLIST_DOMAINS, bl_line);
+                    break;
+                }
+                strncpy(blocklist_domains[blocklist_count],
+                        bl_line, 255);
+                blocklist_domains[blocklist_count][255] = '\0';
+                blocklist_count++;
+            }
+            fclose(bl_fp);
+            ci_debug_printf(3, "polis_dlp: Loaded %d blocklist "
+                               "domains from %s\n",
+                           blocklist_count, BLOCKLIST_PATH);
+        } else {
+            ci_debug_printf(1, "polis_dlp: WARNING: Cannot open "
+                               "blocklist %s — domain blocklist "
+                               "disabled\n", BLOCKLIST_PATH);
+        }
+    }
+
     /* Fail-closed: refuse to start if no credential patterns loaded (CWE-636) */
     if (pattern_count == 0) {
         ci_debug_printf(0, "polis_dlp: CRITICAL: No credential patterns "
@@ -1021,17 +1108,18 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
 
     /* --- OTT rewrite initialization (Requirements 1.3, 1.9, 1.12) --- */
     
-    /* Compile approve pattern regex: /polis-approve req-{hex8}
+    /* Compile approve/except pattern regex: /polis-(approve|except) req-{hex8}
      * Must match both plain text and URL-encoded bodies where
-     * spaces appear as '+' or '%20'. */
+     * spaces appear as '+' or '%20'.
+     * Groups: 1=command(approve|except), 2=separator, 3=request_id */
     int rc = regcomp(&approve_pattern,
-                     "/polis-approve([[:space:]]|\\+|%20)+(req-[a-f0-9]{8})",
+                     "/polis-(approve|except)([[:space:]]|\\+|%20)+(req-[a-f0-9]{8})",
                      REG_EXTENDED);
     if (rc != 0) {
         char errbuf[128];
         regerror(rc, &approve_pattern, errbuf, sizeof(errbuf));
         ci_debug_printf(0, "polis_dlp: CRITICAL: Failed to compile "
-                           "approve pattern regex: %s\n", errbuf);
+                           "approve/except pattern regex: %s\n", errbuf);
         return CI_ERROR;
     }
     ci_debug_printf(3, "polis_dlp: Compiled approve pattern regex\n");
@@ -1329,6 +1417,12 @@ int dlp_check_preview(char *preview_data, int preview_data_len,
      * no-body requests, c-ICAP will call dlp_process() immediately
      * since there is no more data to read. */
     if (!ci_req_hasbody(req)) {
+        /* Check domain blocklist first (hard block, any security level) */
+        if (is_blocked_domain(data->host)) {
+            ci_debug_printf(3, "polis_dlp: BLOCKED domain '%s' "
+                               "— matches blocklist\n", data->host);
+            return CI_MOD_CONTINUE;  /* defer to dlp_process for 403 */
+        }
         int policy = apply_security_policy(data->host, 0);
         if (policy == 0) {
             ci_debug_printf(5, "polis_dlp: No body, known domain "
@@ -1391,12 +1485,28 @@ int dlp_process(ci_request_t *req)
     /* Null-terminate the body membuf for regex scanning */
     ci_membuf_write(data->body, "\0", 1, 1);
 
-    /* Scan the first 1MB of the body */
-    check_patterns(ci_membuf_raw(data->body),
-                   (int)data->total_body_len, data);
+    /* --- Domain blocklist check (merged from url_check) --- */
+    /* Hard block: blocklisted domains are blocked regardless of
+     * security level or credentials. These are known-bad destinations
+     * (exfiltration, tunneling, typosquatting). */
+    if (is_blocked_domain(data->host)) {
+        data->blocked = 1;
+        strncpy(data->matched_pattern, "blocklisted_domain",
+                sizeof(data->matched_pattern) - 1);
+        data->matched_pattern[sizeof(data->matched_pattern) - 1] = '\0';
+        ci_debug_printf(3, "polis_dlp: BLOCKED domain '%s' "
+                           "— matches blocklist\n", data->host);
+        /* Fall through to the blocking response below */
+    }
 
-    /* If body exceeded 1MB, also scan the tail buffer */
-    if (data->total_body_len > MAX_BODY_SCAN && data->tail_len > 0) {
+    /* Scan the first 1MB of the body (skip if already blocked by blocklist) */
+    if (!data->blocked)
+        check_patterns(ci_membuf_raw(data->body),
+                       (int)data->total_body_len, data);
+
+    /* If body exceeded 1MB, also scan the tail buffer (skip if already blocked) */
+    if (!data->blocked &&
+        data->total_body_len > MAX_BODY_SCAN && data->tail_len > 0) {
         ci_debug_printf(3, "polis_dlp: DLP_PARTIAL_SCAN - "
                            "body size %zu exceeds %d, "
                            "scanning tail buffer (%zu bytes)\n",
@@ -1575,20 +1685,29 @@ int dlp_process(ci_request_t *req)
     }
 
     /* --- OTT rewrite pass (Requirements 1.3-1.7, 1.10) --- */
-    /* Only scan for approve pattern if body passed DLP + security policy */
+    /* Only scan for approve/except pattern if body passed DLP + security policy */
     {
-        regmatch_t matches[3];
+        regmatch_t matches[4];
         char *body_raw = (char *)ci_membuf_raw(data->body);
 
         if (body_raw &&
-            regexec(&approve_pattern, body_raw, 3, matches, 0) == 0) {
-            /* Extract request_id from match group 2
-             * (group 1 is the space/+/%20 separator) */
-            int req_id_len = matches[2].rm_eo - matches[2].rm_so;
+            regexec(&approve_pattern, body_raw, 4, matches, 0) == 0) {
+            /* Extract command from match group 1 ("approve" or "except") */
+            int cmd_len = matches[1].rm_eo - matches[1].rm_so;
+            char action_str[8];
+            if (cmd_len > 0 && cmd_len < (int)sizeof(action_str)) {
+                memcpy(action_str, body_raw + matches[1].rm_so, cmd_len);
+                action_str[cmd_len] = '\0';
+            } else {
+                action_str[0] = '\0';
+            }
+
+            /* Extract request_id from match group 3 */
+            int req_id_len = matches[3].rm_eo - matches[3].rm_so;
             char request_id[32];
             
             if (req_id_len > 0 && req_id_len < (int)sizeof(request_id)) {
-                memcpy(request_id, body_raw + matches[2].rm_so, req_id_len);
+                memcpy(request_id, body_raw + matches[3].rm_so, req_id_len);
                 request_id[req_id_len] = '\0';
                 
                 ci_debug_printf(3, "polis_dlp: Found approve pattern with "
@@ -1694,9 +1813,11 @@ int dlp_process(ci_request_t *req)
                                                 "{\"ott_code\":\"%s\","
                                                 "\"request_id\":\"%s\","
                                                 "\"armed_after\":%ld,"
-                                                "\"origin_host\":\"%s\"}",
+                                                "\"origin_host\":\"%s\","
+                                                "\"action\":\"%s\"}",
                                                 ott_code, request_id,
-                                                (long)armed_after, data->host);
+                                                (long)armed_after, data->host,
+                                                action_str[0] ? action_str : "approve");
                                         
                                         /* Store with SET NX EX */
                                         redisReply *set_reply = redisCommand(
@@ -1724,10 +1845,12 @@ int dlp_process(ci_request_t *req)
                                                         "{\"ott_code\":\"%s\","
                                                         "\"request_id\":\"%s\","
                                                         "\"armed_after\":%ld,"
-                                                        "\"origin_host\":\"%s\"}",
+                                                        "\"origin_host\":\"%s\","
+                                                        "\"action\":\"%s\"}",
                                                         ott_code, request_id,
                                                         (long)armed_after,
-                                                        data->host);
+                                                        data->host,
+                                                        action_str[0] ? action_str : "approve");
                                                 
                                                 set_reply = redisCommand(
                                                     valkey_gov_ctx,
@@ -1756,7 +1879,7 @@ int dlp_process(ci_request_t *req)
                                             
                                             /* Perform length-preserving substitution */
                                             /* Replace request_id with ott_code in membuf */
-                                            int sub_offset = matches[2].rm_so;
+                                            int sub_offset = matches[3].rm_so;
                                             
                                             /* Verify both are same length (12 chars) */
                                             if (req_id_len == OTT_LEN) {
@@ -1795,9 +1918,12 @@ int dlp_process(ci_request_t *req)
                                                             "\"request_id\":\"%s\","
                                                             "\"ott_code\":\"%s\","
                                                             "\"origin_host\":\"%s\","
+                                                            "\"action\":\"%s\","
                                                             "\"timestamp\":%ld}",
                                                             request_id, ott_code,
-                                                            data->host, (long)now);
+                                                            data->host,
+                                                            action_str[0] ? action_str : "approve",
+                                                            (long)now);
                                                     
                                                     redisReply *log_reply =
                                                         redisCommand(valkey_gov_ctx,
