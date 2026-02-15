@@ -50,12 +50,17 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    user: gate
+    user: root
+    cap_drop:
+      - ALL
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    # security_opt:
-    #   - seccomp=./services/gate/config/seccomp/gateway.json
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./services/gate/config/seccomp/gateway.json
     networks:
       internal-bridge:
         ipv4_address: 10.10.1.10
@@ -69,7 +74,6 @@ services:
       - ./services/gate/scripts/init.sh:/init.sh:ro
       - ./certs/ca:/etc/g3proxy/ssl:ro
       - ./services/gate/scripts/health.sh:/scripts/health-check.sh:ro
-    privileged: true  # Required for TPROXY networking
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv4.ip_nonlocal_bind=1
