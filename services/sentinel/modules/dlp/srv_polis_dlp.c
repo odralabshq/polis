@@ -914,9 +914,11 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
 
     /* --- OTT rewrite initialization (Requirements 1.3, 1.9, 1.12) --- */
     
-    /* Compile approve pattern regex: /polis-approve req-{hex8} */
+    /* Compile approve pattern regex: /polis-approve req-{hex8}
+     * Must match both plain text and URL-encoded bodies where
+     * spaces appear as '+' or '%20'. */
     int rc = regcomp(&approve_pattern,
-                     "/polis-approve[[:space:]]+(req-[a-f0-9]{8})",
+                     "/polis-approve([[:space:]]|\\+|%20)+(req-[a-f0-9]{8})",
                      REG_EXTENDED);
     if (rc != 0) {
         char errbuf[128];
@@ -1427,17 +1429,18 @@ int dlp_process(ci_request_t *req)
     /* --- OTT rewrite pass (Requirements 1.3-1.7, 1.10) --- */
     /* Only scan for approve pattern if body passed DLP + security policy */
     {
-        regmatch_t matches[2];
+        regmatch_t matches[3];
         char *body_raw = (char *)ci_membuf_raw(data->body);
 
         if (body_raw &&
-            regexec(&approve_pattern, body_raw, 2, matches, 0) == 0) {
-            /* Extract request_id from match group 1 */
-            int req_id_len = matches[1].rm_eo - matches[1].rm_so;
+            regexec(&approve_pattern, body_raw, 3, matches, 0) == 0) {
+            /* Extract request_id from match group 2
+             * (group 1 is the space/+/%20 separator) */
+            int req_id_len = matches[2].rm_eo - matches[2].rm_so;
             char request_id[32];
             
             if (req_id_len > 0 && req_id_len < (int)sizeof(request_id)) {
-                memcpy(request_id, body_raw + matches[1].rm_so, req_id_len);
+                memcpy(request_id, body_raw + matches[2].rm_so, req_id_len);
                 request_id[req_id_len] = '\0';
                 
                 ci_debug_printf(3, "polis_dlp: Found approve pattern with "
@@ -1514,23 +1517,14 @@ int dlp_process(ci_request_t *req)
                             } else {
                                 freeReplyObject(lock_reply);
                                 
-                                /* Check blocked key exists */
-                                redisReply *blocked_reply = redisCommand(
-                                    valkey_gov_ctx,
-                                    "EXISTS polis:blocked:%s", request_id);
+                                /* NOTE: We no longer check EXISTS polis:blocked:{req-id}
+                                 * here. The blocked key is created by the MCP agent
+                                 * (toolbox) asynchronously, so it may not exist yet
+                                 * when the approval message passes through REQMOD.
+                                 * The RESPMOD module validates the blocked key in
+                                 * process_ott_approval() Step 4 before granting
+                                 * approval, so security is maintained. */
                                 
-                                if (!blocked_reply ||
-                                    blocked_reply->type != REDIS_REPLY_INTEGER ||
-                                    blocked_reply->integer != 1) {
-                                    ci_debug_printf(2, "polis_dlp: "
-                                                   "blocked key does not exist "
-                                                   "for %s — skipping\n",
-                                                   request_id);
-                                    if (blocked_reply) freeReplyObject(blocked_reply);
-                                    pthread_mutex_unlock(&gov_valkey_mutex);
-                                } else {
-                                    freeReplyObject(blocked_reply);
-                                    
                                     /* Generate OTT code */
                                     char ott_code[OTT_LEN + 1];
                                     if (generate_ott(ott_code, sizeof(ott_code)) != 0) {
@@ -1614,7 +1608,7 @@ int dlp_process(ci_request_t *req)
                                             
                                             /* Perform length-preserving substitution */
                                             /* Replace request_id with ott_code in membuf */
-                                            int sub_offset = matches[1].rm_so;
+                                            int sub_offset = matches[2].rm_so;
                                             
                                             /* Verify both are same length (12 chars) */
                                             if (req_id_len == OTT_LEN) {
@@ -1677,7 +1671,6 @@ int dlp_process(ci_request_t *req)
                                     }
                                 }
                             }
-                        }
                     } else {
                         ci_debug_printf(1, "polis_dlp: WARNING: "
                                        "request_id format invalid "
