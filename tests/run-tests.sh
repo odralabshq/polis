@@ -56,15 +56,11 @@ case "$TIER" in
     unit)        run_tier "unit" ;;
     integration) run_tier "integration" ;;
     e2e)
-        if [[ "$CI_MODE" == "true" ]]; then
-            docker compose --profile test up -d httpbin 2>/dev/null || true
-        fi
+        docker compose --profile test up -d httpbin 2>/dev/null || true
         run_tier "e2e"
         ;;
     all)
-        if [[ "$CI_MODE" == "true" ]]; then
-            docker compose --profile test up -d httpbin 2>/dev/null || true
-        fi
+        docker compose --profile test up -d httpbin 2>/dev/null || true
         run_tier "unit"
         run_tier "integration"
         run_tier "e2e"

@@ -44,9 +44,9 @@ PROXY="--proxy http://10.10.1.10:8080"
 }
 
 @test "e2e: HTTP POST intercepted by DLP" {
-    # POST requests to new domains are blocked by DLP new_domain_prompt — expected behavior
+    # POST with credential pattern is blocked by DLP at any security level
     run docker exec "$CTR_WORKSPACE" \
-        curl -s -w "%{http_code}" --connect-timeout 15 $PROXY -X POST -d "test=data" \
+        curl -s -w "%{http_code}" --connect-timeout 15 $PROXY -X POST -d "key=AKIAIOSFODNN7EXAMPLE" \
         "http://${HTTPBIN_HOST}/post"
     assert_output --partial "403"
 }

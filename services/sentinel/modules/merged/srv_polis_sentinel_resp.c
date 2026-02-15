@@ -39,7 +39,7 @@
 
 /* Constants */
 #define CLAMD_CHUNK_SIZE    16384   /* 16KB chunks (matches squidclamav) */
-#define CLAMD_TIMEOUT_SECS  30      /* Socket read/write timeout */
+#define CLAMD_TIMEOUT_SECS  5       /* Socket read/write timeout */
 #define CLAMD_MAX_RESPONSE  1024    /* Max response line length */
 #define MAX_BODY_SIZE       (2 * 1024 * 1024)  /* 2MB body accumulation limit */
 #define APPROVAL_TTL_SECS   300     /* Approval key TTL: 5 minutes */
@@ -157,6 +157,10 @@ static int sentinel_resp_init_service(ci_service_xdata_t *srv_xdata, struct ci_s
     int ret;
 
     ci_debug_printf(2, "sentinel_resp: Initializing service\n");
+
+    /* Enable ICAP 204 (no modification) and 206 (partial) responses */
+    ci_service_enable_204(srv_xdata);
+    ci_service_enable_206(srv_xdata);
 
     /* ---------------------------------------------------------- */
     /* Step 1: Compile OTT regex pattern                          */
@@ -2057,7 +2061,7 @@ static int sentinel_resp_process(ci_request_t *req)
     if (!data->body || data->total_body_len == 0) {
         ci_debug_printf(4, "sentinel_resp: "
             "No body data — passing through\n");
-        return CI_MOD_DONE;
+        return ci_req_allow204(req) ? CI_MOD_ALLOW204 : CI_MOD_DONE;
     }
 
     /* ---------------------------------------------------------- */
@@ -2236,7 +2240,7 @@ static int sentinel_resp_process(ci_request_t *req)
         ci_debug_printf(4, "sentinel_resp: "
             "Host '%s' not in allowlist — passing through\n",
             data->host);
-        return CI_MOD_DONE;
+        return ci_req_allow204(req) ? CI_MOD_ALLOW204 : CI_MOD_DONE;
     }
 
     ci_debug_printf(4, "sentinel_resp: "
@@ -2263,7 +2267,7 @@ static int sentinel_resp_process(ci_request_t *req)
             ci_debug_printf(1, "sentinel_resp: WARNING: "
                 "Decompression bomb detected — "
                 "skipping OTT scan, passing original body\n");
-            return CI_MOD_DONE;
+            return ci_req_allow204(req) ? CI_MOD_ALLOW204 : CI_MOD_DONE;
 
         } else if (decomp_ret == -1) {
             /* ---------------------------------------------------------- */
@@ -2272,7 +2276,7 @@ static int sentinel_resp_process(ci_request_t *req)
             ci_debug_printf(2, "sentinel_resp: WARNING: "
                 "Decompression failed — "
                 "skipping OTT scan, passing original body\n");
-            return CI_MOD_DONE;
+            return ci_req_allow204(req) ? CI_MOD_ALLOW204 : CI_MOD_DONE;
         }
 
         /* Decompression successful */
@@ -2440,7 +2444,8 @@ static int sentinel_resp_process(ci_request_t *req)
     ci_debug_printf(3, "sentinel_resp: "
         "Processing complete — passing through\n");
 
-    return CI_MOD_DONE;
+    return (ott_count > 0) ? CI_MOD_DONE
+         : ci_req_allow204(req) ? CI_MOD_ALLOW204 : CI_MOD_DONE;
 }
 
 /* ========================================================================== */

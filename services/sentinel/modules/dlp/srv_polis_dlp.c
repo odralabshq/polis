@@ -517,6 +517,8 @@ static int is_new_domain(const char *host)
         ".api.telegram.org",
         ".discord.com",
         ".api.slack.com",
+        ".deb.debian.org",
+        ".registry.npmjs.org",
         NULL
     };
     size_t hlen, dlen;

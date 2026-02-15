@@ -31,7 +31,7 @@ setup() {
 @test "g3proxy config: has ICAP RESPMOD configured" {
     run grep "icap_respmod_service:" "$CONFIG"
     assert_success
-    run grep "squidclamav" "$CONFIG"
+    run grep "sentinel_respmod" "$CONFIG"
     assert_success
 }
 

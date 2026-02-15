@@ -44,10 +44,10 @@ setup() {
 }
 
 @test "e2e: HTTPS POST intercepted by DLP" {
-    # POST requests to new domains are blocked by DLP new_domain_prompt — expected behavior
+    # POST with credential pattern is blocked by DLP at any security level
     run_with_network_skip "httpbin.org" \
         docker exec "$CTR_WORKSPACE" \
-        curl -s -w "%{http_code}" --connect-timeout 15 -X POST -d "test=data" \
+        curl -s -w "%{http_code}" --connect-timeout 15 -X POST -d "key=AKIAIOSFODNN7EXAMPLE" \
         https://httpbin.org/post
     assert_output --partial "403"
 }
