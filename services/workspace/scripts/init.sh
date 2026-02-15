@@ -106,16 +106,22 @@ for agent_dir in /tmp/agents/*/; do
             continue
         fi
     fi
+done
 
-    # Enable the agent service (if service file was mounted).
-    # NOTE: We use "enable" without "--now" because this init script runs as
-    # polis-init.service (Type=oneshot). Agent services declare
-    # Requires=polis-init.service + After=polis-init.service, so starting them
-    # here would deadlock (systemd waits for polis-init to finish first).
-    # Instead, we enable the service and start it explicitly after this loop.
+# Single daemon-reload after all agents are bootstrapped (batched for efficiency)
+systemctl daemon-reload
+
+# Enable agent services (if service files were mounted).
+# NOTE: We use "enable" without "--now" because this init script runs as
+# polis-init.service (Type=oneshot). Agent services declare
+# Requires=polis-init.service + After=polis-init.service, so starting them
+# here would deadlock (systemd waits for polis-init to finish first).
+# Instead, we enable the service and start it explicitly after the next loop.
+for agent_dir in /tmp/agents/*/; do
+    [ -d "$agent_dir" ] || continue
+    name=$(basename "$agent_dir")
     svc="/etc/systemd/system/${name}.service"
     if [ -f "$svc" ]; then
-        systemctl daemon-reload
         systemctl enable "${name}.service" || \
             echo "[workspace] WARNING: failed to enable ${name}.service"
     fi
