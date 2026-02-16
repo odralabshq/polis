@@ -117,6 +117,15 @@ for agent_dir in /tmp/agents/*/; do
     fi
 
     # Service enablement is handled below (with integrity checks)
+
+    # Symlink polis-* scripts into PATH so the agent can invoke them
+    # directly without searching the filesystem (find / returns exit 1
+    # due to permission-denied directories, confusing the agent).
+    for script in "${agent_dir}"/scripts/polis-*.sh; do
+        [ -f "$script" ] || continue
+        base=$(basename "$script" .sh)
+        ln -sf "$script" "/usr/local/bin/${base}"
+    done
 done
 
 # Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
