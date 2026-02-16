@@ -395,53 +395,13 @@ generate_toolbox_certs() {
         return 0
     fi
     
-    if [[ ! -f "${CA_DIR}/ca.pem" ]] || [[ ! -f "${CA_DIR}/ca.key" ]]; then
-        log_error "CA certificate not found. Run generate_ca first."
+    echo "Generating Toolbox TLS certificates..."
+    if ! bash "${PROJECT_ROOT}/services/toolbox/scripts/generate-certs.sh" \
+        "${TOOLBOX_DIR}" "${CA_DIR}"; then
+        log_error "Failed to generate Toolbox TLS certificates"
         return 1
     fi
-    
-    echo "=== Generating Toolbox TLS certificate ==="
-    mkdir -p "$TOOLBOX_DIR"
-    
-    # Generate key
-    openssl genrsa -out "${TOOLBOX_DIR}/toolbox.key" 2048 2>/dev/null
-    
-    # Generate CSR
-    openssl req -new -key "${TOOLBOX_DIR}/toolbox.key" \
-        -out "${TOOLBOX_DIR}/toolbox.csr" \
-        -subj "/CN=toolbox/O=polis" 2>/dev/null
-    
-    # Create extensions file for SANs
-    cat > "${TOOLBOX_DIR}/toolbox.ext" << 'EOF'
-authorityKeyIdentifier=keyid,issuer
-basicConstraints=CA:FALSE
-keyUsage = digitalSignature, keyEncipherment
-extendedKeyUsage = serverAuth
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = toolbox
-DNS.2 = polis-toolbox
-DNS.3 = localhost
-IP.1 = 10.10.1.20
-IP.2 = 10.30.1.20
-IP.3 = 127.0.0.1
-EOF
-    
-    # Sign with CA
-    openssl x509 -req -in "${TOOLBOX_DIR}/toolbox.csr" \
-        -CA "${CA_DIR}/ca.pem" -CAkey "${CA_DIR}/ca.key" \
-        -CAcreateserial -out "${TOOLBOX_DIR}/toolbox.pem" \
-        -days 365 -sha256 -extfile "${TOOLBOX_DIR}/toolbox.ext" 2>/dev/null
-    
-    # Cleanup temp files
-    rm -f "${TOOLBOX_DIR}/toolbox.csr" "${TOOLBOX_DIR}/toolbox.ext"
-    
-    # Set permissions (readable by container user 65532)
-    chmod 644 "${TOOLBOX_DIR}/toolbox.key"
-    chmod 644 "${TOOLBOX_DIR}/toolbox.pem"
-    
-    log_success "Toolbox TLS certificate generated."
+    log_success "Toolbox TLS certificates generated."
     return 0
 }
 
