@@ -1295,20 +1295,18 @@ case "${1:-}" in
             elapsed=0
             while [[ $elapsed -lt $init_timeout ]]; do
                 init_state=$(docker exec polis-workspace systemctl show polis-init.service --property=ActiveState --value 2>/dev/null || echo "unknown")
+                init_sub=$(docker exec polis-workspace systemctl show polis-init.service --property=SubState --value 2>/dev/null || echo "unknown")
+                init_result=$(docker exec polis-workspace systemctl show polis-init.service --property=Result --value 2>/dev/null || echo "unknown")
                 
-                if [[ "$init_state" == "inactive" ]]; then
-                    # Check if it succeeded or failed
-                    init_result=$(docker exec polis-workspace systemctl show polis-init.service --property=Result --value 2>/dev/null || echo "unknown")
-                    if [[ "$init_result" == "success" ]]; then
-                        log_success "Workspace initialization complete."
-                        break
-                    else
-                        log_error "Workspace initialization failed (result: ${init_result})."
-                        echo "Check logs with: docker exec polis-workspace journalctl -u polis-init.service --no-pager"
-                        exit 1
-                    fi
-                elif [[ "$init_state" == "failed" ]]; then
-                    log_error "Workspace initialization failed."
+                # oneshot+RemainAfterExit services go to active/exited on success
+                if [[ "$init_state" == "active" && "$init_sub" == "exited" && "$init_result" == "success" ]]; then
+                    log_success "Workspace initialization complete."
+                    break
+                elif [[ "$init_state" == "inactive" && "$init_result" == "success" ]]; then
+                    log_success "Workspace initialization complete."
+                    break
+                elif [[ "$init_state" == "failed" || "$init_result" == "failed" ]]; then
+                    log_error "Workspace initialization failed (result: ${init_result})."
                     echo "Check logs with: docker exec polis-workspace journalctl -u polis-init.service --no-pager"
                     exit 1
                 fi
