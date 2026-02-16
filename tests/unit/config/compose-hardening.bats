@@ -23,10 +23,8 @@ setup() {
     refute_output --partial "cap_add"
 }
 
-@test "compose: scanner cap_add is limited to ClamAV requirements" {
-    # ClamAV needs CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER for internal user management
+@test "compose: scanner has no cap_add (DHI nonroot image)" {
+    # DHI clamav image runs as nonroot (65532) with pre-owned dirs — no cap_add needed
     run sed -n '/container_name: polis-scanner$/,/container_name:/p' "$COMPOSE"
-    assert_output --partial "cap_add"
-    refute_output --partial "SYS_ADMIN"
-    refute_output --partial "NET_ADMIN"
+    refute_output --partial "cap_add"
 }

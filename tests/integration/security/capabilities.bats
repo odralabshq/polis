@@ -84,10 +84,10 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "ALL"
 }
 
-@test "scanner: has CHOWN capability for ClamAV" {
+@test "scanner: does NOT have CHOWN capability (DHI nonroot image)" {
     require_container "$CTR_SCANNER"
     run jq -r '.[0].HostConfig.CapAdd // [] | .[]' <<< "$(_inspect "$CTR_SCANNER")"
-    assert_output --partial "CHOWN"
+    refute_output --partial "CHOWN"
 }
 
 # ── State / Toolbox / Workspace: drop ALL, no cap_add ─────────────────────

@@ -31,6 +31,27 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "CHOWN"
 }
 
+@test "scanner-init: has DAC_OVERRIDE capability" {
+    run jq -r '.[0].HostConfig.CapAdd[]' <<< "$SCANNER_INIT_INSPECT"
+    assert_success
+    assert_output --partial "DAC_OVERRIDE"
+}
+
+@test "scanner-init: has read-only rootfs" {
+    run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$SCANNER_INIT_INSPECT"
+    assert_output "true"
+}
+
+@test "scanner-init: has no-new-privileges" {
+    run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$SCANNER_INIT_INSPECT"
+    assert_output --partial "no-new-privileges"
+}
+
+@test "scanner-init: has 32M memory limit" {
+    run jq -r '.[0].HostConfig.Memory' <<< "$SCANNER_INIT_INSPECT"
+    assert_output "33554432"
+}
+
 @test "scanner-init: completed successfully" {
     run jq -r '.[0].State.ExitCode' <<< "$SCANNER_INIT_INSPECT"
     assert_output "0"
@@ -48,6 +69,21 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     run jq -r '.[0].HostConfig.CapAdd[]' <<< "$STATE_INIT_INSPECT"
     assert_success
     assert_output --partial "CHOWN"
+}
+
+@test "state-init: has read-only rootfs" {
+    run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$STATE_INIT_INSPECT"
+    assert_output "true"
+}
+
+@test "state-init: has no-new-privileges" {
+    run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$STATE_INIT_INSPECT"
+    assert_output --partial "no-new-privileges"
+}
+
+@test "state-init: has 32M memory limit" {
+    run jq -r '.[0].HostConfig.Memory' <<< "$STATE_INIT_INSPECT"
+    assert_output "33554432"
 }
 
 @test "state-init: completed successfully" {

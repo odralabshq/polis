@@ -241,19 +241,18 @@ services:
       dockerfile: services/scanner/Dockerfile
     image: polis-scanner-oss:latest
     container_name: polis-scanner
+    user: "65532:65532"
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./services/scanner/config/seccomp.json
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-      - DAC_OVERRIDE
-      - FOWNER
+    read_only: true
     tmpfs:
       - /tmp:size=100M,mode=1777
-      - /var/log/clamav:size=50M,mode=755,uid=100,gid=101
-      - /run/clamav:size=10M,mode=755,uid=100,gid=101
-      - /var/lock:size=10M,mode=1777,uid=100,gid=101
+      - /var/log/clamav:size=50M,mode=755,uid=65532,gid=65532
+      - /run/clamav:size=10M,mode=755,uid=65532,gid=65532
+      - /var/lock:size=10M,mode=1777,uid=65532,gid=65532
     networks:
       gateway-bridge: {}
       internet: {}
@@ -382,43 +381,56 @@ services:
   # SCANNER INIT (ClamAV Volume permission setup)
   # =========================================================
   scanner-init:
-    image: alpine:3.21
+    image: dhi.io/alpine-base:3.23-dev
     container_name: polis-scanner-init
     cap_drop:
       - ALL
     cap_add:
       - CHOWN
       - DAC_OVERRIDE
-      - FOWNER
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.25"
     volumes:
       - scanner-db:/var/lib/clamav
-    command: chown -R 100:101 /var/lib/clamav
+    command: chown -R 65532:65532 /var/lib/clamav
     restart: "no"
 
   # =========================================================
   # STATE INIT (Valkey Volume permission setup)
   # =========================================================
   state-init:
-    image: alpine:3.21
+    image: dhi.io/alpine-base:3.23-dev
     container_name: polis-state-init
     cap_drop:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.25"
     volumes:
       - state-data:/data
-    command: chown -R 999:1000 /data
+    command: chown -R 65532:65532 /data
     restart: "no"
 
   # =========================================================
   # STATE (VALKEY / State Management)
   # =========================================================
   state:
-    image: valkey/valkey:8-alpine
+    image: dhi.io/valkey:8.1
     container_name: polis-state
-    user: "999:1000"
+    user: "65532:65532"
     entrypoint: []
     command: ["valkey-server", "/etc/valkey/valkey.conf"]
     networks:
@@ -429,8 +441,8 @@ services:
     secrets:
       - valkey_password
       - source: valkey_acl
-        uid: "999"
-        gid: "1000"
+        uid: "65532"
+        gid: "65532"
         mode: 0440
       - valkey_mcp_admin_password
       - valkey_mcp_agent_password

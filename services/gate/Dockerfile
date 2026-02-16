@@ -4,7 +4,7 @@
 # ===========================================
 # Stage 1: Build from source
 # ===========================================
-FROM rust:1.85 AS builder
+FROM dhi.io/rust:1-dev AS builder
 
 # Install build dependencies (gzip needed for tar extraction)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -45,38 +45,41 @@ RUN cargo build --release -p g3proxy -p g3fcgen
 # ===========================================
 # Stage 2: Runtime image (needs apt for runtime deps)
 # ===========================================
-FROM debian:bookworm-slim
+FROM dhi.io/debian-base:trixie-dev
 
 # Install runtime dependencies (util-linux provides setpriv for privilege dropping with ambient caps)
+# Note: apt-get may overwrite /etc/passwd, so we ensure nonroot user exists after
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     nftables \
     openssl \
     ca-certificates \
     curl \
-    libssl3 \
+    libssl3t64 \
     liblua5.4-0 \
     libc-ares2 \
     libcap2 \
-    python3 \
-    libpython3.11 \
     libunwind8 \
     libnuma1 \
     procps \
     netcat-openbsd \
     util-linux \
     && rm -rf /var/lib/apt/lists/* \
-    && echo 'gate:x:999:999:gate:/home/gate:/sbin/nologin' >> /etc/passwd \
-    && echo 'gate:x:999:' >> /etc/group
+    && (grep -q '^nonroot:' /etc/passwd || echo 'nonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin' >> /etc/passwd) \
+    && (grep -q '^nonroot:' /etc/group || echo 'nonroot:x:65532:' >> /etc/group)
 
 # Copy binaries from builder stage
 COPY --from=builder /build/g3/target/release/g3proxy /usr/bin/g3proxy
 COPY --from=builder /build/g3/target/release/g3fcgen /usr/bin/g3fcgen
 
-# Create directories with correct ownership for gate user (999)
+# Copy Python 3.11 shared library from builder (bookworm has 3.11, trixie has 3.13)
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libpython3.11.so.1.0 /usr/lib/x86_64-linux-gnu/
+RUN ldconfig
+
+# Create directories with correct ownership for DHI nonroot user (65532)
 RUN mkdir -p /etc/g3proxy /var/lib/g3proxy/ssl /tmp/g3 && \
     mkdir -p /var/log/g3proxy && \
-    chown -R 999:999 /var/log/g3proxy /var/lib/g3proxy /tmp/g3
+    chown -R 65532:65532 /var/log/g3proxy /var/lib/g3proxy /tmp/g3
 
 # Verify binaries
 # Note: setcap is NOT used because no-new-privileges:true in compose prevents
@@ -89,6 +92,5 @@ COPY services/gate/scripts/init.sh /init.sh
 COPY services/gate/scripts/setup-network.sh /setup-network.sh
 RUN chmod +x /init.sh /setup-network.sh
 
-USER gate
+USER nonroot
 ENTRYPOINT ["/init.sh"]
-

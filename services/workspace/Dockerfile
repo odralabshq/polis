@@ -1,7 +1,7 @@
 # hadolint ignore=DL3007
 # Root required: sysbox VM container runs systemd which needs root.
 # Actual isolation provided by sysbox-runc runtime (VM-level, not container-level).
-FROM debian:trixie
+FROM dhi.io/debian-base:trixie-dev
 
 # Install systemd and required tools for networking
 RUN apt-get update && apt-get install -y --no-install-recommends \

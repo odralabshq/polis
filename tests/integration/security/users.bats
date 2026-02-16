@@ -15,11 +15,11 @@ setup() {
 
 # ── Process users (source: docker-compose.yml user: fields) ───────────────
 
-@test "gate: g3proxy runs as gate user (999)" {
+@test "gate: g3proxy runs as nonroot (65532)" {
     require_container "$CTR_GATE"
     run bash -c "docker top $CTR_GATE | grep g3proxy | awk '{print \$1}'"
     assert_success
-    assert_output --partial "999"
+    assert_output --partial "65532"
 }
 
 @test "sentinel: c-icap runs as nonroot (65532)" {
@@ -31,14 +31,12 @@ setup() {
 
 # ── Container UIDs (source: docker-compose.yml user: "UID:GID") ──────────
 
-@test "scanner: ClamAV manages its own user (clamav)" {
+@test "scanner: ClamAV runs as nonroot (65532)" {
     require_container "$CTR_SCANNER"
-    # ClamAV image runs as root initially, then drops to clamav user internally
-    # On clamav/clamav image, the clamav user maps to UID 100
-    run bash -c "docker top $CTR_SCANNER | grep -E 'clamd|freshclam' | head -1"
+    # DHI clamav image runs as nonroot (UID 65532) with pre-owned directories
+    run docker exec "$CTR_SCANNER" id -u
     assert_success
-    # Process should NOT be running as root
-    refute_output --regexp "^root "
+    assert_output "65532"
 }
 
 @test "resolver: runs as UID 200 (resolver)" {
@@ -48,11 +46,11 @@ setup() {
     assert_output "200"
 }
 
-@test "state: runs as UID 999 (valkey)" {
+@test "state: runs as UID 65532 (nonroot)" {
     require_container "$CTR_STATE"
     run docker exec "$CTR_STATE" id -u
     assert_success
-    assert_output "999"
+    assert_output "65532"
 }
 
 # ── Workspace user setup ─────────────────────────────────────────────────

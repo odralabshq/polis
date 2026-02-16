@@ -1110,10 +1110,10 @@ static int is_known_package_registry(const char *host)
     if (host == NULL || host[0] == '\0')
         return 0;
 
-    hlen = strlen(host);
+    hlen = strlen(host);  /* Safe: NULL checked above */
 
     for (i = 0; registries[i] != NULL; i++) {
-        size_t dlen = strlen(registries[i]);
+        size_t dlen = strlen(registries[i]);  /* Safe: loop guard ensures non-NULL, values are string literals */
 
         /* Suffix match */
         if (hlen >= dlen &&
@@ -1137,11 +1137,11 @@ static int is_allowed_domain(const char *host)
     if (host == NULL || host[0] == '\0')
         return 0;
 
-    host_len = strlen(host);
+    host_len = strlen(host);  /* Safe: NULL checked above */
 
     for (i = 0; i < allowed_domains_count; i++) {
         const char *entry = allowed_domains[i];
-        entry_len = strlen(entry);
+        entry_len = strlen(entry);  /* Safe: entries populated by strdup() of non-empty tokens */
 
         if (entry_len == 0)
             continue;

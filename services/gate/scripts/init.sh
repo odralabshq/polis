@@ -56,7 +56,7 @@ rm -rf /tmp/g3/*
 # Start g3proxy with ambient capabilities (replaces current process)
 # g3fcgen now runs in separate certgen container
 echo "[gateway] Starting g3proxy..."
-exec setpriv --reuid 999 --regid 999 --init-groups \
+exec setpriv --reuid 65532 --regid 65532 --init-groups \
   --inh-caps +net_admin,+net_raw \
   --ambient-caps +net_admin,+net_raw \
   -- g3proxy -c /etc/g3proxy/g3proxy.yaml

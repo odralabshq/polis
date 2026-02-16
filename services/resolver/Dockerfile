@@ -1,4 +1,4 @@
-FROM golang:1.24-bookworm AS builder
+FROM dhi.io/golang:1-dev AS builder
 
 ARG COREDNS_VERSION=1.14.1
 
@@ -13,20 +13,24 @@ WORKDIR /src
 
 # Inject blocklist plugin before forward (order matters in CoreDNS)
 RUN sed -i '/^forward:forward/i blocklist:github.com/relekang/coredns-blocklist' plugin.cfg \
-    && go generate && go get github.com/relekang/coredns-blocklist \
-    && CGO_ENABLED=0 go build -o /coredns
+    && go generate && go get github.com/relekang/coredns-blocklist
 
-FROM debian:bookworm-slim
+# Patch otel SDK to v1.40.0+ (fixes SNYK-GOLANG-GOOPENTELEMETRYIOOTELSDKRESOURCE Untrusted Search Path)
+RUN go get go.opentelemetry.io/otel/sdk@v1.40.0 \
+    && go get go.opentelemetry.io/otel/sdk/resource@v1.40.0 \
+    && go mod tidy
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && echo 'resolver:x:200:200:resolver:/home/resolver:/sbin/nologin' >> /etc/passwd \
-    && echo 'resolver:x:200:' >> /etc/group
+RUN CGO_ENABLED=0 go build -o /coredns
+
+FROM dhi.io/debian-base:trixie
+
+# DHI debian-base includes ca-certificates; no apt-get available in minimal image
 
 COPY --from=builder /coredns /usr/local/bin/coredns
 
 EXPOSE 53/udp 53/tcp
 
-USER resolver
+# DHI images run as nonroot (UID 65532) by default
+USER nonroot
 ENTRYPOINT ["/usr/local/bin/coredns"]
 CMD ["-conf", "/etc/coredns/Corefile"]

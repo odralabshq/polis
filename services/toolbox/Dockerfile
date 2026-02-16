@@ -1,4 +1,4 @@
-FROM rust:1.85-bookworm AS builder
+FROM dhi.io/rust:1-dev AS builder
 WORKDIR /build
 COPY services/toolbox/crates/ services/toolbox/crates/
 COPY lib/crates/ lib/crates/
@@ -11,16 +11,14 @@ RUN rustup default nightly-2026-02-01
 
 RUN cargo build --release -p polis-mcp-agent
 
-FROM debian:bookworm-slim
+FROM dhi.io/debian-base:trixie
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && echo 'toolbox:x:65532:65532:toolbox:/home/toolbox:/sbin/nologin' >> /etc/passwd \
-    && echo 'toolbox:x:65532:' >> /etc/group
+# DHI debian-base includes ca-certificates; no apt-get/useradd in minimal image
 
 COPY --from=builder /build/target/release/polis-mcp-agent /usr/bin/
 
-USER toolbox
+# DHI images run as nonroot (UID 65532) by default
+USER nonroot
 
 ENV RUST_LOG=info
 ENV polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
