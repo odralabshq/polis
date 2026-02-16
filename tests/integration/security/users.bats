@@ -31,11 +31,11 @@ setup() {
 
 # ── Container UIDs (source: docker-compose.yml user: "UID:GID") ──────────
 
-@test "scanner: runs as UID 100" {
+@test "scanner: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_SCANNER"
     run docker exec "$CTR_SCANNER" id -u
     assert_success
-    assert_output "100"
+    assert_output "65532"
 }
 
 @test "resolver: runs as UID 200" {
@@ -45,11 +45,11 @@ setup() {
     assert_output "200"
 }
 
-@test "state: runs as UID 999" {
+@test "state: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_STATE"
     run docker exec "$CTR_STATE" id -u
     assert_success
-    assert_output "999"
+    assert_output "65532"
 }
 
 # ── Workspace user setup ─────────────────────────────────────────────────
