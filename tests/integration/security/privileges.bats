@@ -5,7 +5,7 @@
 setup_file() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
-    for ctr in "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE"; do
+    for ctr in "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE" "$CTR_RESOLVER"; do
         local var="${ctr//-/_}_INSPECT"
         export "$var"="$(docker inspect "$ctr" 2>/dev/null || echo '[]')"
     done
@@ -109,5 +109,19 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 @test "workspace: has seccomp profile applied" {
     require_container "$CTR_WORKSPACE"
     run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_WORKSPACE")"
+    assert_output --partial "seccomp="
+}
+
+# ── Resolver hardening (source: docker-compose.yml) ───────────────────────
+
+@test "resolver: has read-only rootfs" {
+    require_container "$CTR_RESOLVER"
+    run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$(_inspect "$CTR_RESOLVER")"
+    assert_output "true"
+}
+
+@test "resolver: has seccomp profile applied" {
+    require_container "$CTR_RESOLVER"
+    run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_RESOLVER")"
     assert_output --partial "seccomp="
 }

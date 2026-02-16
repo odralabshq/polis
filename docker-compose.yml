@@ -10,8 +10,19 @@ services:
     image: polis-resolver-oss:latest
     container_name: polis-resolver
     user: "200:200"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M,mode=1777
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/resolver/config/seccomp.json
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
     networks:
       gateway-bridge:
         ipv4_address: 10.30.1.10
@@ -60,7 +71,7 @@ services:
       - SETGID
     security_opt:
       - no-new-privileges:true
-      - seccomp=./services/gate/config/seccomp/gateway.json
+      - seccomp=./services/gate/config/seccomp.json
     networks:
       internal-bridge:
         ipv4_address: 10.10.1.10

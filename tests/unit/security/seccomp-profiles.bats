@@ -4,9 +4,10 @@
 
 setup() {
     load "../../lib/test_helper.bash"
-    GATE_SECCOMP="$PROJECT_ROOT/services/gate/config/seccomp/gateway.json"
+    GATE_SECCOMP="$PROJECT_ROOT/services/gate/config/seccomp.json"
     WORKSPACE_SECCOMP="$PROJECT_ROOT/services/workspace/config/seccomp.json"
     SENTINEL_SECCOMP="$PROJECT_ROOT/services/sentinel/config/seccomp.json"
+    RESOLVER_SECCOMP="$PROJECT_ROOT/services/resolver/config/seccomp.json"
 }
 
 @test "seccomp: gateway profile exists" {
@@ -61,4 +62,15 @@ setup() {
 @test "seccomp: sentinel does NOT allow chown" {
     run grep '"chown"' "$SENTINEL_SECCOMP"
     assert_failure
+}
+
+# ── Resolver seccomp profile (source: services/resolver/config/seccomp/coredns.json) ──
+
+@test "seccomp: resolver profile exists" {
+    [ -f "$RESOLVER_SECCOMP" ]
+}
+
+@test "seccomp: resolver default action is ERRNO" {
+    run grep "SCMP_ACT_ERRNO" "$RESOLVER_SECCOMP"
+    assert_success
 }
