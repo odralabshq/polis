@@ -87,19 +87,21 @@ RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
     -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lpthread -lz
 
-# Runtime image (needs apt for runtime deps)
-FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b
-ENV DEBIAN_FRONTEND=noninteractive
+# Collect runtime shared libraries not in base image
+RUN mkdir -p /runtime-libs/lib/x86_64-linux-gnu /runtime-libs/usr/lib/x86_64-linux-gnu && \
+    cp -L /lib/x86_64-linux-gnu/libatomic.so.1 \
+          /lib/x86_64-linux-gnu/libhiredis.so.1.1.0 \
+          /lib/x86_64-linux-gnu/libhiredis_ssl.so.1.1.0 \
+          /runtime-libs/lib/x86_64-linux-gnu/ && \
+    cp -L /usr/lib/x86_64-linux-gnu/libdb-5.3.so \
+          /runtime-libs/usr/lib/x86_64-linux-gnu/
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 \
-    zlib1g \
-    libatomic1 \
-    libhiredis1.1.0 \
-    procps \
-    netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+# Runtime image (minimal, no apt)
+FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+
+# Copy runtime shared libraries not in base
+COPY --from=builder /runtime-libs/lib/ /lib/
+COPY --from=builder /runtime-libs/usr/lib/ /usr/lib/
 
 # Copy built c-icap and squidclamav
 COPY --from=builder /install/usr /usr
@@ -116,6 +118,7 @@ COPY --from=builder /build/srv_polis_approval.so /usr/lib/c_icap/
 COPY --from=builder /build/srv_polis_sentinel_resp.so /usr/lib/c_icap/
 
 # Create directories with proper ownership for DHI nonroot user (65532)
+USER 0
 RUN mkdir -p /var/run/c-icap /run/c-icap /var/log/c-icap && \
     chown 65532:65532 /var/run/c-icap /run/c-icap /var/log/c-icap && \
     chmod 755 /var/run/c-icap /run/c-icap /var/log/c-icap

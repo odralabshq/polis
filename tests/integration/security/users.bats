@@ -17,14 +17,14 @@ setup() {
 
 @test "gate: g3proxy runs as nonroot (65532)" {
     require_container "$CTR_GATE"
-    run docker exec "$CTR_GATE" ps -o user= -C g3proxy
+    run bash -c "docker top $CTR_GATE | grep g3proxy | awk '{print \$1}'"
     assert_success
     assert_output --partial "65532"
 }
 
 @test "sentinel: c-icap runs as nonroot (65532)" {
     require_container "$CTR_SENTINEL"
-    run docker exec "$CTR_SENTINEL" ps -o user= -C c-icap
+    run bash -c "docker top $CTR_SENTINEL | grep c-icap | awk '{print \$1}'"
     assert_success
     assert_output --partial "65532"
 }

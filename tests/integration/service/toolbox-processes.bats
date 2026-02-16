@@ -17,7 +17,10 @@ setup() {
 # ── Health (source: docker-compose.yml healthcheck curl localhost:8080/health) ──
 
 @test "toolbox: health endpoint responds" {
-    run docker exec "$CTR_TOOLBOX" curl -sf http://localhost:8080/health
+    # Check health from host (minimal image has no curl/wget)
+    local ip
+    ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "polis_internal-bridge").IPAddress}}' "$CTR_TOOLBOX")
+    run curl -sf "http://${ip}:8080/health"
     assert_success
 }
 

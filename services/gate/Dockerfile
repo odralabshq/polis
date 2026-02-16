@@ -48,6 +48,7 @@ RUN cargo build --release -p g3proxy -p g3fcgen
 FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b
 
 # Install runtime dependencies (util-linux provides setpriv for privilege dropping with ambient caps)
+# Note: apt-get may overwrite /etc/passwd, so we ensure nonroot user exists after
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     nftables \
@@ -65,7 +66,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     netcat-openbsd \
     util-linux \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && (grep -q '^nonroot:' /etc/passwd || echo 'nonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin' >> /etc/passwd) \
+    && (grep -q '^nonroot:' /etc/group || echo 'nonroot:x:65532:' >> /etc/group)
 
 # Copy binaries from builder stage
 COPY --from=builder /build/g3/target/release/g3proxy /usr/bin/g3proxy
