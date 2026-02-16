@@ -1364,7 +1364,7 @@ int dlp_process(ci_request_t *req)
 
     /* If blocked, create 403 response with body (like srv_url_check) */
     if (data->blocked == 1) {
-        char body_buf[512];
+        char body_buf[1024];
         int body_len;
         char len_hdr[64];
 
@@ -1383,12 +1383,45 @@ int dlp_process(ci_request_t *req)
             }
         }
 
-        /* Build minimal HTML error page body */
+        /* Store block in Valkey so it appears in list_pending immediately.
+         * JSON matches the BlockedRequest schema used by the MCP toolbox. */
+        if (data->request_id[0] != '\0' && ensure_gov_valkey_connected()) {
+            char json_buf[512];
+            time_t now = time(NULL);
+            struct tm utc_tm;
+            char ts_buf[32];
+            gmtime_r(&now, &utc_tm);
+            strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%SZ", &utc_tm);
+
+            snprintf(json_buf, sizeof(json_buf),
+                "{\"request_id\":\"%s\",\"reason\":\"credential_detected\","
+                "\"destination\":\"%s\",\"pattern\":\"%s\","
+                "\"blocked_at\":\"%s\",\"status\":\"pending\"}",
+                data->request_id, data->host, data->matched_pattern,
+                ts_buf);
+
+            pthread_mutex_lock(&gov_valkey_mutex);
+            redisReply *set_reply = redisCommand(valkey_gov_ctx,
+                "SETEX polis:blocked:%s 3600 %s",
+                data->request_id, json_buf);
+            if (set_reply) freeReplyObject(set_reply);
+            pthread_mutex_unlock(&gov_valkey_mutex);
+
+            ci_debug_printf(3, "polis_dlp: Stored block %s in Valkey\n",
+                           data->request_id);
+        }
+
+        /* Build HTML error page with request ID and approval hint */
         body_len = snprintf(body_buf, sizeof(body_buf),
             "<html><head><title>403 Forbidden</title></head>"
             "<body><h1>403 Forbidden</h1>"
-            "<p>Request blocked by DLP: %s</p></body></html>",
-            data->matched_pattern);
+            "<p>Request blocked by DLP: %s</p>"
+            "<p>Request ID: %s</p>"
+            "<p>Destination: %s</p>"
+            "<p>To approve, run: polis-approve approve %s</p>"
+            "</body></html>",
+            data->matched_pattern, data->request_id,
+            data->host, data->request_id);
 
         /* Store error page for streaming via dlp_io */
         data->error_page = ci_membuf_new_sized(body_len + 1);
