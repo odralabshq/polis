@@ -32,7 +32,7 @@
         "sched_getparam", "sched_get_priority_max", "sched_get_priority_min",
         "sched_getscheduler", "sched_rr_get_interval", "sched_setaffinity",
         "sched_setattr", "sched_setparam", "sched_setscheduler",
-        "sched_yield", "seccomp", "select", "sendfile", "sendmmsg",
+        "sched_yield", "select", "sendfile", "sendmmsg",
         "sendmsg", "sendto", "set_robust_list", "set_tid_address",
         "setgid", "setgroups", "setitimer", "setpgid", "setpriority",
         "setregid", "setresgid", "setresuid", "setreuid", "setrlimit",
