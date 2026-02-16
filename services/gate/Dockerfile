@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust nightly (g3 requires rustc 1.90+)
-RUN rustup default nightly && rustup update nightly
+# Install Rust nightly pinned to specific date (g3 requires rustc 1.90+)
+RUN rustup default nightly-2026-02-01 && rustup component add rust-src
 
 # Download and verify g3 source v1.12.2 (supply chain security)
 WORKDIR /build
@@ -78,10 +78,10 @@ RUN mkdir -p /etc/g3proxy /var/lib/g3proxy/ssl /tmp/g3 && \
     chown -R gate:gate /var/log/g3proxy /var/lib/g3proxy /tmp/g3
 
 # Verify binaries
-RUN which g3proxy && which g3fcgen && \
-    g3proxy --version && g3fcgen --version && \
-    setcap 'cap_net_admin,cap_net_raw+ep' /usr/bin/g3proxy && \
-    setcap 'cap_net_admin+ep' /usr/sbin/nft
+# Note: setcap is NOT used because no-new-privileges:true in compose prevents
+# execve from honoring file capabilities. Capabilities are granted via setpriv
+# ambient caps in init.sh instead.
+RUN g3proxy --version && g3fcgen --version
 
 # Copy scripts
 COPY services/gate/scripts/init.sh /init.sh
