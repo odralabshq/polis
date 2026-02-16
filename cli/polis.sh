@@ -385,6 +385,66 @@ generate_ca() {
     return 0
 }
 
+# Generate toolbox TLS certificate (signed by internal CA)
+generate_toolbox_certs() {
+    local TOOLBOX_DIR="${PROJECT_ROOT}/certs/toolbox"
+    local CA_DIR="${PROJECT_ROOT}/certs/ca"
+    
+    if [[ -f "${TOOLBOX_DIR}/toolbox.pem" ]] && [[ -f "${TOOLBOX_DIR}/toolbox.key" ]]; then
+        log_success "Toolbox TLS certificates already exist."
+        return 0
+    fi
+    
+    if [[ ! -f "${CA_DIR}/ca.pem" ]] || [[ ! -f "${CA_DIR}/ca.key" ]]; then
+        log_error "CA certificate not found. Run generate_ca first."
+        return 1
+    fi
+    
+    echo "=== Generating Toolbox TLS certificate ==="
+    mkdir -p "$TOOLBOX_DIR"
+    
+    # Generate key
+    openssl genrsa -out "${TOOLBOX_DIR}/toolbox.key" 2048 2>/dev/null
+    
+    # Generate CSR
+    openssl req -new -key "${TOOLBOX_DIR}/toolbox.key" \
+        -out "${TOOLBOX_DIR}/toolbox.csr" \
+        -subj "/CN=toolbox/O=polis" 2>/dev/null
+    
+    # Create extensions file for SANs
+    cat > "${TOOLBOX_DIR}/toolbox.ext" << 'EOF'
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = toolbox
+DNS.2 = polis-toolbox
+DNS.3 = localhost
+IP.1 = 10.10.1.20
+IP.2 = 10.30.1.20
+IP.3 = 127.0.0.1
+EOF
+    
+    # Sign with CA
+    openssl x509 -req -in "${TOOLBOX_DIR}/toolbox.csr" \
+        -CA "${CA_DIR}/ca.pem" -CAkey "${CA_DIR}/ca.key" \
+        -CAcreateserial -out "${TOOLBOX_DIR}/toolbox.pem" \
+        -days 365 -sha256 -extfile "${TOOLBOX_DIR}/toolbox.ext" 2>/dev/null
+    
+    # Cleanup temp files
+    rm -f "${TOOLBOX_DIR}/toolbox.csr" "${TOOLBOX_DIR}/toolbox.ext"
+    
+    # Set permissions (readable by container user 65532)
+    chmod 644 "${TOOLBOX_DIR}/toolbox.key"
+    chmod 644 "${TOOLBOX_DIR}/toolbox.pem"
+    
+    log_success "Toolbox TLS certificate generated."
+    return 0
+}
+
 # Setup Valkey TLS certificates and secrets (idempotent)
 setup_valkey() {
     local VALKEY_CERTS_DIR="${PROJECT_ROOT}/certs/valkey"
@@ -1182,6 +1242,14 @@ case "${1:-}" in
             exit 1
         fi
         
+        # Step 3b: Generate Toolbox TLS certificate
+        echo ""
+        log_step "Setting up Toolbox TLS certificate..."
+        if ! generate_toolbox_certs; then
+            log_error "Toolbox TLS setup failed. Cannot proceed."
+            exit 1
+        fi
+        
         # Step 4: Validate agent environment
         echo ""
         if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
@@ -1322,10 +1390,11 @@ case "${1:-}" in
         echo "=== Polis: Cleaning Secrets and Certificates ==="
         rm -rf "${PROJECT_ROOT}/secrets/"*.txt
         rm -rf "${PROJECT_ROOT}/secrets/"*.acl
-        rm -rf "${PROJECT_ROOT}/certs/"*.pem
-        rm -rf "${PROJECT_ROOT}/certs/"*.crt
-        rm -rf "${PROJECT_ROOT}/certs/"*.key
-        rm -rf "${PROJECT_ROOT}/certs/"*.srl
+        rm -rf "${PROJECT_ROOT}/certs/ca/"*.pem
+        rm -rf "${PROJECT_ROOT}/certs/ca/"*.key
+        rm -rf "${PROJECT_ROOT}/certs/ca/"*.srl
+        rm -rf "${PROJECT_ROOT}/certs/valkey/"
+        rm -rf "${PROJECT_ROOT}/certs/toolbox/"
         
         log_success "Containers, networks, volumes, secrets, and certificates removed."
         log_info "Run 'polis init' to regenerate secrets and certificates."
