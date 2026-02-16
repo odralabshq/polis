@@ -18,7 +18,7 @@ require_network() {
 }
 
 relax_security_level() {
-    local ttl="${1:-300}"
+    local ttl="${1:-600}"
     # Retry setting security level (state container may still be initializing)
     for _attempt in 1 2 3 4 5; do
         if docker exec "$CTR_STATE" sh -c "
@@ -27,10 +27,12 @@ relax_security_level() {
                 --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
                 --user mcp-admin --no-auth-warning \
                 SET polis:config:security_level relaxed EX $ttl" 2>/dev/null; then
-            # Warm-up request to force DLP to poll and see the new level
-            docker exec "$CTR_WORKSPACE" curl -sf -o /dev/null \
-                --proxy http://10.10.1.10:8080 "http://${HTTPBIN_HOST}/status/200" 2>/dev/null || true
-            sleep 1
+            # Warmup: wait for proxy to stabilise after security level change
+            for _i in 1 2 3; do
+                docker exec "$CTR_WORKSPACE" curl -sf -o /dev/null --connect-timeout 5 \
+                    --proxy "http://${IP_GATE_INT}:8080" "http://${HTTPBIN_HOST}/get" 2>/dev/null && return
+                sleep 1
+            done
             return 0
         fi
         sleep 2

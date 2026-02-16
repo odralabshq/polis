@@ -10,8 +10,19 @@ services:
     image: polis-resolver-oss:latest
     container_name: polis-resolver
     user: "200:200"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M,mode=1777
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/resolver/config/seccomp.json
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
     networks:
       gateway-bridge:
         ipv4_address: 10.30.1.10
@@ -58,9 +69,14 @@ services:
       - NET_RAW
       - SETUID
       - SETGID
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,mode=1777,uid=999,gid=999
+      - /var/log/g3proxy:size=50M,mode=755,uid=999,gid=999
+      - /var/lib/g3proxy:size=10M,mode=755,uid=999,gid=999
     security_opt:
       - no-new-privileges:true
-      - seccomp=./services/gate/config/seccomp/gateway.json
+      - seccomp=./services/gate/config/seccomp.json
     networks:
       internal-bridge:
         ipv4_address: 10.10.1.10
@@ -114,8 +130,10 @@ services:
     image: polis-sentinel-oss:latest
     container_name: polis-sentinel
     user: sentinel
+    read_only: true
     tmpfs:
       - /tmp:size=2G,mode=1777
+      - /var/tmp:size=2G,mode=1777
       - /var/log:size=100M,mode=1777,uid=101,gid=101
       - /run:size=10M,mode=755,uid=101,gid=101
       - /var/run/c-icap:size=10M,mode=755,uid=101,gid=101
@@ -123,10 +141,9 @@ services:
     mem_reservation: 1G
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/sentinel/config/seccomp.json
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
     networks:
       gateway-bridge:
         ipv4_address: 10.30.1.5
@@ -178,10 +195,9 @@ services:
     user: "65532:65532"
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/scanner/config/seccomp.json
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
     read_only: true
     tmpfs:
       - /tmp:size=100M,mode=1777
@@ -429,13 +445,18 @@ services:
       dockerfile: services/toolbox/Dockerfile
     image: polis-toolbox-oss:latest
     container_name: polis-toolbox
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,mode=1777
+    mem_limit: 512m
+    cpus: 1.0
     networks:
       internal-bridge:
         ipv4_address: 10.10.1.20
       gateway-bridge:
         ipv4_address: 10.30.1.20
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
       - polis_AGENT_VALKEY_URL=rediss://state:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
@@ -455,6 +476,7 @@ services:
       start_period: 15s
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/toolbox/config/seccomp.json
     cap_drop:
       - ALL
     restart: unless-stopped

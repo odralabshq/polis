@@ -5,7 +5,7 @@
 setup_file() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
-    for ctr in "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE"; do
+    for ctr in "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE" "$CTR_RESOLVER"; do
         local var="${ctr//-/_}_INSPECT"
         export "$var"="$(docker inspect "$ctr" 2>/dev/null || echo '[]')"
     done
@@ -54,7 +54,7 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     [[ "$capeff" != "0000000000000000" ]] || fail "Gate has no capabilities: $capeff"
 }
 
-# ── Sentinel capabilities (source: docker-compose.yml cap_drop:[ALL] cap_add:[CHOWN]) ──
+# ── Sentinel capabilities (source: docker-compose.yml cap_drop:[ALL]) ──
 
 @test "sentinel: drops ALL capabilities" {
     require_container "$CTR_SENTINEL"
@@ -63,11 +63,10 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "ALL"
 }
 
-@test "sentinel: has CHOWN capability" {
+@test "sentinel: does NOT have CHOWN capability" {
     require_container "$CTR_SENTINEL"
-    run jq -r '.[0].HostConfig.CapAdd[]' <<< "$(_inspect "$CTR_SENTINEL")"
-    assert_success
-    assert_output --regexp "(CHOWN|CAP_CHOWN)"
+    run jq -r '.[0].HostConfig.CapAdd // [] | .[]' <<< "$(_inspect "$CTR_SENTINEL")"
+    refute_output --partial "CHOWN"
 }
 
 @test "sentinel: does NOT have SETGID capability" {
@@ -76,7 +75,7 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     refute_output --partial "SETGID"
 }
 
-# ── Scanner capabilities (source: docker-compose.yml cap_drop:[ALL] cap_add:[CHOWN]) ──
+# ── Scanner capabilities (source: docker-compose.yml cap_drop:[ALL]) ──
 
 @test "scanner: drops ALL capabilities" {
     require_container "$CTR_SCANNER"
@@ -85,11 +84,10 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "ALL"
 }
 
-@test "scanner: has CHOWN capability" {
+@test "scanner: does NOT have CHOWN capability" {
     require_container "$CTR_SCANNER"
-    run jq -r '.[0].HostConfig.CapAdd[]' <<< "$(_inspect "$CTR_SCANNER")"
-    assert_success
-    assert_output --regexp "(CHOWN|CAP_CHOWN)"
+    run jq -r '.[0].HostConfig.CapAdd // [] | .[]' <<< "$(_inspect "$CTR_SCANNER")"
+    refute_output --partial "CHOWN"
 }
 
 # ── State / Toolbox / Workspace: drop ALL, no cap_add ─────────────────────
@@ -111,6 +109,15 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 @test "workspace: drops ALL capabilities" {
     require_container "$CTR_WORKSPACE"
     run jq -r '.[0].HostConfig.CapDrop[]' <<< "$(_inspect "$CTR_WORKSPACE")"
+    assert_success
+    assert_output --partial "ALL"
+}
+
+# ── Resolver capabilities (source: docker-compose.yml cap_drop:[ALL]) ─────
+
+@test "resolver: drops ALL capabilities" {
+    require_container "$CTR_RESOLVER"
+    run jq -r '.[0].HostConfig.CapDrop[]' <<< "$(_inspect "$CTR_RESOLVER")"
     assert_success
     assert_output --partial "ALL"
 }
