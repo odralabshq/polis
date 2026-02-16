@@ -19,16 +19,20 @@ setup() {
 # ── Processes ─────────────────────────────────────────────────────────────
 
 @test "certgen: g3fcgen process running" {
-    run docker exec "$CTR_CERTGEN" pgrep -x g3fcgen
+    # Use docker top (minimal image has no procps)
+    run docker top "$CTR_CERTGEN" -o pid,comm
     assert_success
+    assert_output --partial "g3fcgen"
 }
 
 # ── Ports ─────────────────────────────────────────────────────────────────
 
 @test "certgen: g3fcgen listening on UDP 2999" {
-    run docker exec "$CTR_CERTGEN" ss -uln
+    # Check from host via docker port or netstat
+    run docker exec "$CTR_CERTGEN" cat /proc/net/udp
     assert_success
-    assert_output --partial ":2999"
+    # 2999 = 0x0BB7, appears in local_address column
+    assert_output --partial "0BB7"
 }
 
 # ── CA certificate and key (certgen holds both) ───────────────────────────
@@ -44,16 +48,17 @@ setup() {
 }
 
 @test "certgen: CA key matches cert" {
+    # Run openssl from host against mounted certs
     local cert_mod key_mod
-    cert_mod=$(docker exec "$CTR_CERTGEN" openssl x509 -noout -modulus -in /etc/g3fcgen/ca.pem 2>/dev/null | md5sum)
-    key_mod=$(docker exec "$CTR_CERTGEN" openssl rsa -noout -modulus -in /etc/g3fcgen/ca.key 2>/dev/null | md5sum)
+    cert_mod=$(openssl x509 -noout -modulus -in "$PROJECT_ROOT/certs/ca/ca.pem" 2>/dev/null | md5sum)
+    key_mod=$(openssl rsa -noout -modulus -in "$PROJECT_ROOT/certs/ca/ca.key" 2>/dev/null | md5sum)
     [[ "$cert_mod" == "$key_mod" ]] || fail "CA key does not match cert"
 }
 
 # ── Security constraints ──────────────────────────────────────────────────
 
 @test "certgen: runs as nonroot user (65532)" {
-    run docker exec "$CTR_CERTGEN" id -u
+    run bash -c "docker top $CTR_CERTGEN | grep g3fcgen | awk '{print \$1}'"
     assert_success
     assert_output "65532"
 }
