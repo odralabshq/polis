@@ -373,8 +373,8 @@ generate_ca() {
         return 1
     fi
     
-    # Set permissions (readable for Docker bind mount)
-    chmod 644 "$CA_KEY"
+    # Set permissions: key=600 (owner only), cert=644 (public)
+    chmod 600 "$CA_KEY"
     chmod 644 "$CA_PEM"
     
     log_success "CA certificate generated successfully:"
@@ -382,6 +382,26 @@ generate_ca() {
     echo "  Certificate: $CA_PEM"
     echo ""
     log_warn "Keep ca.key secure and never commit it to version control!"
+    return 0
+}
+
+# Generate toolbox TLS certificate (signed by internal CA)
+generate_toolbox_certs() {
+    local TOOLBOX_DIR="${PROJECT_ROOT}/certs/toolbox"
+    local CA_DIR="${PROJECT_ROOT}/certs/ca"
+    
+    if [[ -f "${TOOLBOX_DIR}/toolbox.pem" ]] && [[ -f "${TOOLBOX_DIR}/toolbox.key" ]]; then
+        log_success "Toolbox TLS certificates already exist."
+        return 0
+    fi
+    
+    echo "Generating Toolbox TLS certificates..."
+    if ! bash "${PROJECT_ROOT}/services/toolbox/scripts/generate-certs.sh" \
+        "${TOOLBOX_DIR}" "${CA_DIR}"; then
+        log_error "Failed to generate Toolbox TLS certificates"
+        return 1
+    fi
+    log_success "Toolbox TLS certificates generated."
     return 0
 }
 
@@ -1182,6 +1202,14 @@ case "${1:-}" in
             exit 1
         fi
         
+        # Step 3b: Generate Toolbox TLS certificate
+        echo ""
+        log_step "Setting up Toolbox TLS certificate..."
+        if ! generate_toolbox_certs; then
+            log_error "Toolbox TLS setup failed. Cannot proceed."
+            exit 1
+        fi
+        
         # Step 4: Validate agent environment
         echo ""
         if [[ "$EFFECTIVE_AGENT" != "base" ]]; then
@@ -1322,10 +1350,11 @@ case "${1:-}" in
         echo "=== Polis: Cleaning Secrets and Certificates ==="
         rm -rf "${PROJECT_ROOT}/secrets/"*.txt
         rm -rf "${PROJECT_ROOT}/secrets/"*.acl
-        rm -rf "${PROJECT_ROOT}/certs/"*.pem
-        rm -rf "${PROJECT_ROOT}/certs/"*.crt
-        rm -rf "${PROJECT_ROOT}/certs/"*.key
-        rm -rf "${PROJECT_ROOT}/certs/"*.srl
+        rm -rf "${PROJECT_ROOT}/certs/ca/"*.pem
+        rm -rf "${PROJECT_ROOT}/certs/ca/"*.key
+        rm -rf "${PROJECT_ROOT}/certs/ca/"*.srl
+        rm -rf "${PROJECT_ROOT}/certs/valkey/"
+        rm -rf "${PROJECT_ROOT}/certs/toolbox/"
         
         log_success "Containers, networks, volumes, secrets, and certificates removed."
         log_info "Run 'polis init' to regenerate secrets and certificates."

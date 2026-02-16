@@ -1,4 +1,4 @@
-FROM debian:trixie AS builder
+FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
@@ -13,6 +13,10 @@ RUN apt-get update && apt-get install -y \
     zlib1g-dev \
     libdb-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# OpenSSF compiler hardening flags for C modules
+ENV CFLAGS_HARDEN="-fstack-protector-strong -D_FORTIFY_SOURCE=3 -Wformat -Wformat-security -fstack-clash-protection -O2"
+ENV LDFLAGS_HARDEN="-Wl,-z,relro,-z,now"
 
 # Download and build c-icap from GitHub release (with SHA256 verification)
 WORKDIR /build
@@ -50,14 +54,15 @@ RUN wget -q https://github.com/darold/squidclamav/archive/refs/tags/v7.3.tar.gz 
 
 # Copy and compile DLP module against c-ICAP source headers
 COPY services/sentinel/modules/dlp/srv_polis_dlp.c /build/
-RUN gcc -shared -fPIC -Wall -Werror -o /build/srv_polis_dlp.so /build/srv_polis_dlp.c \
+RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
+    -o /build/srv_polis_dlp.so /build/srv_polis_dlp.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
     -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lpthread
 
 # Copy and compile approval REQMOD rewriter module
 COPY services/sentinel/modules/approval/srv_polis_approval_rewrite.c /build/
-RUN gcc -shared -fPIC -Wall -Werror \
+RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     -o /build/srv_polis_approval_rewrite.so \
     /build/srv_polis_approval_rewrite.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
@@ -66,7 +71,7 @@ RUN gcc -shared -fPIC -Wall -Werror \
 
 # Copy and compile approval RESPMOD scanner module
 COPY services/sentinel/modules/approval/srv_polis_approval.c /build/
-RUN gcc -shared -fPIC -Wall -Werror \
+RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     -o /build/srv_polis_approval.so \
     /build/srv_polis_approval.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
@@ -75,26 +80,28 @@ RUN gcc -shared -fPIC -Wall -Werror \
 
 # Copy and compile merged Sentinel RESPMOD module (ClamAV + OTT)
 COPY services/sentinel/modules/merged/srv_polis_sentinel_resp.c /build/
-RUN gcc -shared -fPIC -Wall -Werror \
+RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     -o /build/srv_polis_sentinel_resp.so \
     /build/srv_polis_sentinel_resp.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
     -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lpthread -lz
 
-# Runtime image
-FROM debian:trixie
-ENV DEBIAN_FRONTEND=noninteractive
+# Collect runtime shared libraries not in base image
+RUN mkdir -p /runtime-libs/lib/x86_64-linux-gnu /runtime-libs/usr/lib/x86_64-linux-gnu && \
+    cp -L /lib/x86_64-linux-gnu/libatomic.so.1 \
+          /lib/x86_64-linux-gnu/libhiredis.so.1.1.0 \
+          /lib/x86_64-linux-gnu/libhiredis_ssl.so.1.1.0 \
+          /runtime-libs/lib/x86_64-linux-gnu/ && \
+    cp -L /usr/lib/x86_64-linux-gnu/libdb-5.3.so \
+          /runtime-libs/usr/lib/x86_64-linux-gnu/
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libssl3 \
-    zlib1g \
-    libatomic1 \
-    libhiredis1.1.0 \
-    procps \
-    netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+# Runtime image (minimal, no apt)
+FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+
+# Copy runtime shared libraries not in base
+COPY --from=builder /runtime-libs/lib/ /lib/
+COPY --from=builder /runtime-libs/usr/lib/ /usr/lib/
 
 # Copy built c-icap and squidclamav
 COPY --from=builder /install/usr /usr
@@ -110,20 +117,15 @@ COPY --from=builder /build/srv_polis_approval.so /usr/lib/c_icap/
 # Copy merged Sentinel RESPMOD module
 COPY --from=builder /build/srv_polis_sentinel_resp.so /usr/lib/c_icap/
 
-# Create dedicated c-icap user and group
-# Create dedicated sentinel user and group (uid/gid 101 matches sentinel tmpfs in compose)
-RUN groupadd -r -g 101 c-icap && useradd -r -u 101 -g c-icap -s /sbin/nologin c-icap && \
-    usermod -l sentinel -d /home/sentinel -m c-icap && \
-    groupmod -n sentinel c-icap
-
-# Create directories with proper ownership
+# Create directories with proper ownership for DHI nonroot user (65532)
+USER 0
 RUN mkdir -p /var/run/c-icap /run/c-icap /var/log/c-icap && \
-    chown sentinel:sentinel /var/run/c-icap /run/c-icap /var/log/c-icap && \
+    chown 65532:65532 /var/run/c-icap /run/c-icap /var/log/c-icap && \
     chmod 755 /var/run/c-icap /run/c-icap /var/log/c-icap
 
 # Entrypoint (non-root)
 COPY services/sentinel/scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER sentinel
+USER nonroot
 ENTRYPOINT ["/entrypoint.sh"]

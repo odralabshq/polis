@@ -17,13 +17,16 @@ setup() {
 # ── Processes ─────────────────────────────────────────────────────────────
 
 @test "sentinel: c-icap process running" {
-    run docker exec "$CTR_SENTINEL" pgrep -x c-icap
+    # Use docker top instead of pgrep (minimal image has no procps)
+    run docker top "$CTR_SENTINEL" -o pid,comm
     assert_success
+    assert_output --partial "c-icap"
 }
 
 # Source: c-icap.conf StartServers 3 → master + workers
 @test "sentinel: multiple c-icap worker processes" {
-    run docker exec "$CTR_SENTINEL" pgrep -c c-icap
+    # Use docker top instead of pgrep -c (minimal image has no procps)
+    run bash -c "docker top $CTR_SENTINEL | grep -c c-icap"
     assert_success
     [[ "$output" -ge 2 ]] || fail "Expected ≥2 c-icap processes, got $output"
 }
@@ -49,7 +52,8 @@ setup() {
     local pid
     pid=$(docker exec "$CTR_SENTINEL" cat /var/run/c-icap/c-icap.pid 2>/dev/null)
     [[ -n "$pid" ]] || fail "PID file empty"
-    run docker exec "$CTR_SENTINEL" ps -p "$pid"
+    # Use /proc instead of ps (minimal image has no procps)
+    run docker exec "$CTR_SENTINEL" test -d "/proc/$pid"
     assert_success
 }
 

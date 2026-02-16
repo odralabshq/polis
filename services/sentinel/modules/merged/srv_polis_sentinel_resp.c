@@ -594,7 +594,7 @@ static int clamd_scan_buffer(const char *buf, size_t len,
         memset(&unix_addr, 0, sizeof(unix_addr));
         unix_addr.sun_family = AF_UNIX;
         strncpy(unix_addr.sun_path, clamd_socket_path,
-                sizeof(unix_addr.sun_path) - 1);
+                sizeof(unix_addr.sun_path));
         unix_addr.sun_path[sizeof(unix_addr.sun_path) - 1] = '\0';
 
         if (connect(fd, (struct sockaddr *)&unix_addr,

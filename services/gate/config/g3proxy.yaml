@@ -17,9 +17,10 @@ resolver:
 auditor:
   - name: default
     protocol_inspection: {}
-    # TLS certificate generation for MITM - connects to g3fcgen on UDP 2999
+    # TLS certificate generation for MITM - connects to certgen sidecar on UDP 2999
+    # CA key isolated in certgen container (Issue #17 - CA Key Isolation)
     tls_cert_agent:
-      query_peer_addr: 127.0.0.1:2999
+      query_peer_addr: 10.30.1.7:2999
       query_wait_timeout: 4s
       protective_cache_ttl: 10
       maximum_cache_ttl: 300

@@ -33,12 +33,12 @@ setup() {
     assert_output --partial "meta nfproto ipv6 drop"
 }
 
-@test "gate-init: logs show IPv6 disable" {
-    run docker logs "$CTR_GATE_INIT" 2>&1
+@test "gate: logs show IPv6 disable" {
+    run docker logs "$CTR_GATE" 2>&1
     assert_output --partial "Disabling IPv6"
 }
 
-@test "gate-init: logs show completion" {
-    run docker logs "$CTR_GATE_INIT" 2>&1
+@test "gate: logs show network setup completion" {
+    run docker logs "$CTR_GATE" 2>&1
     assert_output --partial "Networking setup complete"
 }

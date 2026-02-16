@@ -7,9 +7,9 @@ if ! pgrep -x g3proxy > /dev/null; then
     exit 1
 fi
 
-# Check g3fcgen process
-if ! pgrep -x g3fcgen > /dev/null; then
-    echo "UNHEALTHY: g3fcgen not running"
+# Check certgen sidecar is reachable (g3fcgen now runs in certgen container)
+if ! timeout 1 bash -c "echo > /dev/udp/certgen/2999" 2>/dev/null; then
+    echo "UNHEALTHY: certgen sidecar not reachable at certgen:2999"
     exit 1
 fi
 

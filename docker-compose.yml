@@ -9,9 +9,20 @@ services:
       dockerfile: services/resolver/Dockerfile
     image: polis-resolver-oss:latest
     container_name: polis-resolver
-    user: "200:200"
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M,mode=1777
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/resolver/config/seccomp.json
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
     networks:
       gateway-bridge:
         ipv4_address: 10.30.1.10
@@ -22,7 +33,7 @@ services:
       - ./services/resolver/config/Corefile:/etc/coredns/Corefile:ro
       - ./services/resolver/config/blocklist.txt:/etc/coredns/blocklist.txt:ro
     healthcheck:
-      test: ["CMD", "nslookup", "github.com", "127.0.0.1"]
+      test: ["CMD", "/usr/local/bin/coredns", "-plugins"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -38,7 +49,55 @@ services:
       service: "polis-resolver"
 
   # =========================================================
+  # CERTGEN (g3fcgen / TLS Certificate Generator Sidecar)
+  # Isolates CA private key - gate never sees ca.key
+  # =========================================================
+  certgen:
+    build:
+      context: .
+      dockerfile: services/certgen/Dockerfile
+    image: polis-certgen-oss:latest
+    container_name: polis-certgen
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./services/certgen/config/seccomp.json
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+    networks:
+      gateway-bridge:
+        ipv4_address: 10.30.1.7
+    environment:
+      - UDP_LISTEN_ADDR=0.0.0.0:2999
+    volumes:
+      - ./services/certgen/config/g3fcgen.yaml:/etc/g3fcgen/g3fcgen.yaml:ro
+      - ./certs/ca/ca.pem:/etc/g3fcgen/ca.pem:ro
+      - ./certs/ca/ca.key:/etc/g3fcgen/ca.key:ro
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/udp/localhost/2999"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service"
+    labels:
+      service: "polis-certgen"
+
+  # =========================================================
   # GATE (G3PROXY / Tier 1 Entry Point)
+  # CA key isolated in certgen sidecar
   # =========================================================
   gate:
     build:
@@ -58,9 +117,14 @@ services:
       - NET_RAW
       - SETUID
       - SETGID
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,mode=1777,uid=65532,gid=65532
+      - /var/log/g3proxy:size=50M,mode=755,uid=65532,gid=65532
+      - /var/lib/g3proxy:size=10M,mode=755,uid=65532,gid=65532
     security_opt:
       - no-new-privileges:true
-      - seccomp=./services/gate/config/seccomp/gateway.json
+      - seccomp=./services/gate/config/seccomp.json
     networks:
       internal-bridge:
         ipv4_address: 10.10.1.10
@@ -70,9 +134,8 @@ services:
         ipv4_address: 10.20.1.3
     volumes:
       - ./services/gate/config/g3proxy.yaml:/etc/g3proxy/g3proxy.yaml:ro
-      - ./services/gate/config/g3fcgen.yaml:/etc/g3proxy/g3fcgen.yaml:ro
       - ./services/gate/scripts/init.sh:/init.sh:ro
-      - ./certs/ca:/etc/g3proxy/ssl:ro
+      - ./certs/ca/ca.pem:/etc/g3proxy/ssl/ca.pem:ro
       - ./services/gate/scripts/health.sh:/scripts/health-check.sh:ro
     sysctls:
       - net.ipv4.ip_forward=1
@@ -82,6 +145,8 @@ services:
       - net.ipv4.conf.all.route_localnet=1
       - net.ipv4.conf.default.route_localnet=1
     depends_on:
+      certgen:
+        condition: service_healthy
       sentinel:
         condition: service_healthy
       state:
@@ -113,20 +178,21 @@ services:
       dockerfile: services/sentinel/Dockerfile
     image: polis-sentinel-oss:latest
     container_name: polis-sentinel
-    user: sentinel
+    user: "65532:65532"
+    read_only: true
     tmpfs:
       - /tmp:size=2G,mode=1777
-      - /var/log:size=100M,mode=1777,uid=101,gid=101
-      - /run:size=10M,mode=755,uid=101,gid=101
-      - /var/run/c-icap:size=10M,mode=755,uid=101,gid=101
+      - /var/tmp:size=2G,mode=1777
+      - /var/log:size=100M,mode=1777,uid=65532,gid=65532
+      - /run:size=10M,mode=755,uid=65532,gid=65532
+      - /var/run/c-icap:size=10M,mode=755,uid=65532,gid=65532
     mem_limit: 3G
     mem_reservation: 1G
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/sentinel/config/seccomp.json
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
     networks:
       gateway-bridge:
         ipv4_address: 10.30.1.5
@@ -175,19 +241,18 @@ services:
       dockerfile: services/scanner/Dockerfile
     image: polis-scanner-oss:latest
     container_name: polis-scanner
-    user: "100:101"
+    user: "65532:65532"
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/scanner/config/seccomp.json
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
     read_only: true
     tmpfs:
       - /tmp:size=100M,mode=1777
-      - /var/log/clamav:size=50M,mode=755,uid=100,gid=101
-      - /run/clamav:size=10M,mode=755,uid=100,gid=101
-      - /var/lock:size=10M,mode=1777,uid=100,gid=101
+      - /var/log/clamav:size=50M,mode=755,uid=65532,gid=65532
+      - /run/clamav:size=10M,mode=755,uid=65532,gid=65532
+      - /var/lock:size=10M,mode=1777,uid=65532,gid=65532
     networks:
       gateway-bridge: {}
       internet: {}
@@ -313,53 +378,58 @@ services:
       service: "polis-workspace"
 
   # =========================================================
-  # GATE INIT (Network setup for TPROXY)
-  # =========================================================
-  gate-init:
-    image: polis-gate-oss:latest
-    container_name: polis-gate-init
-    user: root
-    network_mode: service:gate
-    entrypoint: []
-    cap_add:
-      - NET_ADMIN
-    privileged: true
-    depends_on:
-      - gate
-    volumes:
-      - ./services/gate/scripts/setup-network.sh:/setup-network.sh:ro
-    command: ["/setup-network.sh"]
-    restart: "no"
-
-  # =========================================================
   # SCANNER INIT (ClamAV Volume permission setup)
   # =========================================================
   scanner-init:
-    image: alpine
+    image: dhi.io/alpine-base:3.23-dev@sha256:2b318097756a2d92fb8fc059beaf512f8607224a17767d56e557618ca61296cb
     container_name: polis-scanner-init
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.25"
     volumes:
       - scanner-db:/var/lib/clamav
-    command: chown -R 100:101 /var/lib/clamav
+    command: chown -R 65532:65532 /var/lib/clamav
     restart: "no"
 
   # =========================================================
   # STATE INIT (Valkey Volume permission setup)
   # =========================================================
   state-init:
-    image: alpine
+    image: dhi.io/alpine-base:3.23-dev@sha256:2b318097756a2d92fb8fc059beaf512f8607224a17767d56e557618ca61296cb
     container_name: polis-state-init
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.25"
     volumes:
       - state-data:/data
-    command: chown -R 999:999 /data
+    command: chown -R 65532:65532 /data
     restart: "no"
 
   # =========================================================
   # STATE (VALKEY / State Management)
   # =========================================================
   state:
-    image: valkey/valkey:8-alpine
+    image: dhi.io/valkey:8.1@sha256:5f33330d05cbe6665af387cea4adc955b93cf86eb3cabc676965b4a38cabef2c
     container_name: polis-state
-    user: "999:999"
+    user: "65532:65532"
     entrypoint: []
     command: ["valkey-server", "/etc/valkey/valkey.conf"]
     networks:
@@ -370,8 +440,8 @@ services:
     secrets:
       - valkey_password
       - source: valkey_acl
-        uid: "999"
-        gid: "999"
+        uid: "65532"
+        gid: "65532"
         mode: 0440
       - valkey_mcp_admin_password
       - valkey_mcp_agent_password
@@ -424,32 +494,43 @@ services:
       dockerfile: services/toolbox/Dockerfile
     image: polis-toolbox-oss:latest
     container_name: polis-toolbox
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,mode=1777
+    mem_limit: 512m
+    cpus: 1.0
     networks:
       internal-bridge:
         ipv4_address: 10.10.1.20
       gateway-bridge:
         ipv4_address: 10.30.1.20
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
       - polis_AGENT_VALKEY_URL=rediss://state:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
       - polis_AGENT_VALKEY_PASS_FILE=/run/secrets/valkey_mcp_agent_password
+      - polis_AGENT_TLS_CERT=/etc/toolbox/tls/toolbox.pem
+      - polis_AGENT_TLS_KEY=/etc/toolbox/tls/toolbox.key
     secrets:
       - valkey_mcp_agent_password
     volumes:
       - ./certs/valkey:/etc/valkey/tls:ro
+      - ./certs/toolbox:/etc/toolbox/tls:ro
+      - ./certs/ca/ca.pem:/etc/toolbox/ca.pem:ro
     depends_on:
       state:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      test: ["CMD-SHELL", "timeout 2 sh -c 'exec 3<>/dev/tcp/localhost/8080' 2>/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 15s
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/toolbox/config/seccomp.json
     cap_drop:
       - ALL
     restart: unless-stopped

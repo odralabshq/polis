@@ -15,41 +15,41 @@ setup() {
 
 # ── Process users (source: docker-compose.yml user: fields) ───────────────
 
-@test "gate: g3proxy runs as gate user" {
+@test "gate: g3proxy runs as nonroot (65532)" {
     require_container "$CTR_GATE"
-    run docker exec "$CTR_GATE" ps -o user= -C g3proxy
+    run bash -c "docker top $CTR_GATE | grep g3proxy | awk '{print \$1}'"
     assert_success
-    assert_output --partial "gate"
+    assert_output --partial "65532"
 }
 
-@test "sentinel: c-icap runs as sentinel user" {
+@test "sentinel: c-icap runs as nonroot (65532)" {
     require_container "$CTR_SENTINEL"
-    run docker exec "$CTR_SENTINEL" ps -o user= -C c-icap
+    run bash -c "docker top $CTR_SENTINEL | grep c-icap | awk '{print \$1}'"
     assert_success
-    assert_output --partial "sentinel"
+    assert_output --partial "65532"
 }
 
 # ── Container UIDs (source: docker-compose.yml user: "UID:GID") ──────────
 
-@test "scanner: runs as UID 100" {
+@test "scanner: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_SCANNER"
     run docker exec "$CTR_SCANNER" id -u
     assert_success
-    assert_output "100"
+    assert_output "65532"
 }
 
-@test "resolver: runs as UID 200" {
+@test "resolver: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_RESOLVER"
     run docker exec "$CTR_RESOLVER" id -u
     assert_success
-    assert_output "200"
+    assert_output "65532"
 }
 
-@test "state: runs as UID 999" {
+@test "state: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_STATE"
     run docker exec "$CTR_STATE" id -u
     assert_success
-    assert_output "999"
+    assert_output "65532"
 }
 
 # ── Workspace user setup ─────────────────────────────────────────────────
