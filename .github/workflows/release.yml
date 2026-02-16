@@ -34,7 +34,7 @@ jobs:
   # =========================================================
   validate:
     name: Validate Version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.validate.outputs.version }}
       is_prerelease: ${{ steps.validate.outputs.is_prerelease }}
@@ -70,7 +70,7 @@ jobs:
   docker:
     name: "Docker: ${{ matrix.image }}"
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -86,7 +86,7 @@ jobs:
             description: Polis Workspace (base)
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Generate CA certificate for build
         run: |
@@ -96,10 +96,10 @@ jobs:
             -subj "/C=US/ST=Local/L=Local/O=Polis/OU=Gateway/CN=Polis CA"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.12.0
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3.7.0
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -107,7 +107,7 @@ jobs:
 
       - name: Build and push
         id: build-push
-        uses: docker/build-push-action@v6.18.0
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -124,7 +124,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.0.0
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
         with:
           cosign-release: 'v3.0.3'
 
@@ -134,21 +134,21 @@ jobs:
             "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss@${{ steps.build-push.outputs.digest }}"
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0.22.2
+        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss:${{ needs.validate.outputs.version }}
           format: spdx-json
           output-file: sbom-${{ matrix.image }}.spdx.json
 
       - name: Attest image provenance
-        uses: actions/attest-build-provenance@v2.1.0
+        uses: actions/attest-build-provenance@7668571508540a607bdfd90a87a560489fe372eb # v2.1.0
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss
           subject-digest: ${{ steps.build-push.outputs.digest }}
           push-to-registry: true
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: sbom-${{ matrix.image }}
           path: sbom-${{ matrix.image }}.spdx.json
@@ -160,10 +160,10 @@ jobs:
   release:
     name: Create Release
     needs: [validate, docker]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Create and push tag (workflow_dispatch only)
         if: github.event_name == 'workflow_dispatch'
@@ -174,7 +174,7 @@ jobs:
           git push origin "${{ needs.validate.outputs.version }}"
 
       - name: Download SBOM artifacts
-        uses: actions/download-artifact@v4.2.0
+        uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # v4.2.0
         with:
           pattern: sbom-*
           merge-multiple: true
@@ -192,7 +192,7 @@ jobs:
             README.md .gitignore Cargo.toml Cargo.lock docker-compose.yml
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2.5.0
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: ${{ needs.validate.outputs.version }}
           name: Release ${{ needs.validate.outputs.version }}
