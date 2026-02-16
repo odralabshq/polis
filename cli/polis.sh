@@ -373,8 +373,8 @@ generate_ca() {
         return 1
     fi
     
-    # Set permissions (readable for Docker bind mount)
-    chmod 644 "$CA_KEY"
+    # Set permissions: key=600 (owner only), cert=644 (public)
+    chmod 600 "$CA_KEY"
     chmod 644 "$CA_PEM"
     
     log_success "CA certificate generated successfully:"

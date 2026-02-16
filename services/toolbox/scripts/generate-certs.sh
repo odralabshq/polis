@@ -76,8 +76,8 @@ openssl x509 -req \
 # Cleanup temp files
 rm -f "${OUTPUT_DIR}/toolbox.csr" "${OUTPUT_DIR}/toolbox.ext" "${CA_DIR}/ca.srl"
 
-# Set permissions (readable by container user 65532)
-chmod 644 "${OUTPUT_DIR}/toolbox.key"
+# Set permissions: key=600 (owner only), cert=644 (public)
+chmod 600 "${OUTPUT_DIR}/toolbox.key"
 chmod 644 "${OUTPUT_DIR}/toolbox.pem"
 
 echo ""
