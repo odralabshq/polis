@@ -31,6 +31,12 @@ secrets/
 # Valkey TLS certificates and keys - generated per-install by polis init
 certs/valkey/
 
+# Toolbox TLS certificates - generated per-install
+certs/toolbox/
+
+# CA serial file (generated when signing certs)
+certs/ca/ca.srl
+
 # Rust build artifacts
 target/
 .grepai/

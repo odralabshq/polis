@@ -24,13 +24,14 @@ setup() {
 }
 
 @test "scanner: responds to PING" {
-    run docker exec "$CTR_SCANNER" sh -c 'echo PING | nc localhost 3310'
+    # DHI ClamAV image doesn't have nc; use clamdscan --ping instead
+    run docker exec "$CTR_SCANNER" clamdscan --ping 3
     assert_success
-    assert_output --partial "PONG"
 }
 
 @test "scanner: returns version info" {
-    run docker exec "$CTR_SCANNER" sh -c 'echo VERSION | nc localhost 3310'
+    # DHI ClamAV image doesn't have nc; use clamdscan --version instead
+    run docker exec "$CTR_SCANNER" clamdscan --version
     assert_success
     assert_output --partial "ClamAV"
 }

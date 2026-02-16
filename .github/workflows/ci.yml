@@ -11,9 +11,11 @@ on:
 
 env:
   SYSBOX_VERSION: "0.6.7"
+  SYSBOX_SHA256: "b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
   POLIS_IMAGES: >-
     polis-resolver-oss:latest
     polis-gate-oss:latest
+    polis-certgen-oss:latest
     polis-sentinel-oss:latest
     polis-scanner-oss:latest
     polis-workspace-oss:latest
@@ -24,12 +26,12 @@ jobs:
   build-code:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           submodules: recursive
 
       - name: Cache Cargo registry + target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -57,15 +59,15 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build-code
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           submodules: recursive
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           driver-opts: |
-            image=moby/buildkit:latest
+            image=moby/buildkit:v0.19.0@sha256:14aa1b4dd92ea0a4cd03a54d0c6079046ea98cd0c0ae6176bdd7036ba370cbbe
             network=host
 
       - name: Build images (compose + buildx GHA cache)
@@ -82,19 +84,49 @@ jobs:
           docker save ${{ env.POLIS_IMAGES }} | zstd -T0 -3 -o polis-images.tar.zst
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: polis-images
           path: polis-images.tar.zst
           retention-days: 1
           compression-level: 0  # already zstd-compressed
 
-  # ── Stage 2b: BATS unit tests (no Docker needed) ─────────────────
+  # ── Stage 2b: Scan images for vulnerabilities ────────────────────
+  scan-images:
+    runs-on: ubuntu-24.04
+    needs: build-containers
+    strategy:
+      matrix:
+        image:
+          - polis-gate-oss
+          - polis-sentinel-oss
+          - polis-workspace-oss
+          - polis-scanner-oss
+          - polis-resolver-oss
+          - polis-toolbox-oss
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst --stdout | docker load
+
+      - name: Scan ${{ matrix.image }} with Snyk
+        uses: snyk/actions/docker@9adf32b1121593767fc3c057af55b55db032dc04 # master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: ${{ matrix.image }}:latest
+          args: --severity-threshold=high
+
+  # ── Stage 2c: BATS unit tests (no Docker needed) ─────────────────
   unit-tests:
     runs-on: ubuntu-24.04
     needs: build-code
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           submodules: recursive
 
@@ -110,9 +142,9 @@ jobs:
   # ── Stage 3: Integration tests (load pre-built images) ───────────
   integration-tests:
     runs-on: ubuntu-24.04
-    needs: [build-containers, unit-tests]
+    needs: [build-containers, unit-tests, scan-images]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           submodules: recursive
 
@@ -120,13 +152,14 @@ jobs:
         run: |
           docker rm -f $(docker ps -aq) 2>/dev/null || true
           wget -q "https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+          echo "${SYSBOX_SHA256}  sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb" | sha256sum -c -
           sudo apt-get install -y jq "./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
           sudo mkdir -p /etc/docker
           echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
 
       - name: Download image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: polis-images
 
@@ -181,7 +214,7 @@ jobs:
     needs: integration-tests
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           submodules: recursive
 
@@ -189,13 +222,14 @@ jobs:
         run: |
           docker rm -f $(docker ps -aq) 2>/dev/null || true
           wget -q "https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+          echo "${SYSBOX_SHA256}  sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb" | sha256sum -c -
           sudo apt-get install -y jq "./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
           sudo mkdir -p /etc/docker
           echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
 
       - name: Download image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: polis-images
 

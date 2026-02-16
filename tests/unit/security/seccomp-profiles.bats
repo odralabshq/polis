@@ -4,8 +4,10 @@
 
 setup() {
     load "../../lib/test_helper.bash"
-    GATE_SECCOMP="$PROJECT_ROOT/services/gate/config/seccomp/gateway.json"
+    GATE_SECCOMP="$PROJECT_ROOT/services/gate/config/seccomp.json"
     WORKSPACE_SECCOMP="$PROJECT_ROOT/services/workspace/config/seccomp.json"
+    SENTINEL_SECCOMP="$PROJECT_ROOT/services/sentinel/config/seccomp.json"
+    RESOLVER_SECCOMP="$PROJECT_ROOT/services/resolver/config/seccomp.json"
 }
 
 @test "seccomp: gateway profile exists" {
@@ -33,5 +35,42 @@ setup() {
 
 @test "seccomp: gateway allows setsockopt for TPROXY" {
     run grep "setsockopt" "$GATE_SECCOMP"
+    assert_success
+}
+
+# ── Sentinel seccomp profile (source: services/sentinel/config/seccomp.json) ──
+
+@test "seccomp: sentinel profile exists" {
+    [ -f "$SENTINEL_SECCOMP" ]
+}
+
+@test "seccomp: sentinel default action is ERRNO" {
+    run grep "SCMP_ACT_ERRNO" "$SENTINEL_SECCOMP"
+    assert_success
+}
+
+@test "seccomp: sentinel does NOT allow setuid" {
+    run grep '"setuid"' "$SENTINEL_SECCOMP"
+    assert_failure
+}
+
+@test "seccomp: sentinel does NOT allow setgid" {
+    run grep '"setgid"' "$SENTINEL_SECCOMP"
+    assert_failure
+}
+
+@test "seccomp: sentinel does NOT allow chown" {
+    run grep '"chown"' "$SENTINEL_SECCOMP"
+    assert_failure
+}
+
+# ── Resolver seccomp profile (source: services/resolver/config/seccomp/coredns.json) ──
+
+@test "seccomp: resolver profile exists" {
+    [ -f "$RESOLVER_SECCOMP" ]
+}
+
+@test "seccomp: resolver default action is ERRNO" {
+    run grep "SCMP_ACT_ERRNO" "$RESOLVER_SECCOMP"
     assert_success
 }

@@ -15,7 +15,8 @@ if [ ! -d "/run/clamav" ]; then
 fi
 
 # Assign ownership to the database directory, just in case it is a mounted volume
-chown -R scanner:scanner /var/lib/clamav
+# This may fail if running without CAP_CHOWN (expected in hardened containers)
+chown -R scanner:scanner /var/lib/clamav 2>/dev/null || true
 
 # configure freshclam.conf and clamd.conf from env variables if present
 env | grep "^CLAMD_CONF_" | while IFS="=" read -r KEY VALUE; do

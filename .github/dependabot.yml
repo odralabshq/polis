@@ -35,3 +35,26 @@ updates:
     directory: "services/toolbox"
     schedule:
       interval: monthly
+
+  - package-ecosystem: docker
+    directory: "services/scanner"
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: docker
+    directory: "services/resolver"
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: gomod
+    directory: "services/resolver"
+    schedule:
+      interval: weekly
+    groups:
+      go-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: monthly

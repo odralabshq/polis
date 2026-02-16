@@ -122,6 +122,7 @@ static const char OTT_CHARSET[] =
  * null-terminated (requires buf_len >= OTT_LEN + 1 = 13).
  *
  * Security: Uses /dev/urandom exclusively. No PRNG fallback.
+ * Uses rejection sampling to eliminate modulo bias (CWE-330).
  * Fail-closed: Returns -1 on any error; caller must abort rewrite.
  *
  * @param buf      Output buffer (must be >= OTT_LEN + 1 bytes)
@@ -131,8 +132,7 @@ static const char OTT_CHARSET[] =
 static int generate_ott(char *buf, size_t buf_len)
 {
     FILE *fp;
-    unsigned char random_bytes[OTT_RANDOM_BYTES];
-    size_t nread;
+    unsigned char b;
     int i;
 
     /* Validate output buffer can hold "ott-" + 8 chars + '\0' */
@@ -153,28 +153,30 @@ static int generate_ott(char *buf, size_t buf_len)
         return -1;
     }
 
-    /* Read 8 random bytes — fail closed on short read */
-    nread = fread(random_bytes, 1, OTT_RANDOM_BYTES, fp);
-    fclose(fp);
-
-    if (nread != OTT_RANDOM_BYTES) {
-        ci_debug_printf(0,
-            "CRITICAL: generate_ott: /dev/urandom short read "
-            "(%zu of %d bytes) — fail closed (CWE-457)\n",
-            nread, OTT_RANDOM_BYTES);
-        return -1;
-    }
-
     /* Write "ott-" prefix */
     buf[0] = 'o';
     buf[1] = 't';
     buf[2] = 't';
     buf[3] = '-';
 
-    /* Map each random byte to alphanumeric charset */
-    for (i = 0; i < OTT_RANDOM_BYTES; i++) {
-        buf[4 + i] = OTT_CHARSET[random_bytes[i] % OTT_CHARSET_LEN];
+    /* Generate 8 unbiased random characters using rejection sampling.
+     * 248 is the largest multiple of 62 below 256, so reject bytes >= 248
+     * to eliminate modulo bias. Expected reads: ~8.26 bytes (3.1% rejection). */
+    i = 0;
+    while (i < OTT_RANDOM_BYTES) {
+        if (fread(&b, 1, 1, fp) != 1) {
+            ci_debug_printf(0,
+                "CRITICAL: generate_ott: /dev/urandom read failed "
+                "— fail closed (CWE-457)\n");
+            fclose(fp);
+            return -1;
+        }
+        if (b < 248) {
+            buf[4 + i] = OTT_CHARSET[b % OTT_CHARSET_LEN];
+            i++;
+        }
     }
+    fclose(fp);
 
     /* Null-terminate */
     buf[OTT_LEN] = '\0';
@@ -846,7 +848,7 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
                 continue;
             }
             strncpy(patterns[pattern_count].name, name,
-                    sizeof(patterns[pattern_count].name) - 1);
+                    sizeof(patterns[pattern_count].name));
             patterns[pattern_count].name[
                 sizeof(patterns[pattern_count].name) - 1] = '\0';
             patterns[pattern_count].allow_domain[0] = '\0';

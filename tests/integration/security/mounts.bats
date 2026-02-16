@@ -5,7 +5,7 @@
 setup_file() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
-    for ctr in "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_WORKSPACE"; do
+    for ctr in "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_WORKSPACE" "$CTR_TOOLBOX"; do
         local var="${ctr//-/_}_INSPECT"
         export "$var"="$(docker inspect "$ctr" 2>/dev/null || echo '[]')"
     done
@@ -51,6 +51,30 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 
 # ── Tmpfs mounts ──────────────────────────────────────────────────────────
 
+@test "gate: has /tmp tmpfs with 50M size" {
+    require_container "$CTR_GATE"
+    # Source: docker-compose.yml tmpfs: /tmp:size=50M,mode=1777,uid=999,gid=999
+    run jq -r '.[0].HostConfig.Tmpfs["/tmp"] // empty' <<< "$(_inspect "$CTR_GATE")"
+    assert_success
+    assert_output --partial "size=50"
+}
+
+@test "gate: has /var/log/g3proxy tmpfs" {
+    require_container "$CTR_GATE"
+    # Source: docker-compose.yml tmpfs: /var/log/g3proxy:size=50M,mode=755,uid=999,gid=999
+    run jq -r '.[0].HostConfig.Tmpfs["/var/log/g3proxy"] // empty' <<< "$(_inspect "$CTR_GATE")"
+    assert_success
+    assert_output --partial "size=50"
+}
+
+@test "gate: has /var/lib/g3proxy tmpfs" {
+    require_container "$CTR_GATE"
+    # Source: docker-compose.yml tmpfs: /var/lib/g3proxy:size=10M,mode=755,uid=999,gid=999
+    run jq -r '.[0].HostConfig.Tmpfs["/var/lib/g3proxy"] // empty' <<< "$(_inspect "$CTR_GATE")"
+    assert_success
+    assert_output --partial "size=10"
+}
+
 @test "sentinel: has /tmp tmpfs with 2G size" {
     require_container "$CTR_SENTINEL"
     # Source: docker-compose.yml tmpfs: /tmp:size=2G,mode=1777
@@ -81,6 +105,14 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     run jq -r '.[0].HostConfig.Tmpfs["/tmp"] // empty' <<< "$(_inspect "$CTR_STATE")"
     assert_success
     assert_output --partial "size="
+}
+
+@test "toolbox: has /tmp tmpfs" {
+    require_container "$CTR_TOOLBOX"
+    # Source: docker-compose.yml tmpfs: /tmp:size=50M,mode=1777
+    run jq -r '.[0].HostConfig.Tmpfs["/tmp"] // empty' <<< "$(_inspect "$CTR_TOOLBOX")"
+    assert_success
+    assert_output --partial "size=50"
 }
 
 # ── Named volumes ─────────────────────────────────────────────────────────

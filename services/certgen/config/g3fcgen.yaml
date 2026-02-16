@@ -1,0 +1,10 @@
+---
+# g3fcgen - Fake Certificate Generator for TLS MITM
+# Runs as isolated sidecar - CA key never exposed to gate
+
+runtime:
+  thread_number: 1
+
+backend:
+  ca_certificate: /etc/g3fcgen/ca.pem
+  ca_private_key: /etc/g3fcgen/ca.key

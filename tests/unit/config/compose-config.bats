@@ -98,3 +98,23 @@ setup() {
     run grep "10.10.1.2" "$COMPOSE"
     assert_success
 }
+
+# ── DHI Supply Chain (Issue 14) ──────────────────────────────────────────
+
+@test "compose config: scanner-init uses DHI alpine-base with digest" {
+    run grep -A2 "scanner-init:" "$COMPOSE"
+    assert_output --partial "dhi.io/alpine-base"
+    assert_output --partial "@sha256:"
+}
+
+@test "compose config: state-init uses DHI alpine-base with digest" {
+    run grep -A2 "state-init:" "$COMPOSE"
+    assert_output --partial "dhi.io/alpine-base"
+    assert_output --partial "@sha256:"
+}
+
+@test "compose config: state uses DHI valkey with digest" {
+    run grep -A2 "^  state:" "$COMPOSE"
+    assert_output --partial "dhi.io/valkey"
+    assert_output --partial "@sha256:"
+}

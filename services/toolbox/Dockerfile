@@ -1,25 +1,19 @@
-FROM rust:1-bookworm AS builder
+FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
 WORKDIR /build
 COPY services/toolbox/crates/ services/toolbox/crates/
 COPY lib/crates/ lib/crates/
 COPY Cargo.toml Cargo.lock ./
 RUN cargo build --release -p polis-mcp-agent
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl && rm -rf /var/lib/apt/lists/*
-RUN useradd -r -s /bin/false polis
+FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+
+# DHI debian-base includes ca-certificates; no apt-get/useradd in minimal image
+
 COPY --from=builder /build/target/release/polis-mcp-agent /usr/bin/
 
-# Create directory for Valkey TLS certificates (mounted at runtime).
-# The polis user needs read access; the actual cert files are mounted :ro.
-RUN mkdir -p /etc/valkey/tls && chown polis:polis /etc/valkey/tls
-
-# No entrypoint script needed — the mTLS code loads the CA cert directly
-# from the PEM file (/etc/valkey/tls/ca.crt) via TlsCertificates::root_cert,
-# so the system trust store does NOT need to be updated at runtime.
-# This avoids the su/setuid problem with no-new-privileges:true.
-USER polis
+# DHI images run as nonroot (UID 65532) by default
+# Valkey TLS certs are mounted :ro at runtime
+USER nonroot
 
 ENV RUST_LOG=info
 ENV polis_AGENT_LISTEN_ADDR=0.0.0.0:8080

@@ -4,9 +4,9 @@
 # ===========================================
 # Stage 1: Build from source
 # ===========================================
-FROM rust:1-trixie AS builder
+FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
 
-# Install build dependencies
+# Install build dependencies (gzip needed for tar extraction)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -21,10 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libunwind-dev \
     libnuma-dev \
     curl \
+    gzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust nightly (g3 requires rustc 1.90+)
-RUN rustup default nightly && rustup update nightly
+# Install Rust nightly pinned to specific date (g3 requires rustc 1.90+ and nightly features)
+# DHI rust:1-dev has stable only; install rustup for nightly
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup default nightly-2026-02-01 && rustup component add rust-src
 
 # Download and verify g3 source v1.12.2 (supply chain security)
 WORKDIR /build
@@ -39,11 +43,12 @@ WORKDIR /build/g3
 RUN cargo build --release -p g3proxy -p g3fcgen
 
 # ===========================================
-# Stage 2: Runtime image
+# Stage 2: Runtime image (needs apt for runtime deps)
 # ===========================================
-FROM debian:trixie
+FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b
 
 # Install runtime dependencies (util-linux provides setpriv for privilege dropping with ambient caps)
+# Note: apt-get may overwrite /etc/passwd, so we ensure nonroot user exists after
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     nftables \
@@ -61,33 +66,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     netcat-openbsd \
     util-linux \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && (grep -q '^nonroot:' /etc/passwd || echo 'nonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin' >> /etc/passwd) \
+    && (grep -q '^nonroot:' /etc/group || echo 'nonroot:x:65532:' >> /etc/group)
 
 # Copy binaries from builder stage
 COPY --from=builder /build/g3/target/release/g3proxy /usr/bin/g3proxy
 COPY --from=builder /build/g3/target/release/g3fcgen /usr/bin/g3fcgen
 
-# Create dedicated non-root user for gate
-RUN groupadd -r g3proxy && useradd -r -g g3proxy -s /sbin/nologin g3proxy && \
-    usermod -l gate -d /home/gate -m g3proxy && \
-    groupmod -n gate g3proxy
-
-# Create directories with correct ownership at build time (no runtime chown needed)
+# Create directories with correct ownership for DHI nonroot user (65532)
 RUN mkdir -p /etc/g3proxy /var/lib/g3proxy/ssl /tmp/g3 && \
     mkdir -p /var/log/g3proxy && \
-    chown -R gate:gate /var/log/g3proxy /var/lib/g3proxy /tmp/g3
+    chown -R 65532:65532 /var/log/g3proxy /var/lib/g3proxy /tmp/g3
 
 # Verify binaries
-RUN which g3proxy && which g3fcgen && \
-    g3proxy --version && g3fcgen --version && \
-    setcap 'cap_net_admin,cap_net_raw+ep' /usr/bin/g3proxy && \
-    setcap 'cap_net_admin+ep' /usr/sbin/nft
+# Note: setcap is NOT used because no-new-privileges:true in compose prevents
+# execve from honoring file capabilities. Capabilities are granted via setpriv
+# ambient caps in init.sh instead.
+RUN g3proxy --version && g3fcgen --version
 
 # Copy scripts
 COPY services/gate/scripts/init.sh /init.sh
 COPY services/gate/scripts/setup-network.sh /setup-network.sh
 RUN chmod +x /init.sh /setup-network.sh
 
-USER gate
+USER nonroot
 ENTRYPOINT ["/init.sh"]
 
