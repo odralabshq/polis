@@ -86,6 +86,12 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 
 # ── Read-only rootfs (2) — source: docker-compose.yml read_only: true ────
 
+@test "gate: has read-only rootfs" {
+    require_container "$CTR_GATE"
+    run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$(_inspect "$CTR_GATE")"
+    assert_output "true"
+}
+
 @test "scanner: has read-only rootfs" {
     require_container "$CTR_SCANNER"
     run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$(_inspect "$CTR_SCANNER")"
@@ -101,6 +107,12 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 @test "sentinel: has read-only rootfs" {
     require_container "$CTR_SENTINEL"
     run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$(_inspect "$CTR_SENTINEL")"
+    assert_output "true"
+}
+
+@test "toolbox: has read-only rootfs" {
+    require_container "$CTR_TOOLBOX"
+    run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$(_inspect "$CTR_TOOLBOX")"
     assert_output "true"
 }
 
@@ -121,6 +133,12 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 @test "scanner: has seccomp profile applied" {
     require_container "$CTR_SCANNER"
     run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_SCANNER")"
+    assert_output --partial "seccomp="
+}
+
+@test "toolbox: has seccomp profile applied" {
+    require_container "$CTR_TOOLBOX"
+    run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_TOOLBOX")"
     assert_output --partial "seccomp="
 }
 

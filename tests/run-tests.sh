@@ -56,12 +56,14 @@ case "$TIER" in
     unit)        run_tier "unit" ;;
     integration) run_tier "integration" ;;
     e2e)
-        docker compose --profile test up -d httpbin 2>/dev/null || true
+        docker compose --profile test pull httpbin 2>/dev/null || true
+        docker compose --profile test up -d httpbin
         trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
         run_tier "e2e"
         ;;
     all)
-        docker compose --profile test up -d httpbin 2>/dev/null || true
+        docker compose --profile test pull httpbin 2>/dev/null || true
+        docker compose --profile test up -d httpbin
         trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
         run_tier "unit"
         run_tier "integration"

@@ -69,6 +69,11 @@ services:
       - NET_RAW
       - SETUID
       - SETGID
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,mode=1777,uid=999,gid=999
+      - /var/log/g3proxy:size=50M,mode=755,uid=999,gid=999
+      - /var/lib/g3proxy:size=10M,mode=755,uid=999,gid=999
     security_opt:
       - no-new-privileges:true
       - seccomp=./services/gate/config/seccomp.json
@@ -435,6 +440,11 @@ services:
       dockerfile: services/toolbox/Dockerfile
     image: polis-toolbox-oss:latest
     container_name: polis-toolbox
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,mode=1777
+    mem_limit: 512m
+    cpus: 1.0
     networks:
       internal-bridge:
         ipv4_address: 10.10.1.20
@@ -461,6 +471,7 @@ services:
       start_period: 15s
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/toolbox/config/seccomp.json
     cap_drop:
       - ALL
     restart: unless-stopped
