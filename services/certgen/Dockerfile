@@ -22,14 +22,9 @@ RUN curl -L https://github.com/bytedance/g3/archive/refs/tags/g3proxy-v1.12.2.ta
 WORKDIR /build/g3
 RUN cargo build --release -p g3fcgen
 
-# Runtime stage - minimal image
+# Runtime stage - minimal debian base
 FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3t64 libc-ares2 libcap2 && rm -rf /var/lib/apt/lists/*
-
 COPY --from=builder /build/g3/target/release/g3fcgen /usr/local/bin/
-RUN mkdir -p /etc/g3fcgen && chown 65532:65532 /etc/g3fcgen
-
 USER nonroot
 ENTRYPOINT ["g3fcgen", "-c", "/etc/g3fcgen/g3fcgen.yaml"]
