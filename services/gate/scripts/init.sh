@@ -57,17 +57,17 @@ for i in {1..30}; do
 done
 
 # Clean up stale sockets
-# Directory /tmp/g3 is owned by g3proxy from Dockerfile
+# Directory /tmp/g3 is owned by nonroot (65532) from Dockerfile
 rm -rf /tmp/g3/*
 
-# Start g3fcgen as gate user (background, no special caps needed)
+# Start g3fcgen as nonroot user (background, no special caps needed)
 echo "[gateway] Starting g3fcgen..."
-setpriv --reuid gate --regid gate --init-groups -- g3fcgen -c /etc/g3proxy/g3fcgen.yaml &
+setpriv --reuid 65532 --regid 65532 --init-groups -- g3fcgen -c /etc/g3proxy/g3fcgen.yaml &
 
 # Start g3proxy with ambient capabilities (replaces current process)
 # no-new-privileges blocks file caps from setcap, so we use ambient caps instead
 echo "[gateway] Starting g3proxy..."
-exec setpriv --reuid gate --regid gate --init-groups \
+exec setpriv --reuid 65532 --regid 65532 --init-groups \
   --inh-caps +net_admin,+net_raw \
   --ambient-caps +net_admin,+net_raw \
   -- g3proxy -c /etc/g3proxy/g3proxy.yaml

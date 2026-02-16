@@ -1,4 +1,4 @@
-FROM debian:trixie AS builder
+FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
@@ -87,12 +87,12 @@ RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
     -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lpthread -lz
 
-# Runtime image
-FROM debian:trixie
+# Runtime image (needs apt for runtime deps)
+FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     zlib1g \
     libatomic1 \
@@ -115,20 +115,14 @@ COPY --from=builder /build/srv_polis_approval.so /usr/lib/c_icap/
 # Copy merged Sentinel RESPMOD module
 COPY --from=builder /build/srv_polis_sentinel_resp.so /usr/lib/c_icap/
 
-# Create dedicated c-icap user and group
-# Create dedicated sentinel user and group (uid/gid 101 matches sentinel tmpfs in compose)
-RUN groupadd -r -g 101 c-icap && useradd -r -u 101 -g c-icap -s /sbin/nologin c-icap && \
-    usermod -l sentinel -d /home/sentinel -m c-icap && \
-    groupmod -n sentinel c-icap
-
-# Create directories with proper ownership
+# Create directories with proper ownership for DHI nonroot user (65532)
 RUN mkdir -p /var/run/c-icap /run/c-icap /var/log/c-icap && \
-    chown sentinel:sentinel /var/run/c-icap /run/c-icap /var/log/c-icap && \
+    chown 65532:65532 /var/run/c-icap /run/c-icap /var/log/c-icap && \
     chmod 755 /var/run/c-icap /run/c-icap /var/log/c-icap
 
 # Entrypoint (non-root)
 COPY services/sentinel/scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER sentinel
+USER nonroot
 ENTRYPOINT ["/entrypoint.sh"]

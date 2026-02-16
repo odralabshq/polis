@@ -71,9 +71,9 @@ services:
       - SETGID
     read_only: true
     tmpfs:
-      - /tmp:size=50M,mode=1777,uid=999,gid=999
-      - /var/log/g3proxy:size=50M,mode=755,uid=999,gid=999
-      - /var/lib/g3proxy:size=10M,mode=755,uid=999,gid=999
+      - /tmp:size=50M,mode=1777,uid=65532,gid=65532
+      - /var/log/g3proxy:size=50M,mode=755,uid=65532,gid=65532
+      - /var/lib/g3proxy:size=10M,mode=755,uid=65532,gid=65532
     security_opt:
       - no-new-privileges:true
       - seccomp=./services/gate/config/seccomp.json
@@ -129,14 +129,14 @@ services:
       dockerfile: services/sentinel/Dockerfile
     image: polis-sentinel-oss:latest
     container_name: polis-sentinel
-    user: sentinel
+    user: "65532:65532"
     read_only: true
     tmpfs:
       - /tmp:size=2G,mode=1777
       - /var/tmp:size=2G,mode=1777
-      - /var/log:size=100M,mode=1777,uid=101,gid=101
-      - /run:size=10M,mode=755,uid=101,gid=101
-      - /var/run/c-icap:size=10M,mode=755,uid=101,gid=101
+      - /var/log:size=100M,mode=1777,uid=65532,gid=65532
+      - /run:size=10M,mode=755,uid=65532,gid=65532
+      - /var/run/c-icap:size=10M,mode=755,uid=65532,gid=65532
     mem_limit: 3G
     mem_reservation: 1G
     security_opt:

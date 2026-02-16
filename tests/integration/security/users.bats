@@ -15,18 +15,18 @@ setup() {
 
 # ── Process users (source: docker-compose.yml user: fields) ───────────────
 
-@test "gate: g3proxy runs as gate user" {
+@test "gate: g3proxy runs as nonroot (65532)" {
     require_container "$CTR_GATE"
     run docker exec "$CTR_GATE" ps -o user= -C g3proxy
     assert_success
-    assert_output --partial "gate"
+    assert_output --partial "65532"
 }
 
-@test "sentinel: c-icap runs as sentinel user" {
+@test "sentinel: c-icap runs as nonroot (65532)" {
     require_container "$CTR_SENTINEL"
     run docker exec "$CTR_SENTINEL" ps -o user= -C c-icap
     assert_success
-    assert_output --partial "sentinel"
+    assert_output --partial "65532"
 }
 
 # ── Container UIDs (source: docker-compose.yml user: "UID:GID") ──────────
