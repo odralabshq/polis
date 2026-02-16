@@ -1,5 +1,6 @@
 # Release Workflow for polis-core
-# Builds 3 Docker images (gateway, icap, workspace), signs them, generates SBOMs,
+# Builds 6 Docker images (gateway, icap, workspace, scanner, resolver, toolbox),
+# signs them with cosign, generates SBOMs, creates SLSA attestations,
 # and creates a GitHub Release with source tarball.
 #
 # Usage: Go to Actions > Release > Run workflow > Enter version (e.g., v0.1.0)
@@ -84,6 +85,15 @@ jobs:
           - image: workspace
             dockerfile: services/workspace/Dockerfile
             description: Polis Workspace (base)
+          - image: scanner
+            dockerfile: services/scanner/Dockerfile
+            description: Polis Scanner (ClamAV)
+          - image: resolver
+            dockerfile: services/resolver/Dockerfile
+            description: Polis Resolver (CoreDNS)
+          - image: toolbox
+            dockerfile: services/toolbox/Dockerfile
+            description: Polis Toolbox (MCP server)
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -206,5 +216,8 @@ jobs:
             sboms/sbom-gateway.spdx.json
             sboms/sbom-icap.spdx.json
             sboms/sbom-workspace.spdx.json
+            sboms/sbom-scanner.spdx.json
+            sboms/sbom-resolver.spdx.json
+            sboms/sbom-toolbox.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

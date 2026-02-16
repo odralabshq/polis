@@ -12,7 +12,6 @@ export CTR_TOOLBOX="polis-toolbox"
 export CTR_WORKSPACE="polis-workspace"
 
 # Init containers
-export CTR_GATE_INIT="polis-gate-init"
 export CTR_SCANNER_INIT="polis-scanner-init"
 export CTR_STATE_INIT="polis-state-init"
 
@@ -48,7 +47,7 @@ export PORT_G3FCGEN=2999
 
 # All long-running containers (for iteration)
 export ALL_CONTAINERS=("$CTR_RESOLVER" "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE")
-export ALL_INIT_CONTAINERS=("$CTR_GATE_INIT" "$CTR_SCANNER_INIT" "$CTR_STATE_INIT")
+export ALL_INIT_CONTAINERS=("$CTR_SCANNER_INIT" "$CTR_STATE_INIT")
 
 # Test profile containers
 export CTR_HTTPBIN="polis-httpbin"

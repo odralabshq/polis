@@ -132,12 +132,7 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output "healthy"
 }
 
-# ── Init containers (6) ───────────────────────────────────────────────────
-
-@test "gate-init: completed successfully" {
-    run jq -r '.[0].State.ExitCode' <<< "$(_inspect "$CTR_GATE_INIT")"
-    assert_output "0"
-}
+# ── Init containers (4) ───────────────────────────────────────────────────
 
 @test "scanner-init: completed successfully" {
     run jq -r '.[0].State.ExitCode' <<< "$(_inspect "$CTR_SCANNER_INIT")"
@@ -147,26 +142,4 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 @test "state-init: completed successfully" {
     run jq -r '.[0].State.ExitCode' <<< "$(_inspect "$CTR_STATE_INIT")"
     assert_output "0"
-}
-
-@test "gate-init: completed within 60 seconds" {
-    local started finished
-    started=$(jq -r '.[0].State.StartedAt' <<< "$(_inspect "$CTR_GATE_INIT")")
-    finished=$(jq -r '.[0].State.FinishedAt' <<< "$(_inspect "$CTR_GATE_INIT")")
-    local s_epoch f_epoch
-    s_epoch=$(date -d "$started" +%s 2>/dev/null) || skip "cannot parse StartedAt"
-    f_epoch=$(date -d "$finished" +%s 2>/dev/null) || skip "cannot parse FinishedAt"
-    local duration=$(( f_epoch - s_epoch ))
-    [[ "$duration" -lt 60 ]] || fail "gate-init took ${duration}s (limit 60s)"
-}
-
-@test "gate-init: is not still running" {
-    run jq -r '.[0].State.Status' <<< "$(_inspect "$CTR_GATE_INIT")"
-    assert_output "exited"
-}
-
-@test "gate-init: ran as root" {
-    local user
-    user=$(jq -r '.[0].Config.User // ""' <<< "$(_inspect "$CTR_GATE_INIT")")
-    [[ "$user" == "root" || -z "$user" ]]
 }

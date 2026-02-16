@@ -313,30 +313,23 @@ services:
       service: "polis-workspace"
 
   # =========================================================
-  # GATE INIT (Network setup for TPROXY)
-  # =========================================================
-  gate-init:
-    image: polis-gate-oss:latest
-    container_name: polis-gate-init
-    user: root
-    network_mode: service:gate
-    entrypoint: []
-    cap_add:
-      - NET_ADMIN
-    privileged: true
-    depends_on:
-      - gate
-    volumes:
-      - ./services/gate/scripts/setup-network.sh:/setup-network.sh:ro
-    command: ["/setup-network.sh"]
-    restart: "no"
-
-  # =========================================================
   # SCANNER INIT (ClamAV Volume permission setup)
   # =========================================================
   scanner-init:
     image: alpine
     container_name: polis-scanner-init
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.25"
     volumes:
       - scanner-db:/var/lib/clamav
     command: chown -R 100:101 /var/lib/clamav
@@ -348,6 +341,18 @@ services:
   state-init:
     image: alpine
     container_name: polis-state-init
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.25"
     volumes:
       - state-data:/data
     command: chown -R 999:999 /data

@@ -1,7 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "[gateway] Starting initialization (non-root)..."
+echo "[gateway] Starting initialization..."
+
+# Network setup (runs as root before privilege drop)
+if [[ -x /setup-network.sh ]]; then
+    echo "[gateway] Running network setup..."
+    /setup-network.sh
+fi
 
 # Certificate validation (fail-fast)
 validate_certificates() {
