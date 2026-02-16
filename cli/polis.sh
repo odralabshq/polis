@@ -629,7 +629,7 @@ services:
   workspace:
 HEADER
 
-    # Ports
+    # Ports — require a non-internal network for host publishing
     local portcount
     portcount=$(yq '.spec.ports | length // 0' "$manifest")
     if [[ "$portcount" -gt 0 ]]; then
@@ -641,6 +641,12 @@ HEADER
             hdef=$(yq ".spec.ports[${i}].default" "$manifest")
             echo "      - \"\${${henv}:-${hdef}}:${cport}\"" >> "$outfile"
         done
+        # Workspace is on internal-bridge (internal: true) by default,
+        # which prevents Docker from publishing ports to the host.
+        # Add the default bridge so the port-forward proxy can bind.
+        echo "    networks:" >> "$outfile"
+        echo "      internal-bridge: {}" >> "$outfile"
+        echo "      default: {}" >> "$outfile"
     fi
 
     # env_file + volumes
