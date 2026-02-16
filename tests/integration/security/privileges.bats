@@ -98,11 +98,29 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output "true"
 }
 
-# ── Seccomp profile applied (2) — source: docker-compose.yml security_opt seccomp= ──
+@test "sentinel: has read-only rootfs" {
+    require_container "$CTR_SENTINEL"
+    run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$(_inspect "$CTR_SENTINEL")"
+    assert_output "true"
+}
+
+# ── Seccomp profile applied — source: docker-compose.yml security_opt seccomp= ──
 
 @test "gate: has seccomp profile applied" {
     require_container "$CTR_GATE"
     run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_GATE")"
+    assert_output --partial "seccomp="
+}
+
+@test "sentinel: has seccomp profile applied" {
+    require_container "$CTR_SENTINEL"
+    run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_SENTINEL")"
+    assert_output --partial "seccomp="
+}
+
+@test "scanner: has seccomp profile applied" {
+    require_container "$CTR_SCANNER"
+    run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_SCANNER")"
     assert_output --partial "seccomp="
 }
 

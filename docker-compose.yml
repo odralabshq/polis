@@ -125,8 +125,10 @@ services:
     image: polis-sentinel-oss:latest
     container_name: polis-sentinel
     user: sentinel
+    read_only: true
     tmpfs:
       - /tmp:size=2G,mode=1777
+      - /var/tmp:size=2G,mode=1777
       - /var/log:size=100M,mode=1777,uid=101,gid=101
       - /run:size=10M,mode=755,uid=101,gid=101
       - /var/run/c-icap:size=10M,mode=755,uid=101,gid=101
@@ -188,6 +190,7 @@ services:
     user: "100:101"
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/scanner/config/seccomp.json
     cap_drop:
       - ALL
     read_only: true

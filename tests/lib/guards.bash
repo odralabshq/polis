@@ -18,7 +18,7 @@ require_network() {
 }
 
 relax_security_level() {
-    local ttl="${1:-120}"
+    local ttl="${1:-600}"
     docker exec "$CTR_STATE" sh -c "
         REDISCLI_AUTH=\$(cat /run/secrets/valkey_mcp_admin_password) \
         valkey-cli --tls --cert /etc/valkey/tls/client.crt \
