@@ -12,7 +12,7 @@
         "eventfd", "eventfd2", "execve", "exit", "exit_group",
         "faccessat", "faccessat2", "fcntl", "fork", "fstat", "fstatfs", "futex",
         "getcwd", "getdents", "getdents64", "getegid", "geteuid", "getgid",
-        "getpeername", "getpid", "getppid", "getrandom", "getresgid",
+        "getpeername", "getpgrp", "getpid", "getppid", "getrandom", "getresgid",
         "getresuid", "getrlimit", "getsockname", "getsockopt", "gettid",
         "gettimeofday", "getuid",
         "ioctl", "listen", "lseek", "lstat",

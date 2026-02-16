@@ -20,54 +20,55 @@ setup() {
 
 # ── Blocked domains (NXDOMAIN) ────────────────────────────────────────────
 # Source: services/resolver/config/blocklist.txt
+# Note: DHI debian-base is minimal, no nslookup. Query from workspace.
 
 @test "dns: blocks webhook.site" {
-    require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" nslookup webhook.site 127.0.0.1
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" getent hosts webhook.site
     assert_failure
 }
 
 @test "dns: blocks ngrok.io" {
-    require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" nslookup ngrok.io 127.0.0.1
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" getent hosts ngrok.io
     assert_failure
 }
 
 @test "dns: blocks ngrok-free.app" {
-    require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" nslookup ngrok-free.app 127.0.0.1
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" getent hosts ngrok-free.app
     assert_failure
 }
 
 @test "dns: blocks transfer.sh" {
-    require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" nslookup transfer.sh 127.0.0.1
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" getent hosts transfer.sh
     assert_failure
 }
 
 @test "dns: blocks burpcollaborator.net" {
-    require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" nslookup burpcollaborator.net 127.0.0.1
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" getent hosts burpcollaborator.net
     assert_failure
 }
 
 @test "dns: blocks githab.com (typosquatting)" {
-    require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" nslookup githab.com 127.0.0.1
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" getent hosts githab.com
     assert_failure
 }
 
 # ── Allowed domains ───────────────────────────────────────────────────────
 
 @test "dns: resolves github.com" {
-    require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" nslookup github.com 127.0.0.1
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" getent hosts github.com
     assert_success
 }
 
 @test "dns: resolves google.com" {
-    require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" nslookup google.com 127.0.0.1
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" getent hosts google.com
     assert_success
 }
 

@@ -9,7 +9,7 @@ services:
       dockerfile: services/resolver/Dockerfile
     image: polis-resolver-oss:latest
     container_name: polis-resolver
-    user: "200:200"
+    user: "65532:65532"
     cap_drop:
       - ALL
     read_only: true
@@ -33,7 +33,7 @@ services:
       - ./services/resolver/config/Corefile:/etc/coredns/Corefile:ro
       - ./services/resolver/config/blocklist.txt:/etc/coredns/blocklist.txt:ro
     healthcheck:
-      test: ["CMD", "nslookup", "github.com", "127.0.0.1"]
+      test: ["CMD", "/usr/local/bin/coredns", "-plugins"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -445,6 +445,7 @@ services:
       dockerfile: services/toolbox/Dockerfile
     image: polis-toolbox-oss:latest
     container_name: polis-toolbox
+    user: "65532:65532"
     read_only: true
     tmpfs:
       - /tmp:size=50M,mode=1777
@@ -469,7 +470,7 @@ services:
       state:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8080"]
       interval: 10s
       timeout: 5s
       retries: 3

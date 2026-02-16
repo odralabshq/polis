@@ -1,4 +1,4 @@
-FROM debian:trixie
+FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b
 
 # Create polis user (uid 1000)
 RUN useradd -m -u 1000 -s /bin/bash polis \

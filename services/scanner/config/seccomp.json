@@ -10,7 +10,7 @@
         "epoll_create", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_wait",
         "eventfd", "eventfd2", "execve", "exit", "exit_group",
         "faccessat", "faccessat2", "fadvise64", "fchmod", "fchmodat", "fchown", "fchownat", "fcntl", "fdatasync", "flock", "fork",
-        "fstat", "fstatfs", "fsync", "ftruncate", "futex",
+        "fstat", "fstatfs", "fsync", "ftruncate", "futex", "futex_waitv",
         "getcwd", "getdents", "getdents64", "getegid", "geteuid", "getgid",
         "getgroups", "getpeername", "getpgid", "getpgrp", "getpid", "getppid",
         "getpriority", "getrandom", "getrlimit", "getrusage", "getsid",
@@ -32,7 +32,7 @@
         "shutdown", "sigaltstack", "socket", "socketpair",
         "stat", "statfs", "statx", "symlink", "symlinkat",
         "tgkill", "time", "tkill", "truncate",
-        "umask", "uname", "unlink", "unlinkat",
+        "umask", "uname", "unlink", "unlinkat", "vfork",
         "wait4", "waitid", "waitpid", "write", "writev"
       ],
       "action": "SCMP_ACT_ALLOW",
