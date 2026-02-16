@@ -14,6 +14,10 @@ RUN apt-get update && apt-get install -y \
     libdb-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# OpenSSF compiler hardening flags for C modules
+ENV CFLAGS_HARDEN="-fstack-protector-strong -D_FORTIFY_SOURCE=3 -Wformat -Wformat-security -fstack-clash-protection -O2"
+ENV LDFLAGS_HARDEN="-Wl,-z,relro,-z,now"
+
 # Download and build c-icap from GitHub release (with SHA256 verification)
 WORKDIR /build
 ENV CICAP_SHA256=ecc7789787fe4eceae807f0717f6da18c5b1fbf7d2d26028711222eb154c82fe
@@ -50,14 +54,15 @@ RUN wget -q https://github.com/darold/squidclamav/archive/refs/tags/v7.3.tar.gz 
 
 # Copy and compile DLP module against c-ICAP source headers
 COPY services/sentinel/modules/dlp/srv_polis_dlp.c /build/
-RUN gcc -shared -fPIC -Wall -Werror -o /build/srv_polis_dlp.so /build/srv_polis_dlp.c \
+RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
+    -o /build/srv_polis_dlp.so /build/srv_polis_dlp.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
     -L/usr/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lpthread
 
 # Copy and compile approval REQMOD rewriter module
 COPY services/sentinel/modules/approval/srv_polis_approval_rewrite.c /build/
-RUN gcc -shared -fPIC -Wall -Werror \
+RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     -o /build/srv_polis_approval_rewrite.so \
     /build/srv_polis_approval_rewrite.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
@@ -66,7 +71,7 @@ RUN gcc -shared -fPIC -Wall -Werror \
 
 # Copy and compile approval RESPMOD scanner module
 COPY services/sentinel/modules/approval/srv_polis_approval.c /build/
-RUN gcc -shared -fPIC -Wall -Werror \
+RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     -o /build/srv_polis_approval.so \
     /build/srv_polis_approval.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
@@ -75,7 +80,7 @@ RUN gcc -shared -fPIC -Wall -Werror \
 
 # Copy and compile merged Sentinel RESPMOD module (ClamAV + OTT)
 COPY services/sentinel/modules/merged/srv_polis_sentinel_resp.c /build/
-RUN gcc -shared -fPIC -Wall -Werror \
+RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     -o /build/srv_polis_sentinel_resp.so \
     /build/srv_polis_sentinel_resp.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \

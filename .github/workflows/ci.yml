@@ -90,7 +90,37 @@ jobs:
           retention-days: 1
           compression-level: 0  # already zstd-compressed
 
-  # ── Stage 2b: BATS unit tests (no Docker needed) ─────────────────
+  # ── Stage 2b: Scan images for vulnerabilities ────────────────────
+  scan-images:
+    runs-on: ubuntu-24.04
+    needs: build-containers
+    strategy:
+      matrix:
+        image:
+          - polis-gate-oss
+          - polis-sentinel-oss
+          - polis-workspace-oss
+          - polis-scanner-oss
+          - polis-resolver-oss
+          - polis-toolbox-oss
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst --stdout | docker load
+
+      - name: Scan ${{ matrix.image }}
+        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
+        with:
+          image-ref: ${{ matrix.image }}:latest
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          format: table
+
+  # ── Stage 2c: BATS unit tests (no Docker needed) ─────────────────
   unit-tests:
     runs-on: ubuntu-24.04
     needs: build-code
@@ -111,7 +141,7 @@ jobs:
   # ── Stage 3: Integration tests (load pre-built images) ───────────
   integration-tests:
     runs-on: ubuntu-24.04
-    needs: [build-containers, unit-tests]
+    needs: [build-containers, unit-tests, scan-images]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
