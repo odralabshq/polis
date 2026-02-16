@@ -33,6 +33,11 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_success
 }
 
+@test "certgen: container exists" {
+    run jq -e '.[0].Id' <<< "$(_inspect "$CTR_CERTGEN")"
+    assert_success
+}
+
 @test "sentinel: container exists" {
     run jq -e '.[0].Id' <<< "$(_inspect "$CTR_SENTINEL")"
     assert_success
@@ -70,6 +75,11 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output "running"
 }
 
+@test "certgen: container is running" {
+    run jq -r '.[0].State.Status' <<< "$(_inspect "$CTR_CERTGEN")"
+    assert_output "running"
+}
+
 @test "sentinel: container is running" {
     run jq -r '.[0].State.Status' <<< "$(_inspect "$CTR_SENTINEL")"
     assert_output "running"
@@ -104,6 +114,11 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 
 @test "gate: container is healthy" {
     run jq -r '.[0].State.Health.Status' <<< "$(_inspect "$CTR_GATE")"
+    assert_output "healthy"
+}
+
+@test "certgen: container is healthy" {
+    run jq -r '.[0].State.Health.Status' <<< "$(_inspect "$CTR_CERTGEN")"
     assert_output "healthy"
 }
 

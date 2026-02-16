@@ -36,7 +36,7 @@ setup() {
 }
 
 @test "g3proxy config: TLS cert agent on port 2999" {
-    run grep "query_peer_addr: 127.0.0.1:2999" "$CONFIG"
+    run grep "query_peer_addr:.*:2999" "$CONFIG"
     assert_success
 }
 

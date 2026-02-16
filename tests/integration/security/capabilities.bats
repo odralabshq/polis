@@ -5,7 +5,7 @@
 setup_file() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
-    for ctr in "$CTR_GATE" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE" "$CTR_RESOLVER"; do
+    for ctr in "$CTR_GATE" "$CTR_CERTGEN" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE" "$CTR_RESOLVER"; do
         local var="${ctr//-/_}_INSPECT"
         export "$var"="$(docker inspect "$ctr" 2>/dev/null || echo '[]')"
     done
@@ -118,6 +118,15 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 @test "resolver: drops ALL capabilities" {
     require_container "$CTR_RESOLVER"
     run jq -r '.[0].HostConfig.CapDrop[]' <<< "$(_inspect "$CTR_RESOLVER")"
+    assert_success
+    assert_output --partial "ALL"
+}
+
+# ── Certgen capabilities (source: docker-compose.yml cap_drop:[ALL]) ──────
+
+@test "certgen: drops ALL capabilities" {
+    require_container "$CTR_CERTGEN"
+    run jq -r '.[0].HostConfig.CapDrop[]' <<< "$(_inspect "$CTR_CERTGEN")"
     assert_success
     assert_output --partial "ALL"
 }
