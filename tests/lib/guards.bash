@@ -18,19 +18,21 @@ require_network() {
 }
 
 relax_security_level() {
-    local ttl="${1:-120}"
-    docker exec "$CTR_STATE" sh -c "
-        REDISCLI_AUTH=\$(cat /run/secrets/valkey_mcp_admin_password) \
-        valkey-cli --tls --cert /etc/valkey/tls/client.crt \
-            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
-            --user mcp-admin --no-auth-warning \
-            SET polis:config:security_level relaxed EX $ttl" 2>/dev/null || true
-    # Warmup: wait for proxy to stabilise after security level change
-    for _i in 1 2 3; do
-        docker exec "$CTR_WORKSPACE" curl -sf -o /dev/null --connect-timeout 5 \
-            --proxy "http://${IP_GATE_INT}:8080" "http://${HTTPBIN_HOST}/get" 2>/dev/null && return
-        sleep 1
+    local ttl="${1:-300}"
+    # Retry setting security level (state container may still be initializing)
+    for _attempt in 1 2 3 4 5; do
+        if docker exec "$CTR_STATE" sh -c "
+            REDISCLI_AUTH=\$(cat /run/secrets/valkey_mcp_admin_password) \
+            valkey-cli --tls --cert /etc/valkey/tls/client.crt \
+                --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
+                --user mcp-admin --no-auth-warning \
+                SET polis:config:security_level relaxed EX $ttl" 2>/dev/null; then
+            sleep 2  # Wait for proxy to pick up the change
+            return 0
+        fi
+        sleep 2
     done
+    echo "Warning: Failed to set security_level after 5 attempts" >&2
 }
 
 restore_security_level() {
