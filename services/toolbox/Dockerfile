@@ -1,19 +1,26 @@
-FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
+FROM rust:1.85-bookworm AS builder
 WORKDIR /build
 COPY services/toolbox/crates/ services/toolbox/crates/
 COPY lib/crates/ lib/crates/
 COPY Cargo.toml Cargo.lock ./
+
+# Install nightly toolchain (darling 0.23 requires rustc 1.88+)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup default nightly-2026-02-01
+
 RUN cargo build --release -p polis-mcp-agent
 
-FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+FROM debian:bookworm-slim
 
-# DHI debian-base includes ca-certificates; no apt-get/useradd in minimal image
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'toolbox:x:65532:65532:toolbox:/home/toolbox:/sbin/nologin' >> /etc/passwd \
+    && echo 'toolbox:x:65532:' >> /etc/group
 
 COPY --from=builder /build/target/release/polis-mcp-agent /usr/bin/
 
-# DHI images run as nonroot (UID 65532) by default
-# Valkey TLS certs are mounted :ro at runtime
-USER nonroot
+USER toolbox
 
 ENV RUST_LOG=info
 ENV polis_AGENT_LISTEN_ADDR=0.0.0.0:8080

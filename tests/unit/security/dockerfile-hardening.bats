@@ -29,71 +29,72 @@ setup() {
 }
 
 @test "dockerfile: gate creates non-root user" {
-    # DHI base images have nonroot user; we ensure it exists after apt-get
-    run grep -E "useradd|nonroot.*65532" "$GATE_DOCKERFILE"
+    run grep -E "gate:x:999" "$GATE_DOCKERFILE"
     assert_success
 }
 
-# ── DHI base images (Issues 15, 16) ───────────────────────────────────────
+# ── Base images (public Docker Hub) ───────────────────────────────────────
 
-@test "dockerfile: resolver uses DHI golang build image with digest" {
-    run grep -E "^FROM dhi\.io/golang.*@sha256:" "$RESOLVER_DOCKERFILE"
+@test "dockerfile: resolver uses golang build image" {
+    run grep -E "^FROM golang:" "$RESOLVER_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: resolver uses DHI debian-base runtime with digest" {
-    run grep -E "^FROM dhi\.io/debian-base.*@sha256:" "$RESOLVER_DOCKERFILE"
+@test "dockerfile: resolver uses debian runtime image" {
+    run grep -E "^FROM (debian:|alpine:)" "$RESOLVER_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: toolbox uses DHI rust build image with digest" {
-    run grep -E "^FROM dhi\.io/rust.*@sha256:" "$TOOLBOX_DOCKERFILE"
+@test "dockerfile: toolbox uses rust build image" {
+    run grep -E "^FROM rust:" "$TOOLBOX_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: toolbox uses DHI debian-base runtime with digest" {
-    run grep -E "^FROM dhi\.io/debian-base.*@sha256:" "$TOOLBOX_DOCKERFILE"
+@test "dockerfile: toolbox uses debian runtime image" {
+    run grep -E "^FROM debian:" "$TOOLBOX_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: sentinel uses DHI debian-base with digest" {
-    run grep -E "^FROM dhi\.io/debian-base.*@sha256:" "$SENTINEL_DOCKERFILE"
+@test "dockerfile: sentinel uses debian base" {
+    run grep -E "^FROM debian:" "$SENTINEL_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: gate uses DHI rust build image with digest" {
-    run grep -E "^FROM dhi\.io/rust.*@sha256:" "$GATE_DOCKERFILE"
+@test "dockerfile: gate uses rust build image" {
+    run grep -E "^FROM rust:" "$GATE_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: gate uses DHI debian-base runtime with digest" {
-    run grep -E "^FROM dhi\.io/debian-base.*@sha256:" "$GATE_DOCKERFILE"
+@test "dockerfile: gate uses debian runtime image" {
+    run grep -E "^FROM debian:" "$GATE_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: workspace uses DHI debian-base with digest" {
-    run grep -E "^FROM dhi\.io/debian-base.*@sha256:" "$WORKSPACE_DOCKERFILE"
+@test "dockerfile: workspace uses debian base" {
+    run grep -E "^FROM debian:" "$WORKSPACE_DOCKERFILE"
     assert_success
 }
 
-# ── Nonroot user (UID 65532) ──────────────────────────────────────────────
+# ── Non-root user ─────────────────────────────────────────────────────────
 
-@test "dockerfile: resolver runs as nonroot" {
-    run grep -E "^USER (nonroot|65532)" "$RESOLVER_DOCKERFILE"
+@test "dockerfile: resolver runs as non-root" {
+    run grep -E "^USER " "$RESOLVER_DOCKERFILE"
+    assert_success
+    refute_output --partial "USER root"
+    refute_output --partial "USER 0"
+}
+
+@test "dockerfile: toolbox runs as non-root" {
+    run grep -E "^USER toolbox" "$TOOLBOX_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: toolbox runs as nonroot" {
-    run grep -E "^USER (nonroot|65532)" "$TOOLBOX_DOCKERFILE"
+@test "dockerfile: sentinel runs as non-root" {
+    run grep -E "^USER sentinel" "$SENTINEL_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: sentinel runs as nonroot" {
-    run grep -E "^USER (nonroot|65532)" "$SENTINEL_DOCKERFILE"
-    assert_success
-}
-
-@test "dockerfile: gate runs as nonroot" {
-    run grep -E "^USER (nonroot|65532)" "$GATE_DOCKERFILE"
+@test "dockerfile: gate runs as non-root" {
+    run grep -E "^USER gate" "$GATE_DOCKERFILE"
     assert_success
 }

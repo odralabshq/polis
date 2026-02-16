@@ -77,7 +77,7 @@ openssl x509 -req \
 rm -f "${OUTPUT_DIR}/toolbox.csr" "${OUTPUT_DIR}/toolbox.ext" "${CA_DIR}/ca.srl"
 
 # Set permissions: key=600 (owner only), cert=644 (public)
-chmod 600 "${OUTPUT_DIR}/toolbox.key"
+chmod 644 "${OUTPUT_DIR}/toolbox.key"
 chmod 644 "${OUTPUT_DIR}/toolbox.pem"
 
 echo ""

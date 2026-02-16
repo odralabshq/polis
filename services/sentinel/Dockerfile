@@ -1,4 +1,4 @@
-FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b AS builder
+FROM debian:trixie-slim AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
@@ -96,8 +96,14 @@ RUN mkdir -p /runtime-libs/lib/x86_64-linux-gnu /runtime-libs/usr/lib/x86_64-lin
     cp -L /usr/lib/x86_64-linux-gnu/libdb-5.3.so \
           /runtime-libs/usr/lib/x86_64-linux-gnu/
 
-# Runtime image (minimal, no apt)
-FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+# Runtime image (minimal)
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'sentinel:x:65532:65532:sentinel:/home/sentinel:/sbin/nologin' >> /etc/passwd \
+    && echo 'sentinel:x:65532:' >> /etc/group
 
 # Copy runtime shared libraries not in base
 COPY --from=builder /runtime-libs/lib/ /lib/
@@ -127,5 +133,5 @@ RUN mkdir -p /var/run/c-icap /run/c-icap /var/log/c-icap && \
 COPY services/sentinel/scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER nonroot
+USER sentinel
 ENTRYPOINT ["/entrypoint.sh"]

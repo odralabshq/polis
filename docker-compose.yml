@@ -9,7 +9,7 @@ services:
       dockerfile: services/resolver/Dockerfile
     image: polis-resolver-oss:latest
     container_name: polis-resolver
-    user: "65532:65532"
+    user: "200:200"
     cap_drop:
       - ALL
     read_only: true
@@ -80,7 +80,7 @@ services:
       - ./certs/ca/ca.pem:/etc/g3fcgen/ca.pem:ro
       - ./certs/ca/ca.key:/etc/g3fcgen/ca.key:ro
     healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/udp/localhost/2999"]
+      test: ["CMD", "bash", "-c", "echo > /dev/udp/localhost/2999"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -119,9 +119,9 @@ services:
       - SETGID
     read_only: true
     tmpfs:
-      - /tmp:size=50M,mode=1777,uid=65532,gid=65532
-      - /var/log/g3proxy:size=50M,mode=755,uid=65532,gid=65532
-      - /var/lib/g3proxy:size=10M,mode=755,uid=65532,gid=65532
+      - /tmp:size=50M,mode=1777,uid=999,gid=999
+      - /var/log/g3proxy:size=50M,mode=755,uid=999,gid=999
+      - /var/lib/g3proxy:size=10M,mode=755,uid=999,gid=999
     security_opt:
       - no-new-privileges:true
       - seccomp=./services/gate/config/seccomp.json
@@ -241,18 +241,19 @@ services:
       dockerfile: services/scanner/Dockerfile
     image: polis-scanner-oss:latest
     container_name: polis-scanner
-    user: "65532:65532"
-    security_opt:
-      - no-new-privileges:true
-      - seccomp=./services/scanner/config/seccomp.json
     cap_drop:
       - ALL
-    read_only: true
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+      - FOWNER
     tmpfs:
       - /tmp:size=100M,mode=1777
-      - /var/log/clamav:size=50M,mode=755,uid=65532,gid=65532
-      - /run/clamav:size=10M,mode=755,uid=65532,gid=65532
-      - /var/lock:size=10M,mode=1777,uid=65532,gid=65532
+      - /var/log/clamav:size=50M,mode=755,uid=100,gid=101
+      - /run/clamav:size=10M,mode=755,uid=100,gid=101
+      - /var/lock:size=10M,mode=1777,uid=100,gid=101
     networks:
       gateway-bridge: {}
       internet: {}
@@ -381,55 +382,43 @@ services:
   # SCANNER INIT (ClamAV Volume permission setup)
   # =========================================================
   scanner-init:
-    image: dhi.io/alpine-base:3.23-dev@sha256:2b318097756a2d92fb8fc059beaf512f8607224a17767d56e557618ca61296cb
+    image: alpine:3.21
     container_name: polis-scanner-init
     cap_drop:
       - ALL
     cap_add:
       - CHOWN
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          memory: 32M
-          cpus: "0.25"
+      - DAC_OVERRIDE
+      - FOWNER
     volumes:
       - scanner-db:/var/lib/clamav
-    command: chown -R 65532:65532 /var/lib/clamav
+    command: chown -R 100:101 /var/lib/clamav
     restart: "no"
 
   # =========================================================
   # STATE INIT (Valkey Volume permission setup)
   # =========================================================
   state-init:
-    image: dhi.io/alpine-base:3.23-dev@sha256:2b318097756a2d92fb8fc059beaf512f8607224a17767d56e557618ca61296cb
+    image: alpine:3.21
     container_name: polis-state-init
     cap_drop:
       - ALL
     cap_add:
       - CHOWN
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          memory: 32M
-          cpus: "0.25"
+      - DAC_OVERRIDE
+      - FOWNER
     volumes:
       - state-data:/data
-    command: chown -R 65532:65532 /data
+    command: chown -R 999:1000 /data
     restart: "no"
 
   # =========================================================
   # STATE (VALKEY / State Management)
   # =========================================================
   state:
-    image: dhi.io/valkey:8.1@sha256:5f33330d05cbe6665af387cea4adc955b93cf86eb3cabc676965b4a38cabef2c
+    image: valkey/valkey:8-alpine
     container_name: polis-state
-    user: "65532:65532"
+    user: "999:1000"
     entrypoint: []
     command: ["valkey-server", "/etc/valkey/valkey.conf"]
     networks:
@@ -440,8 +429,8 @@ services:
     secrets:
       - valkey_password
       - source: valkey_acl
-        uid: "65532"
-        gid: "65532"
+        uid: "999"
+        gid: "1000"
         mode: 0440
       - valkey_mcp_admin_password
       - valkey_mcp_agent_password
@@ -523,7 +512,7 @@ services:
       state:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "timeout 2 sh -c 'exec 3<>/dev/tcp/localhost/8080' 2>/dev/null"]
+      test: ["CMD-SHELL", "timeout 2 bash -c 'exec 3<>/dev/tcp/localhost/8080' 2>/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 3

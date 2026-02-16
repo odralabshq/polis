@@ -2,7 +2,7 @@
 # Isolates CA private key from gate container
 # Copies g3fcgen binary from gate builder stage (no runtime dependency on gate image)
 
-FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
+FROM rust:1.85-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential pkg-config libssl-dev cmake capnproto libcapnp-dev \
@@ -23,8 +23,13 @@ WORKDIR /build/g3
 RUN cargo build --release -p g3fcgen
 
 # Runtime stage - minimal debian base
-FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'certgen:x:65532:65532:certgen:/home/certgen:/sbin/nologin' >> /etc/passwd \
+    && echo 'certgen:x:65532:' >> /etc/group
 
 COPY --from=builder /build/g3/target/release/g3fcgen /usr/local/bin/
-USER nonroot
+USER certgen
 ENTRYPOINT ["g3fcgen", "-c", "/etc/g3fcgen/g3fcgen.yaml"]

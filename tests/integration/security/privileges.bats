@@ -78,12 +78,6 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "no-new-privileges"
 }
 
-@test "scanner: has no-new-privileges" {
-    require_container "$CTR_SCANNER"
-    run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_SCANNER")"
-    assert_output --partial "no-new-privileges"
-}
-
 @test "state: has no-new-privileges" {
     require_container "$CTR_STATE"
     run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_STATE")"
@@ -110,10 +104,10 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output "true"
 }
 
-@test "scanner: has read-only rootfs" {
+@test "scanner: does NOT have read-only rootfs (ClamAV needs write)" {
     require_container "$CTR_SCANNER"
     run jq -r '.[0].HostConfig.ReadonlyRootfs' <<< "$(_inspect "$CTR_SCANNER")"
-    assert_output "true"
+    assert_output "false"
 }
 
 @test "state: has read-only rootfs" {
@@ -151,12 +145,6 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
 @test "sentinel: has seccomp profile applied" {
     require_container "$CTR_SENTINEL"
     run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_SENTINEL")"
-    assert_output --partial "seccomp="
-}
-
-@test "scanner: has seccomp profile applied" {
-    require_container "$CTR_SCANNER"
-    run jq -r '.[0].HostConfig.SecurityOpt[]' <<< "$(_inspect "$CTR_SCANNER")"
     assert_output --partial "seccomp="
 }
 

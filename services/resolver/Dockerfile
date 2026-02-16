@@ -1,4 +1,4 @@
-FROM dhi.io/golang:1-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940 AS builder
+FROM golang:1.24-bookworm AS builder
 
 ARG COREDNS_VERSION=1.14.1
 
@@ -16,15 +16,17 @@ RUN sed -i '/^forward:forward/i blocklist:github.com/relekang/coredns-blocklist'
     && go generate && go get github.com/relekang/coredns-blocklist \
     && CGO_ENABLED=0 go build -o /coredns
 
-FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+FROM debian:bookworm-slim
 
-# DHI debian-base includes ca-certificates; no apt-get available in minimal image
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'resolver:x:200:200:resolver:/home/resolver:/sbin/nologin' >> /etc/passwd \
+    && echo 'resolver:x:200:' >> /etc/group
 
 COPY --from=builder /coredns /usr/local/bin/coredns
 
 EXPOSE 53/udp 53/tcp
 
-# DHI images run as nonroot (UID 65532) by default
-USER nonroot
+USER resolver
 ENTRYPOINT ["/usr/local/bin/coredns"]
 CMD ["-conf", "/etc/coredns/Corefile"]
