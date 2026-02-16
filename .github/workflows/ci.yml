@@ -15,6 +15,7 @@ env:
   POLIS_IMAGES: >-
     polis-resolver-oss:latest
     polis-gate-oss:latest
+    polis-certgen-oss:latest
     polis-sentinel-oss:latest
     polis-scanner-oss:latest
     polis-workspace-oss:latest
