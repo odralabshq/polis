@@ -511,15 +511,19 @@ services:
       - polis_AGENT_VALKEY_URL=rediss://state:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
       - polis_AGENT_VALKEY_PASS_FILE=/run/secrets/valkey_mcp_agent_password
+      - polis_AGENT_TLS_CERT=/etc/toolbox/tls/toolbox.pem
+      - polis_AGENT_TLS_KEY=/etc/toolbox/tls/toolbox.key
     secrets:
       - valkey_mcp_agent_password
     volumes:
       - ./certs/valkey:/etc/valkey/tls:ro
+      - ./certs/toolbox:/etc/toolbox/tls:ro
+      - ./certs/ca/ca.pem:/etc/toolbox/ca.pem:ro
     depends_on:
       state:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8080"]
+      test: ["CMD-SHELL", "timeout 2 sh -c 'exec 3<>/dev/tcp/localhost/8080' 2>/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 3

@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::http::StatusCode;
+use axum_server::tls_rustls::RustlsConfig;
 use serde::Deserialize;
 use tracing_subscriber::EnvFilter;
 
@@ -32,6 +33,8 @@ use crate::tools::PolisAgentTools;
 ///   - `polis_AGENT_VALKEY_URL`      (default `redis://valkey:6379`)
 ///   - `polis_AGENT_VALKEY_USER`     (required)
 ///   - `polis_AGENT_VALKEY_PASS_FILE` (required, path to Docker secret)
+///   - `polis_AGENT_TLS_CERT`        (optional, path to TLS cert)
+///   - `polis_AGENT_TLS_KEY`         (optional, path to TLS key)
 #[derive(Debug, Deserialize)]
 struct Config {
     /// Socket address to bind the HTTP server to.
@@ -47,6 +50,12 @@ struct Config {
 
     /// Path to file containing ACL password (Docker secret).
     valkey_pass_file: String,
+
+    /// Path to TLS certificate (enables HTTPS when set).
+    tls_cert: Option<String>,
+
+    /// Path to TLS private key.
+    tls_key: Option<String>,
 }
 
 fn default_listen_addr() -> String {
@@ -101,6 +110,7 @@ async fn main() -> Result<()> {
         listen_addr = %config.listen_addr,
         valkey_url  = %config.valkey_url,
         valkey_user = %config.valkey_user,
+        tls_enabled = config.tls_cert.is_some(),
         "configuration loaded",
     );
 
@@ -133,29 +143,40 @@ async fn main() -> Result<()> {
         .nest_service("/mcp", service)
         .route("/health", axum::routing::get(health));
 
-    // 6. Bind and serve.
-    tracing::info!(
-        listen_addr = %config.listen_addr,
-        "starting Streamable-HTTP MCP server",
-    );
+    // 6. Bind and serve (TLS or plaintext).
+    let addr: std::net::SocketAddr = config.listen_addr.parse()
+        .context("invalid listen address")?;
 
-    let listener = tokio::net::TcpListener::bind(&config.listen_addr)
-        .await
-        .context("failed to bind TCP listener")?;
+    if let (Some(cert_path), Some(key_path)) = (&config.tls_cert, &config.tls_key) {
+        tracing::info!("TLS enabled — loading cert from {}", cert_path);
+        let tls_config = RustlsConfig::from_pem_file(cert_path, key_path)
+            .await
+            .context("failed to load TLS certificates")?;
 
-    tracing::info!(
-        "MCP server ready — http://{}/mcp",
-        config.listen_addr,
-    );
-    tracing::info!(
-        "Health check — http://{}/health",
-        config.listen_addr,
-    );
+        tracing::info!(
+            "MCP server ready — https://{}/mcp",
+            config.listen_addr,
+        );
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("HTTP server error")?;
+        axum_server::bind_rustls(addr, tls_config)
+            .serve(router.into_make_service())
+            .await
+            .context("HTTPS server error")?;
+    } else {
+        tracing::info!(
+            "MCP server ready — http://{}/mcp (TLS disabled)",
+            config.listen_addr,
+        );
+
+        let listener = tokio::net::TcpListener::bind(&config.listen_addr)
+            .await
+            .context("failed to bind TCP listener")?;
+
+        axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .context("HTTP server error")?;
+    }
 
     tracing::info!("polis-mcp-agent shut down");
     Ok(())

@@ -21,3 +21,5 @@ percent-encoding = "2.3"
 envy = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tokio-rustls = "0.26"

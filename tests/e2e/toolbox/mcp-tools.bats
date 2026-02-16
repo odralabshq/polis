@@ -48,15 +48,16 @@ mcp_call() {
     local tool="$1" args="$2"
     local toolbox_ip
     toolbox_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "polis_internal-bridge").IPAddress}}' "$CTR_TOOLBOX")
-    local ep="http://${toolbox_ip}:8080/mcp"
+    local ep="https://${toolbox_ip}:8080/mcp"
     local ct="Content-Type:application/json"
     local ac="Accept:application/json,text/event-stream"
+    local ca_cert="${PROJECT_ROOT}/certs/ca/ca.pem"
 
     # 1. Initialize session
     local init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}'
     local headers
     headers=$(mktemp)
-    curl -sf -D "$headers" -o /dev/null -H "$ct" -H "$ac" --connect-timeout 10 \
+    curl -sf --cacert "$ca_cert" -D "$headers" -o /dev/null -H "$ct" -H "$ac" --connect-timeout 10 \
         -X POST "$ep" -d "$init"
 
     local sid
@@ -64,13 +65,13 @@ mcp_call() {
     rm -f "$headers"
 
     # 2. Initialized notification
-    curl -sf -o /dev/null -H "$ct" -H "$ac" -H "Mcp-Session-Id:$sid" --connect-timeout 10 \
+    curl -sf --cacert "$ca_cert" -o /dev/null -H "$ct" -H "$ac" -H "Mcp-Session-Id:$sid" --connect-timeout 10 \
         -X POST "$ep" \
         -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' 2>/dev/null || true
 
     # 3. Tool call — extract JSON from SSE data: lines
     local payload="{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"${tool}\",\"arguments\":${args}}}"
-    curl -sf -H "$ct" -H "$ac" -H "Mcp-Session-Id:$sid" --connect-timeout 10 \
+    curl -sf --cacert "$ca_cert" -H "$ct" -H "$ac" -H "Mcp-Session-Id:$sid" --connect-timeout 10 \
         -X POST "$ep" -d "$payload" 2>/dev/null \
         | grep '^data: {' | sed 's/^data: //'
 }

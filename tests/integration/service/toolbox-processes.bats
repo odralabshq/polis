@@ -16,11 +16,11 @@ setup() {
 
 # ── Health (source: docker-compose.yml healthcheck curl localhost:8080/health) ──
 
-@test "toolbox: health endpoint responds" {
+@test "toolbox: health endpoint responds over HTTPS" {
     # Check health from host (minimal image has no curl/wget)
     local ip
     ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "polis_internal-bridge").IPAddress}}' "$CTR_TOOLBOX")
-    run curl -sf "http://${ip}:8080/health"
+    run curl -sf --cacert "${PROJECT_ROOT}/certs/ca/ca.pem" "https://${ip}:8080/health"
     assert_success
 }
 
@@ -49,4 +49,27 @@ setup() {
 @test "toolbox: valkey TLS certs mounted" {
     run docker exec "$CTR_TOOLBOX" test -d /etc/valkey/tls
     assert_success
+}
+
+@test "toolbox: TLS cert mounted" {
+    run docker exec "$CTR_TOOLBOX" test -f /etc/toolbox/tls/toolbox.pem
+    assert_success
+}
+
+@test "toolbox: TLS key mounted" {
+    run docker exec "$CTR_TOOLBOX" test -f /etc/toolbox/tls/toolbox.key
+    assert_success
+}
+
+@test "toolbox: CA cert mounted for TLS verification" {
+    run docker exec "$CTR_TOOLBOX" test -f /etc/toolbox/ca.pem
+    assert_success
+}
+
+@test "toolbox: rejects plaintext HTTP (TLS enforced)" {
+    local ip
+    ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "polis_internal-bridge").IPAddress}}' "$CTR_TOOLBOX")
+    # Plaintext HTTP should fail - server only accepts TLS
+    run curl -sf --max-time 2 "http://${ip}:8080/health"
+    assert_failure
 }
