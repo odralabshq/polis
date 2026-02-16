@@ -646,12 +646,12 @@ HEADER
     # env_file + volumes
     cat >> "$outfile" << VOLS
     env_file:
-      - ../.env
+      - .env
     volumes:
-      - ../agents/${name}/:/tmp/agents/${name}/:ro
-      - ../agents/${name}/.generated/${name}.service:/etc/systemd/system/${name}.service:ro
-      - ../agents/${name}/.generated/${name}.service.sha256:/etc/systemd/system/${name}.service.sha256:ro
-      - ../agents/${name}/.generated/${name}.env:/run/${name}-env:ro
+      - ./agents/${name}/:/tmp/agents/${name}/:ro
+      - ./agents/${name}/.generated/${name}.service:/etc/systemd/system/${name}.service:ro
+      - ./agents/${name}/.generated/${name}.service.sha256:/etc/systemd/system/${name}.service.sha256:ro
+      - ./agents/${name}/.generated/${name}.env:/run/${name}-env:ro
 VOLS
 
     # Persistence volumes
