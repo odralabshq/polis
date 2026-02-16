@@ -123,10 +123,9 @@ services:
     mem_reservation: 1G
     security_opt:
       - no-new-privileges:true
+      - seccomp=./services/sentinel/config/seccomp.json
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
     networks:
       gateway-bridge:
         ipv4_address: 10.30.1.5
@@ -180,8 +179,6 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
     read_only: true
     tmpfs:
       - /tmp:size=100M,mode=1777
@@ -430,7 +427,7 @@ services:
       gateway-bridge:
         ipv4_address: 10.30.1.20
     environment:
-      - RUST_LOG=debug
+      - RUST_LOG=info
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
       - polis_AGENT_VALKEY_URL=rediss://state:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
