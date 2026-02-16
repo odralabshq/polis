@@ -109,10 +109,17 @@ inject_polis_soul() {
     
     mkdir -p "${CONFIG_DIR}/workspace"
     
-    # Skip if already injected
-    if [[ -f "$ws_soul" ]] && grep -qF "$marker" "$ws_soul" 2>/dev/null; then
-        echo "[openclaw-init] Polis security section already in workspace SOUL.md"
+    # Skip if already injected with MCP tools section
+    if [[ -f "$ws_soul" ]] && grep -qF "Security Tools (MCP)" "$ws_soul" 2>/dev/null; then
+        echo "[openclaw-init] Polis security section (MCP) already in workspace SOUL.md"
         return 0
+    fi
+    
+    # Remove old shell-only security section if present (upgrade path)
+    if [[ -f "$ws_soul" ]] && grep -qF "$marker" "$ws_soul" 2>/dev/null; then
+        # Strip everything from the marker line to end of file, then re-inject
+        sed -i "/^---$/,\${ /^## Polis Security Workspace$/,\$d; /^---$/d }" "$ws_soul"
+        echo "[openclaw-init] Removed old security section, will re-inject with MCP tools"
     fi
     
     # Append polis security section (works whether file exists or not)
@@ -140,44 +147,37 @@ When a request is blocked, the proxy returns HTTP 403 with headers:
 - `X-polis-Pattern: <pattern_name>`
 - `X-polis-Request-Id: <request_id>` (format: `req-` + 8 hex chars)
 
-### Security Shell Commands
+### Security Tools (MCP)
 
-You have these shell commands available. Run them with your exec tool.
+You have a `polis-security` MCP server connected with these tools:
 
-**/home/polis/.local/bin/polis-report-block.sh** — Call immediately when you receive a 403 with X-polis-Block header:
-```
-/home/polis/.local/bin/polis-report-block.sh <request_id> <reason> <destination> [pattern]
-```
+- **report_block** — Report a blocked request. Params: `request_id`, `reason`, `destination`, `pattern` (optional). Call immediately when you receive a 403 with `X-polis-Block: true`.
+- **check_request_status** — Check if a blocked request has been approved. Params: `request_id`. Returns `pending`, `approved`, or `not_found`.
+- **list_pending_approvals** — List all blocked requests awaiting human approval. No params.
+- **get_security_status** — Get current security level, pending count, recent approvals. No params.
+- **get_security_log** — Get recent security events (up to 50). No params.
 
-**/home/polis/.local/bin/polis-check-status.sh** — Poll after reporting a block to check approval status:
-```
-/home/polis/.local/bin/polis-check-status.sh <request_id>
-```
+#### Fallback: Shell Commands
 
-**/home/polis/.local/bin/polis-list-pending.sh** — List all blocked requests awaiting human approval:
-```
-/home/polis/.local/bin/polis-list-pending.sh
-```
+If MCP tools are unavailable, use these shell commands:
 
-**/home/polis/.local/bin/polis-security-status.sh** — Get current security level and pending counts:
 ```
-/home/polis/.local/bin/polis-security-status.sh
-```
-
-**/home/polis/.local/bin/polis-security-log.sh** — Get recent security events:
-```
-/home/polis/.local/bin/polis-security-log.sh
+polis-report-block <request_id> <reason> <destination> [pattern]
+polis-check-status <request_id>
+polis-list-pending
+polis-security-status
+polis-security-log
 ```
 
 ### Approval Workflow
 
 1. Your request gets blocked (HTTP 403 + X-polis headers)
-2. Run `polis-report-block.sh` with the block details to register it in the approval queue
+2. Call `report_block` (MCP) or `polis-report-block` (shell) with the block details
 3. **Send the approval command as a message to the user**: Include `/polis-approve <request_id>` in your response.
 4. The proxy rewrites the request_id into a one-time token (OTT) before it reaches the user. The user sees something like `/polis-approve ott-x7k9m2p4`.
 5. **Tell the user to wait ~5 seconds** before sending the OTT code back. The system has a short security delay — if they send it too quickly, it won't register.
 6. The user types the OTT code back in the chat to approve.
-7. Poll `polis-check-status.sh <request_id>` to confirm approval.
+7. Poll `check_request_status` (MCP) or `polis-check-status` (shell) to confirm approval.
 8. Retry the original request once approved.
 
 **When presenting the approval code, always tell the user:**
@@ -193,6 +193,10 @@ You have these shell commands available. Run them with your exec tool.
 2. Ask the user to resend the same `ott-` code. It's still valid (lasts 10 minutes).
 3. Remind them about the 5-second wait — they likely sent it too quickly.
 4. Only generate a new code after 2-3 failed retries with the same OTT.
+
+### Proactive Monitoring
+
+Periodically call `list_pending_approvals` or `get_security_status` to check if there are blocked requests you haven't handled yet. If you find pending requests that you didn't report, inform the user about them.
 
 **Critical: Include `/polis-approve <request_id>` as text in your chat message.** Do NOT tell the user to run shell commands on the host. The approval happens through the chat — the proxy intercepts and secures the flow automatically.
 
@@ -315,6 +319,12 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
   "tools": {
     "web": {
       "search": {}
+    }
+  },
+  "mcpServers": {
+    "polis-security": {
+      "url": "http://toolbox:8080/mcp",
+      "transport": "streamable-http"
     }
   }
 }
