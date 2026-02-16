@@ -1288,11 +1288,92 @@ case "${1:-}" in
             echo ""
             log_success "${AGENT_DISPLAY_NAME} workspace started!"
             echo ""
-            echo "════════════════════════════════════════════════════════════════"
-            echo ""
-            echo "  Next: ./cli/polis.sh ${EFFECTIVE_AGENT} init"
-            echo ""
-            echo "════════════════════════════════════════════════════════════════"
+            
+            # Wait for polis-init.service to finish (install.sh + service enablement)
+            log_info "Waiting for workspace initialization to complete (this may take several minutes)..."
+            init_timeout=600  # 10 minutes max
+            elapsed=0
+            while [[ $elapsed -lt $init_timeout ]]; do
+                init_state=$(docker exec polis-workspace systemctl show polis-init.service --property=ActiveState --value 2>/dev/null || echo "unknown")
+                
+                if [[ "$init_state" == "inactive" ]]; then
+                    # Check if it succeeded or failed
+                    init_result=$(docker exec polis-workspace systemctl show polis-init.service --property=Result --value 2>/dev/null || echo "unknown")
+                    if [[ "$init_result" == "success" ]]; then
+                        log_success "Workspace initialization complete."
+                        break
+                    else
+                        log_error "Workspace initialization failed (result: ${init_result})."
+                        echo "Check logs with: docker exec polis-workspace journalctl -u polis-init.service --no-pager"
+                        exit 1
+                    fi
+                elif [[ "$init_state" == "failed" ]]; then
+                    log_error "Workspace initialization failed."
+                    echo "Check logs with: docker exec polis-workspace journalctl -u polis-init.service --no-pager"
+                    exit 1
+                fi
+                
+                # Show progress every 30 seconds
+                if (( elapsed % 30 == 0 && elapsed > 0 )); then
+                    log_info "Still initializing... (${elapsed}s elapsed)"
+                fi
+                
+                sleep 5
+                ((elapsed += 5))
+            done
+            
+            if [[ $elapsed -ge $init_timeout ]]; then
+                log_error "Workspace initialization timed out after ${init_timeout}s."
+                echo "Check logs with: docker exec polis-workspace journalctl -u polis-init.service --no-pager"
+                exit 1
+            fi
+            
+            # Wait for agent service to become active
+            log_info "Waiting for ${AGENT_DISPLAY_NAME} to start..."
+            svc_retries=30
+            while [[ $svc_retries -gt 0 ]]; do
+                if docker exec polis-workspace systemctl is-active "${EFFECTIVE_AGENT}" &>/dev/null; then
+                    break
+                fi
+                sleep 2
+                ((svc_retries--))
+            done
+            
+            if [[ $svc_retries -eq 0 ]]; then
+                log_error "${AGENT_DISPLAY_NAME} service failed to start."
+                echo "Check logs with: docker exec polis-workspace journalctl -u ${EFFECTIVE_AGENT}.service --no-pager"
+                exit 1
+            fi
+            
+            # Wait for agent to fully initialize (token available)
+            commands_script="${PROJECT_ROOT}/agents/${EFFECTIVE_AGENT}/commands.sh"
+            if [[ -f "$commands_script" ]]; then
+                token_retries=15
+                while [[ $token_retries -gt 0 ]]; do
+                    if bash "$commands_script" "polis-workspace" token &>/dev/null; then
+                        break
+                    fi
+                    sleep 2
+                    ((token_retries--))
+                done
+                
+                if [[ $token_retries -eq 0 ]]; then
+                    log_warn "${AGENT_DISPLAY_NAME} initialization taking longer than expected."
+                    echo "Check logs with: docker exec polis-workspace journalctl -u ${EFFECTIVE_AGENT}.service --no-pager"
+                    exit 1
+                fi
+                
+                echo ""
+                echo "════════════════════════════════════════════════════════════════"
+                echo ""
+                bash "$commands_script" "polis-workspace" token
+                echo ""
+                log_info "To connect: open the Control UI, paste the token above, and click Connect."
+                echo ""
+                echo "════════════════════════════════════════════════════════════════"
+            fi
+            
+            log_success "${AGENT_DISPLAY_NAME} is ready."
         fi
         ;;
         
