@@ -8,10 +8,10 @@
 set -euo pipefail
 
 # Configuration
+VERSION="${POLIS_VERSION:-latest}"
+INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
-INSTALL_DIR="${POLIS_INSTALL_DIR:-$HOME/.polis}"
-BRANCH="${POLIS_BRANCH:-main}"
 
 # Colors
 RED='\033[0;31m'
@@ -21,239 +21,133 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
+log_ok() { echo -e "${GREEN}[OK]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
-# Detect OS and architecture
-detect_platform() {
-    local os arch
-    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+# Check architecture
+check_arch() {
+    local arch
     arch=$(uname -m)
-    
-    case "$os" in
-        linux) ;;
-        darwin)
-            log_error "macOS is not currently supported (requires Sysbox which is Linux-only)"
-            exit 1
-            ;;
+    case "${arch}" in
+        x86_64|amd64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
         *)
-            log_error "Unsupported operating system: $os"
+            log_error "Unsupported architecture: ${arch}"
             exit 1
             ;;
     esac
-    
-    case "$arch" in
-        x86_64|amd64) arch="amd64" ;;
-        aarch64|arm64) arch="arm64" ;;
-        *)
-            log_error "Unsupported architecture: $arch"
-            exit 1
-            ;;
-    esac
-    
-    echo "${os}-${arch}"
 }
 
-# Check prerequisites
-check_prerequisites() {
-    log_info "Checking prerequisites..."
-    
-    local missing=()
-    
-    # Docker
-    if ! command -v docker &>/dev/null; then
-        missing+=("docker")
-    elif ! docker info &>/dev/null; then
-        log_error "Docker is installed but not running or accessible"
-        echo "Make sure Docker is running and your user is in the docker group"
+# Check for Multipass (V9 - no auto-install)
+check_multipass() {
+    if command -v multipass &>/dev/null; then
+        return 0
+    fi
+    log_error "Multipass is required but not installed"
+    echo ""
+    echo "Install Multipass before running this installer:"
+    case "$(uname -s)" in
+        Darwin) echo "  brew install multipass" ;;
+        Linux)  echo "  sudo snap install multipass" ;;
+        *)      echo "  https://multipass.run/install" ;;
+    esac
+    echo ""
+    echo "Then re-run this installer."
+    exit 1
+}
+
+# Resolve version tag
+resolve_version() {
+    if [[ "${VERSION}" == "latest" ]]; then
+        VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+        if [[ -z "${VERSION}" ]]; then
+            log_error "Failed to resolve latest version"
+            exit 1
+        fi
+    fi
+    log_info "Installing Polis ${VERSION}"
+}
+
+# Download and verify with SHA256
+download_and_verify() {
+    local base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
+    local bin_dir="${INSTALL_DIR}/bin"
+    local checksum_file="/tmp/polis.sh.sha256.$$"
+
+    mkdir -p "${bin_dir}"
+
+    log_info "Downloading polis CLI..."
+    curl -fsSL "${base_url}/polis.sh" -o "${bin_dir}/polis"
+    curl -fsSL "${base_url}/polis.sh.sha256" -o "${checksum_file}"
+
+    log_info "Verifying SHA256 checksum..."
+    local expected actual
+    expected=$(cut -d' ' -f1 < "${checksum_file}")
+    actual=$(sha256sum "${bin_dir}/polis" | cut -d' ' -f1)
+    rm -f "${checksum_file}"
+
+    if [[ "${actual}" != "${expected}" ]]; then
+        log_error "SHA256 checksum mismatch!"
+        echo "  Expected: ${expected}" >&2
+        echo "  Actual:   ${actual}" >&2
+        rm -f "${bin_dir}/polis"
         exit 1
     fi
-    
-    # curl or wget
-    if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
-        missing+=("curl or wget")
+    log_ok "SHA256 verified: ${expected}"
+
+    chmod +x "${bin_dir}/polis"
+}
+
+# Optional attestation verification
+verify_attestation() {
+    if command -v gh &>/dev/null; then
+        log_info "Verifying GitHub attestation..."
+        if gh attestation verify "${INSTALL_DIR}/bin/polis" --owner "${REPO_OWNER}" 2>/dev/null; then
+            log_ok "Attestation verified"
+        else
+            log_info "Attestation verification skipped (not available or failed)"
+        fi
     fi
-    
-    # openssl (for CA generation)
-    if ! command -v openssl &>/dev/null; then
-        missing+=("openssl")
-    fi
-    
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        log_error "Missing required tools: ${missing[*]}"
+}
+
+# Create symlink
+create_symlink() {
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "${INSTALL_DIR}/bin/polis" "$HOME/.local/bin/polis"
+    log_ok "Created symlink: ~/.local/bin/polis"
+
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        log_warn "\$HOME/.local/bin is not in your PATH"
         echo ""
-        echo "Install them with:"
-        echo "  Ubuntu/Debian: sudo apt-get install ${missing[*]}"
-        echo "  Fedora/RHEL:   sudo dnf install ${missing[*]}"
-        exit 1
-    fi
-    
-    log_success "All prerequisites met"
-}
-
-# Download file helper
-download() {
-    local url="$1"
-    local dest="$2"
-    
-    if command -v curl &>/dev/null; then
-        curl -fsSL "$url" -o "$dest"
-    else
-        wget -q "$url" -O "$dest"
+        echo "Add it by running:"
+        # shellcheck disable=SC2016
+        echo '  export PATH="$HOME/.local/bin:$PATH"'
+        echo ""
+        echo "To make it permanent, add to your shell rc file (~/.bashrc or ~/.zshrc)"
     fi
 }
 
-# Main installation
-install_polis() {
+# Main
+main() {
     echo ""
     echo "╔═══════════════════════════════════════════════════════════════╗"
     echo "║                    Polis Installer                            ║"
-    echo "║         Secure AI Workspace with Traffic Inspection           ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo ""
-    
-    detect_platform
-    check_prerequisites
-    
-    # Handle existing install directory
-    if [[ -d "${INSTALL_DIR}/.git" ]]; then
-        log_info "Existing installation found at ${INSTALL_DIR}, updating..."
-        cd "${INSTALL_DIR}"
-        if git pull --ff-only origin "${BRANCH}" 2>/dev/null; then
-            log_success "Updated existing installation"
-            # Skip clone, jump to symlink/permissions
-            chmod +x cli/polis.sh scripts/*.sh services/*/scripts/*.sh 2>/dev/null || true
-            mkdir -p "$HOME/.local/bin"
-            ln -sf "${INSTALL_DIR}/cli/polis.sh" "$HOME/.local/bin/polis"
-            log_success "Polis updated successfully!"
-            return 0
-        else
-            log_warn "Update failed, performing fresh install..."
-            rm -rf "${INSTALL_DIR}"
-        fi
-    elif [[ -d "${INSTALL_DIR}" ]] && [[ -n "$(ls -A "${INSTALL_DIR}" 2>/dev/null)" ]]; then
-        log_warn "Non-empty directory exists at ${INSTALL_DIR}, removing..."
-        rm -rf "${INSTALL_DIR}"
-    fi
-    
-    # Create install directory
-    log_info "Installing to ${INSTALL_DIR}..."
-    mkdir -p "${INSTALL_DIR}"
-    cd "${INSTALL_DIR}"
-    
-    # Check if git is available for cloning
-    if command -v git &>/dev/null; then
-        log_info "Cloning Polis repository..."
-        
-        # GIT_TERMINAL_PROMPT=0 prevents git from prompting for credentials
-        # This ensures the clone fails cleanly for public repos instead of hanging
-        if GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "${BRANCH}" "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" . 2>/dev/null; then
-            log_success "Repository cloned successfully"
-        elif git clone --depth 1 --branch "${BRANCH}" "git@github.com:${REPO_OWNER}/${REPO_NAME}.git" . 2>/dev/null; then
-            log_success "Repository cloned via SSH"
-        else
-            log_error "Failed to clone repository"
-            echo ""
-            echo "Make sure:"
-            echo "  - The repository exists: https://github.com/${REPO_OWNER}/${REPO_NAME}"
-            echo "  - The branch exists: ${BRANCH}"
-            echo "  - The repository is public, or you have access"
-            echo ""
-            echo "For private repos, clone manually:"
-            echo "  git clone git@github.com:${REPO_OWNER}/${REPO_NAME}.git ${INSTALL_DIR}"
-            exit 1
-        fi
-    else
-        # Fallback to downloading individual files (only works for public repos)
-        log_info "Git not found, downloading files directly..."
-        download_files
-    fi
-    
-    # Make scripts executable
-    chmod +x cli/polis.sh scripts/*.sh services/*/scripts/*.sh 2>/dev/null || true
-    
-    # Create symlink for easy access
-    log_info "Creating polis command..."
-    mkdir -p "$HOME/.local/bin"
-    ln -sf "${INSTALL_DIR}/cli/polis.sh" "$HOME/.local/bin/polis"
-    
-    # Check if ~/.local/bin is in PATH
-    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-        log_warn "~/.local/bin is not in your PATH"
-        echo ""
-        echo "Add it by running:"
-        echo '  echo '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> ~/.bashrc && source ~/.bashrc'
-        echo ""
-    fi
-    
-    log_success "Polis installed successfully!"
+
+    check_arch >/dev/null
+    check_multipass
+    resolve_version
+    download_and_verify
+    verify_attestation
+    create_symlink
+
     echo ""
-    echo "═══════════════════════════════════════════════════════════════"
+    log_ok "Polis installed successfully!"
     echo ""
-    echo "Next steps:"
-    echo ""
-    echo "  1. Configure your API key:"
-    echo "     cp ${INSTALL_DIR}/agents/openclaw/config/env.example ${INSTALL_DIR}/.env"
-    echo "     nano ${INSTALL_DIR}/.env"
-    echo "     # Add ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY"
-    echo ""
-    echo "  2. Initialize Polis:"
-    echo "     cd ${INSTALL_DIR} && ./cli/polis.sh init"
-    echo ""
-    echo "  The init command will:"
-    echo "    - Check Docker compatibility"
-    echo "    - Install Sysbox runtime"
-    echo "    - Build/pull container images"
-    echo "    - Start all services"
-    echo "    - Help you pair your first device"
-    echo ""
-    echo "Documentation: https://github.com/${REPO_OWNER}/${REPO_NAME}"
+    echo "Run 'polis --help' to get started."
     echo ""
 }
 
-# Download files directly (fallback for when git is not available)
-download_files() {
-    local base_url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}"
-    
-    # URL-encode the branch name (replace + with %2B, / with %2F for safety)
-    local encoded_branch
-    encoded_branch=$(echo "$BRANCH" | sed 's/+/%2B/g')
-    base_url="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${encoded_branch}"
-    
-    # Create directory structure
-    mkdir -p tools scripts config deploy certs/ca lib/shell \
-             services/resolver/config \
-             services/gate/config services/gate/scripts \
-             services/sentinel/config \
-             services/workspace/config \
-             services/toolbox/crates \
-             services/state/scripts
-    
-    # Download essential files
-    download "${base_url}/cli/polis.sh" "cli/polis.sh" || exit 1
-    chmod +x cli/polis.sh
-    
-    download "${base_url}/docker-compose.yml" "docker-compose.yml" || exit 1
-    download "${base_url}/config/polis.yaml" "config/polis.yaml" || exit 1
-    
-    download "${base_url}/services/gate/config/g3proxy.yaml" "services/gate/config/g3proxy.yaml" || exit 1
-    download "${base_url}/services/gate/config/g3fcgen.yaml" "services/gate/config/g3fcgen.yaml" || exit 1
-    download "${base_url}/services/gate/scripts/init.sh" "services/gate/scripts/init.sh" || exit 1
-    
-    download "${base_url}/services/sentinel/config/c-icap.conf" "services/sentinel/config/c-icap.conf" || exit 1
-    download "${base_url}/services/sentinel/config/polis_approval.conf" "services/sentinel/config/polis_approval.conf" || exit 1
-    download "${base_url}/services/sentinel/config/polis_dlp.conf" "services/sentinel/config/polis_dlp.conf" || exit 1
-    
-    download "${base_url}/services/workspace/config/polis-init.service" "services/workspace/config/polis-init.service" || exit 1
-    
-    # Download scripts
-    download "${base_url}/services/workspace/scripts/workspace-init.sh" "services/workspace/scripts/workspace-init.sh" || exit 1
-    download "${base_url}/services/gate/scripts/health-check.sh" "services/gate/scripts/health-check.sh" || exit 1
-    chmod +x scripts/*.sh services/*/scripts/*.sh
-    
-    log_success "Files downloaded"
-}
-
-# Run installer
-install_polis
+main
