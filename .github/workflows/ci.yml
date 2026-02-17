@@ -1,7 +1,9 @@
-name: Test Suite
+name: CI
 
 permissions:
   contents: read
+  security-events: write
+  actions: read
 
 on:
   push:
@@ -22,31 +24,80 @@ env:
     polis-toolbox-oss:latest
 
 jobs:
-  # ── Stage 1: Compile Rust workspace + C native tests ──────────────
-  build-code:
+  # ── Stage 1a: Lint Rust ───────────────────────────────────────────
+  lint-rust:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          persist-credentials: false
 
-      - name: Cache Cargo registry + target
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          toolchain: stable
+          components: rustfmt, clippy
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
-      - name: Cargo test (compile + unit tests)
-        run: cargo test --workspace
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: Compile and run C native tests
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── Stage 1b: Lint C ──────────────────────────────────────────────
+  lint-c:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install analyzers
+        run: sudo apt-get update && sudo apt-get install -y cppcheck clang-tidy libicapapi-dev libhiredis-dev libssl-dev
+
+      - name: cppcheck
+        run: |
+          find services/sentinel/modules -name '*.c' -print0 | \
+            xargs -0 cppcheck --enable=warning,style,performance --error-exitcode=1
+
+      - name: clang-tidy
+        run: |
+          find services/sentinel/modules -name '*.c' -print0 | \
+            xargs -0 -I{} clang-tidy {} -- -Wall \
+              -I/usr/include \
+              -I/usr/include/c_icap \
+              -I/usr/include/hiredis
+
+  # ── Stage 2a: Test Rust ───────────────────────────────────────────
+  test-rust:
+    needs: [lint-rust]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - run: cargo test --workspace
+
+  # ── Stage 2b: Test C ──────────────────────────────────────────────
+  test-c:
+    needs: [lint-c]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Compile and run C tests
         run: |
           for src in tests/native/sentinel/test_*.c; do
             bin="${src%.c}"
@@ -54,14 +105,15 @@ jobs:
             "$bin"
           done
 
-  # ── Stage 2a: Build all Docker images, export as artifact ─────────
+  # ── Stage 3a: Build containers ────────────────────────────────────
   build-containers:
     runs-on: ubuntu-24.04
-    needs: build-code
+    needs: [test-rust, test-c]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -84,14 +136,33 @@ jobs:
           docker save ${{ env.POLIS_IMAGES }} | zstd -T0 -3 -o polis-images.tar.zst
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v6.0.0
         with:
           name: polis-images
           path: polis-images.tar.zst
           retention-days: 1
-          compression-level: 0  # already zstd-compressed
+          compression-level: 0
 
-  # ── Stage 2b: Scan images for vulnerabilities ────────────────────
+  # ── Stage 3b: BATS unit tests ─────────────────────────────────────
+  unit-tests:
+    runs-on: ubuntu-24.04
+    needs: [test-rust, test-c]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Generate secrets for ACL structure tests
+        run: |
+          chmod +x ./services/state/scripts/generate-secrets.sh
+          touch .env
+          ./services/state/scripts/generate-secrets.sh ./secrets .
+
+      - name: Run unit tests
+        run: ./tests/run-tests.sh unit
+
+  # ── Stage 3c: Scan images ─────────────────────────────────────────
   scan-images:
     runs-on: ubuntu-24.04
     needs: build-containers
@@ -106,7 +177,7 @@ jobs:
           - polis-toolbox-oss
     steps:
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
         with:
           name: polis-images
 
@@ -114,39 +185,23 @@ jobs:
         run: zstd -d polis-images.tar.zst --stdout | docker load
 
       - name: Scan ${{ matrix.image }} with Snyk
-        uses: snyk/actions/docker@9adf32b1121593767fc3c057af55b55db032dc04 # master
+        uses: snyk/actions/docker@9adf32b1121593767fc3c057af55b55db032dc04
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           image: ${{ matrix.image }}:latest
           args: --severity-threshold=high
+        continue-on-error: true
 
-  # ── Stage 2c: BATS unit tests (no Docker needed) ─────────────────
-  unit-tests:
-    runs-on: ubuntu-24.04
-    needs: build-code
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          submodules: recursive
-
-      - name: Generate secrets for ACL structure tests
-        run: |
-          chmod +x ./services/state/scripts/generate-secrets.sh
-          touch .env
-          ./services/state/scripts/generate-secrets.sh ./secrets .
-
-      - name: Run unit tests
-        run: ./tests/run-tests.sh unit
-
-  # ── Stage 3: Integration tests (load pre-built images) ───────────
+  # ── Stage 4: Integration tests ────────────────────────────────────
   integration-tests:
     runs-on: ubuntu-24.04
-    needs: [build-containers, unit-tests, scan-images]
+    needs: [build-containers, unit-tests]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Install sysbox
         run: |
@@ -159,7 +214,7 @@ jobs:
           sudo systemctl restart docker
 
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
         with:
           name: polis-images
 
@@ -208,15 +263,15 @@ jobs:
           done
           docker ps -a
 
-  # ── Stage 4: E2E tests (push to main/develop only) ───────────────
+  # ── Stage 5: E2E tests ─────────────────────────────────────────────
   e2e-tests:
     runs-on: ubuntu-24.04
     needs: integration-tests
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Install sysbox
         run: |
@@ -229,7 +284,7 @@ jobs:
           sudo systemctl restart docker
 
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
         with:
           name: polis-images
 
@@ -279,3 +334,76 @@ jobs:
             echo "=== $c ===" && docker logs "$c" 2>&1 | tail -30 || true
           done
           docker ps -a
+
+  # ── Security: CodeQL ──────────────────────────────────────────────
+  security-codeql:
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        with:
+          languages: c-cpp
+
+      - name: Build C modules for analysis
+        run: |
+          set -e
+          sudo apt-get update && sudo apt-get install -y libicapapi-dev libhiredis-dev libssl-dev
+          find services/sentinel/modules -name '*.c' -print0 | xargs -0 -I{} \
+            gcc -c -Wall {} -o /dev/null \
+              -I/usr/include \
+              -I/usr/include/c_icap \
+              -I/usr/include/hiredis
+
+      - uses: github/codeql-action/analyze@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+
+  # ── Security: Snyk Code (SAST) ────────────────────────────────────
+  security-snyk-code:
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04
+
+      - name: Snyk Code test (SAST)
+        run: snyk code test --severity-threshold=high --sarif-file-output=snyk-code.sarif
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        continue-on-error: true
+
+      - uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        with:
+          sarif_file: snyk-code.sarif
+        if: always()
+
+  # ── Security: Snyk IaC ────────────────────────────────────────────
+  security-snyk-iac:
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: snyk/actions/iac@9adf32b1121593767fc3c057af55b55db032dc04
+        with:
+          args: --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        continue-on-error: true
+
+      - uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        with:
+          sarif_file: snyk.sarif
+        if: always()

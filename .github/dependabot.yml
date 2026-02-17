@@ -1,55 +1,79 @@
 version: 2
 updates:
-  # Rust dependencies
-  - package-ecosystem: cargo
-    directory: "/"
-    schedule:
-      interval: weekly
-    groups:
-      rust-deps:
-        patterns: ["*"]
-
   # GitHub Actions
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Rust dependencies
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
+    groups:
+      rust-deps:
+        patterns: ["*"]
 
   # Docker — per service
   - package-ecosystem: docker
     directory: "services/gate"
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "deps"
 
   - package-ecosystem: docker
     directory: "services/sentinel"
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "deps"
 
   - package-ecosystem: docker
     directory: "services/workspace"
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "deps"
 
   - package-ecosystem: docker
     directory: "services/toolbox"
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "deps"
 
   - package-ecosystem: docker
     directory: "services/scanner"
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "deps"
 
   - package-ecosystem: docker
     directory: "services/resolver"
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "deps"
 
   - package-ecosystem: gomod
     directory: "services/resolver"
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "deps"
     groups:
       go-deps:
         patterns: ["*"]
@@ -58,3 +82,5 @@ updates:
     directory: "/"
     schedule:
       interval: monthly
+    commit-message:
+      prefix: "deps"
