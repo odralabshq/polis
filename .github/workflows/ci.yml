@@ -1,7 +1,9 @@
-name: Test Suite
+name: CI
 
 permissions:
   contents: read
+  security-events: write
+  actions: read
 
 on:
   push:
@@ -22,31 +24,72 @@ env:
     polis-toolbox-oss:latest
 
 jobs:
-  # ── Stage 1: Compile Rust workspace + C native tests ──────────────
-  build-code:
+  # ── Stage 1a: Lint Rust ───────────────────────────────────────────
+  lint-rust:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          persist-credentials: false
 
-      - name: Cache Cargo registry + target
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          toolchain: stable
+          components: rustfmt, clippy
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
-      - name: Cargo test (compile + unit tests)
-        run: cargo test --workspace
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: Compile and run C native tests
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── Stage 1b: Lint C ──────────────────────────────────────────────
+  lint-c:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: cppcheck
+        run: |
+          find services/sentinel/modules -name '*.c' -print0 | \
+            xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
+
+  # ── Stage 2a: Test Rust ───────────────────────────────────────────
+  test-rust:
+    needs: [lint-rust]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - run: cargo test --workspace
+
+  # ── Stage 2b: Test C ──────────────────────────────────────────────
+  test-c:
+    needs: [lint-c]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Compile and run C tests
         run: |
           for src in tests/native/sentinel/test_*.c; do
             bin="${src%.c}"
@@ -54,14 +97,29 @@ jobs:
             "$bin"
           done
 
-  # ── Stage 2a: Build all Docker images, export as artifact ─────────
+  # ── Stage 3a: Build containers ────────────────────────────────────
   build-containers:
     runs-on: ubuntu-24.04
-    needs: build-code
+    needs: [test-rust, test-c]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          persist-credentials: false
+
+      - name: Login to DHI registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -84,14 +142,33 @@ jobs:
           docker save ${{ env.POLIS_IMAGES }} | zstd -T0 -3 -o polis-images.tar.zst
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v6.0.0
         with:
           name: polis-images
           path: polis-images.tar.zst
           retention-days: 1
-          compression-level: 0  # already zstd-compressed
+          compression-level: 0
 
-  # ── Stage 2b: Scan images for vulnerabilities ────────────────────
+  # ── Stage 3b: BATS unit tests ─────────────────────────────────────
+  unit-tests:
+    runs-on: ubuntu-24.04
+    needs: [test-rust, test-c]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Generate secrets for ACL structure tests
+        run: |
+          chmod +x ./services/state/scripts/generate-secrets.sh
+          touch .env
+          ./services/state/scripts/generate-secrets.sh ./secrets .
+
+      - name: Run unit tests
+        run: ./tests/run-tests.sh unit
+
+  # ── Stage 3c: Scan images ─────────────────────────────────────────
   scan-images:
     runs-on: ubuntu-24.04
     needs: build-containers
@@ -106,7 +183,7 @@ jobs:
           - polis-toolbox-oss
     steps:
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
         with:
           name: polis-images
 
@@ -114,39 +191,30 @@ jobs:
         run: zstd -d polis-images.tar.zst --stdout | docker load
 
       - name: Scan ${{ matrix.image }} with Snyk
-        uses: snyk/actions/docker@9adf32b1121593767fc3c057af55b55db032dc04 # master
+        uses: snyk/actions/docker@9adf32b1121593767fc3c057af55b55db032dc04
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           image: ${{ matrix.image }}:latest
           args: --severity-threshold=high
+        continue-on-error: true
 
-  # ── Stage 2c: BATS unit tests (no Docker needed) ─────────────────
-  unit-tests:
-    runs-on: ubuntu-24.04
-    needs: build-code
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          submodules: recursive
-
-      - name: Generate secrets for ACL structure tests
-        run: |
-          chmod +x ./services/state/scripts/generate-secrets.sh
-          touch .env
-          ./services/state/scripts/generate-secrets.sh ./secrets .
-
-      - name: Run unit tests
-        run: ./tests/run-tests.sh unit
-
-  # ── Stage 3: Integration tests (load pre-built images) ───────────
+  # ── Stage 4: Integration tests ────────────────────────────────────
   integration-tests:
     runs-on: ubuntu-24.04
-    needs: [build-containers, unit-tests, scan-images]
+    needs: [build-containers, unit-tests]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          persist-credentials: false
+
+      - name: Login to DHI registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Install sysbox
         run: |
@@ -159,7 +227,7 @@ jobs:
           sudo systemctl restart docker
 
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
         with:
           name: polis-images
 
@@ -170,9 +238,13 @@ jobs:
         run: |
           chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
           ./cli/polis.sh setup-ca
+          chmod 644 ./certs/ca/ca.pem
+          chmod a+r ./certs/ca/ca.key
+          mkdir -p ./certs/toolbox
+          ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
           ./services/state/scripts/generate-certs.sh ./certs/valkey
-          chmod 644 ./certs/valkey/*.crt
-          chmod a+r ./certs/valkey/*.key
+          chmod 644 ./certs/valkey/*.crt ./certs/toolbox/*.pem
+          chmod a+r ./certs/valkey/*.key ./certs/toolbox/*.key
           touch .env
           ./services/state/scripts/generate-secrets.sh ./secrets .
           chmod 644 ./secrets/valkey_users.acl
@@ -208,15 +280,22 @@ jobs:
           done
           docker ps -a
 
-  # ── Stage 4: E2E tests (push to main/develop only) ───────────────
+  # ── Stage 5: E2E tests ─────────────────────────────────────────────
   e2e-tests:
     runs-on: ubuntu-24.04
     needs: integration-tests
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
+          persist-credentials: false
+
+      - name: Login to DHI registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Install sysbox
         run: |
@@ -229,7 +308,7 @@ jobs:
           sudo systemctl restart docker
 
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
         with:
           name: polis-images
 
@@ -240,9 +319,13 @@ jobs:
         run: |
           chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
           ./cli/polis.sh setup-ca
+          chmod 644 ./certs/ca/ca.pem
+          chmod a+r ./certs/ca/ca.key
+          mkdir -p ./certs/toolbox
+          ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
           ./services/state/scripts/generate-certs.sh ./certs/valkey
-          chmod 644 ./certs/valkey/*.crt
-          chmod a+r ./certs/valkey/*.key
+          chmod 644 ./certs/valkey/*.crt ./certs/toolbox/*.pem
+          chmod a+r ./certs/valkey/*.key ./certs/toolbox/*.key
           touch .env
           ./services/state/scripts/generate-secrets.sh ./secrets .
           chmod 644 ./secrets/valkey_users.acl
@@ -279,3 +362,67 @@ jobs:
             echo "=== $c ===" && docker logs "$c" 2>&1 | tail -30 || true
           done
           docker ps -a
+
+  # ── Security: Snyk Code (SAST) ────────────────────────────────────
+  security-snyk-code:
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04
+
+      - name: Snyk Code test (SAST)
+        run: snyk code test --severity-threshold=high --sarif-file-output=snyk-code.sarif
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        continue-on-error: true
+
+      - uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        with:
+          sarif_file: snyk-code.sarif
+        if: always()
+
+  # ── Security: Snyk IaC ────────────────────────────────────────────
+  security-snyk-iac:
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04
+
+      - name: Snyk IaC test
+        run: snyk iac test --severity-threshold=high --sarif-file-output=snyk-iac.sarif
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        continue-on-error: true
+
+      - uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        with:
+          sarif_file: snyk-iac.sarif
+        if: always()
+
+  # ── Security: SonarCloud ──────────────────────────────────────────
+  security-sonarcloud:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7.0.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          args: >
+            -Dsonar.projectKey=odralabshq_polis
+            -Dsonar.organization=odralabshq

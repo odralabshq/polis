@@ -75,11 +75,8 @@ pub mod approval {
     /// Dot-prefix prevents spoofing: ".slack.com" won't match "evil-slack.com".
     /// The RESPMOD scanner MUST enforce dot-boundary matching (CWE-346).
     /// Configurable via polis_APPROVAL_DOMAINS environment variable (comma-separated).
-    pub const DEFAULT_APPROVAL_DOMAINS: &[&str] = &[
-        ".api.telegram.org",
-        ".api.slack.com",
-        ".discord.com",
-    ];
+    pub const DEFAULT_APPROVAL_DOMAINS: &[&str] =
+        &[".api.telegram.org", ".api.slack.com", ".discord.com"];
 
     /// Generate the approval command for a given request_id
     pub fn approval_command(request_id: &str) -> String {
@@ -115,7 +112,10 @@ pub fn validate_request_id(request_id: &str) -> Result<(), &'static str> {
     if !request_id.starts_with("req-") {
         return Err("request_id must start with 'req-'");
     }
-    if !request_id[4..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
+    if !request_id[4..]
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    {
         return Err("request_id suffix must be lowercase hex [a-f0-9]");
     }
     Ok(())

@@ -46,3 +46,10 @@ agents/*/.generated/
 
 # Audit log
 .polis-audit.log
+
+# Docs
+docs/research
+docs/reviews
+
+# Kiro
+.kiro/

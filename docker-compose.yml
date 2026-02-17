@@ -80,11 +80,11 @@ services:
       - ./certs/ca/ca.pem:/etc/g3fcgen/ca.pem:ro
       - ./certs/ca/ca.key:/etc/g3fcgen/ca.key:ro
     healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/udp/localhost/2999"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+      test: ["CMD", "bash", "-c", "echo > /dev/udp/localhost/2999"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
     logging:
       driver: json-file
