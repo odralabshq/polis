@@ -49,6 +49,9 @@ test-integration:
 test-e2e:
     ./tests/run-tests.sh --ci e2e
 
+# Run all test tiers (unit + integration + e2e)
+test-all: test test-integration test-e2e
+
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
     cargo fmt --all

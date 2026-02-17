@@ -79,6 +79,7 @@ Run `just --list` to see all available recipes.
 | Recipe | Description |
 |--------|-------------|
 | `just test` | Run all tests (Rust, C, BATS unit) |
+| `just test-all` | Run all test tiers (unit + integration + e2e) |
 | `just test-rust` | Run Rust tests |
 | `just test-c` | Run C tests |
 | `just test-bats` | Run BATS unit tests |
