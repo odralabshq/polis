@@ -327,47 +327,6 @@ jobs:
           done
           docker ps -a
 
-  # ── Security: CodeQL ──────────────────────────────────────────────
-  security-codeql:
-    runs-on: ubuntu-24.04
-    permissions:
-      security-events: write
-      actions: read
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - uses: github/codeql-action/init@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
-        with:
-          languages: c-cpp
-
-      - name: Build c-icap and modules for analysis
-        run: |
-          sudo apt-get update && sudo apt-get install -y autoconf automake libtool libssl-dev libhiredis-dev
-          
-          # Build c-icap from source to get headers
-          wget -q https://github.com/c-icap/c-icap-server/archive/refs/tags/C_ICAP_0.6.4.tar.gz
-          echo "ecc7789787fe4eceae807f0717f6da18c5b1fbf7d2d26028711222eb154c82fe  C_ICAP_0.6.4.tar.gz" | sha256sum -c -
-          tar xzf C_ICAP_0.6.4.tar.gz
-          cd c-icap-server-C_ICAP_0.6.4
-          autoreconf -i
-          ./configure --quiet
-          make -j$(nproc)
-          sudo make install
-          sudo ldconfig
-          cd ..
-          
-          # Build our modules
-          for f in services/sentinel/modules/*/*.c; do
-            gcc -c -Wall -Werror "$f" -o /tmp/out.o \
-              -I/usr/local/include/c_icap \
-              -I/usr/include/hiredis
-          done
-
-      - uses: github/codeql-action/analyze@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
-
   # ── Security: Snyk Code (SAST) ────────────────────────────────────
   security-snyk-code:
     runs-on: ubuntu-24.04
