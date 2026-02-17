@@ -60,11 +60,10 @@ enum Commands {
 /// Parse a string into a [`SecurityLevel`], case-insensitive.
 fn parse_security_level(s: &str) -> Result<SecurityLevel> {
     match s.to_lowercase().as_str() {
-        "relaxed" => Ok(SecurityLevel::Relaxed),
         "balanced" => Ok(SecurityLevel::Balanced),
         "strict" => Ok(SecurityLevel::Strict),
         other => bail!(
-            "invalid security level '{}': expected relaxed, balanced, or strict",
+            "invalid security level '{}': expected balanced or strict",
             other
         ),
     }
@@ -323,10 +322,6 @@ mod tests {
     #[test]
     fn parse_security_level_valid_variants() {
         assert_eq!(
-            parse_security_level("relaxed").unwrap(),
-            SecurityLevel::Relaxed
-        );
-        assert_eq!(
             parse_security_level("balanced").unwrap(),
             SecurityLevel::Balanced
         );
@@ -352,6 +347,8 @@ mod tests {
     fn parse_security_level_rejects_invalid() {
         assert!(parse_security_level("unknown").is_err());
         assert!(parse_security_level("").is_err());
+        // relaxed is no longer valid
+        assert!(parse_security_level("relaxed").is_err());
     }
 
     // --- parse_auto_approve_action ---

@@ -11,14 +11,60 @@ pub enum BlockReason {
     FileInfected,
 }
 
-/// Security level configuration
+/// Security level configuration.
+/// Controls how the DLP module handles requests to new/unknown domains.
+///
+/// - `Balanced` (default): Known domains auto-allowed, new domains prompt user
+/// - `Strict`: All domains prompt user
+///
+/// Credentials are always prompted regardless of level.
+/// Malware is always blocked regardless of level.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SecurityLevel {
-    Relaxed,
     #[default]
     Balanced,
     Strict,
+}
+
+impl SecurityLevel {
+    /// Returns human-readable description for CLI help.
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Balanced => "Known domains auto-allowed, new domains prompt",
+            Self::Strict => "All domains prompt for approval",
+        }
+    }
+
+    /// Returns whether new domains should prompt the user.
+    #[must_use]
+    pub const fn prompt_new_domains(self) -> bool {
+        match self {
+            Self::Balanced | Self::Strict => true,
+        }
+    }
+
+    /// Returns whether known domains should auto-allow.
+    #[must_use]
+    pub const fn auto_allow_known(self) -> bool {
+        match self {
+            Self::Balanced => true,
+            Self::Strict => false,
+        }
+    }
+}
+
+/// Migrate legacy security level values.
+/// Returns the migrated level and whether migration occurred.
+#[must_use]
+pub fn migrate_security_level(value: &str) -> (SecurityLevel, bool) {
+    match value.to_lowercase().as_str() {
+        "relaxed" => (SecurityLevel::Balanced, true),
+        "balanced" => (SecurityLevel::Balanced, false),
+        "strict" => (SecurityLevel::Strict, false),
+        _ => (SecurityLevel::Balanced, true),
+    }
 }
 
 /// Status of a security request
@@ -340,26 +386,100 @@ mod tests {
         }
     }
 
-    // --- SecurityLevel serde round-trip ---
+    // --- SecurityLevel serde round-trip (updated: no Relaxed variant) ---
     #[test]
-    fn security_level_serde_round_trip() {
+    fn test_security_level_serde_round_trip() {
         let variants = [
-            (SecurityLevel::Relaxed, "\"relaxed\""),
             (SecurityLevel::Balanced, "\"balanced\""),
             (SecurityLevel::Strict, "\"strict\""),
         ];
         for (variant, expected_json) in &variants {
-            let json = serde_json::to_string(variant).unwrap();
+            let json = serde_json::to_string(variant).expect("serialize SecurityLevel");
             assert_eq!(&json, expected_json);
-            let deserialized: SecurityLevel = serde_json::from_str(&json).unwrap();
+            let deserialized: SecurityLevel = serde_json::from_str(&json).expect("deserialize SecurityLevel");
             assert_eq!(&deserialized, variant);
         }
     }
 
-    // --- SecurityLevel default ---
     #[test]
-    fn security_level_default_is_balanced() {
+    fn test_security_level_default_is_balanced() {
         assert_eq!(SecurityLevel::default(), SecurityLevel::Balanced);
+    }
+
+    #[test]
+    fn test_security_level_relaxed_deserialize_fails() {
+        let result: Result<SecurityLevel, _> = serde_json::from_str("\"relaxed\"");
+        assert!(result.is_err(), "deserializing 'relaxed' should fail");
+    }
+
+    #[test]
+    fn test_security_level_description_balanced() {
+        assert_eq!(
+            SecurityLevel::Balanced.description(),
+            "Known domains auto-allowed, new domains prompt"
+        );
+    }
+
+    #[test]
+    fn test_security_level_description_strict() {
+        assert_eq!(
+            SecurityLevel::Strict.description(),
+            "All domains prompt for approval"
+        );
+    }
+
+    #[test]
+    fn test_security_level_auto_allow_known_balanced_true() {
+        assert!(SecurityLevel::Balanced.auto_allow_known());
+    }
+
+    #[test]
+    fn test_security_level_auto_allow_known_strict_false() {
+        assert!(!SecurityLevel::Strict.auto_allow_known());
+    }
+
+    #[test]
+    fn test_security_level_prompt_new_domains_both_true() {
+        assert!(SecurityLevel::Balanced.prompt_new_domains());
+        assert!(SecurityLevel::Strict.prompt_new_domains());
+    }
+
+    #[test]
+    fn test_migrate_security_level_relaxed_returns_balanced_with_migration() {
+        let (level, migrated) = migrate_security_level("relaxed");
+        assert_eq!(level, SecurityLevel::Balanced);
+        assert!(migrated, "relaxed should trigger migration");
+    }
+
+    #[test]
+    fn test_migrate_security_level_balanced_returns_balanced_no_migration() {
+        let (level, migrated) = migrate_security_level("balanced");
+        assert_eq!(level, SecurityLevel::Balanced);
+        assert!(!migrated, "balanced should not trigger migration");
+    }
+
+    #[test]
+    fn test_migrate_security_level_strict_returns_strict_no_migration() {
+        let (level, migrated) = migrate_security_level("strict");
+        assert_eq!(level, SecurityLevel::Strict);
+        assert!(!migrated, "strict should not trigger migration");
+    }
+
+    #[test]
+    fn test_migrate_security_level_unknown_returns_balanced_with_migration() {
+        let (level, migrated) = migrate_security_level("invalid_value");
+        assert_eq!(level, SecurityLevel::Balanced);
+        assert!(migrated, "unknown value should trigger migration");
+    }
+
+    #[test]
+    fn test_migrate_security_level_case_insensitive() {
+        let (level1, _) = migrate_security_level("BALANCED");
+        let (level2, _) = migrate_security_level("Strict");
+        let (level3, _) = migrate_security_level("RELAXED");
+        assert_eq!(level1, SecurityLevel::Balanced);
+        assert_eq!(level2, SecurityLevel::Strict);
+        assert_eq!(level3, SecurityLevel::Balanced);
     }
 
     // --- RequestStatus serde round-trip ---
@@ -633,6 +753,10 @@ mod proptests {
         ]
     }
 
+    fn arb_security_level() -> impl Strategy<Value = SecurityLevel> {
+        prop_oneof![Just(SecurityLevel::Balanced), Just(SecurityLevel::Strict),]
+    }
+
     proptest! {
         /// RunStage::next() eventually terminates at None
         #[test]
@@ -719,6 +843,42 @@ mod proptests {
             prop_assert_eq!(state.agent, back.agent);
             prop_assert_eq!(state.workspace_id, back.workspace_id);
             prop_assert_eq!(state.image_sha256, back.image_sha256);
+        }
+
+        /// SecurityLevel serde round-trip is identity
+        #[test]
+        fn prop_security_level_serde_roundtrip(level in arb_security_level()) {
+            let json = serde_json::to_string(&level).expect("serialize");
+            let back: SecurityLevel = serde_json::from_str(&json).expect("deserialize");
+            prop_assert_eq!(level, back);
+        }
+
+        /// SecurityLevel methods return consistent values
+        #[test]
+        fn prop_security_level_prompt_new_domains_always_true(level in arb_security_level()) {
+            prop_assert!(level.prompt_new_domains());
+        }
+
+        /// migrate_security_level always returns a valid SecurityLevel
+        #[test]
+        fn prop_migrate_security_level_returns_valid(input in "\\PC{0,50}") {
+            let (level, _) = migrate_security_level(&input);
+            // Must be one of the two valid variants
+            prop_assert!(level == SecurityLevel::Balanced || level == SecurityLevel::Strict);
+        }
+
+        /// migrate_security_level is case-insensitive for valid inputs
+        #[test]
+        fn prop_migrate_security_level_case_insensitive(level in arb_security_level()) {
+            let name = match level {
+                SecurityLevel::Balanced => "balanced",
+                SecurityLevel::Strict => "strict",
+            };
+            let (result_lower, migrated_lower) = migrate_security_level(name);
+            let (result_upper, migrated_upper) = migrate_security_level(&name.to_uppercase());
+            prop_assert_eq!(result_lower, result_upper);
+            prop_assert_eq!(migrated_lower, migrated_upper);
+            prop_assert!(!migrated_lower, "valid input should not trigger migration");
         }
     }
 }
