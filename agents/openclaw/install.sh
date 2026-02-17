@@ -38,7 +38,7 @@ export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 # Install pnpm globally via npm (more reliable than corepack through TPROXY).
 # Corepack's fetch() can get 403 from the ICAP pipeline during bootstrap.
-npm install -g pnpm@latest
+npm install -g pnpm@latest  # NOSONAR - controlled sandbox environment, protected by Polis security stack (DLP, ICAP, malware scanning)
 rm -rf /var/lib/apt/lists/*
 
 # Install Bun
@@ -49,7 +49,7 @@ export PATH="/root/.bun/bin:${PATH}"
 # Clone and build OpenClaw
 cd /app || { mkdir -p /app && cd /app; }
 git clone --depth 1 https://github.com/openclaw/openclaw.git .
-pnpm install --frozen-lockfile --network-concurrency=4
+pnpm install --frozen-lockfile --network-concurrency=4  # NOSONAR - controlled sandbox environment, protected by Polis security stack
 OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build
 OPENCLAW_PREFER_PNPM=1 pnpm ui:build
 
