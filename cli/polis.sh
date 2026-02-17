@@ -1139,6 +1139,14 @@ Agent Commands:
   agents info <name>    Show agent metadata
   agent scaffold <name> Create new agent from template
 
+Security Commands:
+  blocked               List pending blocked requests
+  blocked pending       List pending blocked requests
+  blocked approve <id>  Approve a blocked request (5 min TTL)
+  blocked deny <id>     Deny a blocked request
+  blocked check <id>    Check status of a request
+  blocked log           Show recent security events
+
 Options:
   --agent=<name>        Agent to use (default: openclaw)
   --local               Build from source instead of pulling images
@@ -1153,6 +1161,8 @@ Examples:
   ./cli/polis.sh openclaw logs 100              # View last 100 log lines
   ./cli/polis.sh agents list                    # List available agents
   ./cli/polis.sh agent scaffold myagent         # Create new agent
+  ./cli/polis.sh blocked                        # List pending blocked requests
+  ./cli/polis.sh blocked approve abc123         # Approve a blocked request
 
 EOF
 }
@@ -1539,6 +1549,92 @@ case "${1:-}" in
     setup-env)
         EFFECTIVE_AGENT="${AGENT_NAME:-openclaw}"
         validate_agent_env "$EFFECTIVE_AGENT"
+        ;;
+        
+    # Blocked request management (HITL approval workflow)
+    blocked)
+        SECRETS_DIR="${PROJECT_ROOT}/secrets"
+        _valkey_cmd() {
+            local pass
+            pass=$(cat "${SECRETS_DIR}/valkey_mcp_admin_password.txt" 2>/dev/null) || {
+                log_error "Valkey admin password not found. Run 'polis init' first."
+                exit 1
+            }
+            docker exec polis-state valkey-cli \
+                --tls \
+                --cert /etc/valkey/tls/client.crt \
+                --key /etc/valkey/tls/client.key \
+                --cacert /etc/valkey/tls/ca.crt \
+                -a "$pass" --user mcp-admin --no-auth-warning \
+                "$@"
+        }
+        case "${2:-pending}" in
+            pending|list)
+                KEYS=$(_valkey_cmd SCAN 0 MATCH 'polis:blocked:*' COUNT 100 | tail -n +2)
+                if [[ -z "$KEYS" ]]; then
+                    echo "No pending requests."
+                    exit 0
+                fi
+                echo "Pending blocked requests:"
+                for key in $KEYS; do
+                    JSON=$(_valkey_cmd GET "$key")
+                    REQ=$(echo "$JSON" | grep -o '"request_id":"[^"]*"' | cut -d'"' -f4)
+                    DEST=$(echo "$JSON" | grep -o '"destination":"[^"]*"' | cut -d'"' -f4)
+                    REASON=$(echo "$JSON" | grep -o '"reason":"[^"]*"' | cut -d'"' -f4)
+                    echo "  ${REQ}  →  ${DEST}  (${REASON})"
+                done
+                ;;
+            approve)
+                REQ_ID="${3:?Usage: polis blocked approve <request_id>}"
+                JSON=$(_valkey_cmd GET "polis:blocked:${REQ_ID}")
+                if [[ -z "$JSON" || "$JSON" == "(nil)" ]]; then
+                    log_error "Request ${REQ_ID} not found (expired or already processed)."
+                    exit 1
+                fi
+                _valkey_cmd SETEX "polis:approved:${REQ_ID}" 300 "$JSON" > /dev/null
+                HOST=$(echo "$JSON" | grep -o '"destination":"[^"]*"' | cut -d'"' -f4)
+                if [[ -n "$HOST" ]]; then
+                    _valkey_cmd SETEX "polis:approved:host:${HOST}" 300 "1" > /dev/null
+                fi
+                _valkey_cmd DEL "polis:blocked:${REQ_ID}" > /dev/null
+                log_success "Approved ${REQ_ID} (destination: ${HOST:-unknown}, TTL: 300s)"
+                ;;
+            deny)
+                REQ_ID="${3:?Usage: polis blocked deny <request_id>}"
+                _valkey_cmd DEL "polis:blocked:${REQ_ID}" > /dev/null
+                log_success "Denied ${REQ_ID}"
+                ;;
+            check)
+                REQ_ID="${3:?Usage: polis blocked check <request_id>}"
+                docker exec polis-workspace /opt/agents/openclaw/scripts/polis-mcp-call.sh \
+                    check_request_status "{\"request_id\":\"${REQ_ID}\"}" 2>/dev/null || {
+                    # Fallback: check directly in Valkey
+                    if _valkey_cmd GET "polis:blocked:${REQ_ID}" | grep -q request_id; then
+                        echo "Status: pending"
+                    elif _valkey_cmd GET "polis:approved:${REQ_ID}" | grep -q request_id; then
+                        echo "Status: approved"
+                    else
+                        echo "Status: not found (expired or denied)"
+                    fi
+                }
+                ;;
+            log)
+                docker exec polis-workspace /opt/agents/openclaw/scripts/polis-mcp-call.sh \
+                    get_security_log "{}" 2>/dev/null || \
+                    log_warn "Could not retrieve security log. Is the workspace running?"
+                ;;
+            *)
+                echo "Usage: polis blocked <pending|approve|deny|check|log>"
+                echo ""
+                echo "Commands:"
+                echo "  pending              List pending blocked requests (default)"
+                echo "  approve <id>         Approve a blocked request (5 min TTL)"
+                echo "  deny <id>            Deny a blocked request"
+                echo "  check <id>           Check status of a request"
+                echo "  log                  Show recent security events"
+                exit 1
+                ;;
+        esac
         ;;
         
     # Agent management commands

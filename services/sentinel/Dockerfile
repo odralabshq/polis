@@ -1,4 +1,4 @@
-FROM dhi.io/debian-base:trixie-dev AS builder
+FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
@@ -97,7 +97,7 @@ RUN mkdir -p /runtime-libs/lib/x86_64-linux-gnu /runtime-libs/usr/lib/x86_64-lin
           /runtime-libs/usr/lib/x86_64-linux-gnu/
 
 # Runtime image (minimal, no apt)
-FROM dhi.io/debian-base:trixie
+FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
 
 # Copy runtime shared libraries not in base
 COPY --from=builder /runtime-libs/lib/ /lib/

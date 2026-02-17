@@ -1420,7 +1420,7 @@ int dlp_process(ci_request_t *req)
             "<p>Request blocked by DLP: %s</p>"
             "<p>Request ID: %s</p>"
             "<p>Destination: %s</p>"
-            "<p>To approve, run: polis-approve approve %s</p>"
+            "<p>To approve, run: polis blocked approve %s</p>"
             "</body></html>",
             data->matched_pattern, data->request_id,
             data->host, data->request_id);

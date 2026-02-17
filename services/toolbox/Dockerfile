@@ -10,13 +10,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --release -p polis-mcp-agent && \
     cp target/release/polis-mcp-agent /polis-mcp-agent
 
-FROM dhi.io/debian-base:trixie
+FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
 
 # DHI debian-base includes ca-certificates; no apt-get/useradd in minimal image
 
 COPY --from=builder /polis-mcp-agent /usr/bin/
 
 # DHI images run as nonroot (UID 65532) by default
+# Valkey TLS certs are mounted :ro at runtime
 USER nonroot
 
 ENV RUST_LOG=info

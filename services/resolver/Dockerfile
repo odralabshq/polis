@@ -1,4 +1,4 @@
-FROM dhi.io/golang:1-dev AS builder
+FROM dhi.io/golang:1-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940 AS builder
 
 ARG COREDNS_VERSION=1.14.1
 
@@ -13,16 +13,10 @@ WORKDIR /src
 
 # Inject blocklist plugin before forward (order matters in CoreDNS)
 RUN sed -i '/^forward:forward/i blocklist:github.com/relekang/coredns-blocklist' plugin.cfg \
-    && go generate && go get github.com/relekang/coredns-blocklist
+    && go generate && go get github.com/relekang/coredns-blocklist \
+    && CGO_ENABLED=0 go build -o /coredns
 
-# Patch otel SDK to v1.40.0+ (fixes SNYK-GOLANG-GOOPENTELEMETRYIOOTELSDKRESOURCE Untrusted Search Path)
-RUN go get go.opentelemetry.io/otel/sdk@v1.40.0 \
-    && go get go.opentelemetry.io/otel/sdk/resource@v1.40.0 \
-    && go mod tidy
-
-RUN CGO_ENABLED=0 go build -o /coredns
-
-FROM dhi.io/debian-base:trixie
+FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
 
 # DHI debian-base includes ca-certificates; no apt-get available in minimal image
 
