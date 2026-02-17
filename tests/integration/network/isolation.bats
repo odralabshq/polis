@@ -28,19 +28,11 @@ setup() {
     assert_output --partial "$IP_GATE_INT"
 }
 
-@test "workspace: interface count matches network config" {
+@test "workspace: has exactly 1 interface plus lo" {
     require_container "$CTR_WORKSPACE"
-    # When agent ports are published, workspace is on 2 networks (internal-bridge + default),
-    # otherwise just 1 (internal-bridge). Count non-lo interfaces accordingly.
-    local ports
-    ports=$(docker port "$CTR_WORKSPACE" 2>/dev/null || true)
-    local expected="1"
-    if [[ -n "$ports" ]]; then
-        expected="2"
-    fi
     run docker exec "$CTR_WORKSPACE" sh -c "ip -o link show | grep -cv lo"
     assert_success
-    assert_output "$expected"
+    assert_output "1"
 }
 
 @test "workspace: cannot reach cloud metadata" {

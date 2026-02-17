@@ -104,25 +104,11 @@ setup() {
 
 # ── Workspace (internal-bridge only) ──────────────────────────────────────
 
-@test "workspace: on internal-bridge" {
+@test "workspace: on internal-bridge only" {
     require_container "$CTR_WORKSPACE"
     assert_on_network "$CTR_WORKSPACE" "$NET_INTERNAL"
     assert_not_on_network "$CTR_WORKSPACE" "$NET_GATEWAY"
     assert_not_on_network "$CTR_WORKSPACE" "$NET_EXTERNAL"
-}
-
-@test "workspace: on default network when agent ports published" {
-    require_container "$CTR_WORKSPACE"
-    local ports
-    ports=$(docker port "$CTR_WORKSPACE" 2>/dev/null || true)
-    if [[ -n "$ports" ]]; then
-        # Agent ports are published — workspace must also be on the default network
-        # because internal-bridge (internal: true) cannot publish ports to the host
-        assert_on_network "$CTR_WORKSPACE" "polis_default"
-    else
-        # No agent ports — workspace should only be on internal-bridge
-        assert_not_on_network "$CTR_WORKSPACE" "polis_default"
-    fi
 }
 
 # ── Network properties ────────────────────────────────────────────────────
@@ -145,23 +131,11 @@ setup() {
     done
 }
 
-@test "no containers expose ports to host except workspace agent ports" {
+@test "no containers expose ports to host" {
     for ctr in "${ALL_CONTAINERS[@]}"; do
         local ports
         ports=$(docker port "$ctr" 2>/dev/null || true)
-        if [[ "$ctr" == "$CTR_WORKSPACE" ]]; then
-            # Workspace may expose agent ports (e.g. 18789 for openclaw dashboard).
-            # If ports are published, verify none are reserved platform ports.
-            if [[ -n "$ports" ]]; then
-                for rp in $RESERVED_PORTS; do
-                    if echo "$ports" | grep -qE "^${rp}/"; then
-                        fail "$ctr exposes reserved platform port ${rp}: $ports"
-                    fi
-                done
-            fi
-        else
-            [[ -z "$ports" ]] || fail "$ctr exposes ports: $ports"
-        fi
+        [[ -z "$ports" ]] || fail "$ctr exposes ports: $ports"
     done
 }
 

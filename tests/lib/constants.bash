@@ -56,6 +56,3 @@ export CTR_HTTPBIN="polis-httpbin"
 export HTTPBIN_HOST="10.20.1.100:8080"
 # Gate HTTP proxy — used to route workspace traffic through g3proxy→ICAP to httpbin
 export HTTP_PROXY_VIA_GATE="http://${IP_GATE_INT}:8080"
-
-# Reserved platform ports — agents must not use these (mirrors cli/polis.sh)
-export RESERVED_PORTS="18080 1344 53 8080 6379"

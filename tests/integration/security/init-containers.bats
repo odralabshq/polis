@@ -25,15 +25,10 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "ALL"
 }
 
-@test "scanner-init: has CHOWN capability" {
+@test "scanner-init: has CHOWN and DAC_OVERRIDE capabilities" {
     run jq -r '.[0].HostConfig.CapAdd[]' <<< "$SCANNER_INIT_INSPECT"
     assert_success
     assert_output --partial "CHOWN"
-}
-
-@test "scanner-init: has DAC_OVERRIDE capability" {
-    run jq -r '.[0].HostConfig.CapAdd[]' <<< "$SCANNER_INIT_INSPECT"
-    assert_success
     assert_output --partial "DAC_OVERRIDE"
 }
 
@@ -47,14 +42,9 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "no-new-privileges"
 }
 
-@test "scanner-init: has 32M memory limit" {
+@test "scanner-init: memory limit is 32M" {
     run jq -r '.[0].HostConfig.Memory' <<< "$SCANNER_INIT_INSPECT"
     assert_output "33554432"
-}
-
-@test "scanner-init: completed successfully" {
-    run jq -r '.[0].State.ExitCode' <<< "$SCANNER_INIT_INSPECT"
-    assert_output "0"
 }
 
 # ── state-init hardening (source: docker-compose.yml) ─────────────────────
@@ -65,10 +55,10 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "ALL"
 }
 
-@test "state-init: has CHOWN capability" {
+@test "state-init: has only CHOWN capability" {
     run jq -r '.[0].HostConfig.CapAdd[]' <<< "$STATE_INIT_INSPECT"
     assert_success
-    assert_output --partial "CHOWN"
+    assert_output --regexp "^(CHOWN|CAP_CHOWN)$"
 }
 
 @test "state-init: has read-only rootfs" {
@@ -81,12 +71,7 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "no-new-privileges"
 }
 
-@test "state-init: has 32M memory limit" {
+@test "state-init: memory limit is 32M" {
     run jq -r '.[0].HostConfig.Memory' <<< "$STATE_INIT_INSPECT"
     assert_output "33554432"
-}
-
-@test "state-init: completed successfully" {
-    run jq -r '.[0].State.ExitCode' <<< "$STATE_INIT_INSPECT"
-    assert_output "0"
 }

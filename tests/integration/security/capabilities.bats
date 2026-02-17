@@ -84,7 +84,7 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "ALL"
 }
 
-@test "scanner: does NOT have CHOWN capability (DHI nonroot image)" {
+@test "scanner: does NOT have CHOWN capability" {
     require_container "$CTR_SCANNER"
     run jq -r '.[0].HostConfig.CapAdd // [] | .[]' <<< "$(_inspect "$CTR_SCANNER")"
     refute_output --partial "CHOWN"

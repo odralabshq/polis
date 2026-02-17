@@ -31,9 +31,8 @@ setup() {
 
 # ── Container UIDs (source: docker-compose.yml user: "UID:GID") ──────────
 
-@test "scanner: ClamAV runs as nonroot (65532)" {
+@test "scanner: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_SCANNER"
-    # DHI clamav image runs as nonroot (UID 65532) with pre-owned directories
     run docker exec "$CTR_SCANNER" id -u
     assert_success
     assert_output "65532"
@@ -46,7 +45,7 @@ setup() {
     assert_output "200"
 }
 
-@test "state: runs as UID 65532 (nonroot)" {
+@test "state: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_STATE"
     run docker exec "$CTR_STATE" id -u
     assert_success

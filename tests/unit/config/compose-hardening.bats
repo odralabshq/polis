@@ -23,8 +23,7 @@ setup() {
     refute_output --partial "cap_add"
 }
 
-@test "compose: scanner has no cap_add (DHI nonroot image)" {
-    # DHI clamav image runs as nonroot (65532) with pre-owned dirs — no cap_add needed
+@test "compose: scanner has no cap_add" {
     run sed -n '/container_name: polis-scanner$/,/container_name:/p' "$COMPOSE"
     refute_output --partial "cap_add"
 }

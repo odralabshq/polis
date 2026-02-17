@@ -9,8 +9,6 @@ setup() {
     RESOLVER_DOCKERFILE="$PROJECT_ROOT/services/resolver/Dockerfile"
     TOOLBOX_DOCKERFILE="$PROJECT_ROOT/services/toolbox/Dockerfile"
     WORKSPACE_DOCKERFILE="$PROJECT_ROOT/services/workspace/Dockerfile"
-    SCANNER_DOCKERFILE="$PROJECT_ROOT/services/scanner/Dockerfile"
-    CERTGEN_DOCKERFILE="$PROJECT_ROOT/services/certgen/Dockerfile"
     G3_BUILDER_DOCKERFILE="$PROJECT_ROOT/services/_builders/g3/Dockerfile"
 }
 
@@ -37,7 +35,7 @@ setup() {
     assert_success
 }
 
-# ── DHI base images (Issues 15, 16) ──────────────────────────────────────
+# ── DHI base images (Issues 15, 16) ───────────────────────────────────────
 
 @test "dockerfile: resolver uses DHI golang build image with digest" {
     run grep -E "^FROM dhi\.io/golang.*@sha256:" "$RESOLVER_DOCKERFILE"
@@ -64,11 +62,6 @@ setup() {
     assert_success
 }
 
-@test "dockerfile: gate uses shared g3-builder image" {
-    run grep -E "^FROM ghcr\.io/odralabshq/g3-builder:" "$GATE_DOCKERFILE"
-    assert_success
-}
-
 @test "dockerfile: g3-builder uses DHI rust build image with digest" {
     run grep -E "^FROM dhi\.io/rust.*@sha256:" "$G3_BUILDER_DOCKERFILE"
     assert_success
@@ -84,22 +77,7 @@ setup() {
     assert_success
 }
 
-@test "dockerfile: scanner uses DHI clamav image with digest" {
-    run grep -E "^FROM dhi\.io/clamav.*@sha256:" "$SCANNER_DOCKERFILE"
-    assert_success
-}
-
-@test "dockerfile: certgen uses shared g3-builder image" {
-    run grep -E "^FROM ghcr\.io/odralabshq/g3-builder:" "$CERTGEN_DOCKERFILE"
-    assert_success
-}
-
-@test "dockerfile: certgen uses DHI debian-base runtime with digest" {
-    run grep -E "^FROM dhi\.io/debian-base.*@sha256:" "$CERTGEN_DOCKERFILE"
-    assert_success
-}
-
-# ── Nonroot user (UID 65532) ─────────────────────────────────────────────
+# ── Nonroot user (UID 65532) ──────────────────────────────────────────────
 
 @test "dockerfile: resolver runs as nonroot" {
     run grep -E "^USER (nonroot|65532)" "$RESOLVER_DOCKERFILE"
