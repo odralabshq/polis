@@ -197,6 +197,7 @@ impl AppState {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn approve_request(&self, request_id: &str) -> Result<()> {
         let blocked_key = blocked_key(request_id);
         let approved_key = approved_key(request_id);

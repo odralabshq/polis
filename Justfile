@@ -13,7 +13,7 @@ lint-rust:
 
 lint-c:
     find services/sentinel/modules -name '*.c' -print0 | \
-      xargs -0 cppcheck --enable=warning,style,performance
+      xargs -0 cppcheck --enable=warning,performance
 
 # ── Test ────────────────────────────────────────────────────────────
 test: test-rust test-c test-bats

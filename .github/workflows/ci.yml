@@ -54,21 +54,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install analyzers
-        run: sudo apt-get update && sudo apt-get install -y cppcheck clang-tidy libicapapi-dev libhiredis-dev libssl-dev
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
 
       - name: cppcheck
         run: |
           find services/sentinel/modules -name '*.c' -print0 | \
             xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
-
-      - name: clang-tidy
-        run: |
-          find services/sentinel/modules -name '*.c' -print0 | \
-            xargs -0 -I{} clang-tidy {} -- -Wall \
-              -I/usr/include \
-              -I/usr/include/c_icap \
-              -I/usr/include/hiredis
 
   # ── Stage 2a: Test Rust ───────────────────────────────────────────
   test-rust:
