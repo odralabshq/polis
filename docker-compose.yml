@@ -1,5 +1,17 @@
 services:
   # =========================================================
+  # G3-BUILDER (Build-only - g3proxy + g3fcgen binaries)
+  # Shared by gate and certgen
+  # =========================================================
+  g3-builder:
+    build:
+      context: .
+      dockerfile: services/_builders/g3/Dockerfile
+    image: g3-builder:latest
+    profiles:
+      - build
+
+  # =========================================================
   # RESOLVER (COREDNS / DNS Filtering)
   # Blocks resolution of malicious domains
   # =========================================================
@@ -56,8 +68,6 @@ services:
     build:
       context: .
       dockerfile: services/certgen/Dockerfile
-      additional_contexts:
-        g3-builder: services/_builders/g3
     image: polis-certgen-oss:latest
     container_name: polis-certgen
     user: "65532:65532"
@@ -105,8 +115,6 @@ services:
     build:
       context: .
       dockerfile: services/gate/Dockerfile
-      additional_contexts:
-        g3-builder: services/_builders/g3
     image: polis-gate-oss:latest
     container_name: polis-gate
     ulimits:

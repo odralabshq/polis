@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 # Polis Gateway with g3proxy + g3fcgen
 
+FROM g3-builder:latest AS builder
+
 FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b
 
 # Install runtime dependencies
@@ -12,8 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && (grep -q '^nonroot:' /etc/passwd || echo 'nonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin' >> /etc/passwd) \
     && (grep -q '^nonroot:' /etc/group || echo 'nonroot:x:65532:' >> /etc/group)
 
-COPY --from=g3-builder /g3proxy /usr/bin/g3proxy
-COPY --from=g3-builder /g3fcgen /usr/bin/g3fcgen
+COPY --from=builder /g3proxy /usr/bin/g3proxy
+COPY --from=builder /g3fcgen /usr/bin/g3fcgen
 
 RUN mkdir -p /etc/g3proxy /var/lib/g3proxy/ssl /tmp/g3 /var/log/g3proxy && \
     chown -R 65532:65532 /var/log/g3proxy /var/lib/g3proxy /tmp/g3
