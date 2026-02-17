@@ -1,29 +1,30 @@
 # syntax=docker/dockerfile:1
 FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
 WORKDIR /build
-# Update Rust toolchain to satisfy darling 0.23 MSRV (requires 1.88+)
-RUN rustup update stable
+# dhi.io/rust:1-dev ships Rust 1.85; darling 0.23 (via rmcp-macros) requires 1.88+.
+# Install 1.88 toolchain via rustup installer and override the active toolchain.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain 1.88.0 --no-modify-path && \
+    . /usr/local/cargo/env && rustup override set 1.88.0
+ENV PATH="/usr/local/cargo/bin:${PATH}"
 COPY services/toolbox/crates/ services/toolbox/crates/
 COPY lib/crates/ lib/crates/
 COPY Cargo.toml Cargo.lock ./
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \
-    cargo build --release -p polis-toolbox && \
-    cp target/release/polis-toolbox /polis-toolbox
+    . /usr/local/cargo/env && \
+    cargo build --release -p polis-hitl-agent && \
+    cp target/release/polis-hitl-agent /polis-hitl-agent
 
 FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
 
-# DHI debian-base includes ca-certificates; no apt-get/useradd in minimal image
+COPY --from=builder /polis-hitl-agent /usr/bin/
 
-COPY --from=builder /polis-toolbox /usr/bin/
-
-# DHI images run as nonroot (UID 65532) by default
-# Valkey TLS certs are mounted :ro at runtime
 USER nonroot
 
 ENV RUST_LOG=info
 ENV polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
 ENV polis_AGENT_VALKEY_URL=redis://valkey:6379
 EXPOSE 8080
-CMD ["/usr/bin/polis-toolbox"]
+CMD ["/usr/bin/polis-hitl-agent"]

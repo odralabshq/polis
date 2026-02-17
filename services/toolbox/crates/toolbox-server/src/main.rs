@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    tracing::info!("polis-toolbox starting");
+    tracing::info!("polis-hitl-agent starting");
 
     // 2. Load configuration from polis_AGENT_* env vars.
     let config: Config = envy::prefixed("polis_AGENT_").from_env().context(
@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
             .context("HTTP server error")?;
     }
 
-    tracing::info!("polis-toolbox shut down");
+    tracing::info!("polis-hitl-agent shut down");
     Ok(())
 }
 
