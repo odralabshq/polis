@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.88-slim AS builder
+FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
 WORKDIR /build
+# Update Rust toolchain to satisfy darling 0.23 MSRV (requires 1.88+)
+RUN rustup update stable
 COPY services/toolbox/crates/ services/toolbox/crates/
 COPY lib/crates/ lib/crates/
 COPY Cargo.toml Cargo.lock ./
@@ -10,7 +12,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --release -p polis-toolbox && \
     cp target/release/polis-toolbox /polis-toolbox
 
-FROM dhi.io/debian-base:trixie
+FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
 
 # DHI debian-base includes ca-certificates; no apt-get/useradd in minimal image
 
