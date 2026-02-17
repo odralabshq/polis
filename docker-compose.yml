@@ -1,17 +1,5 @@
 services:
   # =========================================================
-  # G3-BUILDER (Build-only - g3proxy + g3fcgen binaries)
-  # Shared by gate and certgen
-  # =========================================================
-  g3-builder:
-    build:
-      context: .
-      dockerfile: services/_builders/g3/Dockerfile
-    image: g3-builder:latest
-    profiles:
-      - build
-
-  # =========================================================
   # RESOLVER (COREDNS / DNS Filtering)
   # Blocks resolution of malicious domains
   # =========================================================
