@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "cli",
     "services/toolbox/crates/mcp-agent",
     "services/toolbox/crates/approve-cli",
     "lib/crates/polis-common",
