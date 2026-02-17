@@ -58,8 +58,8 @@ setup() {
     assert_success
 }
 
-@test "dockerfile: gate uses DHI rust build image" {
-    run grep -E "^FROM dhi\\.io/rust:" "$GATE_DOCKERFILE"
+@test "dockerfile: gate uses shared g3-builder image" {
+    run grep -E "^FROM ghcr\\.io/odralabshq/g3-builder:" "$GATE_DOCKERFILE"
     assert_success
 }
 
@@ -78,8 +78,8 @@ setup() {
     assert_success
 }
 
-@test "dockerfile: certgen uses DHI rust build image" {
-    run grep -E "^FROM dhi\\.io/rust:" "$CERTGEN_DOCKERFILE"
+@test "dockerfile: certgen uses shared g3-builder image" {
+    run grep -E "^FROM ghcr\\.io/odralabshq/g3-builder:" "$CERTGEN_DOCKERFILE"
     assert_success
 }
 
