@@ -121,7 +121,7 @@ up:
     ./cli/polis.sh up
 
 down:
-    ./cli/polis.sh down
+    docker compose down
 
 status:
     ./cli/polis.sh status
