@@ -338,7 +338,7 @@ impl ServerHandler for PolisAgentTools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "polis MCP Agent — read-only security tools. \
+                "polis Toolbox — read-only security tools. \
                  Use report_block to report blocked requests, \
                  check_request_status to query approval state."
                     .into(),

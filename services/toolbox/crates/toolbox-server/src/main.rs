@@ -1,4 +1,4 @@
-//! polis MCP-Agent server entry point.
+//! polis Toolbox server entry point.
 //!
 //! Initialises tracing, loads configuration from environment variables
 //! (prefixed with `polis_AGENT_`), connects to Valkey with ACL auth,
@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    tracing::info!("polis-mcp-agent starting");
+    tracing::info!("polis-toolbox starting");
 
     // 2. Load configuration from polis_AGENT_* env vars.
     let config: Config = envy::prefixed("polis_AGENT_").from_env().context(
@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
             .context("HTTP server error")?;
     }
 
-    tracing::info!("polis-mcp-agent shut down");
+    tracing::info!("polis-toolbox shut down");
     Ok(())
 }
 
