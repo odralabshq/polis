@@ -190,6 +190,21 @@ jobs:
           merge-multiple: true
           path: ./sboms
 
+      - name: Generate CLI checksum
+        run: sha256sum cli/polis.sh > cli/polis.sh.sha256
+
+      - name: Attest CLI script provenance
+        uses: actions/attest-build-provenance@7668571508540a607bdfd90a87a560489fe372eb # v2.1.0
+        with:
+          subject-path: cli/polis.sh
+
+      - name: Check if VM artifacts exist
+        id: check-vm
+        run: |
+          # VM artifacts come from build-vm.yml workflow (separate workflow)
+          # For now, VM images are released separately via build-vm.yml
+          echo "available=false" >> "$GITHUB_OUTPUT"
+
       - name: Create source tarball
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
@@ -211,6 +226,7 @@ jobs:
           generate_release_notes: true
           files: |
             cli/polis.sh
+            cli/polis.sh.sha256
             scripts/install.sh
             polis-core-${{ needs.validate.outputs.version }}.tar.gz
             sboms/sbom-gateway.spdx.json

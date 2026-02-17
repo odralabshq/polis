@@ -18,7 +18,7 @@ lint-c:
       xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
 
 lint-shell:
-    shellcheck cli/polis.sh tools/*.sh scripts/*.sh services/*/scripts/*.sh packer/scripts/*.sh
+    shellcheck tools/dev-vm.sh scripts/install.sh packer/scripts/*.sh
 
 # ── Test ────────────────────────────────────────────────────────────
 test: test-rust test-c test-bats

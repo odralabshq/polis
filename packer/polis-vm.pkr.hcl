@@ -81,7 +81,11 @@ source "qemu" "polis" {
   ssh_username     = "ubuntu"
   ssh_timeout      = "10m"
 
-  # Cloud-init injects Packer's ephemeral SSH public key (no hardcoded credentials)
+  # Packer generates ephemeral SSH keypair automatically
+  # Cloud-init disables password auth; we use ssh_handshake_attempts
+  ssh_handshake_attempts = 100
+
+  # Cloud-init with password for initial boot (Packer injects key via ssh)
   cd_content = {
     "meta-data" = ""
     "user-data" = <<-EOF
@@ -90,9 +94,14 @@ source "qemu" "polis" {
         - name: ubuntu
           sudo: ALL=(ALL) NOPASSWD:ALL
           shell: /bin/bash
-          lock_passwd: true
-          ssh_authorized_keys:
-            - ${build.SSHPublicKey}
+          lock_passwd: false
+      chpasswd:
+        expire: false
+        users:
+          - name: ubuntu
+            password: packer
+            type: text
+      ssh_pwauth: true
     EOF
   }
   cd_label = "CIDATA"
