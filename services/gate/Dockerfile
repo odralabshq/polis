@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Polis Gateway with g3proxy + g3fcgen
 # Compiled from source v1.12.2
 
@@ -40,7 +41,12 @@ RUN curl -L https://github.com/bytedance/g3/archive/refs/tags/g3proxy-v1.12.2.ta
 
 # Build g3proxy and g3fcgen with release-lto profile
 WORKDIR /build/g3
-RUN cargo build --release -p g3proxy -p g3fcgen
+RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,target=/root/.cargo/git,sharing=locked \
+    --mount=type=cache,target=/build/g3/target,sharing=locked \
+    cargo build --release -p g3proxy -p g3fcgen && \
+    cp target/release/g3proxy /g3proxy && \
+    cp target/release/g3fcgen /g3fcgen
 
 # ===========================================
 # Stage 2: Runtime image (needs apt for runtime deps)
@@ -71,8 +77,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && (grep -q '^nonroot:' /etc/group || echo 'nonroot:x:65532:' >> /etc/group)
 
 # Copy binaries from builder stage
-COPY --from=builder /build/g3/target/release/g3proxy /usr/bin/g3proxy
-COPY --from=builder /build/g3/target/release/g3fcgen /usr/bin/g3fcgen
+COPY --from=builder /g3proxy /usr/bin/g3proxy
+COPY --from=builder /g3fcgen /usr/bin/g3fcgen
 
 # Create directories with correct ownership for DHI nonroot user (65532)
 RUN mkdir -p /etc/g3proxy /var/lib/g3proxy/ssl /tmp/g3 && \
@@ -92,4 +98,3 @@ RUN chmod +x /init.sh /setup-network.sh
 
 USER nonroot
 ENTRYPOINT ["/init.sh"]
-
