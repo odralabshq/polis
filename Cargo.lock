@@ -1355,6 +1355,7 @@ dependencies = [
  "predicates",
  "proptest",
  "redis",
+ "serde_json",
 ]
 
 [[package]]
