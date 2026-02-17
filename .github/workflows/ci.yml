@@ -123,7 +123,12 @@ jobs:
 
       - name: Build g3-builder first
         run: |
-          docker build -f services/_builders/g3/Dockerfile -t g3-builder:latest .
+          docker buildx build \
+            --cache-from=type=gha \
+            --cache-to=type=gha,mode=max \
+            --load \
+            -f services/_builders/g3/Dockerfile \
+            -t g3-builder:latest .
 
       - name: Build images (compose + buildx GHA cache)
         run: |
