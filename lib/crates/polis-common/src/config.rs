@@ -67,7 +67,10 @@ mod tests {
     #[test]
     fn agent_default_listen_addr() {
         let cfg = AgentServerConfig::default();
-        assert_eq!(cfg.listen_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
+        assert_eq!(
+            cfg.listen_addr,
+            "0.0.0.0:8080".parse::<SocketAddr>().unwrap()
+        );
     }
 
     #[test]
@@ -79,13 +82,19 @@ mod tests {
     #[test]
     fn admin_default_listen_addr() {
         let cfg = AdminServerConfig::default();
-        assert_eq!(cfg.listen_addr, "127.0.0.1:8765".parse::<SocketAddr>().unwrap());
+        assert_eq!(
+            cfg.listen_addr,
+            "127.0.0.1:8765".parse::<SocketAddr>().unwrap()
+        );
     }
 
     #[test]
     fn admin_default_listen_addr_is_loopback() {
         let cfg = AdminServerConfig::default();
-        assert!(cfg.listen_addr.ip().is_loopback(), "CWE-1327: admin must bind to loopback");
+        assert!(
+            cfg.listen_addr.ip().is_loopback(),
+            "CWE-1327: admin must bind to loopback"
+        );
     }
 
     #[test]

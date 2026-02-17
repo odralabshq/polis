@@ -1,21 +1,20 @@
-FROM dhi.io/rust:1-dev AS builder
+# syntax=docker/dockerfile:1
+FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
 WORKDIR /build
 COPY services/toolbox/crates/ services/toolbox/crates/
 COPY lib/crates/ lib/crates/
 COPY Cargo.toml Cargo.lock ./
-
-# Install nightly toolchain (darling 0.23 requires rustc 1.88+)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
-ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup default nightly-2026-02-01
-
-RUN cargo build --release -p polis-mcp-agent
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/build/target,sharing=locked \
+    cargo build --release -p polis-mcp-agent && \
+    cp target/release/polis-mcp-agent /polis-mcp-agent
 
 FROM dhi.io/debian-base:trixie
 
 # DHI debian-base includes ca-certificates; no apt-get/useradd in minimal image
 
-COPY --from=builder /build/target/release/polis-mcp-agent /usr/bin/
+COPY --from=builder /polis-mcp-agent /usr/bin/
 
 # DHI images run as nonroot (UID 65532) by default
 USER nonroot

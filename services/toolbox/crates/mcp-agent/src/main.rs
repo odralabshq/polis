@@ -84,21 +84,18 @@ async fn main() -> Result<()> {
     // 1. Initialise tracing with RUST_LOG env filter.
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
     tracing::info!("polis-mcp-agent starting");
 
     // 2. Load configuration from polis_AGENT_* env vars.
-    let config: Config = envy::prefixed("polis_AGENT_")
-        .from_env()
-        .context(
-            "failed to load config from polis_AGENT_* env vars \
+    let config: Config = envy::prefixed("polis_AGENT_").from_env().context(
+        "failed to load config from polis_AGENT_* env vars \
              (polis_AGENT_VALKEY_USER and polis_AGENT_VALKEY_PASS_FILE \
              are required)",
-        )?;
+    )?;
 
     // 3. Read password from Docker secret file
     let valkey_pass = std::fs::read_to_string(&config.valkey_pass_file)
@@ -116,13 +113,9 @@ async fn main() -> Result<()> {
 
     // 4. Create AppState — connects to Valkey with ACL auth and
     //    verifies connectivity via PING (Requirement 3.1-3.4).
-    let app_state = AppState::new(
-        &config.valkey_url,
-        &config.valkey_user,
-        &valkey_pass,
-    )
-    .await
-    .context("failed to initialise Valkey connection")?;
+    let app_state = AppState::new(&config.valkey_url, &config.valkey_user, &valkey_pass)
+        .await
+        .context("failed to initialise Valkey connection")?;
 
     let state = Arc::new(app_state);
 
@@ -144,7 +137,9 @@ async fn main() -> Result<()> {
         .route("/health", axum::routing::get(health));
 
     // 6. Bind and serve (TLS or plaintext).
-    let addr: std::net::SocketAddr = config.listen_addr.parse()
+    let addr: std::net::SocketAddr = config
+        .listen_addr
+        .parse()
         .context("invalid listen address")?;
 
     if let (Some(cert_path), Some(key_path)) = (&config.tls_cert, &config.tls_key) {
@@ -153,10 +148,7 @@ async fn main() -> Result<()> {
             .await
             .context("failed to load TLS certificates")?;
 
-        tracing::info!(
-            "MCP server ready — https://{}/mcp",
-            config.listen_addr,
-        );
+        tracing::info!("MCP server ready — https://{}/mcp", config.listen_addr,);
 
         axum_server::bind_rustls(addr, tls_config)
             .serve(router.into_make_service())

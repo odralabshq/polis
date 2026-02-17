@@ -1249,6 +1249,10 @@ case "${1:-}" in
             echo ""
             log_step "Building containers from source..."
             
+            # Pull g3-builder from GHCR (shared by gate and certgen)
+            docker pull ghcr.io/odralabshq/g3-builder:latest
+            docker tag ghcr.io/odralabshq/g3-builder:latest g3-builder:latest
+            
             # Build base workspace image
             docker build $NO_CACHE \
                 -f "${PROJECT_ROOT}/services/workspace/Dockerfile" \
@@ -1275,6 +1279,8 @@ case "${1:-}" in
             if [[ "$missing_images" == "true" ]]; then
                 log_info "Some images not in registry. Building from source..."
                 LOCAL_BUILD="true"
+                docker pull ghcr.io/odralabshq/g3-builder:latest
+                docker tag ghcr.io/odralabshq/g3-builder:latest g3-builder:latest
                 docker build $NO_CACHE \
                     -f "${PROJECT_ROOT}/services/workspace/Dockerfile" \
                     -t "polis-workspace-oss:latest" \

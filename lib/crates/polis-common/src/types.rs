@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Reason why a request was blocked by the security layer
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -104,7 +104,6 @@ pub struct OttMapping {
     /// When this mapping was created
     pub created_at: DateTime<Utc>,
 }
-
 
 #[cfg(test)]
 mod tests {
