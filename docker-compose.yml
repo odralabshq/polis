@@ -64,7 +64,6 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
-      - seccomp=./services/certgen/config/seccomp.json
     deploy:
       resources:
         limits:
