@@ -38,11 +38,11 @@ setup() {
     assert_output "65532"
 }
 
-@test "resolver: runs as UID 200 (resolver)" {
+@test "resolver: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_RESOLVER"
     run docker exec "$CTR_RESOLVER" id -u
     assert_success
-    assert_output "200"
+    assert_output "65532"
 }
 
 @test "state: runs as UID 65532 (DHI nonroot)" {

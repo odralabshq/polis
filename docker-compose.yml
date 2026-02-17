@@ -9,7 +9,7 @@ services:
       dockerfile: services/resolver/Dockerfile
     image: polis-resolver-oss:latest
     container_name: polis-resolver
-    user: "200:200"
+    user: "65532:65532"
     cap_drop:
       - ALL
     read_only: true
@@ -119,9 +119,9 @@ services:
       - SETGID
     read_only: true
     tmpfs:
-      - /tmp:size=50M,mode=1777,uid=999,gid=999
-      - /var/log/g3proxy:size=50M,mode=755,uid=999,gid=999
-      - /var/lib/g3proxy:size=10M,mode=755,uid=999,gid=999
+      - /tmp:size=50M,mode=1777,uid=65532,gid=65532
+      - /var/log/g3proxy:size=50M,mode=755,uid=65532,gid=65532
+      - /var/lib/g3proxy:size=10M,mode=755,uid=65532,gid=65532
     security_opt:
       - no-new-privileges:true
       - seccomp=./services/gate/config/seccomp.json
@@ -363,7 +363,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 6G
+          memory: 4G
           cpus: "2.0"
         reservations:
           memory: 1G

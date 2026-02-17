@@ -67,12 +67,12 @@ setup() {
     assert_output "1000000000"
 }
 
-# ── Workspace: deploy.resources 6G, cpus 2.0 ─────────────────────────────
+# ── Workspace: deploy.resources 4G, cpus 2.0 ─────────────────────────────
 
-@test "workspace: memory limit 6GB" {
+@test "workspace: memory limit 4GB" {
     require_container "$CTR_WORKSPACE"
     run jq -r '.[0].HostConfig.Memory' <<< "$polis_workspace_INSPECT"
-    assert_output "6442450944"
+    assert_output "4294967296"
 }
 
 @test "workspace: CPU limit 2.0" {
