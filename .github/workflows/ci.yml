@@ -238,6 +238,8 @@ jobs:
         run: |
           chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
           ./cli/polis.sh setup-ca
+          chmod 644 ./certs/ca/ca.pem
+          chmod a+r ./certs/ca/ca.key
           mkdir -p ./certs/toolbox
           ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
           ./services/state/scripts/generate-certs.sh ./certs/valkey
@@ -317,6 +319,8 @@ jobs:
         run: |
           chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
           ./cli/polis.sh setup-ca
+          chmod 644 ./certs/ca/ca.pem
+          chmod a+r ./certs/ca/ca.key
           mkdir -p ./certs/toolbox
           ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
           ./services/state/scripts/generate-certs.sh ./certs/valkey
