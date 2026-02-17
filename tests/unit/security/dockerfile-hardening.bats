@@ -9,17 +9,18 @@ setup() {
     RESOLVER_DOCKERFILE="$PROJECT_ROOT/services/resolver/Dockerfile"
     TOOLBOX_DOCKERFILE="$PROJECT_ROOT/services/toolbox/Dockerfile"
     WORKSPACE_DOCKERFILE="$PROJECT_ROOT/services/workspace/Dockerfile"
+    G3_BUILDER_DOCKERFILE="$PROJECT_ROOT/services/_builders/g3/Dockerfile"
 }
 
 # ── Source verification ───────────────────────────────────────────────────
 
-@test "dockerfile: gate has SHA256 verification" {
-    run grep "sha256sum -c" "$GATE_DOCKERFILE"
+@test "dockerfile: g3-builder has SHA256 verification" {
+    run grep "sha256sum -c" "$G3_BUILDER_DOCKERFILE"
     assert_success
 }
 
-@test "dockerfile: gate pins G3_SHA256 hash" {
-    run grep "ENV G3_SHA256=" "$GATE_DOCKERFILE"
+@test "dockerfile: g3-builder pins G3_SHA256 hash" {
+    run grep "ENV G3_SHA256=" "$G3_BUILDER_DOCKERFILE"
     assert_success
 }
 
@@ -61,8 +62,8 @@ setup() {
     assert_success
 }
 
-@test "dockerfile: gate uses DHI rust build image with digest" {
-    run grep -E "^FROM dhi\.io/rust.*@sha256:" "$GATE_DOCKERFILE"
+@test "dockerfile: g3-builder uses DHI rust build image with digest" {
+    run grep -E "^FROM dhi\.io/rust.*@sha256:" "$G3_BUILDER_DOCKERFILE"
     assert_success
 }
 
