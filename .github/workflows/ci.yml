@@ -107,12 +107,23 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Login to DHI registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           driver-opts: |
             image=moby/buildkit:v0.19.0@sha256:14aa1b4dd92ea0a4cd03a54d0c6079046ea98cd0c0ae6176bdd7036ba370cbbe
             network=host
+
+      - name: Build g3-builder first
+        run: |
+          docker build -f services/_builders/g3/Dockerfile -t g3-builder:latest .
 
       - name: Build images (compose + buildx GHA cache)
         run: |
