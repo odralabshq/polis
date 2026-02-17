@@ -1346,6 +1346,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "chrono",
  "clap",
  "console",
  "indicatif",
@@ -1353,6 +1354,7 @@ dependencies = [
  "polis-common",
  "predicates",
  "proptest",
+ "redis",
 ]
 
 [[package]]

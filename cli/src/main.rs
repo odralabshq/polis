@@ -5,6 +5,8 @@ use clap::Parser;
 mod cli;
 mod commands;
 mod output;
+#[allow(dead_code)] // Module will be used by status command
+mod valkey;
 
 use cli::Cli;
 

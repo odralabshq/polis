@@ -17,6 +17,8 @@ owo-colors = { version = "4.2", features = ["supports-colors"] }
 console = "0.16"
 indicatif = "0.18"
 polis-common = { path = "../lib/crates/polis-common" }
+chrono = "0.4"
+redis = { version = "0.27", features = ["tokio-comp", "tokio-rustls-comp"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
