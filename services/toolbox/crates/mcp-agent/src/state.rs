@@ -9,7 +9,7 @@ use std::io::BufReader;
 use std::sync::Arc;
 
 use polis_common::{
-    blocked_key, approved_key,
+    approved_key, blocked_key,
     redis_keys::{keys, ttl},
     BlockedRequest, RequestStatus, SecurityLevel, SecurityLogEntry,
 };
@@ -24,11 +24,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(
-        valkey_url: &str,
-        user: &str,
-        password: &str,
-    ) -> Result<Self> {
+    pub async fn new(valkey_url: &str, user: &str, password: &str) -> Result<Self> {
         let ca_path = std::env::var("polis_AGENT_VALKEY_CA")
             .unwrap_or_else(|_| DEFAULT_VALKEY_CA_PATH.to_string());
         let cert_path = std::env::var("polis_AGENT_VALKEY_CLIENT_CERT")
@@ -37,8 +33,8 @@ impl AppState {
             .unwrap_or_else(|_| DEFAULT_VALKEY_CLIENT_KEY_PATH.to_string());
 
         // Load CA certificate
-        let ca_file = File::open(&ca_path)
-            .with_context(|| format!("failed to open CA cert: {}", ca_path))?;
+        let ca_file =
+            File::open(&ca_path).with_context(|| format!("failed to open CA cert: {}", ca_path))?;
         let mut ca_reader = BufReader::new(ca_file);
         let ca_certs = rustls_pemfile::certs(&mut ca_reader)
             .collect::<Result<Vec<_>, _>>()
@@ -46,7 +42,9 @@ impl AppState {
 
         let mut root_store = rustls::RootCertStore::empty();
         for cert in ca_certs {
-            root_store.add(cert).context("failed to add CA cert to root store")?;
+            root_store
+                .add(cert)
+                .context("failed to add CA cert to root store")?;
         }
 
         // Load client certificate
@@ -89,10 +87,12 @@ impl AppState {
             })
             .set_policy(ReconnectPolicy::new_exponential(0, 100, 5000, 5))
             .build()?;
-        
+
         client.init().await?;
 
-        client.ping::<String>(None).await
+        client
+            .ping::<String>(None)
+            .await
             .context("Valkey startup PING failed")?;
 
         tracing::info!(
@@ -109,7 +109,15 @@ impl AppState {
         let key = blocked_key(&request.request_id);
         let json = serde_json::to_string(request)?;
 
-        self.client.set::<(), _, _>(&key, json, Some(Expiration::EX(ttl::BLOCKED_REQUEST_SECS as i64)), None, false).await?;
+        self.client
+            .set::<(), _, _>(
+                &key,
+                json,
+                Some(Expiration::EX(ttl::BLOCKED_REQUEST_SECS as i64)),
+                None,
+                false,
+            )
+            .await?;
 
         tracing::info!(
             request_id = %request.request_id,
@@ -133,8 +141,7 @@ impl AppState {
         match raw {
             Some(val) => {
                 let level: SecurityLevel =
-                    serde_json::from_str(&format!("\"{}\"", val))
-                        .unwrap_or_default();
+                    serde_json::from_str(&format!("\"{}\"", val)).unwrap_or_default();
                 Ok(level)
             }
             None => Ok(SecurityLevel::default()),
@@ -197,7 +204,15 @@ impl AppState {
         let json: Option<String> = self.client.get(&blocked_key).await?;
         let json = json.context("blocked request not found")?;
 
-        self.client.set::<(), _, _>(&approved_key, json, Some(Expiration::EX(ttl::APPROVED_REQUEST_SECS as i64)), None, false).await?;
+        self.client
+            .set::<(), _, _>(
+                &approved_key,
+                json,
+                Some(Expiration::EX(ttl::APPROVED_REQUEST_SECS as i64)),
+                None,
+                false,
+            )
+            .await?;
         self.client.del::<(), _>(&blocked_key).await?;
 
         tracing::info!(request_id, "approved request");
@@ -208,24 +223,31 @@ impl AppState {
         let json = serde_json::to_string(entry)?;
         let score = entry.timestamp.timestamp() as f64;
 
-        self.client.zadd::<(), _, _>(
-            keys::EVENT_LOG, None, None, false, false,
-            (score, json.as_str()),
-        ).await?;
+        self.client
+            .zadd::<(), _, _>(
+                keys::EVENT_LOG,
+                None,
+                None,
+                false,
+                false,
+                (score, json.as_str()),
+            )
+            .await?;
 
         // Trim to last 1000 entries (remove oldest by rank)
         let count: i64 = self.client.zcard(keys::EVENT_LOG).await?;
         if count > 1000 {
-            self.client.zremrangebyrank::<(), _>(
-                keys::EVENT_LOG, 0, count - 1001,
-            ).await?;
+            self.client
+                .zremrangebyrank::<(), _>(keys::EVENT_LOG, 0, count - 1001)
+                .await?;
         }
 
         Ok(())
     }
 
     pub async fn get_security_log(&self, limit: usize) -> Result<Vec<SecurityLogEntry>> {
-        let entries: Vec<String> = self.client
+        let entries: Vec<String> = self
+            .client
             .zrevrange(keys::EVENT_LOG, 0, (limit as i64) - 1, false)
             .await?;
 
@@ -248,7 +270,7 @@ impl AppState {
 
     async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
         use futures::stream::TryStreamExt;
-        
+
         let mut keys = Vec::new();
         let mut stream = self.client.scan(pattern, Some(100), None);
 

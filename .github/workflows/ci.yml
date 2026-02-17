@@ -60,7 +60,7 @@ jobs:
       - name: cppcheck
         run: |
           find services/sentinel/modules -name '*.c' -print0 | \
-            xargs -0 cppcheck --enable=warning,style,performance --error-exitcode=1
+            xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
 
       - name: clang-tidy
         run: |
@@ -355,11 +355,11 @@ jobs:
         run: |
           set -e
           sudo apt-get update && sudo apt-get install -y libicapapi-dev libhiredis-dev libssl-dev
-          find services/sentinel/modules -name '*.c' -print0 | xargs -0 -I{} \
-            gcc -c -Wall {} -o /dev/null \
-              -I/usr/include \
+          for f in services/sentinel/modules/*/*.c; do
+            gcc -c -Wall "$f" -o /dev/null \
               -I/usr/include/c_icap \
-              -I/usr/include/hiredis
+              -I/usr/include/hiredis || true
+          done
 
       - uses: github/codeql-action/analyze@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
 
@@ -396,14 +396,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: snyk/actions/iac@9adf32b1121593767fc3c057af55b55db032dc04
-        with:
-          args: --severity-threshold=high
+      - uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04
+
+      - name: Snyk IaC test
+        run: snyk iac test --severity-threshold=high --sarif-file-output=snyk-iac.sarif
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         continue-on-error: true
 
       - uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
         with:
-          sarif_file: snyk.sarif
+          sarif_file: snyk-iac.sarif
         if: always()

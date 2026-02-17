@@ -89,19 +89,15 @@ async fn main() -> Result<()> {
 
     // Load Valkey password from environment variable only (CWE-214).
     // The password MUST NOT be accepted as a CLI argument.
-    cli.valkey_pass = std::env::var("polis_VALKEY_PASS")
-        .context("polis_VALKEY_PASS env var is required")?;
+    cli.valkey_pass =
+        std::env::var("polis_VALKEY_PASS").context("polis_VALKEY_PASS env var is required")?;
 
     // Build the Valkey connection URL with ACL credentials.
     // Uses rediss:// (TLS) per requirement 5.6.
-    let conn_url = build_connection_url(
-        &cli.valkey_url,
-        &cli.valkey_user,
-        &cli.valkey_pass,
-    )?;
+    let conn_url = build_connection_url(&cli.valkey_url, &cli.valkey_user, &cli.valkey_pass)?;
 
-    let client = redis::Client::open(conn_url.as_str())
-        .context("failed to create Valkey client")?;
+    let client =
+        redis::Client::open(conn_url.as_str()).context("failed to create Valkey client")?;
 
     let mut con = client
         .get_multiplexed_async_connection()
@@ -110,8 +106,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Approve { ref request_id } => {
-            polis_common::validate_request_id(request_id)
-                .map_err(|e| anyhow::anyhow!(e))?;
+            polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
 
             let blocked_key = polis_common::blocked_key(request_id);
             let approved_key = polis_common::approved_key(request_id);
@@ -124,10 +119,7 @@ async fn main() -> Result<()> {
 
             let blocked_data = match blocked_data {
                 Some(data) => data,
-                None => bail!(
-                    "no blocked request found for {}",
-                    request_id
-                ),
+                None => bail!("no blocked request found for {}", request_id),
             };
 
             // ZADD audit log FIRST — before destructive operations.
@@ -172,8 +164,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Deny { ref request_id } => {
-            polis_common::validate_request_id(request_id)
-                .map_err(|e| anyhow::anyhow!(e))?;
+            polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
 
             let blocked_key = polis_common::blocked_key(request_id);
 
@@ -185,10 +176,7 @@ async fn main() -> Result<()> {
 
             let blocked_data = match blocked_data {
                 Some(data) => data,
-                None => bail!(
-                    "no blocked request found for {}",
-                    request_id
-                ),
+                None => bail!("no blocked request found for {}", request_id),
             };
 
             // ZADD audit log FIRST — before destructive DEL (Finding 1 fix).
@@ -230,16 +218,15 @@ async fn main() -> Result<()> {
 
             loop {
                 // SCAN cursor MATCH pattern COUNT 100
-                let (next_cursor, batch): (u64, Vec<String>) =
-                    redis::cmd("SCAN")
-                        .arg(cursor)
-                        .arg("MATCH")
-                        .arg(&match_pattern)
-                        .arg("COUNT")
-                        .arg(100)
-                        .query_async(&mut con)
-                        .await
-                        .context("failed to SCAN blocked keys")?;
+                let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+                    .arg(cursor)
+                    .arg("MATCH")
+                    .arg(&match_pattern)
+                    .arg("COUNT")
+                    .arg(100)
+                    .query_async(&mut con)
+                    .await
+                    .context("failed to SCAN blocked keys")?;
 
                 for key in &batch {
                     let value: Option<String> = con
@@ -270,10 +257,7 @@ async fn main() -> Result<()> {
             // Store the validated, lowercase level string in Valkey.
             let level_str = level.to_lowercase();
             let _: () = con
-                .set(
-                    polis_common::keys::SECURITY_LEVEL,
-                    &level_str,
-                )
+                .set(polis_common::keys::SECURITY_LEVEL, &level_str)
                 .await
                 .context("failed to SET security level")?;
 
@@ -295,10 +279,7 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to SET auto-approve rule")?;
 
-            println!(
-                "auto-approve rule set: {} → {}",
-                pattern, action_str
-            );
+            println!("auto-approve rule set: {} → {}", pattern, action_str);
             Ok(())
         }
     }
@@ -308,16 +289,9 @@ async fn main() -> Result<()> {
 ///
 /// Transforms `rediss://host:port` into `rediss://user:pass@host:port`.
 /// Ensures the URL uses the `rediss://` scheme for TLS (requirement 5.6).
-fn build_connection_url(
-    base_url: &str,
-    user: &str,
-    pass: &str,
-) -> Result<String> {
+fn build_connection_url(base_url: &str, user: &str, pass: &str) -> Result<String> {
     if !base_url.starts_with("rediss://") {
-        bail!(
-            "Valkey URL must use rediss:// for TLS, got: {}",
-            base_url
-        );
+        bail!("Valkey URL must use rediss:// for TLS, got: {}", base_url);
     }
     // Strip the scheme, insert credentials, reassemble.
     let host_part = &base_url["rediss://".len()..];
@@ -332,22 +306,13 @@ mod tests {
 
     #[test]
     fn build_url_inserts_credentials() {
-        let url = build_connection_url(
-            "rediss://valkey:6379",
-            "mcp-admin",
-            "s3cret",
-        )
-        .unwrap();
+        let url = build_connection_url("rediss://valkey:6379", "mcp-admin", "s3cret").unwrap();
         assert_eq!(url, "rediss://mcp-admin:s3cret@valkey:6379");
     }
 
     #[test]
     fn build_url_rejects_non_tls() {
-        let err = build_connection_url(
-            "redis://valkey:6379",
-            "mcp-admin",
-            "s3cret",
-        );
+        let err = build_connection_url("redis://valkey:6379", "mcp-admin", "s3cret");
         assert!(err.is_err());
         let msg = err.unwrap_err().to_string();
         assert!(msg.contains("rediss://"));

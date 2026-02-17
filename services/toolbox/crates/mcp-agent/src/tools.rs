@@ -14,17 +14,15 @@
 use std::sync::Arc;
 
 use rmcp::{
-    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::ServerInfo,
-    tool, tool_handler, tool_router,
+    tool, tool_handler, tool_router, ServerHandler,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use polis_common::{
-    redis_keys::approval::approval_command,
-    validate_request_id, BlockedRequest, RequestStatus,
+    redis_keys::approval::approval_command, validate_request_id, BlockedRequest, RequestStatus,
     SecurityLogEntry,
 };
 
@@ -158,15 +156,11 @@ impl PolisAgentTools {
     /// the agent-facing response (CWE-200).
     #[tool(description = "Report a blocked outbound request. \
         Returns an approval command the user can run.")]
-    async fn report_block(
-        &self,
-        params: Parameters<ReportBlockInput>,
-    ) -> Result<String, String> {
+    async fn report_block(&self, params: Parameters<ReportBlockInput>) -> Result<String, String> {
         let input = params.0;
 
         // Validate request_id format (CWE-20).
-        validate_request_id(&input.request_id)
-            .map_err(|e| format!("Invalid request_id: {e}"))?;
+        validate_request_id(&input.request_id).map_err(|e| format!("Invalid request_id: {e}"))?;
 
         // Parse the reason string into a BlockReason enum.
         let reason = parse_block_reason(&input.reason)?;
@@ -210,8 +204,7 @@ impl PolisAgentTools {
             approval_command: approval_command(&input.request_id),
         };
 
-        serde_json::to_string(&output)
-            .map_err(|e| format!("Serialization error: {e}"))
+        serde_json::to_string(&output).map_err(|e| format!("Serialization error: {e}"))
     }
 
     /// Query the current security status.
@@ -246,8 +239,7 @@ impl PolisAgentTools {
             security_level: format!("{:?}", level).to_lowercase(),
         };
 
-        serde_json::to_string(&output)
-            .map_err(|e| format!("Serialization error: {e}"))
+        serde_json::to_string(&output).map_err(|e| format!("Serialization error: {e}"))
     }
 
     /// List all pending (blocked) requests awaiting approval.
@@ -265,8 +257,7 @@ impl PolisAgentTools {
 
         let output = PendingApprovalsOutput { pending };
 
-        serde_json::to_string(&output)
-            .map_err(|e| format!("Serialization error: {e}"))
+        serde_json::to_string(&output).map_err(|e| format!("Serialization error: {e}"))
     }
 
     /// Retrieve the most recent security log events (up to 50).
@@ -285,8 +276,7 @@ impl PolisAgentTools {
             total_count,
         };
 
-        serde_json::to_string(&output)
-            .map_err(|e| format!("Serialization error: {e}"))
+        serde_json::to_string(&output).map_err(|e| format!("Serialization error: {e}"))
     }
 
     /// Check the approval status of a specific request.
@@ -302,8 +292,7 @@ impl PolisAgentTools {
         let input = params.0;
 
         // Validate request_id format (CWE-20).
-        validate_request_id(&input.request_id)
-            .map_err(|e| format!("Invalid request_id: {e}"))?;
+        validate_request_id(&input.request_id).map_err(|e| format!("Invalid request_id: {e}"))?;
 
         let status = self
             .state
@@ -314,17 +303,11 @@ impl PolisAgentTools {
         let (status_str, message) = match status {
             RequestStatus::Approved => (
                 "approved",
-                format!(
-                    "Request {} has been approved.",
-                    input.request_id,
-                ),
+                format!("Request {} has been approved.", input.request_id,),
             ),
             RequestStatus::Pending => (
                 "pending",
-                format!(
-                    "Request {} is pending approval.",
-                    input.request_id,
-                ),
+                format!("Request {} is pending approval.", input.request_id,),
             ),
             // Denied is used as "not_found" (see state.rs).
             RequestStatus::Denied => (
@@ -342,8 +325,7 @@ impl PolisAgentTools {
             message,
         };
 
-        serde_json::to_string(&output)
-            .map_err(|e| format!("Serialization error: {e}"))
+        serde_json::to_string(&output).map_err(|e| format!("Serialization error: {e}"))
     }
 }
 
@@ -373,20 +355,17 @@ impl ServerHandler for PolisAgentTools {
 /// Parse a reason string into a `BlockReason` enum variant.
 ///
 /// Accepts snake_case strings matching the serde representation.
-fn parse_block_reason(
-    reason: &str,
-) -> Result<polis_common::BlockReason, String> {
+fn parse_block_reason(reason: &str) -> Result<polis_common::BlockReason, String> {
     // Try serde deserialization from a JSON string value.
     let json_str = format!("\"{}\"", reason);
-    serde_json::from_str::<polis_common::BlockReason>(&json_str)
-        .map_err(|_| {
-            format!(
-                "Unknown block reason '{}'. Expected one of: \
+    serde_json::from_str::<polis_common::BlockReason>(&json_str).map_err(|_| {
+        format!(
+            "Unknown block reason '{}'. Expected one of: \
                  credential_detected, malware_domain, \
                  url_blocked, file_infected",
-                reason,
-            )
-        })
+            reason,
+        )
+    })
 }
 
 #[cfg(test)]

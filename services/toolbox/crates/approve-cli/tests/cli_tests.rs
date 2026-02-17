@@ -39,7 +39,9 @@ fn test_missing_env_var() {
         .arg("list-pending")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("polis_VALKEY_PASS env var is required"));
+        .stderr(predicate::str::contains(
+            "polis_VALKEY_PASS env var is required",
+        ));
 }
 
 #[test]
