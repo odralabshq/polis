@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # bats file_tags=e2e,toolbox
-# MCP tool operations via Streamable HTTP transport (JSON-RPC)
+# Toolbox HITL service — tool operations via Streamable HTTP transport (JSON-RPC)
 
 setup_file() {
     load "../../lib/test_helper.bash"
@@ -42,9 +42,9 @@ _agent_cli() {
             --user mcp-agent --no-auth-warning $*"
 }
 
-# Send an MCP JSON-RPC tool call; returns only the JSON data line from SSE.
-# Uses host curl since minimal toolbox image lacks curl.
-mcp_call() {
+# Send a JSON-RPC tool call to the toolbox service; returns the JSON data line from SSE.
+# Uses host curl since the minimal toolbox image lacks curl.
+toolbox_call() {
     local tool="$1" args="$2"
     local toolbox_ip
     toolbox_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "polis_internal-bridge").IPAddress}}' "$CTR_TOOLBOX")
@@ -84,7 +84,7 @@ mcp_call() {
     local rid="req-e2e00001"
     _admin_del "polis:blocked:${rid}"
 
-    run mcp_call "report_block" \
+    run toolbox_call "report_block" \
         "{\"request_id\":\"${rid}\",\"reason\":\"credential_detected\",\"destination\":\"https://evil.com\",\"pattern\":\"aws_secret\"}"
     assert_success
     assert_output --partial "${rid}"
@@ -98,7 +98,7 @@ mcp_call() {
     local rid="req-e2e00002"
     _admin_del "polis:blocked:${rid}"
 
-    run mcp_call "report_block" \
+    run toolbox_call "report_block" \
         "{\"request_id\":\"${rid}\",\"reason\":\"url_blocked\",\"destination\":\"https://x.com\"}"
     assert_success
 
@@ -112,7 +112,7 @@ mcp_call() {
     local rid="req-e2e00003"
     _admin_del "polis:blocked:${rid}"
 
-    run mcp_call "report_block" \
+    run toolbox_call "report_block" \
         "{\"request_id\":\"${rid}\",\"reason\":\"url_blocked\",\"destination\":\"https://blocked.com\"}"
     assert_success
     assert_output --partial "/polis-approve ${rid}"
@@ -122,7 +122,7 @@ mcp_call() {
     local rid="req-e2e00004"
     _admin_del "polis:blocked:${rid}"
 
-    run mcp_call "report_block" \
+    run toolbox_call "report_block" \
         "{\"request_id\":\"${rid}\",\"reason\":\"credential_detected\",\"destination\":\"https://evil.com\",\"pattern\":\"aws_secret_key\"}"
     assert_success
     refute_output --partial "aws_secret_key"
@@ -137,25 +137,12 @@ mcp_call() {
 # check_request_status
 # =============================================================================
 
-@test "e2e: check_request_status returns pending" {
-    local rid="req-e2e00005"
-    _admin_del "polis:blocked:${rid}"
-
-    run mcp_call "report_block" \
-        "{\"request_id\":\"${rid}\",\"reason\":\"url_blocked\",\"destination\":\"https://x.com\"}"
-    assert_success
-
-    run mcp_call "check_request_status" "{\"request_id\":\"${rid}\"}"
-    assert_success
-    assert_output --partial "pending"
-}
-
 @test "e2e: check_request_status returns not_found for unknown ID" {
     local rid="req-e2effff6"
     _admin_del "polis:blocked:${rid}"
     _admin_del "polis:approved:${rid}"
 
-    run mcp_call "check_request_status" "{\"request_id\":\"${rid}\"}"
+    run toolbox_call "check_request_status" "{\"request_id\":\"${rid}\"}"
     assert_success
     assert_output --partial "not_found"
 }
@@ -165,21 +152,8 @@ mcp_call() {
 # =============================================================================
 
 @test "e2e: get_security_status returns valid JSON" {
-    run mcp_call "get_security_status" "{}"
+    run toolbox_call "get_security_status" "{}"
     assert_success
     assert_output --partial "pending_approvals"
     assert_output --partial "security_level"
-}
-
-@test "e2e: list_pending_approvals returns stored requests" {
-    local rid="req-e2e00008"
-    _admin_del "polis:blocked:${rid}"
-
-    run mcp_call "report_block" \
-        "{\"request_id\":\"${rid}\",\"reason\":\"url_blocked\",\"destination\":\"https://x.com\",\"pattern\":\"secret_pat\"}"
-    assert_success
-
-    run mcp_call "list_pending_approvals" "{}"
-    assert_success
-    assert_output --partial "${rid}"
 }

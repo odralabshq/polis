@@ -1,16 +1,16 @@
 #!/bin/bash
 # =============================================================================
-# polis-mcp-call: MCP JSON-RPC caller for polis-toolbox
+# polis-toolbox-call: JSON-RPC caller for the polis-toolbox HITL service
 # =============================================================================
 # Streamable HTTP protocol: initialize → notify → tools/call
 #
-# Usage: polis-mcp-call <tool_name> '<json_arguments>'
+# Usage: polis-toolbox-call <tool_name> '<json_arguments>'
 # =============================================================================
 set -euo pipefail
 
 # Toolbox runs HTTPS (TLS cert signed by Polis CA, trusted by workspace)
-MCP_URL="${POLIS_MCP_URL:-https://toolbox:8080/mcp}"
-TOOL_NAME="${1:?Usage: polis-mcp-call <tool_name> '<json_arguments>'}"
+MCP_URL="${POLIS_TOOLBOX_URL:-https://toolbox:8080/mcp}"
+TOOL_NAME="${1:?Usage: polis-toolbox-call <tool_name> '<json_arguments>'}"
 TOOL_ARGS="${2:-\{\}}"
 
 HDR_FILE=$(mktemp /tmp/mcp-hdr.XXXXXX)

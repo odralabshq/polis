@@ -338,7 +338,7 @@ CONFIGEOF
     POLIS_BIN_DIR="/home/polis/.local/bin"
     mkdir -p "$POLIS_BIN_DIR"
     if [[ -d "$POLIS_SCRIPTS_SRC" ]]; then
-        for script in polis-mcp-call.sh polis-report-block.sh polis-check-status.sh \
+        for script in polis-toolbox-call.sh polis-report-block.sh polis-check-status.sh \
                       polis-list-pending.sh polis-security-status.sh polis-security-log.sh; do
             if [[ -f "${POLIS_SCRIPTS_SRC}/${script}" ]]; then
                 cp "${POLIS_SCRIPTS_SRC}/${script}" "${POLIS_BIN_DIR}/${script}"
@@ -356,7 +356,7 @@ else
     POLIS_BIN_DIR="/home/polis/.local/bin"
     mkdir -p "$POLIS_BIN_DIR"
     if [[ -d "$POLIS_SCRIPTS_SRC" ]]; then
-        for script in polis-mcp-call.sh polis-report-block.sh polis-check-status.sh \
+        for script in polis-toolbox-call.sh polis-report-block.sh polis-check-status.sh \
                       polis-list-pending.sh polis-security-status.sh polis-security-log.sh; do
             if [[ -f "${POLIS_SCRIPTS_SRC}/${script}" ]]; then
                 cp "${POLIS_SCRIPTS_SRC}/${script}" "${POLIS_BIN_DIR}/${script}"

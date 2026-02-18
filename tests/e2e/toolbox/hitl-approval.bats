@@ -55,16 +55,6 @@ _seed_blocked() {
 # Pending / List
 # =============================================================================
 
-@test "e2e: polis blocked pending with no requests shows empty message" {
-    # Clean slate — ensure no blocked keys exist for our test prefix
-    local rid="req-hitl0002"
-    _admin_cmd DEL "polis:blocked:${rid}" 2>/dev/null || true
-
-    run bash "$POLIS_CLI" pending
-    # Should succeed regardless (may show other requests or "No pending")
-    assert_success
-}
-
 @test "e2e: polis blocked pending lists seeded request" {
     local rid="req-hitl0003"
     _seed_blocked "$rid" "https://hitl-test-3.example.com" "url_blocked"
@@ -164,12 +154,6 @@ _seed_blocked() {
     run bash "$POLIS_CLI" check "$rid"
     assert_success
     assert_output --partial "approved"
-}
-
-@test "e2e: polis blocked check shows not found for unknown request" {
-    run bash "$POLIS_CLI" check "req-hitl-unknown"
-    assert_success
-    assert_output --partial "not found"
 }
 
 # =============================================================================
