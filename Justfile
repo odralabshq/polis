@@ -123,8 +123,11 @@ dev-delete:
 
 # ── Lifecycle ───────────────────────────────────────────────────────
 up:
+    #!/usr/bin/env bash
+    set -euo pipefail
     docker compose down --remove-orphans 2>/dev/null || true
     sudo systemctl restart sysbox 2>/dev/null || true
+    timeout 15 bash -c 'until sudo systemctl is-active sysbox &>/dev/null; do sleep 1; done' || true
     ./cli/polis.sh up
 
 down:
