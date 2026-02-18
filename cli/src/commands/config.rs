@@ -143,7 +143,12 @@ fn set_config(ctx: &OutputContext, key: &str, value: &str) -> Result<()> {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn get_config_path() -> Result<PathBuf> {
+/// Get the config file path, respecting `POLIS_CONFIG` env var.
+///
+/// # Errors
+///
+/// Returns an error if the home directory cannot be determined.
+pub fn get_config_path() -> Result<PathBuf> {
     if let Ok(val) = std::env::var("POLIS_CONFIG") {
         return Ok(PathBuf::from(val));
     }
@@ -152,7 +157,12 @@ fn get_config_path() -> Result<PathBuf> {
     Ok(home.join(".polis").join("config.yaml"))
 }
 
-fn load_config(path: &Path) -> Result<PolisConfig> {
+/// Load config from the given path, returning defaults if file doesn't exist.
+///
+/// # Errors
+///
+/// Returns an error if the file exists but cannot be read or parsed.
+pub fn load_config(path: &Path) -> Result<PolisConfig> {
     if !path.exists() {
         return Ok(PolisConfig::default());
     }

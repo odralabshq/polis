@@ -12,10 +12,8 @@ mod tests {
     #[test]
     fn test_styles_default_has_no_colors() {
         let styles = Styles::default();
-        // Default styles should not apply any formatting
         let text = "test";
         let styled = text.style(styles.success);
-        // When no color is applied, styled output equals input
         assert_eq!(format!("{styled}"), text);
     }
 
@@ -23,10 +21,7 @@ mod tests {
     fn test_styles_colorize_applies_colors() {
         let mut styles = Styles::default();
         styles.colorize();
-        // After colorize, styles should have color codes
-        let text = "test";
-        let styled = format!("{}", text.style(styles.success));
-        // Green text should contain ANSI escape codes
+        let styled = format!("{}", "test".style(styles.success));
         assert!(styled.contains("\x1b["), "should contain ANSI escape code");
         assert!(styled.contains("32"), "should contain green color code");
     }
@@ -35,27 +30,22 @@ mod tests {
     fn test_styles_colorize_sets_all_styles() {
         let mut styles = Styles::default();
         styles.colorize();
-
-        // Verify each style produces different output
         let text = "x";
         let success = format!("{}", text.style(styles.success));
         let warning = format!("{}", text.style(styles.warning));
         let error = format!("{}", text.style(styles.error));
         let info = format!("{}", text.style(styles.info));
-
         assert_ne!(success, warning);
         assert_ne!(warning, error);
         assert_ne!(error, info);
     }
 
-    // --- OutputContext tests ---
+    // --- OutputContext construction tests ---
 
     #[test]
     fn test_output_context_no_color_flag_disables_colors() {
         let ctx = OutputContext::new(true, false);
-        let text = "test";
-        let styled = format!("{}", text.style(ctx.styles.success));
-        // With no_color=true, should not contain escape codes
+        let styled = format!("{}", "test".style(ctx.styles.success));
         assert!(!styled.contains("\x1b["), "should not contain ANSI codes when no_color=true");
     }
 
@@ -66,20 +56,118 @@ mod tests {
     }
 
     #[test]
+    fn test_output_context_not_quiet_by_default() {
+        let ctx = OutputContext::new(false, false);
+        assert!(!ctx.quiet);
+    }
+
+    #[test]
     fn test_output_context_show_progress_false_when_quiet() {
         let ctx = OutputContext::new(false, true);
-        // When quiet, show_progress should be false regardless of TTY
         assert!(!ctx.show_progress() || !ctx.quiet);
     }
 
     #[test]
     fn test_output_context_show_progress_false_when_not_tty() {
-        // In test environment, stdout is typically not a TTY
         let ctx = OutputContext::new(false, false);
-        // show_progress depends on is_tty
         if !ctx.is_tty {
             assert!(!ctx.show_progress());
         }
+    }
+
+    // --- Helper method smoke tests (no_color=true avoids ANSI in test output) ---
+
+    #[test]
+    fn test_success_does_not_panic_when_not_quiet() {
+        let ctx = OutputContext::new(true, false);
+        ctx.success("workspace ready");
+    }
+
+    #[test]
+    fn test_success_does_not_panic_when_quiet() {
+        let ctx = OutputContext::new(true, true);
+        ctx.success("workspace ready");
+    }
+
+    #[test]
+    fn test_warn_does_not_panic_when_not_quiet() {
+        let ctx = OutputContext::new(true, false);
+        ctx.warn("certificate expiring soon");
+    }
+
+    #[test]
+    fn test_warn_does_not_panic_when_quiet() {
+        let ctx = OutputContext::new(true, true);
+        ctx.warn("certificate expiring soon");
+    }
+
+    #[test]
+    fn test_error_does_not_panic_when_not_quiet() {
+        let ctx = OutputContext::new(true, false);
+        ctx.error("connection refused");
+    }
+
+    #[test]
+    fn test_error_does_not_panic_when_quiet() {
+        // error() is never suppressed — must not panic even when quiet=true
+        let ctx = OutputContext::new(true, true);
+        ctx.error("connection refused");
+    }
+
+    #[test]
+    fn test_info_does_not_panic_when_not_quiet() {
+        let ctx = OutputContext::new(true, false);
+        ctx.info("checking network");
+    }
+
+    #[test]
+    fn test_info_does_not_panic_when_quiet() {
+        let ctx = OutputContext::new(true, true);
+        ctx.info("checking network");
+    }
+
+    #[test]
+    fn test_header_does_not_panic_when_not_quiet() {
+        let ctx = OutputContext::new(true, false);
+        ctx.header("Polis Health Check");
+    }
+
+    #[test]
+    fn test_header_does_not_panic_when_quiet() {
+        let ctx = OutputContext::new(true, true);
+        ctx.header("Polis Health Check");
+    }
+
+    #[test]
+    fn test_kv_does_not_panic_when_not_quiet() {
+        let ctx = OutputContext::new(true, false);
+        ctx.kv("agent", "openclaw");
+    }
+
+    #[test]
+    fn test_kv_does_not_panic_when_quiet() {
+        let ctx = OutputContext::new(true, true);
+        ctx.kv("agent", "openclaw");
+    }
+
+    #[test]
+    fn test_kv_does_not_panic_with_empty_value() {
+        let ctx = OutputContext::new(true, false);
+        ctx.kv("status", "");
+    }
+
+    // --- Quiet flag is the only suppression gate ---
+
+    #[test]
+    fn test_quiet_field_true_when_constructed_quiet() {
+        let ctx = OutputContext::new(false, true);
+        assert!(ctx.quiet, "quiet flag must be stored");
+    }
+
+    #[test]
+    fn test_quiet_field_false_when_constructed_not_quiet() {
+        let ctx = OutputContext::new(false, false);
+        assert!(!ctx.quiet, "quiet flag must be stored as false");
     }
 
     // --- Progress helpers tests ---
@@ -87,14 +175,12 @@ mod tests {
     #[test]
     fn test_spinner_creates_progress_bar() {
         let pb = progress::spinner("Loading...");
-        // Spinner should be created without panic
         pb.finish();
     }
 
     #[test]
     fn test_bar_creates_progress_bar() {
         let pb = progress::bar(100, "Downloading");
-        // Bar should be created without panic
         assert_eq!(pb.length(), Some(100));
         pb.finish();
     }
@@ -113,21 +199,11 @@ mod tests {
         assert!(pb.is_finished());
     }
 
-    // --- NO_COLOR environment tests ---
-
     #[test]
     fn test_no_color_env_disables_colors() {
-        // This test checks the logic - when NO_COLOR is set, colors should be disabled
-        // We test the OutputContext behavior with no_color=true flag instead of env var
-        // since env var manipulation is unsafe in Rust 2024
-        let ctx = OutputContext::new(true, false); // no_color=true simulates NO_COLOR env
-        let text = "test";
-        let styled = format!("{}", text.style(ctx.styles.success));
-        // Should not have ANSI codes
-        assert!(
-            !styled.contains("\x1b["),
-            "NO_COLOR should disable colors"
-        );
+        let ctx = OutputContext::new(true, false);
+        let styled = format!("{}", "test".style(ctx.styles.success));
+        assert!(!styled.contains("\x1b["), "NO_COLOR should disable colors");
     }
 }
 
@@ -154,7 +230,6 @@ mod proptests {
         fn prop_colorize_produces_distinct_styles(_seed in 0u32..100) {
             let mut styles = Styles::default();
             styles.colorize();
-            
             let text = "x";
             let outputs: Vec<String> = vec![
                 format!("{}", text.style(styles.success)),
@@ -162,10 +237,8 @@ mod proptests {
                 format!("{}", text.style(styles.error)),
                 format!("{}", text.style(styles.info)),
             ];
-            
-            // All colored outputs should be different
             for i in 0..outputs.len() {
-                for j in (i+1)..outputs.len() {
+                for j in (i + 1)..outputs.len() {
                     prop_assert_ne!(&outputs[i], &outputs[j], "styles should be distinct");
                 }
             }
@@ -184,6 +257,59 @@ mod proptests {
             let pb = progress::bar(len, "test");
             prop_assert_eq!(pb.length(), Some(len));
             pb.finish();
+        }
+
+        /// Helper methods do not panic with any printable message
+        #[test]
+        fn prop_helper_methods_do_not_panic(msg in "[a-zA-Z0-9 .,!?_-]{0,100}") {
+            let ctx = OutputContext::new(true, false);
+            ctx.success(&msg);
+            ctx.warn(&msg);
+            ctx.error(&msg);
+            ctx.info(&msg);
+            ctx.header(&msg);
+            ctx.kv("key", &msg);
+            ctx.kv(&msg, "value");
+        }
+
+        /// Helper methods do not panic when quiet=true
+        #[test]
+        fn prop_helper_methods_do_not_panic_when_quiet(msg in "[a-zA-Z0-9 .,!?_-]{0,100}") {
+            let ctx = OutputContext::new(true, true);
+            ctx.success(&msg);
+            ctx.warn(&msg);
+            ctx.error(&msg);
+            ctx.info(&msg);
+            ctx.header(&msg);
+            ctx.kv("key", &msg);
+        }
+
+        /// quiet flag is stored exactly as passed
+        #[test]
+        fn prop_quiet_flag_stored_correctly(quiet in proptest::bool::ANY) {
+            let ctx = OutputContext::new(true, quiet);
+            prop_assert_eq!(ctx.quiet, quiet);
+        }
+
+        /// no_color=true always produces plain text (no ANSI) for all styles
+        #[test]
+        fn prop_no_color_plain_for_all_styles(text in "[a-zA-Z0-9]{1,30}") {
+            let mut styles = Styles::default();
+            // no_color=true means colorize() is never called — styles stay default
+            for styled in [
+                format!("{}", text.style(styles.success)),
+                format!("{}", text.style(styles.warning)),
+                format!("{}", text.style(styles.error)),
+                format!("{}", text.style(styles.info)),
+                format!("{}", text.style(styles.header)),
+                format!("{}", text.style(styles.dim)),
+            ] {
+                prop_assert!(!styled.contains("\x1b["), "no_color should produce plain text");
+            }
+            // Verify colorize() does add ANSI
+            styles.colorize();
+            let colored = format!("{}", text.style(styles.success));
+            prop_assert!(colored.contains("\x1b["), "colorize should add ANSI codes");
         }
     }
 }

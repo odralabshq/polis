@@ -87,25 +87,6 @@ fn test_status_json_schema_has_security() {
     );
 }
 
-/// EARS: WHEN `polis status --json` is run THEN output contains `metrics` object.
-#[test]
-fn test_status_json_schema_has_metrics() {
-    let output = polis()
-        .args(["status", "--json"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-
-    let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
-    assert!(v["metrics"].is_object(), "status JSON must have a 'metrics' object");
-    assert!(
-        v["metrics"]["requests_inspected"].is_number(),
-        "metrics.requests_inspected must be a number"
-    );
-}
-
 /// EARS: WHEN `polis status --json` is run THEN output contains `events` object.
 #[test]
 fn test_status_json_schema_has_events() {

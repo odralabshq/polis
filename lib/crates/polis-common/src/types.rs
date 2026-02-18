@@ -253,20 +253,15 @@ pub struct ActivityEvent {
     pub detail: Option<String>,
 }
 
-/// Snapshot of metrics counters from Valkey.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct MetricsSnapshot {
-    /// Start of the current metrics window (ISO 8601)
-    #[serde(default = "Utc::now")]
-    pub window_start: DateTime<Utc>,
-    /// Total requests inspected in window
-    pub requests_inspected: u64,
-    /// Requests blocked due to credential detection
-    pub blocked_credentials: u64,
-    /// Requests blocked due to malware detection
-    pub blocked_malware: u64,
+/// Complete status output for `polis status --json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusOutput {
+    pub workspace: WorkspaceStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentStatus>,
+    pub security: SecurityStatus,
+    pub events: SecurityEvents,
 }
-
 /// Workspace state enum.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -335,17 +330,6 @@ pub struct SecurityEvents {
     pub count: u32,
     /// Highest severity level
     pub severity: EventSeverity,
-}
-
-/// Complete status output for `polis status --json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatusOutput {
-    pub workspace: WorkspaceStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<AgentStatus>,
-    pub security: SecurityStatus,
-    pub metrics: MetricsSnapshot,
-    pub events: SecurityEvents,
 }
 
 /// Persisted run state for checkpoint/resume.
@@ -671,7 +655,6 @@ mod tests {
                 credential_protection: true,
                 malware_scanning: true,
             },
-            metrics: MetricsSnapshot::default(),
             events: SecurityEvents {
                 count: 0,
                 severity: EventSeverity::None,
@@ -800,26 +783,6 @@ mod proptests {
             let json = serde_json::to_string(&state).expect("serialize");
             let back: WorkspaceState = serde_json::from_str(&json).expect("deserialize");
             prop_assert_eq!(state, back);
-        }
-
-        /// MetricsSnapshot counters are preserved through serde
-        #[test]
-        fn prop_metrics_snapshot_serde_roundtrip(
-            inspected in 0u64..1_000_000,
-            creds in 0u64..1_000_000,
-            malware in 0u64..1_000_000,
-        ) {
-            let snap = MetricsSnapshot {
-                window_start: Utc::now(),
-                requests_inspected: inspected,
-                blocked_credentials: creds,
-                blocked_malware: malware,
-            };
-            let json = serde_json::to_string(&snap).expect("serialize");
-            let back: MetricsSnapshot = serde_json::from_str(&json).expect("deserialize");
-            prop_assert_eq!(snap.requests_inspected, back.requests_inspected);
-            prop_assert_eq!(snap.blocked_credentials, back.blocked_credentials);
-            prop_assert_eq!(snap.blocked_malware, back.blocked_malware);
         }
 
         /// RunState serde round-trip preserves all fields

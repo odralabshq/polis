@@ -1,12 +1,13 @@
 //! Output formatting module
 
-#![allow(dead_code)] // Module not yet integrated into CLI commands
+#![allow(dead_code)] // Helper methods not yet adopted by all commands
 
 pub mod json;
 pub mod progress;
 pub mod styles;
 
 use console::Term;
+use owo_colors::OwoColorize as _;
 pub use styles::Styles;
 
 /// Output context carrying styling and terminal state.
@@ -43,7 +44,48 @@ impl OutputContext {
     pub fn show_progress(&self) -> bool {
         self.is_tty && !self.quiet
     }
+
+    /// Print a success message prefixed with `✓`. Suppressed when `quiet`.
+    pub fn success(&self, msg: &str) {
+        if !self.quiet {
+            println!("  {} {msg}", "✓".style(self.styles.success));
+        }
+    }
+
+    /// Print a warning message prefixed with `⚠`. Suppressed when `quiet`.
+    pub fn warn(&self, msg: &str) {
+        if !self.quiet {
+            println!("  {} {msg}", "⚠".style(self.styles.warning));
+        }
+    }
+
+    /// Print an error message prefixed with `✗` to stderr. Never suppressed.
+    pub fn error(&self, msg: &str) {
+        eprintln!("  {} {msg}", "✗".style(self.styles.error));
+    }
+
+    /// Print an info message prefixed with `ℹ`. Suppressed when `quiet`.
+    pub fn info(&self, msg: &str) {
+        if !self.quiet {
+            println!("  {} {msg}", "ℹ".style(self.styles.info));
+        }
+    }
+
+    /// Print a section header. Suppressed when `quiet`.
+    pub fn header(&self, msg: &str) {
+        if !self.quiet {
+            println!("  {}", msg.style(self.styles.header));
+        }
+    }
+
+    /// Print a key-value pair with the key dimmed. Suppressed when `quiet`.
+    pub fn kv(&self, key: &str, value: &str) {
+        if !self.quiet {
+            println!("  {}  {value}", key.style(self.styles.dim));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests;
+

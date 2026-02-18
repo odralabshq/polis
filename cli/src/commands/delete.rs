@@ -44,6 +44,7 @@ fn delete_workspace(state_mgr: &StateManager, driver: &dyn WorkspaceDriver) -> R
     println!();
 
     if !confirm("Continue?")? {
+        println!("Cancelled.");
         return Ok(());
     }
 
@@ -69,6 +70,7 @@ fn delete_all(state_mgr: &StateManager, driver: &dyn WorkspaceDriver) -> Result<
     println!();
 
     if !confirm("Continue?")? {
+        println!("Cancelled.");
         return Ok(());
     }
 

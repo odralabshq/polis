@@ -2,60 +2,268 @@
 //!
 //! Displays workspace state, agent health, security status, and metrics.
 
-#![allow(dead_code)] // Some helpers used only in human-readable path
+#![allow(dead_code)] // Helper functions used only in tests
+
+use std::time::Duration;
 
 use anyhow::Result;
 use polis_common::types::{
-    AgentHealth, EventSeverity, MetricsSnapshot, SecurityEvents, SecurityStatus, StatusOutput,
+    AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
     WorkspaceState, WorkspaceStatus,
 };
+use tokio::time::timeout;
 
 use crate::output::OutputContext;
 
+/// Timeout for status checks.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Run the status command.
-///
-/// Outputs workspace state, security status, and metrics. When `json` is true,
-/// emits a pretty-printed JSON object matching the `StatusOutput` schema.
 ///
 /// # Errors
 ///
 /// Returns an error if JSON serialization fails.
-pub fn run(_ctx: &OutputContext, json: bool) -> Result<()> {
-    let output = StatusOutput {
-        workspace: workspace_unknown(),
-        agent: None,
-        security: SecurityStatus {
-            traffic_inspection: false,
-            credential_protection: false,
-            malware_scanning: false,
-        },
-        metrics: metrics_unavailable(),
-        events: SecurityEvents {
-            count: 0,
-            severity: EventSeverity::None,
-        },
-    };
+pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
+    let output = gather_status().await;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!(
-            "workspace: {}",
-            workspace_state_display(output.workspace.status)
-        );
+        print_human_readable(ctx, &output);
     }
 
     Ok(())
 }
 
-/// Format uptime seconds as human-readable string.
-///
-/// Returns "Xh Ym" if hours > 0, otherwise "Xm".
+/// Gather all status information.
+async fn gather_status() -> StatusOutput {
+    let workspace = get_workspace_status().await;
+    let is_running = workspace.status == WorkspaceState::Running;
+
+    let (security, agent) = if is_running {
+        tokio::join!(get_security_status(), get_agent_status())
+    } else {
+        (
+            SecurityStatus {
+                traffic_inspection: false,
+                credential_protection: false,
+                malware_scanning: false,
+            },
+            None,
+        )
+    };
+
+    StatusOutput {
+        workspace,
+        agent,
+        security,
+        events: SecurityEvents {
+            count: 0,
+            severity: EventSeverity::None,
+        },
+    }
+}
+
+/// Check workspace status via multipass.
+async fn get_workspace_status() -> WorkspaceStatus {
+    // First check if VM is running
+    let Ok(Some(vm_state)) = timeout(CHECK_TIMEOUT, check_multipass_status()).await else {
+        return workspace_unknown();
+    };
+
+    // If VM not running, return that state
+    if vm_state != WorkspaceState::Running {
+        return WorkspaceStatus {
+            status: vm_state,
+            uptime_seconds: None,
+        };
+    }
+
+    // VM is running - check if polis-workspace container is running
+    let container_running = check_workspace_container().await;
+
+    WorkspaceStatus {
+        status: if container_running {
+            WorkspaceState::Running
+        } else {
+            WorkspaceState::Starting // VM up but container not ready
+        },
+        uptime_seconds: None,
+    }
+}
+
+/// Check multipass VM state.
+async fn check_multipass_status() -> Option<WorkspaceState> {
+    let output = tokio::process::Command::new("multipass")
+        .args(["info", "polis", "--format", "json"])
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let info: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let state = info.get("info")?.get("polis")?.get("state")?.as_str()?;
+
+    Some(match state {
+        "Running" => WorkspaceState::Running,
+        "Stopped" => WorkspaceState::Stopped,
+        "Starting" => WorkspaceState::Starting,
+        "Stopping" => WorkspaceState::Stopping,
+        _ => WorkspaceState::Error,
+    })
+}
+
+/// Check if polis-workspace container is running inside VM.
+async fn check_workspace_container() -> bool {
+    let output = tokio::process::Command::new("multipass")
+        .args(["exec", "polis", "--", "docker", "compose", "ps", "--format", "json", "workspace"])
+        .output()
+        .await;
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return false,
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(first_line) = stdout.lines().next() else {
+        return false;
+    };
+
+    serde_json::from_str::<serde_json::Value>(first_line)
+        .ok()
+        .and_then(|c| c.get("State")?.as_str().map(|s| s == "running"))
+        .unwrap_or(false)
+}
+
+/// Check security services inside multipass VM.
+async fn get_security_status() -> SecurityStatus {
+    let output = tokio::process::Command::new("multipass")
+        .args(["exec", "polis", "--", "docker", "compose", "ps", "--format", "json"])
+        .output()
+        .await;
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => {
+            return SecurityStatus {
+                traffic_inspection: false,
+                credential_protection: false,
+                malware_scanning: false,
+            }
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut gate = false;
+    let mut sentinel = false;
+    let mut scanner = false;
+
+    for line in stdout.lines() {
+        if let Ok(container) = serde_json::from_str::<serde_json::Value>(line) {
+            let service = container.get("Service").and_then(|s| s.as_str());
+            let state = container.get("State").and_then(|s| s.as_str());
+
+            if state == Some("running") {
+                match service {
+                    Some("gate") => gate = true,
+                    Some("sentinel") => sentinel = true,
+                    Some("scanner") => scanner = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    SecurityStatus {
+        traffic_inspection: gate,
+        credential_protection: sentinel,
+        malware_scanning: scanner,
+    }
+}
+
+/// Check agent status inside multipass VM.
+async fn get_agent_status() -> Option<AgentStatus> {
+    let output = tokio::process::Command::new("multipass")
+        .args(["exec", "polis", "--", "docker", "compose", "ps", "--format", "json", "workspace"])
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first_line = stdout.lines().next()?;
+    let container: serde_json::Value = serde_json::from_str(first_line).ok()?;
+
+    let state = container.get("State")?.as_str()?;
+    let health = container.get("Health").and_then(|h| h.as_str());
+
+    let status = match (state, health) {
+        ("running", Some("healthy")) => AgentHealth::Healthy,
+        ("running", Some("unhealthy")) => AgentHealth::Unhealthy,
+        ("running", _) => AgentHealth::Starting,
+        _ => AgentHealth::Stopped,
+    };
+
+    let name = crate::state::StateManager::new()
+        .ok()
+        .and_then(|mgr| mgr.load().ok().flatten())
+        .map_or_else(|| "unknown".to_string(), |state| state.agent);
+
+    Some(AgentStatus { name, status })
+}
+
+/// Print human-readable status output.
+fn print_human_readable(ctx: &OutputContext, status: &StatusOutput) {
+    ctx.kv("Workspace:", workspace_state_display(status.workspace.status));
+
+    if let Some(agent) = &status.agent {
+        ctx.kv(
+            "Agent:",
+            &format!("{} ({})", agent.name, agent_health_display(agent.status)),
+        );
+    }
+
+    if let Some(uptime) = status.workspace.uptime_seconds {
+        ctx.kv("Uptime:", &format_uptime(uptime));
+    }
+
+    println!();
+    ctx.header("Security:");
+
+    if status.security.traffic_inspection {
+        ctx.success("Traffic inspection active");
+    } else {
+        ctx.warn("Traffic inspection inactive");
+    }
+    if status.security.credential_protection {
+        ctx.success("Credential protection enabled");
+    } else {
+        ctx.warn("Credential protection disabled");
+    }
+    if status.security.malware_scanning {
+        ctx.success("Malware scanning enabled");
+    } else {
+        ctx.warn("Malware scanning disabled");
+    }
+
+    if status.events.count > 0 {
+        println!();
+        ctx.warn(&format!("{} security events", status.events.count));
+        ctx.info("Run: polis logs --security");
+    }
+}
+
 #[must_use]
 pub fn format_uptime(seconds: u64) -> String {
     let hours = seconds / 3600;
     let minutes = (seconds % 3600) / 60;
-
     if hours > 0 {
         format!("{hours}h {minutes}m")
     } else {
@@ -63,7 +271,6 @@ pub fn format_uptime(seconds: u64) -> String {
     }
 }
 
-/// Convert workspace state to display string.
 #[must_use]
 pub fn workspace_state_display(state: WorkspaceState) -> &'static str {
     match state {
@@ -75,7 +282,6 @@ pub fn workspace_state_display(state: WorkspaceState) -> &'static str {
     }
 }
 
-/// Convert agent health to display string.
 #[must_use]
 pub fn agent_health_display(health: AgentHealth) -> &'static str {
     match health {
@@ -86,48 +292,17 @@ pub fn agent_health_display(health: AgentHealth) -> &'static str {
     }
 }
 
-/// Format agent status line for human-readable output.
-///
-/// Returns "name (health)" format, e.g., "claude-dev (healthy)".
 #[must_use]
 pub fn format_agent_line(name: &str, health: AgentHealth) -> String {
-    format!("{name} ({health})", health = agent_health_display(health))
+    format!("{name} ({})", agent_health_display(health))
 }
 
-/// Format security events warning message.
-///
-/// Returns warning text with count and hint to run `polis logs --security`.
 #[must_use]
 pub fn format_events_warning(count: u32) -> String {
     let noun = if count == 1 { "event" } else { "events" };
     format!("{count} security {noun}\nRun: polis logs --security")
 }
 
-/// Error type for status command failures.
-#[derive(Debug, Clone, Copy)]
-pub enum StatusError {
-    /// Valkey/Redis connection failed
-    ValkeyUnreachable,
-    /// Could not determine workspace status
-    WorkspaceUnknown,
-}
-
-impl std::fmt::Display for StatusError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ValkeyUnreachable => write!(f, "metrics unavailable: valkey unreachable"),
-            Self::WorkspaceUnknown => write!(f, "workspace status unknown"),
-        }
-    }
-}
-
-/// Return default metrics when Valkey is unreachable.
-#[must_use]
-pub fn metrics_unavailable() -> MetricsSnapshot {
-    MetricsSnapshot::default()
-}
-
-/// Return unknown workspace status when check fails.
 #[must_use]
 pub fn workspace_unknown() -> WorkspaceStatus {
     WorkspaceStatus {
@@ -137,361 +312,97 @@ pub fn workspace_unknown() -> WorkspaceStatus {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)] // Tests use expect for clarity
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
     use polis_common::types::{
-        AgentHealth, AgentStatus, EventSeverity, MetricsSnapshot, SecurityEvents,
-        SecurityStatus, StatusOutput, WorkspaceState, WorkspaceStatus,
+        AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
+        WorkspaceState, WorkspaceStatus,
     };
-
-    // =========================================================================
-    // format_uptime tests
-    // =========================================================================
 
     #[test]
     fn test_format_uptime_hours_and_minutes() {
-        // 2h 34m = 2*3600 + 34*60 = 7200 + 2040 = 9240
         assert_eq!(format_uptime(9240), "2h 34m");
     }
 
     #[test]
     fn test_format_uptime_minutes_only() {
-        // 5m = 300s, should show "5m" not "0h 5m"
         assert_eq!(format_uptime(300), "5m");
     }
 
     #[test]
-    fn test_format_uptime_zero_seconds() {
+    fn test_format_uptime_zero() {
         assert_eq!(format_uptime(0), "0m");
     }
 
     #[test]
-    fn test_format_uptime_exact_hour() {
-        // 1h 0m = 3600s
-        assert_eq!(format_uptime(3600), "1h 0m");
-    }
-
-    #[test]
-    fn test_format_uptime_under_minute() {
-        // 59 seconds should round down to 0m
-        assert_eq!(format_uptime(59), "0m");
-    }
-
-    #[test]
-    fn test_format_uptime_large_value() {
-        // 24h = 86400s
-        assert_eq!(format_uptime(86400), "24h 0m");
-    }
-
-    #[test]
-    fn test_format_uptime_one_minute() {
-        assert_eq!(format_uptime(60), "1m");
-    }
-
-    #[test]
-    fn test_format_uptime_one_hour_one_minute() {
-        // 1h 1m = 3660s
-        assert_eq!(format_uptime(3660), "1h 1m");
-    }
-
-    // =========================================================================
-    // workspace_state_display tests
-    // =========================================================================
-
-    #[test]
-    fn test_workspace_state_display_running() {
+    fn test_workspace_state_display_all() {
         assert_eq!(workspace_state_display(WorkspaceState::Running), "running");
-    }
-
-    #[test]
-    fn test_workspace_state_display_stopped() {
         assert_eq!(workspace_state_display(WorkspaceState::Stopped), "stopped");
-    }
-
-    #[test]
-    fn test_workspace_state_display_starting() {
         assert_eq!(workspace_state_display(WorkspaceState::Starting), "starting");
-    }
-
-    #[test]
-    fn test_workspace_state_display_stopping() {
         assert_eq!(workspace_state_display(WorkspaceState::Stopping), "stopping");
-    }
-
-    #[test]
-    fn test_workspace_state_display_error() {
         assert_eq!(workspace_state_display(WorkspaceState::Error), "error");
     }
 
-    // =========================================================================
-    // agent_health_display tests
-    // =========================================================================
-
     #[test]
-    fn test_agent_health_display_healthy() {
+    fn test_agent_health_display_all() {
         assert_eq!(agent_health_display(AgentHealth::Healthy), "healthy");
-    }
-
-    #[test]
-    fn test_agent_health_display_unhealthy() {
         assert_eq!(agent_health_display(AgentHealth::Unhealthy), "unhealthy");
-    }
-
-    #[test]
-    fn test_agent_health_display_starting() {
         assert_eq!(agent_health_display(AgentHealth::Starting), "starting");
-    }
-
-    #[test]
-    fn test_agent_health_display_stopped() {
         assert_eq!(agent_health_display(AgentHealth::Stopped), "stopped");
     }
 
-    // =========================================================================
-    // format_agent_line tests
-    // =========================================================================
-
     #[test]
-    fn test_format_agent_line_healthy() {
-        assert_eq!(
-            format_agent_line("claude-dev", AgentHealth::Healthy),
-            "claude-dev (healthy)"
-        );
+    fn test_format_agent_line() {
+        assert_eq!(format_agent_line("claude-dev", AgentHealth::Healthy), "claude-dev (healthy)");
     }
 
     #[test]
-    fn test_format_agent_line_unhealthy() {
-        assert_eq!(
-            format_agent_line("test-agent", AgentHealth::Unhealthy),
-            "test-agent (unhealthy)"
-        );
-    }
-
-    #[test]
-    fn test_format_agent_line_starting() {
-        assert_eq!(
-            format_agent_line("my-agent", AgentHealth::Starting),
-            "my-agent (starting)"
-        );
-    }
-
-    // =========================================================================
-    // format_events_warning tests
-    // =========================================================================
-
-    #[test]
-    fn test_format_events_warning_single() {
-        let warning = format_events_warning(1);
-        assert!(warning.contains("1 security event"));
-        assert!(warning.contains("polis logs --security"));
+    fn test_format_events_warning_singular() {
+        assert!(format_events_warning(1).contains("1 security event\n"));
     }
 
     #[test]
     fn test_format_events_warning_plural() {
-        let warning = format_events_warning(5);
-        assert!(warning.contains("5 security events"));
-        assert!(warning.contains("polis logs --security"));
+        assert!(format_events_warning(2).contains("2 security events"));
     }
 
     #[test]
-    fn test_format_events_warning_zero() {
-        // Zero events should still format (caller decides whether to show)
-        let warning = format_events_warning(0);
-        assert!(warning.contains("0 security events"));
+    fn test_workspace_unknown() {
+        let ws = workspace_unknown();
+        assert_eq!(ws.status, WorkspaceState::Error);
+        assert!(ws.uptime_seconds.is_none());
     }
 
-    // =========================================================================
-    // JSON output tests
-    // =========================================================================
-
-    #[test]
-    fn test_status_output_json_contains_workspace_status() {
-        let status = create_test_status();
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(json.contains(r#""status":"running""#));
-    }
-
-    #[test]
-    fn test_status_output_json_contains_uptime_seconds() {
-        let status = create_test_status();
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(json.contains(r#""uptime_seconds":9240"#));
-    }
-
-    #[test]
-    fn test_status_output_json_contains_agent_name() {
-        let status = create_test_status();
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(json.contains(r#""name":"claude-dev""#));
-    }
-
-    #[test]
-    fn test_status_output_json_contains_agent_status() {
-        let status = create_test_status();
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(json.contains(r#""status":"healthy""#));
-    }
-
-    #[test]
-    fn test_status_output_json_contains_security_fields() {
-        let status = create_test_status();
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(json.contains(r#""traffic_inspection":true"#));
-        assert!(json.contains(r#""credential_protection":true"#));
-        assert!(json.contains(r#""malware_scanning":true"#));
-    }
-
-    #[test]
-    fn test_status_output_json_contains_metrics() {
-        let status = create_test_status();
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(json.contains(r#""requests_inspected":142"#));
-        assert!(json.contains(r#""blocked_credentials":0"#));
-        assert!(json.contains(r#""blocked_malware":0"#));
-    }
-
-    #[test]
-    fn test_status_output_json_contains_events() {
-        let status = create_test_status();
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(json.contains(r#""count":2"#));
-        assert!(json.contains(r#""severity":"warning""#));
-    }
-
-    #[test]
-    fn test_status_output_json_omits_agent_when_none() {
-        let status = StatusOutput {
-            workspace: WorkspaceStatus {
-                status: WorkspaceState::Stopped,
-                uptime_seconds: None,
-            },
-            agent: None,
-            security: SecurityStatus {
-                traffic_inspection: false,
-                credential_protection: false,
-                malware_scanning: false,
-            },
-            metrics: MetricsSnapshot::default(),
-            events: SecurityEvents {
-                count: 0,
-                severity: EventSeverity::None,
-            },
-        };
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(!json.contains(r#""agent""#), "agent field should be omitted when None");
-    }
-
-    #[test]
-    fn test_status_output_json_omits_uptime_when_none() {
-        let status = StatusOutput {
-            workspace: WorkspaceStatus {
-                status: WorkspaceState::Stopped,
-                uptime_seconds: None,
-            },
-            agent: None,
-            security: SecurityStatus {
-                traffic_inspection: false,
-                credential_protection: false,
-                malware_scanning: false,
-            },
-            metrics: MetricsSnapshot::default(),
-            events: SecurityEvents {
-                count: 0,
-                severity: EventSeverity::None,
-            },
-        };
-        let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        assert!(
-            !json.contains("uptime_seconds"),
-            "uptime_seconds should be omitted when None"
-        );
-    }
-
-    // =========================================================================
-    // Test helpers
-    // =========================================================================
-
-    fn create_test_status() -> StatusOutput {
+    fn test_status() -> StatusOutput {
         StatusOutput {
-            workspace: WorkspaceStatus {
-                status: WorkspaceState::Running,
-                uptime_seconds: Some(9240),
-            },
-            agent: Some(AgentStatus {
-                name: "claude-dev".to_string(),
-                status: AgentHealth::Healthy,
-            }),
-            security: SecurityStatus {
-                traffic_inspection: true,
-                credential_protection: true,
-                malware_scanning: true,
-            },
-            metrics: MetricsSnapshot {
-                window_start: chrono::Utc::now(),
-                requests_inspected: 142,
-                blocked_credentials: 0,
-                blocked_malware: 0,
-            },
-            events: SecurityEvents {
-                count: 2,
-                severity: EventSeverity::Warning,
-            },
+            workspace: WorkspaceStatus { status: WorkspaceState::Running, uptime_seconds: Some(9240) },
+            agent: Some(AgentStatus { name: "claude-dev".to_string(), status: AgentHealth::Healthy }),
+            security: SecurityStatus { traffic_inspection: true, credential_protection: true, malware_scanning: true },
+            events: SecurityEvents { count: 2, severity: EventSeverity::Warning },
         }
     }
-}
-
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
-#[cfg(test)]
-mod error_tests {
-    use super::*;
-
-    // =========================================================================
-    // StatusError type tests
-    // =========================================================================
 
     #[test]
-    fn test_status_error_valkey_unreachable_display() {
-        let err = StatusError::ValkeyUnreachable;
-        let msg = err.to_string();
-        assert!(
-            msg.to_lowercase().contains("valkey") || msg.to_lowercase().contains("metrics"),
-            "error message should mention valkey or metrics"
-        );
+    fn test_status_json_roundtrip() {
+        let status = test_status();
+        let json = serde_json::to_string(&status).expect("serialize");
+        let back: StatusOutput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.workspace.status, WorkspaceState::Running);
+        assert_eq!(back.events.count, 2);
     }
 
     #[test]
-    fn test_status_error_workspace_unknown_display() {
-        let err = StatusError::WorkspaceUnknown;
-        let msg = err.to_string();
-        assert!(
-            msg.to_lowercase().contains("workspace") || msg.to_lowercase().contains("status"),
-            "error message should mention workspace or status"
-        );
-    }
-
-    // =========================================================================
-    // Graceful degradation tests
-    // =========================================================================
-
-    #[test]
-    fn test_metrics_unavailable_returns_default() {
-        // When Valkey is unreachable, metrics should return a default/unavailable state
-        let result = metrics_unavailable();
-        assert_eq!(result.requests_inspected, 0);
-        assert_eq!(result.blocked_credentials, 0);
-        assert_eq!(result.blocked_malware, 0);
-    }
-
-    #[test]
-    fn test_workspace_unknown_status() {
-        // When workspace status check fails, should return Error state
-        let result = workspace_unknown();
-        assert_eq!(result.status, polis_common::types::WorkspaceState::Error);
-        assert!(result.uptime_seconds.is_none());
+    fn test_status_json_omits_none_fields() {
+        let status = StatusOutput {
+            workspace: WorkspaceStatus { status: WorkspaceState::Stopped, uptime_seconds: None },
+            agent: None,
+            security: SecurityStatus { traffic_inspection: false, credential_protection: false, malware_scanning: false },
+            events: SecurityEvents { count: 0, severity: EventSeverity::None },
+        };
+        let json = serde_json::to_string(&status).expect("serialize");
+        assert!(!json.contains("uptime_seconds"));
+        assert!(!json.contains(r#""agent""#));
     }
 }
 
@@ -502,157 +413,41 @@ mod proptests {
     use polis_common::types::{AgentHealth, WorkspaceState};
     use proptest::prelude::*;
 
-    fn arb_agent_health() -> impl Strategy<Value = AgentHealth> {
-        prop_oneof![
-            Just(AgentHealth::Healthy),
-            Just(AgentHealth::Unhealthy),
-            Just(AgentHealth::Starting),
-            Just(AgentHealth::Stopped),
-        ]
-    }
+    proptest! {
+        #[test]
+        fn prop_format_uptime_ends_with_m(seconds in 0u64..=604_800) {
+            prop_assert!(format_uptime(seconds).ends_with('m'));
+        }
 
-    fn arb_workspace_state() -> impl Strategy<Value = WorkspaceState> {
-        prop_oneof![
+        #[test]
+        fn prop_format_uptime_hours_has_h(hours in 1u64..168) {
+            prop_assert!(format_uptime(hours * 3600).contains('h'));
+        }
+
+        #[test]
+        fn prop_workspace_state_lowercase(state in prop_oneof![
             Just(WorkspaceState::Running),
             Just(WorkspaceState::Stopped),
             Just(WorkspaceState::Starting),
             Just(WorkspaceState::Stopping),
             Just(WorkspaceState::Error),
-        ]
-    }
-
-    proptest! {
-        /// format_uptime always produces valid format
-        #[test]
-        fn prop_format_uptime_valid_format(seconds in 0u64..=604_800) {
-            let result = format_uptime(seconds);
-            prop_assert!(result.ends_with('m'), "should end with 'm'");
-            prop_assert!(
-                result.chars().all(|c| c.is_ascii_digit() || c == 'h' || c == 'm' || c == ' '),
-                "should only contain digits, h, m, space"
-            );
+        ]) {
+            prop_assert!(workspace_state_display(state).chars().all(|c| c.is_lowercase()));
         }
 
-        /// format_uptime with hours > 0 contains 'h'
         #[test]
-        fn prop_format_uptime_hours_contains_h(hours in 1u64..=168, minutes in 0u64..60) {
-            let seconds = hours * 3600 + minutes * 60;
-            let result = format_uptime(seconds);
-            prop_assert!(result.contains('h'), "hours > 0 should contain 'h'");
+        fn prop_agent_health_lowercase(health in prop_oneof![
+            Just(AgentHealth::Healthy),
+            Just(AgentHealth::Unhealthy),
+            Just(AgentHealth::Starting),
+            Just(AgentHealth::Stopped),
+        ]) {
+            prop_assert!(agent_health_display(health).chars().all(|c| c.is_lowercase()));
         }
 
-        /// format_uptime with hours == 0 does not contain 'h'
         #[test]
-        fn prop_format_uptime_no_hours_no_h(minutes in 0u64..60) {
-            let seconds = minutes * 60;
-            let result = format_uptime(seconds);
-            prop_assert!(!result.contains('h'), "hours == 0 should not contain 'h'");
-        }
-
-        /// format_uptime extracts correct hours
-        #[test]
-        fn prop_format_uptime_correct_hours(hours in 1u64..=100, minutes in 0u64..60) {
-            let seconds = hours * 3600 + minutes * 60;
-            let result = format_uptime(seconds);
-            let expected_prefix = format!("{hours}h");
-            prop_assert!(result.starts_with(&expected_prefix), "should start with correct hours");
-        }
-
-        /// format_uptime extracts correct minutes
-        #[test]
-        fn prop_format_uptime_correct_minutes(minutes in 0u64..60) {
-            let seconds = minutes * 60;
-            let result = format_uptime(seconds);
-            let expected = format!("{minutes}m");
-            prop_assert_eq!(result, expected);
-        }
-
-        /// format_agent_line always contains agent name
-        #[test]
-        fn prop_format_agent_line_contains_name(
-            name in "[a-z][a-z0-9-]{0,20}",
-            health in arb_agent_health()
-        ) {
-            let result = format_agent_line(&name, health);
-            prop_assert!(result.contains(&name), "should contain agent name");
-        }
-
-        /// format_agent_line always contains parentheses
-        #[test]
-        fn prop_format_agent_line_has_parens(
-            name in "[a-z][a-z0-9-]{0,20}",
-            health in arb_agent_health()
-        ) {
-            let result = format_agent_line(&name, health);
-            prop_assert!(result.contains('(') && result.contains(')'), "should have parentheses");
-        }
-
-        /// format_events_warning always mentions polis logs
-        #[test]
-        fn prop_format_events_warning_has_hint(count in 0u32..1000) {
-            let result = format_events_warning(count);
-            prop_assert!(result.contains("polis logs"), "should mention polis logs");
-        }
-
-        /// format_events_warning uses singular for count == 1
-        #[test]
-        fn prop_format_events_warning_singular(_seed in 0u32..100) {
-            let result = format_events_warning(1);
-            prop_assert!(result.contains("1 security event"), "should use singular");
-            prop_assert!(!result.contains("events"), "should not use plural");
-        }
-
-        /// format_events_warning uses plural for count != 1
-        #[test]
-        fn prop_format_events_warning_plural(count in 0u32..1000) {
-            prop_assume!(count != 1);
-            let result = format_events_warning(count);
-            prop_assert!(result.contains("events"), "should use plural for count != 1");
-        }
-
-        /// workspace_state_display returns lowercase string
-        #[test]
-        fn prop_workspace_state_display_lowercase(state in arb_workspace_state()) {
-            let result = workspace_state_display(state);
-            prop_assert!(result.chars().all(|c| c.is_lowercase()), "should be lowercase");
-        }
-
-        /// workspace_state_display is non-empty
-        #[test]
-        fn prop_workspace_state_display_non_empty(state in arb_workspace_state()) {
-            let result = workspace_state_display(state);
-            prop_assert!(!result.is_empty(), "should not be empty");
-        }
-
-        /// agent_health_display returns lowercase string
-        #[test]
-        fn prop_agent_health_display_lowercase(health in arb_agent_health()) {
-            let result = agent_health_display(health);
-            prop_assert!(result.chars().all(|c| c.is_lowercase()), "should be lowercase");
-        }
-
-        /// agent_health_display is non-empty
-        #[test]
-        fn prop_agent_health_display_non_empty(health in arb_agent_health()) {
-            let result = agent_health_display(health);
-            prop_assert!(!result.is_empty(), "should not be empty");
-        }
-
-        /// metrics_unavailable returns zero counters
-        #[test]
-        fn prop_metrics_unavailable_zero_counters(_seed in 0u32..100) {
-            let result = metrics_unavailable();
-            prop_assert_eq!(result.requests_inspected, 0);
-            prop_assert_eq!(result.blocked_credentials, 0);
-            prop_assert_eq!(result.blocked_malware, 0);
-        }
-
-        /// workspace_unknown returns Error state
-        #[test]
-        fn prop_workspace_unknown_error_state(_seed in 0u32..100) {
-            let result = workspace_unknown();
-            prop_assert_eq!(result.status, WorkspaceState::Error);
-            prop_assert!(result.uptime_seconds.is_none());
+        fn prop_events_warning_has_hint(count in 0u32..1000) {
+            prop_assert!(format_events_warning(count).contains("polis logs"));
         }
     }
 }

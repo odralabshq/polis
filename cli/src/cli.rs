@@ -1,6 +1,6 @@
 //! CLI argument parsing with clap derive
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands;
@@ -24,7 +24,7 @@ pub struct Cli {
     pub quiet: bool,
 
     /// Disable colored output
-    #[arg(long, global = true, env = "NO_COLOR")]
+    #[arg(long, global = true)]
     pub no_color: bool,
 
     #[command(subcommand)]
@@ -47,9 +47,6 @@ pub enum Command {
 
     /// Show workspace and agent status
     Status,
-
-    /// Show agent activity
-    Logs(commands::logs::LogsArgs),
 
     /// Enter workspace terminal
     Shell,
@@ -92,11 +89,12 @@ impl Cli {
     /// Returns an error if the command fails or is not yet implemented.
     pub async fn run(self) -> Result<()> {
         let Cli { no_color, quiet, json, command } = self;
+        let no_color = no_color || std::env::var("NO_COLOR").is_ok();
         match command {
             Command::Version => commands::version::run(json),
             Command::Status => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::status::run(&ctx, json)
+                commands::status::run(&ctx, json).await
             }
             Command::Run(args) => commands::run::run(&args),
             Command::Start => {
@@ -113,12 +111,6 @@ impl Cli {
                 let state_mgr = crate::state::StateManager::new()?;
                 let driver = crate::workspace::DockerDriver;
                 commands::delete::run(&args, &state_mgr, &driver)
-            }
-            Command::Logs(args) => {
-                let ctx = crate::output::OutputContext::new(no_color, quiet);
-                let client = crate::valkey::ValkeyClient::new(&crate::valkey::ValkeyConfig::default())
-                    .context("cannot connect to workspace")?;
-                commands::logs::run(&ctx, &client, args).await
             }
             Command::Connect(args) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);

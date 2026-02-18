@@ -280,8 +280,14 @@ This installs: packer (via HashiCorp repo), qemu-system-x86, qemu-utils, ovmf, x
 # Build Docker images first
 just build
 
-# Build VM image
+# Build VM image (amd64, default)
 just build-vm
+
+# Build for arm64
+just build-vm arch=arm64
+
+# Debug: open QEMU console to watch boot progress
+just build-vm headless=false
 ```
 
 This runs:
@@ -301,14 +307,21 @@ ls /dev/kvm
 
 **Native Linux**
 
-KVM should work out of the box. If `/dev/kvm` is missing:
+KVM should work out of the box. If `/dev/kvm` is missing or you get `Qemu failed to start`:
 
 ```bash
 # Load the module
 sudo modprobe kvm_intel   # or kvm_amd on AMD CPUs
 
-# Ensure your user has access
-sudo usermod -aG kvm $USER  # log out and back in
+# Add your user to the kvm group (required for /dev/kvm access)
+sudo usermod -aG kvm $USER
+# Log out and back in — newgrp kvm hangs in non-interactive shells
+```
+
+Verify before building:
+```bash
+ls -la /dev/kvm
+groups | grep kvm
 ```
 
 **Inside a VM (nested virtualization)**
@@ -341,8 +354,10 @@ The VM runs headless. Once QEMU starts, just wait — Packer will print `Connect
 |----------|---------|-------------|
 | `polis_version` | `dev` | Version tag for VM name |
 | `sysbox_version` | `0.6.7` | Sysbox version to install |
-| `arch` | `amd64` | Target architecture |
-| `ubuntu_serial` | `20250115` | Ubuntu cloud image serial |
+| `arch` | `amd64` | Target architecture (`amd64` or `arm64`) |
+| `ubuntu_serial` | `20260128` | Ubuntu cloud image release serial |
+| `use_minimal_image` | `true` | Use Ubuntu Minimal image (~248MB vs ~2GB) |
+| `headless` | `true` | Run QEMU headless (set `false` to open console for debugging) |
 
 ---
 

@@ -4,5 +4,4 @@ pub mod commands;
 pub mod output;
 pub mod ssh;
 pub mod state;
-pub mod valkey;
 pub mod workspace;

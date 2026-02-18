@@ -433,7 +433,7 @@ mod proptests {
         /// Any non-"y" input to delete always exits 0 and preserves state file
         #[test]
         fn prop_delete_non_confirm_preserves_state(
-            input in "[^yY\n][^\n]*\n|[^\n]*\n"
+            input in "[^yY\n][^\n]*\n|\n"
         ) {
             let dir = TempDir::new().expect("tempdir");
             write_state(&dir, "ws-prop01");
@@ -454,7 +454,7 @@ mod proptests {
         /// Any non-"y" input to delete --all always exits 0 and preserves state file
         #[test]
         fn prop_delete_all_non_confirm_preserves_state(
-            input in "[^yY\n][^\n]*\n|[^\n]*\n"
+            input in "[^yY\n][^\n]*\n|\n"
         ) {
             let dir = TempDir::new().expect("tempdir");
             write_state(&dir, "ws-prop02");
