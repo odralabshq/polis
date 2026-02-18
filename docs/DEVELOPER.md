@@ -80,6 +80,7 @@ Run `just --list` to see all available recipes.
 |--------|-------------|
 | `just test` | Run all tests (Rust, C, BATS unit) |
 | `just test-all` | Run all test tiers (unit + integration + e2e) |
+| `just test-clean` | Full clean → build → setup → up → test-all (stops on first failure) |
 | `just test-rust` | Run Rust tests |
 | `just test-c` | Run C tests |
 | `just test-bats` | Run BATS unit tests |
@@ -100,8 +101,9 @@ Run `just --list` to see all available recipes.
 
 | Recipe | Description |
 |--------|-------------|
-| `just clean` | Remove build artifacts, stop containers |
-| `just clean-all` | ⚠️ Also removes certs, secrets, .env |
+| `just down` | Stop containers, remove volumes + orphans |
+| `just clean` | `down` + `docker system prune -af --volumes` (wipes all images, cache, networks) |
+| `just clean-all` | ⚠️ `clean` + removes `certs/`, `secrets/`, `.env` |
 
 ---
 
@@ -368,11 +370,14 @@ docker compose logs -f gate
 
 ```bash
 # Stop and remove containers, volumes, networks
+just down
+
+# Also wipe all Docker images and build cache
 just clean
 
 # Also remove certs, secrets, .env (full reset)
 just clean-all
 
-# Rebuild from scratch
-just setup && just build && just up
+# Full clean-build-test cycle (CI equivalent)
+just test-clean
 ```

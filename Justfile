@@ -52,6 +52,9 @@ test-e2e:
 # Run all test tiers (unit + integration + e2e)
 test-all: test test-integration test-e2e
 
+# Full clean-build-test cycle — CI equivalent, stops on first failure
+test-clean: clean-all build setup up test-all
+
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
     cargo fmt --all
