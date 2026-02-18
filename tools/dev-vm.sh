@@ -180,8 +180,8 @@ cmd_rebuild() {
     log_info "Rebuilding Polis..."
     multipass exec "${VM_NAME}" -- bash -c "
         cd ~/polis
-        ./cli/polis.sh down 2>/dev/null || true
-        ./cli/polis.sh init --local --no-cache
+        just down 2>/dev/null || true
+        just clean-all && just build && just setup && just up
     "
     log_success "Rebuild complete!"
 }

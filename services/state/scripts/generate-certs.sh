@@ -130,7 +130,7 @@ echo ""
 echo "--- Setting file permissions ---"
 
 # Private keys: 600 (owner read/write only)
-# polis.sh will sudo chown 65532 after generation so containers can read them
+# Justfile will sudo chown 65532 after generation so containers can read them
 chmod 600 "${OUTPUT_DIR}/ca.key"
 chmod 600 "${OUTPUT_DIR}/server.key"
 chmod 600 "${OUTPUT_DIR}/client.key"
