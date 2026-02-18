@@ -1,6 +1,6 @@
 //! CLI argument parsing with clap derive
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use crate::commands;
@@ -90,10 +90,11 @@ impl Cli {
     /// # Errors
     ///
     /// Returns an error if the command fails or is not yet implemented.
-    pub fn run(self) -> Result<()> {
-        match self.command {
+    pub async fn run(self) -> Result<()> {
+        let Cli { no_color, quiet, json, command } = self;
+        match command {
             Command::Version => {
-                commands::version::run(self.json);
+                commands::version::run(json);
                 Ok(())
             }
             Command::Run(args) => commands::run::run(&args),
@@ -111,6 +112,12 @@ impl Cli {
                 let state_mgr = crate::state::StateManager::new()?;
                 let driver = crate::workspace::DockerDriver;
                 commands::delete::run(&args, &state_mgr, &driver)
+            }
+            Command::Logs(args) => {
+                let ctx = crate::output::OutputContext::new(no_color, quiet);
+                let client = crate::valkey::ValkeyClient::new(&crate::valkey::ValkeyConfig::default())
+                    .context("cannot connect to workspace")?;
+                commands::logs::run(&ctx, &client, args).await
             }
             _ => anyhow::bail!("Command not yet implemented"),
         }

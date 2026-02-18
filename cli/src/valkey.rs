@@ -179,13 +179,36 @@ fn parse_activity_event(map: &HashMap<String, redis::Value>) -> Result<ActivityE
     })
 }
 
-impl ValkeyClient {
+/// Trait for reading activity events from the Valkey stream.
+///
+/// Implemented by [`ValkeyClient`] for production use and by test doubles for unit testing.
+#[allow(async_fn_in_trait)]
+pub trait ActivityStreamReader {
     /// Read recent activity events in reverse chronological order.
     ///
     /// # Errors
     ///
-    /// Returns an error if the Valkey connection fails or the stream cannot be read.
-    pub async fn get_activity(&self, count: usize) -> Result<Vec<ActivityEvent>> {
+    /// Returns an error if the stream cannot be read.
+    async fn get_activity(&self, count: usize) -> Result<Vec<ActivityEvent>>;
+
+    /// Stream new activity events using a blocking read.
+    ///
+    /// Returns entries with IDs newer than `last_id`. Use `"$"` to read only
+    /// new entries. Blocks up to `timeout_ms` milliseconds before returning an
+    /// empty vec if no new entries arrive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stream cannot be read.
+    async fn stream_activity(
+        &self,
+        last_id: &str,
+        timeout_ms: u64,
+    ) -> Result<Vec<(String, ActivityEvent)>>;
+}
+
+impl ActivityStreamReader for ValkeyClient {
+    async fn get_activity(&self, count: usize) -> Result<Vec<ActivityEvent>> {
         let mut conn = self
             .client
             .get_multiplexed_async_connection()
@@ -209,16 +232,7 @@ impl ValkeyClient {
             .collect()
     }
 
-    /// Stream new activity events using a blocking read.
-    ///
-    /// Returns entries with IDs newer than `last_id`. Use `"$"` to read only
-    /// new entries. Blocks up to `timeout_ms` milliseconds before returning an
-    /// empty vec if no new entries arrive.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the Valkey connection fails or the stream cannot be read.
-    pub async fn stream_activity(
+    async fn stream_activity(
         &self,
         last_id: &str,
         timeout_ms: u64,
@@ -249,6 +263,34 @@ impl ValkeyClient {
                 Ok((entry.id, event))
             })
             .collect()
+    }
+}
+
+impl ValkeyClient {
+    /// Read recent activity events in reverse chronological order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Valkey connection fails or the stream cannot be read.
+    pub async fn get_activity(&self, count: usize) -> Result<Vec<ActivityEvent>> {
+        ActivityStreamReader::get_activity(self, count).await
+    }
+
+    /// Stream new activity events using a blocking read.
+    ///
+    /// Returns entries with IDs newer than `last_id`. Use `"$"` to read only
+    /// new entries. Blocks up to `timeout_ms` milliseconds before returning an
+    /// empty vec if no new entries arrive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Valkey connection fails or the stream cannot be read.
+    pub async fn stream_activity(
+        &self,
+        last_id: &str,
+        timeout_ms: u64,
+    ) -> Result<Vec<(String, ActivityEvent)>> {
+        ActivityStreamReader::stream_activity(self, last_id, timeout_ms).await
     }
 }
 

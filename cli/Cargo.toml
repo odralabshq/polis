@@ -26,6 +26,7 @@ redis = { version = "0.27", features = ["tokio-comp", "tokio-rustls-comp", "stre
 serde_json = "1.0"
 dirs = "5"
 dialoguer = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -33,7 +34,6 @@ predicates = "3.1"
 proptest = "1.5"
 serde_json = "1.0"
 tempfile = "3.14"  # isolated temp dirs for StateManager tests
-tokio = { version = "1", features = ["rt", "macros"] }  # #[tokio::test] for async ValkeyClient methods
 
 [lints]
 workspace = true

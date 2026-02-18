@@ -6,15 +6,16 @@ mod cli;
 mod commands;
 mod output;
 mod state;
-#[allow(dead_code)] // Module will be used by status command
+#[allow(dead_code)] // Metrics items used by future status command
 mod valkey;
 mod workspace;
 
 use cli::Cli;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
-    if let Err(e) = cli.run() {
+    if let Err(e) = cli.run().await {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }

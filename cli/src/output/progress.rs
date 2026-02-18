@@ -7,6 +7,10 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 
 /// Create a spinner for indeterminate progress.
+///
+/// # Panics
+///
+/// Panics if the spinner template string is invalid (it is a compile-time constant and will not panic).
 #[must_use]
 pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
@@ -21,6 +25,10 @@ pub fn spinner(msg: &str) -> ProgressBar {
 }
 
 /// Create a progress bar for determinate progress.
+///
+/// # Panics
+///
+/// Panics if the progress bar template string is invalid (it is a compile-time constant and will not panic).
 #[must_use]
 pub fn bar(len: u64, msg: &str) -> ProgressBar {
     let pb = ProgressBar::new(len);

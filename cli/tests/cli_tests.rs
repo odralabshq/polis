@@ -247,7 +247,7 @@ fn test_logs_accepts_follow_flag() {
         .args(["logs", "--follow"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .stderr(predicate::str::contains("failed to connect to Valkey"));
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn test_logs_accepts_security_flag() {
         .args(["logs", "--security"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .stderr(predicate::str::contains("failed to connect to Valkey"));
 }
 
 #[test]
