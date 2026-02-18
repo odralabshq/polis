@@ -8,6 +8,7 @@ use crate::output::OutputContext;
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// All check categories returned by the doctor command.
+#[derive(Debug)]
 pub struct DoctorChecks {
     /// Workspace health.
     pub workspace: WorkspaceChecks,
@@ -18,6 +19,7 @@ pub struct DoctorChecks {
 }
 
 /// Workspace health checks.
+#[derive(Debug)]
 pub struct WorkspaceChecks {
     /// Whether the workspace can be started.
     pub ready: bool,
@@ -28,6 +30,7 @@ pub struct WorkspaceChecks {
 }
 
 /// Network health checks.
+#[derive(Debug)]
 pub struct NetworkChecks {
     /// Whether internet connectivity is available.
     pub internet: bool,
@@ -36,6 +39,7 @@ pub struct NetworkChecks {
 }
 
 /// Security health checks.
+#[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)] // fields are spec-mandated; a bitfield would obscure intent
 pub struct SecurityChecks {
     /// Whether process isolation (sysbox) is active.
@@ -98,13 +102,19 @@ impl HealthProbe for SystemProbe {
     }
 
     async fn check_security(&self) -> Result<SecurityChecks> {
+        let (process_isolation, traffic_inspection, (malware_db_current, malware_db_age_hours), (certificates_valid, certificates_expire_days)) = tokio::join!(
+            check_process_isolation(),
+            check_gate_health(),
+            check_malware_db(),
+            check_certificates(),
+        );
         Ok(SecurityChecks {
-            process_isolation: check_process_isolation().await,
-            traffic_inspection: true,   // TODO: check gate health
-            malware_db_current: true,   // TODO: check ClamAV freshness
-            malware_db_age_hours: 0,
-            certificates_valid: true,   // TODO: check TLS cert expiry
-            certificates_expire_days: 365,
+            process_isolation,
+            traffic_inspection,
+            malware_db_current,
+            malware_db_age_hours,
+            certificates_valid,
+            certificates_expire_days,
         })
     }
 }
@@ -288,6 +298,84 @@ async fn check_process_isolation() -> bool {
         .unwrap_or(false)
 }
 
+/// Check if the gate container is running inside the multipass VM.
+async fn check_gate_health() -> bool {
+    let output = tokio::process::Command::new("multipass")
+        .args(["exec", "polis", "--", "docker", "compose", "ps", "--format", "json", "gate"])
+        .output()
+        .await;
+
+    let Ok(output) = output else { return false };
+    if !output.status.success() {
+        return false;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().next().and_then(|line| {
+        serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .and_then(|c| c.get("State")?.as_str().map(|s| s == "running"))
+    }).unwrap_or(false)
+}
+
+/// Check `ClamAV` database freshness inside the multipass VM.
+async fn check_malware_db() -> (bool, u64) {
+    let output = tokio::process::Command::new("multipass")
+        .args(["exec", "polis", "--", "stat", "-c", "%Y", "/var/lib/clamav/daily.cvd"])
+        .output()
+        .await;
+
+    let Ok(output) = output else { return (false, 0) };
+    if !output.status.success() {
+        return (false, 0);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Ok(mtime) = stdout.trim().parse::<u64>() else { return (false, 0) };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let age_hours = now.saturating_sub(mtime) / 3600;
+    // ClamAV database is considered current if updated within 24 hours
+    (age_hours <= 24, age_hours)
+}
+
+/// Check CA certificate expiry inside the multipass VM.
+async fn check_certificates() -> (bool, i64) {
+    let output = tokio::process::Command::new("multipass")
+        .args([
+            "exec", "polis", "--",
+            "openssl", "x509", "-enddate", "-noout", "-in", "/etc/polis/certs/ca/ca.crt",
+        ])
+        .output()
+        .await;
+
+    let Ok(output) = output else { return (false, 0) };
+    if !output.status.success() {
+        return (false, 0);
+    }
+
+    // Output format: "notAfter=Feb 15 12:00:00 2036 GMT"
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(date_str) = stdout.strip_prefix("notAfter=").map(str::trim) else {
+        return (false, 0);
+    };
+
+    // Parse the date and compute days until expiry
+    let Ok(expiry) = chrono::NaiveDateTime::parse_from_str(date_str, "%b %d %H:%M:%S %Y GMT")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(date_str, "%b  %d %H:%M:%S %Y GMT"))
+    else {
+        return (false, 0);
+    };
+
+    let now = chrono::Utc::now().naive_utc();
+    let days = (expiry - now).num_days();
+    (days > 0, days)
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -409,5 +497,156 @@ mod tests {
 
         let issues = collect_issues(&checks);
         assert_eq!(issues.len(), 3, "expected 3 issues, got: {issues:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Property tests
+    // -----------------------------------------------------------------------
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        prop_compose! {
+            fn arb_workspace_checks()(
+                ready in any::<bool>(),
+                disk_space_gb in 0u64..100,
+            ) -> WorkspaceChecks {
+                WorkspaceChecks {
+                    ready,
+                    disk_space_gb,
+                    disk_space_ok: disk_space_gb >= 10,
+                }
+            }
+        }
+
+        prop_compose! {
+            fn arb_network_checks()(
+                internet in any::<bool>(),
+                dns in any::<bool>(),
+            ) -> NetworkChecks {
+                NetworkChecks { internet, dns }
+            }
+        }
+
+        prop_compose! {
+            fn arb_security_checks()(
+                process_isolation in any::<bool>(),
+                traffic_inspection in any::<bool>(),
+                malware_db_current in any::<bool>(),
+                malware_db_age_hours in 0u64..1000,
+                certificates_valid in any::<bool>(),
+                certificates_expire_days in -30i64..400,
+            ) -> SecurityChecks {
+                SecurityChecks {
+                    process_isolation,
+                    traffic_inspection,
+                    malware_db_current,
+                    malware_db_age_hours,
+                    certificates_valid,
+                    certificates_expire_days,
+                }
+            }
+        }
+
+        prop_compose! {
+            fn arb_doctor_checks()(
+                workspace in arb_workspace_checks(),
+                network in arb_network_checks(),
+                security in arb_security_checks(),
+            ) -> DoctorChecks {
+                DoctorChecks { workspace, network, security }
+            }
+        }
+
+        proptest! {
+            /// collect_issues never panics for any valid input.
+            #[test]
+            fn prop_collect_issues_never_panics(checks in arb_doctor_checks()) {
+                let _ = collect_issues(&checks);
+            }
+
+            /// All healthy checks produce zero issues.
+            #[test]
+            fn prop_all_healthy_produces_no_issues(
+                disk_space_gb in 10u64..100,
+                malware_db_age_hours in 0u64..24,
+                certificates_expire_days in 31i64..400,
+            ) {
+                let checks = DoctorChecks {
+                    workspace: WorkspaceChecks {
+                        ready: true,
+                        disk_space_gb,
+                        disk_space_ok: true,
+                    },
+                    network: NetworkChecks {
+                        internet: true,
+                        dns: true,
+                    },
+                    security: SecurityChecks {
+                        process_isolation: true,
+                        traffic_inspection: true,
+                        malware_db_current: true,
+                        malware_db_age_hours,
+                        certificates_valid: true,
+                        certificates_expire_days,
+                    },
+                };
+                let issues = collect_issues(&checks);
+                prop_assert!(issues.is_empty(), "expected no issues for healthy checks, got: {issues:?}");
+            }
+
+            /// Low disk space always produces a disk-related issue.
+            #[test]
+            fn prop_low_disk_produces_disk_issue(disk_space_gb in 0u64..10) {
+                let checks = DoctorChecks {
+                    workspace: WorkspaceChecks {
+                        ready: true,
+                        disk_space_gb,
+                        disk_space_ok: false,
+                    },
+                    network: NetworkChecks { internet: true, dns: true },
+                    security: SecurityChecks {
+                        process_isolation: true,
+                        traffic_inspection: true,
+                        malware_db_current: true,
+                        malware_db_age_hours: 0,
+                        certificates_valid: true,
+                        certificates_expire_days: 365,
+                    },
+                };
+                let issues = collect_issues(&checks);
+                prop_assert!(
+                    issues.iter().any(|i| i.to_lowercase().contains("disk")),
+                    "expected disk issue for {disk_space_gb} GB"
+                );
+            }
+
+            /// Expired certificates always produce a cert-related issue.
+            #[test]
+            fn prop_expired_certs_produce_cert_issue(days in -30i64..=0) {
+                let checks = DoctorChecks {
+                    workspace: WorkspaceChecks {
+                        ready: true,
+                        disk_space_gb: 50,
+                        disk_space_ok: true,
+                    },
+                    network: NetworkChecks { internet: true, dns: true },
+                    security: SecurityChecks {
+                        process_isolation: true,
+                        traffic_inspection: true,
+                        malware_db_current: true,
+                        malware_db_age_hours: 0,
+                        certificates_valid: false,
+                        certificates_expire_days: days,
+                    },
+                };
+                let issues = collect_issues(&checks);
+                prop_assert!(
+                    issues.iter().any(|i| i.to_lowercase().contains("cert")),
+                    "expected cert issue for {days} days"
+                );
+            }
+        }
     }
 }

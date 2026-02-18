@@ -1,10 +1,25 @@
 //! `polis update` — self-update with signature verification (V-008).
 
+use std::io::{Cursor, Read};
+
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use owo_colors::OwoColorize;
+use sha2::{Digest, Sha256};
+use zipsign_api::{verify::verify_tar, VerifyingKey, PUBLIC_KEY_LENGTH};
 
 use crate::output::OutputContext;
+
+/// Embedded ed25519 public key for release signature verification.
+/// This key is set during the release build process.
+/// Format: 32-byte ed25519 public key, base64-encoded.
+const POLIS_PUBLIC_KEY_B64: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+/// Signer identity displayed to users.
+const SIGNER_NAME: &str = "Odra Labs";
+
+/// Short key fingerprint for display.
+const KEY_FINGERPRINT: &str = "polis-release-v1";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -231,15 +246,98 @@ fn parse_release_notes(body: &str) -> Vec<String> {
         .collect()
 }
 
-#[allow(clippy::unnecessary_wraps)] // placeholder: will return Err once zipsign is wired in
-fn verify_signature(_download_url: &str) -> Result<SignatureInfo> {
-    // TODO(V-008): Implement zipsign ed25519 verification.
-    // The public key will be embedded in the binary at release build time.
+/// Verifies the zipsign ed25519 signature of a release asset.
+///
+/// Downloads the asset, verifies the embedded signature against the embedded
+/// public key, and computes the SHA-256 hash.
+///
+/// # Errors
+///
+/// Returns an error if download fails, signature is invalid, or no matching key.
+fn verify_signature(download_url: &str) -> Result<SignatureInfo> {
+    // Download the release asset
+    let response = ureq::get(download_url)
+        .call()
+        .context("failed to download release asset")?;
+
+    let mut data = Vec::new();
+    response
+        .into_reader()
+        .read_to_end(&mut data)
+        .context("failed to read release asset")?;
+
+    // Compute SHA-256 hash
+    let hash = Sha256::digest(&data);
+    let sha256 = hex_encode(&hash);
+
+    // Decode the embedded public key
+    let key_bytes = base64_decode(POLIS_PUBLIC_KEY_B64)
+        .context("invalid embedded public key encoding")?;
+
+    anyhow::ensure!(
+        key_bytes.len() == PUBLIC_KEY_LENGTH,
+        "embedded public key has wrong length: expected {PUBLIC_KEY_LENGTH}, got {}",
+        key_bytes.len()
+    );
+
+    let key_array: [u8; PUBLIC_KEY_LENGTH] = key_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("public key conversion failed"))?;
+
+    let verifying_key =
+        VerifyingKey::from_bytes(&key_array).context("invalid embedded public key")?;
+
+    // Verify the signature
+    let mut cursor = Cursor::new(&data);
+    verify_tar(&mut cursor, &[verifying_key], None)
+        .context("signature verification failed")?;
+
     Ok(SignatureInfo {
-        signer: "Odra Labs".to_string(),
-        key_id: "0x1234ABCD".to_string(),
-        sha256: "a1b2c3d4e5f6g7h8i9j0".to_string(),
+        signer: SIGNER_NAME.to_string(),
+        key_id: KEY_FINGERPRINT.to_string(),
+        sha256,
     })
+}
+
+/// Encode bytes as lowercase hex string.
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(char::from(HEX[(b >> 4) as usize]));
+        out.push(char::from(HEX[(b & 0xf) as usize]));
+    }
+    out
+}
+
+/// Minimal base64 decoder (standard alphabet, no padding required).
+fn base64_decode(input: &str) -> Result<Vec<u8>> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    fn decode_char(c: u8) -> Option<u8> {
+        // SAFETY: ALPHABET has 64 entries, so position is always < 64 and fits in u8.
+        #[allow(clippy::cast_possible_truncation)]
+        ALPHABET.iter().position(|&x| x == c).map(|p| p as u8)
+    }
+
+    let input = input.trim_end_matches('=');
+    let mut output = Vec::with_capacity(input.len() * 3 / 4);
+    let mut buf = 0u32;
+    let mut bits = 0u8;
+
+    for &byte in input.as_bytes() {
+        let val = decode_char(byte).ok_or_else(|| anyhow::anyhow!("invalid base64 character"))?;
+        buf = (buf << 6) | u32::from(val);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            // SAFETY: We're extracting exactly 8 bits after the shift.
+            #[allow(clippy::cast_possible_truncation)]
+            output.push((buf >> bits) as u8);
+        }
+    }
+
+    Ok(output)
 }
 
 fn perform_update(version: &str) -> Result<()> {
@@ -470,5 +568,82 @@ mod tests {
                 "error for version {version} should mention signature"
             );
         }
+
+        /// hex_encode output length is always 2x input length.
+        #[test]
+        fn prop_hex_encode_output_length(input in proptest::collection::vec(any::<u8>(), 0..256)) {
+            let encoded = hex_encode(&input);
+            prop_assert_eq!(encoded.len(), input.len() * 2);
+        }
+
+        /// hex_encode output contains only lowercase hex characters.
+        #[test]
+        fn prop_hex_encode_only_hex_chars(input in proptest::collection::vec(any::<u8>(), 0..256)) {
+            let encoded = hex_encode(&input);
+            prop_assert!(encoded.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        }
+
+        /// base64_decode rejects invalid characters.
+        #[test]
+        fn prop_base64_decode_rejects_invalid_chars(invalid in "[^A-Za-z0-9+/=]+") {
+            let result = base64_decode(&invalid);
+            prop_assert!(result.is_err());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // hex_encode — unit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_hex_encode_empty_returns_empty() {
+        assert_eq!(hex_encode(&[]), "");
+    }
+
+    #[test]
+    fn test_hex_encode_single_byte() {
+        assert_eq!(hex_encode(&[0x00]), "00");
+        assert_eq!(hex_encode(&[0xff]), "ff");
+        assert_eq!(hex_encode(&[0xab]), "ab");
+    }
+
+    #[test]
+    fn test_hex_encode_multiple_bytes() {
+        assert_eq!(hex_encode(&[0xde, 0xad, 0xbe, 0xef]), "deadbeef");
+    }
+
+    // -----------------------------------------------------------------------
+    // base64_decode — unit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_base64_decode_empty_returns_empty() {
+        assert_eq!(base64_decode("").unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn test_base64_decode_simple() {
+        // "SGVsbG8=" decodes to "Hello"
+        assert_eq!(base64_decode("SGVsbG8=").unwrap(), b"Hello".to_vec());
+    }
+
+    #[test]
+    fn test_base64_decode_no_padding() {
+        // "SGVsbG8" (no padding) should also decode to "Hello"
+        assert_eq!(base64_decode("SGVsbG8").unwrap(), b"Hello".to_vec());
+    }
+
+    #[test]
+    fn test_base64_decode_32_bytes() {
+        // 32 zero bytes in base64
+        let zeros_b64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let decoded = base64_decode(zeros_b64).unwrap();
+        assert_eq!(decoded.len(), 32);
+        assert!(decoded.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn test_base64_decode_invalid_char_returns_err() {
+        assert!(base64_decode("!!!").is_err());
     }
 }
