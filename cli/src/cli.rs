@@ -93,9 +93,10 @@ impl Cli {
     pub async fn run(self) -> Result<()> {
         let Cli { no_color, quiet, json, command } = self;
         match command {
-            Command::Version => {
-                commands::version::run(json);
-                Ok(())
+            Command::Version => commands::version::run(json),
+            Command::Status => {
+                let ctx = crate::output::OutputContext::new(no_color, quiet);
+                commands::status::run(&ctx, json)
             }
             Command::Run(args) => commands::run::run(&args),
             Command::Start => {

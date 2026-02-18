@@ -2,9 +2,51 @@
 //!
 //! Displays workspace state, agent health, security status, and metrics.
 
-#![allow(dead_code)] // Functions will be used when command is wired up
+#![allow(dead_code)] // Some helpers used only in human-readable path
 
-use polis_common::types::{AgentHealth, MetricsSnapshot, WorkspaceState, WorkspaceStatus};
+use anyhow::Result;
+use polis_common::types::{
+    AgentHealth, EventSeverity, MetricsSnapshot, SecurityEvents, SecurityStatus, StatusOutput,
+    WorkspaceState, WorkspaceStatus,
+};
+
+use crate::output::OutputContext;
+
+/// Run the status command.
+///
+/// Outputs workspace state, security status, and metrics. When `json` is true,
+/// emits a pretty-printed JSON object matching the `StatusOutput` schema.
+///
+/// # Errors
+///
+/// Returns an error if JSON serialization fails.
+pub fn run(_ctx: &OutputContext, json: bool) -> Result<()> {
+    let output = StatusOutput {
+        workspace: workspace_unknown(),
+        agent: None,
+        security: SecurityStatus {
+            traffic_inspection: false,
+            credential_protection: false,
+            malware_scanning: false,
+        },
+        metrics: metrics_unavailable(),
+        events: SecurityEvents {
+            count: 0,
+            severity: EventSeverity::None,
+        },
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!(
+            "workspace: {}",
+            workspace_state_display(output.workspace.status)
+        );
+    }
+
+    Ok(())
+}
 
 /// Format uptime seconds as human-readable string.
 ///

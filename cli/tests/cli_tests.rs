@@ -57,7 +57,7 @@ fn test_version_command_json_outputs_valid_json() {
         .arg("--json")
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#"{"version":"0.1.0"}"#));
+        .stdout(predicate::str::contains(r#""version": "0.1.0""#));
 }
 
 // --- Command hierarchy tests ---
@@ -179,7 +179,7 @@ fn test_global_json_flag_accepted() {
         .args(["--json", "version"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#"{"version":"#));
+        .stdout(predicate::str::contains(r#""version":"#));
 }
 
 #[test]
@@ -222,7 +222,7 @@ fn test_unknown_command_exits_with_error() {
 #[test]
 fn test_unimplemented_command_exits_with_error() {
     polis()
-        .arg("status")
+        .arg("shell")
         .assert()
         .failure()
         .stderr(predicate::str::contains("not yet implemented"));
