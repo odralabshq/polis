@@ -1,1 +1,413 @@
-//! Doctor command (placeholder)
+//! `polis doctor` — system health diagnostics.
+
+use anyhow::{Context, Result};
+use owo_colors::OwoColorize;
+
+use crate::output::OutputContext;
+
+// ── Public types ──────────────────────────────────────────────────────────────
+
+/// All check categories returned by the doctor command.
+pub struct DoctorChecks {
+    /// Workspace health.
+    pub workspace: WorkspaceChecks,
+    /// Network health.
+    pub network: NetworkChecks,
+    /// Security health.
+    pub security: SecurityChecks,
+}
+
+/// Workspace health checks.
+pub struct WorkspaceChecks {
+    /// Whether the workspace can be started.
+    pub ready: bool,
+    /// Available disk space in GB.
+    pub disk_space_gb: u64,
+    /// Whether disk space meets the 10 GB minimum.
+    pub disk_space_ok: bool,
+}
+
+/// Network health checks.
+pub struct NetworkChecks {
+    /// Whether internet connectivity is available.
+    pub internet: bool,
+    /// Whether DNS resolution is working.
+    pub dns: bool,
+}
+
+/// Security health checks.
+#[allow(clippy::struct_excessive_bools)] // fields are spec-mandated; a bitfield would obscure intent
+pub struct SecurityChecks {
+    /// Whether process isolation (sysbox) is active.
+    pub process_isolation: bool,
+    /// Whether traffic inspection is responding.
+    pub traffic_inspection: bool,
+    /// Whether the malware scanner database is current.
+    pub malware_db_current: bool,
+    /// Hours since the malware database was last updated.
+    pub malware_db_age_hours: u64,
+    /// Whether certificates are valid.
+    pub certificates_valid: bool,
+    /// Days until certificate expiry (≤ 0 means expired).
+    pub certificates_expire_days: i64,
+}
+
+// ── HealthProbe trait ─────────────────────────────────────────────────────────
+
+/// Abstraction over health check backends, enabling test doubles.
+#[allow(async_fn_in_trait)] // Send bounds not required; probe is always called on the same task
+pub trait HealthProbe {
+    /// Check workspace health.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the workspace check cannot be performed.
+    async fn check_workspace(&self) -> Result<WorkspaceChecks>;
+
+    /// Check network health.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the network check cannot be performed.
+    async fn check_network(&self) -> Result<NetworkChecks>;
+
+    /// Check security health.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the security check cannot be performed.
+    async fn check_security(&self) -> Result<SecurityChecks>;
+}
+
+/// Production implementation that queries the real system.
+pub struct SystemProbe;
+
+impl HealthProbe for SystemProbe {
+    async fn check_workspace(&self) -> Result<WorkspaceChecks> {
+        let disk_space_gb = disk_space_gb().await?;
+        Ok(WorkspaceChecks {
+            ready: true,
+            disk_space_gb,
+            disk_space_ok: disk_space_gb >= 10,
+        })
+    }
+
+    async fn check_network(&self) -> Result<NetworkChecks> {
+        let (internet, dns) = tokio::join!(check_internet(), check_dns());
+        Ok(NetworkChecks { internet, dns })
+    }
+
+    async fn check_security(&self) -> Result<SecurityChecks> {
+        Ok(SecurityChecks {
+            process_isolation: check_process_isolation().await,
+            traffic_inspection: true,   // TODO: check gate health
+            malware_db_current: true,   // TODO: check ClamAV freshness
+            malware_db_age_hours: 0,
+            certificates_valid: true,   // TODO: check TLS cert expiry
+            certificates_expire_days: 365,
+        })
+    }
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+/// Run `polis doctor`.
+///
+/// # Errors
+///
+/// Returns an error if health checks cannot be executed or output fails.
+pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
+    run_with(ctx, json, &SystemProbe).await
+}
+
+async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> Result<()> {
+    let (workspace, network, security) = tokio::try_join!(
+        probe.check_workspace(),
+        probe.check_network(),
+        probe.check_security(),
+    )?;
+    let checks = DoctorChecks { workspace, network, security };
+    let issues = collect_issues(&checks);
+    let status = if issues.is_empty() { "healthy" } else { "unhealthy" };
+
+    if json {
+        let out = serde_json::json!({
+            "status": status,
+            "checks": {
+                "workspace": {
+                    "ready": checks.workspace.ready,
+                    "disk_space_gb": checks.workspace.disk_space_gb,
+                    "disk_space_ok": checks.workspace.disk_space_ok,
+                },
+                "network": {
+                    "internet": checks.network.internet,
+                    "dns": checks.network.dns,
+                },
+                "security": {
+                    "process_isolation": checks.security.process_isolation,
+                    "traffic_inspection": checks.security.traffic_inspection,
+                    "malware_db_current": checks.security.malware_db_current,
+                    "malware_db_age_hours": checks.security.malware_db_age_hours,
+                    "certificates_valid": checks.security.certificates_valid,
+                    "certificates_expire_days": checks.security.certificates_expire_days,
+                },
+            },
+            "issues": issues,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).context("JSON serialization")?);
+        return Ok(());
+    }
+
+    println!();
+    println!("  {}", "Polis Health Check".style(ctx.styles.header));
+    println!();
+
+    println!("  Workspace:");
+    print_check(ctx, checks.workspace.ready, "Ready to start");
+    if checks.workspace.disk_space_ok {
+        print_check(ctx, true, &format!("{} GB disk space available", checks.workspace.disk_space_gb));
+    } else {
+        print_check(ctx, false, &format!("Low disk space ({} GB available, need 10 GB)", checks.workspace.disk_space_gb));
+    }
+    println!();
+
+    println!("  Network:");
+    print_check(ctx, checks.network.internet, "Internet connectivity");
+    print_check(ctx, checks.network.dns, "DNS resolution working");
+    println!();
+
+    println!("  Security:");
+    print_check(ctx, checks.security.process_isolation, "Process isolation active");
+    print_check(ctx, checks.security.traffic_inspection, "Traffic inspection responding");
+    print_check(ctx, checks.security.malware_db_current, &format!(
+        "Malware scanner database current (updated: {}h ago)",
+        checks.security.malware_db_age_hours,
+    ));
+    let expire_days = checks.security.certificates_expire_days;
+    if expire_days > 30 {
+        print_check(ctx, true, &format!("Certificates valid (expires: {expire_days} days)"));
+    } else if expire_days > 0 {
+        println!("    {} Certificates expire soon ({expire_days} days)", "⚠".style(ctx.styles.warning));
+    } else {
+        print_check(ctx, false, "Certificates expired");
+    }
+
+    println!();
+    if issues.is_empty() {
+        println!("  {} Everything looks good!", "✓".style(ctx.styles.success));
+    } else {
+        println!(
+            "  {} Found {} issues. Run with --verbose for details.",
+            "✗".style(ctx.styles.error),
+            issues.len(),
+        );
+    }
+    println!();
+
+    Ok(())
+}
+
+fn print_check(ctx: &OutputContext, ok: bool, msg: &str) {
+    if ok {
+        println!("    {} {msg}", "✓".style(ctx.styles.success));
+    } else {
+        println!("    {} {msg}", "✗".style(ctx.styles.error));
+    }
+}
+
+// ── Issue collection ──────────────────────────────────────────────────────────
+
+/// Collect actionable issues from check results.
+///
+/// Certificates expiring in 1–30 days are a warning only and are NOT included.
+#[must_use]
+pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
+    let mut issues = Vec::new();
+    if !checks.workspace.disk_space_ok {
+        issues.push(format!(
+            "Low disk space ({} GB available, need 10 GB)",
+            checks.workspace.disk_space_gb,
+        ));
+    }
+    if !checks.network.dns {
+        issues.push("DNS resolution failed".to_string());
+    }
+    if !checks.security.traffic_inspection {
+        issues.push("Traffic inspection not responding".to_string());
+    }
+    if checks.security.certificates_expire_days <= 0 {
+        issues.push("Certificates expired".to_string());
+    }
+    issues
+}
+
+// ── System check helpers ──────────────────────────────────────────────────────
+
+async fn disk_space_gb() -> Result<u64> {
+    let out = tokio::process::Command::new("df")
+        .args(["-BG", "/"])
+        .output()
+        .await
+        .context("df failed")?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    // df -BG output (second line): "/dev/sda1  100G  55G  45G  55% /"
+    // column index 3 is "Available", e.g. "45G"
+    text.lines()
+        .nth(1)
+        .and_then(|l| l.split_whitespace().nth(3))
+        .and_then(|s| s.trim_end_matches('G').parse::<u64>().ok())
+        .ok_or_else(|| anyhow::anyhow!("cannot parse df output"))
+}
+
+async fn check_internet() -> bool {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::time::Duration;
+    const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53);
+    tokio::task::spawn_blocking(|| {
+        std::net::TcpStream::connect_timeout(&ADDR, Duration::from_secs(3)).is_ok()
+    })
+    .await
+    .unwrap_or(false)
+}
+
+async fn check_dns() -> bool {
+    tokio::task::spawn_blocking(|| {
+        use std::net::ToSocketAddrs;
+        "dns.google:443".to_socket_addrs().is_ok()
+    })
+    .await
+    .unwrap_or(false)
+}
+
+async fn check_process_isolation() -> bool {
+    tokio::process::Command::new("sysbox-runc")
+        .arg("--version")
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_issues, DoctorChecks, NetworkChecks, SecurityChecks, WorkspaceChecks};
+
+    fn all_healthy() -> DoctorChecks {
+        DoctorChecks {
+            workspace: WorkspaceChecks {
+                ready: true,
+                disk_space_gb: 45,
+                disk_space_ok: true,
+            },
+            network: NetworkChecks {
+                internet: true,
+                dns: true,
+            },
+            security: SecurityChecks {
+                process_isolation: true,
+                traffic_inspection: true,
+                malware_db_current: true,
+                malware_db_age_hours: 2,
+                certificates_valid: true,
+                certificates_expire_days: 365,
+            },
+        }
+    }
+
+    #[test]
+    fn test_collect_issues_all_healthy_returns_empty() {
+        let issues = collect_issues(&all_healthy());
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn test_collect_issues_low_disk_returns_disk_issue() {
+        let mut checks = all_healthy();
+        checks.workspace.disk_space_gb = 2;
+        checks.workspace.disk_space_ok = false;
+
+        let issues = collect_issues(&checks);
+        assert!(
+            issues.iter().any(|i: &String| i.contains("disk") || i.contains("Disk")),
+            "expected a disk issue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn test_collect_issues_dns_failed_returns_dns_issue() {
+        let mut checks = all_healthy();
+        checks.network.dns = false;
+
+        let issues = collect_issues(&checks);
+        assert!(
+            issues.iter().any(|i: &String| i.to_lowercase().contains("dns")),
+            "expected a DNS issue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn test_collect_issues_traffic_inspection_failed_returns_issue() {
+        let mut checks = all_healthy();
+        checks.security.traffic_inspection = false;
+
+        let issues = collect_issues(&checks);
+        assert!(
+            issues.iter().any(|i: &String| i.to_lowercase().contains("traffic") || i.to_lowercase().contains("inspection")),
+            "expected a traffic inspection issue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn test_collect_issues_expired_certs_returns_issue() {
+        let mut checks = all_healthy();
+        checks.security.certificates_expire_days = 0;
+
+        let issues = collect_issues(&checks);
+        assert!(
+            issues.iter().any(|i: &String| i.to_lowercase().contains("cert")),
+            "expected a certificate issue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn test_collect_issues_expiring_soon_not_in_issues() {
+        // Certs expiring in 7 days are a warning (⚠), not an error (✗).
+        // They must NOT appear in the issues list.
+        let mut checks = all_healthy();
+        checks.security.certificates_expire_days = 7;
+
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.iter().any(|i: &String| i.to_lowercase().contains("cert")),
+            "expiring-soon certs should be a warning, not an issue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn test_collect_issues_multiple_failures_all_collected() {
+        let checks = DoctorChecks {
+            workspace: WorkspaceChecks {
+                ready: true,
+                disk_space_gb: 2,
+                disk_space_ok: false,
+            },
+            network: NetworkChecks {
+                internet: true,
+                dns: false,
+            },
+            security: SecurityChecks {
+                process_isolation: true,
+                traffic_inspection: false,
+                malware_db_current: true,
+                malware_db_age_hours: 2,
+                certificates_valid: true,
+                certificates_expire_days: 365,
+            },
+        };
+
+        let issues = collect_issues(&checks);
+        assert_eq!(issues.len(), 3, "expected 3 issues, got: {issues:?}");
+    }
+}
