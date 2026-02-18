@@ -373,9 +373,9 @@ generate_ca() {
         return 1
     fi
     
-    # Set permissions: key=600 (owner only), cert=644 (public)
-    chmod 600 "$CA_KEY"
+    # cert=644 (public); ca.key needs to stay ubuntu-owned for signing but readable by container 65532
     chmod 644 "$CA_PEM"
+    chmod 644 "$CA_KEY"
     
     log_success "CA certificate generated successfully:"
     echo "  Private key: $CA_KEY"
@@ -402,6 +402,7 @@ generate_toolbox_certs() {
         return 1
     fi
     log_success "Toolbox TLS certificates generated."
+    sudo chown 65532:65532 "${TOOLBOX_DIR}/toolbox.key"
     return 0
 }
 
@@ -424,6 +425,8 @@ setup_valkey() {
         fi
         log_success "Valkey TLS certificates generated."
     fi
+    # Ensure container user 65532 (non-root) can read private keys bind-mounted read-only
+    sudo chown 65532:65532 "${VALKEY_CERTS_DIR}/server.key" "${VALKEY_CERTS_DIR}/client.key"
 
     # --- Valkey secrets (passwords + ACL) ---
     # Force regeneration if ACL has placeholder passwords (template from repo)
