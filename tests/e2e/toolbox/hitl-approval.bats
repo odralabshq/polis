@@ -7,7 +7,7 @@ setup_file() {
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
     require_container "$CTR_STATE"
-    export POLIS_CLI="${PROJECT_ROOT}/cli/polis.sh"
+    export POLIS_CLI="${PROJECT_ROOT}/cli/blocked.sh"
 }
 
 setup() {
@@ -46,7 +46,7 @@ _seed_blocked() {
 # =============================================================================
 
 @test "e2e: polis blocked with unknown subcommand shows usage" {
-    run bash "$POLIS_CLI" blocked nonsense
+    run bash "$POLIS_CLI" nonsense
     assert_failure
     assert_output --partial "Usage: polis blocked"
 }
@@ -60,7 +60,7 @@ _seed_blocked() {
     local rid="req-hitl0002"
     _admin_cmd DEL "polis:blocked:${rid}" 2>/dev/null || true
 
-    run bash "$POLIS_CLI" blocked pending
+    run bash "$POLIS_CLI" pending
     # Should succeed regardless (may show other requests or "No pending")
     assert_success
 }
@@ -69,7 +69,7 @@ _seed_blocked() {
     local rid="req-hitl0003"
     _seed_blocked "$rid" "https://hitl-test-3.example.com" "url_blocked"
 
-    run bash "$POLIS_CLI" blocked pending
+    run bash "$POLIS_CLI" pending
     assert_success
     assert_output --partial "$rid"
 }
@@ -82,7 +82,7 @@ _seed_blocked() {
     local rid="req-hitl0004"
     _seed_blocked "$rid" "https://hitl-test-4.example.com"
 
-    run bash "$POLIS_CLI" blocked approve "$rid"
+    run bash "$POLIS_CLI" approve "$rid"
     assert_success
     assert_output --partial "Approved"
 
@@ -100,7 +100,7 @@ _seed_blocked() {
     local rid="req-hitl0005"
     _seed_blocked "$rid" "https://hitl-test-5.example.com"
 
-    bash "$POLIS_CLI" blocked approve "$rid"
+    bash "$POLIS_CLI" approve "$rid"
 
     run _admin_cmd TTL "polis:approved:${rid}"
     assert_success
@@ -113,7 +113,7 @@ _seed_blocked() {
     local dest="https://hitl-test-6.example.com"
     _seed_blocked "$rid" "$dest"
 
-    bash "$POLIS_CLI" blocked approve "$rid"
+    bash "$POLIS_CLI" approve "$rid"
 
     run _admin_cmd GET "polis:approved:host:${dest}"
     assert_success
@@ -121,7 +121,7 @@ _seed_blocked() {
 }
 
 @test "e2e: polis blocked approve for nonexistent request fails" {
-    run bash "$POLIS_CLI" blocked approve "req-hitl-nonexistent"
+    run bash "$POLIS_CLI" approve "req-hitl-nonexistent"
     assert_failure
     assert_output --partial "not found"
 }
@@ -134,7 +134,7 @@ _seed_blocked() {
     local rid="req-hitl0008"
     _seed_blocked "$rid"
 
-    run bash "$POLIS_CLI" blocked deny "$rid"
+    run bash "$POLIS_CLI" deny "$rid"
     assert_success
     assert_output --partial "Denied"
 
@@ -151,7 +151,7 @@ _seed_blocked() {
     local rid="req-hitl0009"
     _seed_blocked "$rid"
 
-    run bash "$POLIS_CLI" blocked check "$rid"
+    run bash "$POLIS_CLI" check "$rid"
     assert_success
     assert_output --partial "pending"
 }
@@ -159,15 +159,15 @@ _seed_blocked() {
 @test "e2e: polis blocked check shows approved after approval" {
     local rid="req-hitl0010"
     _seed_blocked "$rid" "https://hitl-test-10.example.com"
-    bash "$POLIS_CLI" blocked approve "$rid"
+    bash "$POLIS_CLI" approve "$rid"
 
-    run bash "$POLIS_CLI" blocked check "$rid"
+    run bash "$POLIS_CLI" check "$rid"
     assert_success
     assert_output --partial "approved"
 }
 
 @test "e2e: polis blocked check shows not found for unknown request" {
-    run bash "$POLIS_CLI" blocked check "req-hitl-unknown"
+    run bash "$POLIS_CLI" check "req-hitl-unknown"
     assert_success
     assert_output --partial "not found"
 }
@@ -180,9 +180,9 @@ _seed_blocked() {
     local rid="req-hitl0012"
     _seed_blocked "$rid" "https://hitl-test-12.example.com"
 
-    bash "$POLIS_CLI" blocked approve "$rid"
+    bash "$POLIS_CLI" approve "$rid"
 
-    run bash "$POLIS_CLI" blocked pending
+    run bash "$POLIS_CLI" pending
     assert_success
     refute_output --partial "$rid"
 }
