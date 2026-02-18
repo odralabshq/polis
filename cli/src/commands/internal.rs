@@ -56,6 +56,7 @@ where
             break;
         }
         writer.write_all(&buf[..n]).await?;
+        writer.flush().await?;
     }
     Ok(())
 }
@@ -88,8 +89,13 @@ async fn bridge_stdio(child: &mut tokio::process::Child) -> Result<()> {
 }
 
 async fn proxy_via_multipass() -> Result<()> {
+    // Run sshd in inetd mode (-i) directly on stdin/stdout
     let mut child = tokio::process::Command::new("multipass")
-        .args(["exec", "polis", "--", "nc", "localhost", "22"])
+        .args([
+            "exec", "polis", "--",
+            "docker", "exec", "-i", "polis-workspace",
+            "/usr/sbin/sshd", "-i",
+        ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
@@ -99,8 +105,9 @@ async fn proxy_via_multipass() -> Result<()> {
 }
 
 async fn proxy_via_docker() -> Result<()> {
+    // Run sshd in inetd mode (-i) directly on stdin/stdout
     let mut child = tokio::process::Command::new("docker")
-        .args(["exec", "-i", "polis-workspace-1", "nc", "localhost", "22"])
+        .args(["exec", "-i", "polis-workspace-1", "/usr/sbin/sshd", "-i"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
@@ -165,9 +172,14 @@ async fn extract_key_from(cmd: &str, args: &[&str]) -> Result<String> {
 }
 
 async fn extract_from_multipass() -> Result<String> {
+    // Extract host key from polis-workspace container inside the VM
     extract_key_from(
         "multipass",
-        &["exec", "polis", "--", "cat", "/etc/ssh/ssh_host_ed25519_key.pub"],
+        &[
+            "exec", "polis", "--",
+            "docker", "exec", "polis-workspace",
+            "cat", "/etc/ssh/ssh_host_ed25519_key.pub",
+        ],
     )
     .await
 }

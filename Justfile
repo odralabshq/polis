@@ -90,27 +90,57 @@ build-service service:
 
 # Build VM image (requires packer)
 # Usage: just build-vm [arch=amd64|arm64] [headless=true|false]
-build-vm arch="amd64" headless="true": build _export-images
+build-vm arch="amd64" headless="true": build _export-images _bundle-config
     #!/usr/bin/env bash
     set -euo pipefail
     cd packer
     packer init .
-    packer build -var "images_tar=${PWD}/../.build/polis-images.tar" -var "arch={{arch}}" -var "headless={{headless}}" polis-vm.pkr.hcl
+    packer build \
+        -var "images_tar=${PWD}/../.build/polis-images.tar" \
+        -var "config_tar=${PWD}/../.build/polis-config.tar.gz" \
+        -var "arch={{arch}}" \
+        -var "headless={{headless}}" \
+        polis-vm.pkr.hcl
 
 # Internal: export Docker images for VM build
 _export-images:
     #!/usr/bin/env bash
     set -euo pipefail
-    IMAGES=$(grep -oP 'image:\s+\Kpolis-[a-z]+-oss:\S+' docker-compose.yml | sort -u)
+    # Get all images from docker-compose.yml (both polis-* and external)
+    IMAGES=$(grep -oP 'image:\s+\K\S+' docker-compose.yml | sort -u | grep -v 'go-httpbin')
     if [[ -z "${IMAGES}" ]]; then
-        echo "ERROR: No polis-*-oss images found in docker-compose.yml" >&2
+        echo "ERROR: No images found in docker-compose.yml" >&2
         exit 1
     fi
     mkdir -p .build
     chmod 700 .build
-    echo "Exporting: ${IMAGES}"
+    echo "Pulling external images..."
+    EXPORT_IMAGES=""
+    for img in ${IMAGES}; do
+        if [[ ! "$img" =~ ^polis- ]]; then
+            docker pull "$img" || true
+            # Strip @sha256:... suffix for export (docker load doesn't preserve digests)
+            simple_tag="${img%%@sha256:*}"
+            if [[ "$simple_tag" != "$img" ]]; then
+                echo "Tagging $img as $simple_tag"
+                docker tag "$img" "$simple_tag"
+                EXPORT_IMAGES="$EXPORT_IMAGES $simple_tag"
+            else
+                EXPORT_IMAGES="$EXPORT_IMAGES $img"
+            fi
+        else
+            EXPORT_IMAGES="$EXPORT_IMAGES $img"
+        fi
+    done
+    echo "Exporting:${EXPORT_IMAGES}"
     # shellcheck disable=SC2086
-    docker save -o .build/polis-images.tar ${IMAGES}
+    docker save -o .build/polis-images.tar ${EXPORT_IMAGES}
+
+# Internal: bundle config files for VM build
+_bundle-config:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash packer/scripts/bundle-polis-config.sh
 
 build-all: build-vm
 

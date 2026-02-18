@@ -300,10 +300,10 @@ fn get_image_path() -> PathBuf {
     // Check for image in standard locations
     let candidates = [
         // Relative to current working directory (dev workflow)
-        PathBuf::from("packer/output/polis-vm-dev-amd64.qcow2"),
+        PathBuf::from("packer/output/polis-workspace-dev-amd64.qcow2"),
         // User's polis directory
         dirs::home_dir()
-            .map(|h| h.join(".polis").join("images").join("polis-vm-dev-amd64.qcow2"))
+            .map(|h| h.join(".polis").join("images").join("polis-workspace-dev-amd64.qcow2"))
             .unwrap_or_default(),
     ];
 
@@ -418,23 +418,23 @@ fn configure_credentials() -> Result<()> {
     Ok(())
 }
 
-/// Provision the workspace by starting docker compose services.
+/// Provision the workspace by ensuring services are running.
 fn provision_workspace() -> Result<()> {
     println!("  Starting services...");
 
-    // Run docker compose up inside the VM
+    // Services auto-start via systemd polis.service on boot
+    // Just ensure the service is started (idempotent)
     let output = Command::new("multipass")
         .args([
             "exec", VM_NAME, "--",
-            "docker", "compose", "up", "-d",
+            "sudo", "systemctl", "start", "polis",
         ])
         .output()
-        .context("failed to run docker compose")?;
+        .context("failed to start polis service")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Non-fatal: compose might not be set up yet
-        eprintln!("  Warning: docker compose up failed: {stderr}");
+        eprintln!("  Warning: polis service start failed: {stderr}");
     }
 
     Ok(())
@@ -510,7 +510,7 @@ mod tests {
     fn test_get_image_path_returns_packer_output_as_default() {
         let path = get_image_path();
         assert!(
-            path.to_string_lossy().contains("polis-vm-dev-amd64.qcow2"),
+            path.to_string_lossy().contains("polis-workspace-dev-amd64.qcow2"),
             "path should contain image filename"
         );
     }

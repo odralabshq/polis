@@ -75,6 +75,15 @@ protect_sensitive_paths() {
 
 disable_ipv6 "workspace" || exit 1
 
+# Generate SSH host keys if missing and start sshd
+if [[ ! -f /etc/ssh/ssh_host_ed25519_key ]]; then
+    echo "[workspace] Generating SSH host keys..."
+    ssh-keygen -A
+fi
+echo "[workspace] Starting SSH daemon..."
+systemctl enable ssh
+systemctl start ssh
+
 # Configure default route to gate for TPROXY FIRST — the workspace is on an
 # internal-only Docker network with no default gateway. Without this route,
 # there is zero internet connectivity (install.sh, apt-get, curl all fail).

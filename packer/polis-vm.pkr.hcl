@@ -48,6 +48,12 @@ variable "images_tar" {
   default = ".build/polis-images.tar"
 }
 
+variable "config_tar" {
+  type        = string
+  description = "Path to polis-config.tar.gz bundle"
+  default     = ".build/polis-config.tar.gz"
+}
+
 variable "arch" {
   type    = string
   default = "amd64"
@@ -173,6 +179,17 @@ build {
   # Apply VM hardening (sysctl, AppArmor, auditd, Docker daemon)
   provisioner "shell" {
     script = "scripts/harden-vm.sh"
+  }
+
+  # Upload Polis config bundle
+  provisioner "file" {
+    source      = var.config_tar
+    destination = "/tmp/polis-config.tar.gz"
+  }
+
+  # Install Polis orchestration (compose, certs, systemd service)
+  provisioner "shell" {
+    script = "scripts/install-polis.sh"
   }
 
   # Cleanup
