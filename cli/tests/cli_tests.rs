@@ -285,8 +285,8 @@ fn test_agents_list_subcommand() {
     polis()
         .args(["agents", "list"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .success()
+        .stdout(predicate::str::contains("No agents installed").or(predicate::str::contains("NAME")));
 }
 
 #[test]
@@ -295,7 +295,7 @@ fn test_agents_info_subcommand() {
         .args(["agents", "info", "claude-dev"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .stderr(predicate::str::contains("not found"));
 }
 
 #[test]
@@ -390,14 +390,14 @@ mod proptests {
                 .success();
         }
 
-        /// Agents info accepts any agent name
+        /// Agents info accepts any agent name (returns not-found error, not a crash)
         #[test]
         fn prop_agents_info_accepts_name(name in "[a-z][a-z0-9-]{0,20}") {
             polis()
                 .args(["agents", "info", &name])
                 .assert()
                 .failure()
-                .stderr(predicate::str::contains("not yet implemented"));
+                .stderr(predicate::str::contains("not found"));
         }
 
         /// Config set accepts any key-value pair

@@ -123,6 +123,10 @@ impl Cli {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::connect::run(&ctx, args).await
             }
+            Command::Agents(cmd) => {
+                let ctx = crate::output::OutputContext::new(no_color, quiet);
+                commands::agents::run(&ctx, cmd, json)
+            }
             Command::SshProxy => commands::internal::ssh_proxy().await,
             Command::ExtractHostKey => commands::internal::extract_host_key().await,
             _ => anyhow::bail!("Command not yet implemented"),
