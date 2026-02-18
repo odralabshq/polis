@@ -1422,6 +1422,7 @@ dependencies = [
  "redis",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
