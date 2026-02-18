@@ -271,11 +271,13 @@ fn test_delete_accepts_all_flag() {
 
 #[test]
 fn test_connect_accepts_ide_option() {
+    // connect is implemented: --ide vscode is accepted (fails because no TTY/IDE in CI,
+    // not because the command is unrecognised).
     polis()
         .args(["connect", "--ide", "vscode"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .stderr(predicate::str::contains("not yet implemented").not());
 }
 
 #[test]

@@ -256,6 +256,395 @@ mod tests {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SshConfigManager
+// ---------------------------------------------------------------------------
+
+/// Manages the polis SSH config files and `~/.ssh/config` Include directive.
+pub struct SshConfigManager {
+    polis_config_path: std::path::PathBuf,
+    user_config_path: std::path::PathBuf,
+    sockets_dir: std::path::PathBuf,
+}
+
+impl SshConfigManager {
+    /// Creates a manager using the real `$HOME`-based paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the home directory cannot be determined.
+    pub fn new() -> Result<Self> {
+        let home = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+        Ok(Self::with_paths(
+            home.join(".polis").join("ssh_config"),
+            home.join(".ssh").join("config"),
+            home.join(".polis").join("sockets"),
+        ))
+    }
+
+    /// Creates a manager with explicit paths (for testing).
+    #[must_use]
+    pub fn with_paths(
+        polis_config_path: std::path::PathBuf,
+        user_config_path: std::path::PathBuf,
+        sockets_dir: std::path::PathBuf,
+    ) -> Self {
+        Self { polis_config_path, user_config_path, sockets_dir }
+    }
+
+    /// Returns `true` if the polis SSH config exists **and** the Include
+    /// directive is present in `~/.ssh/config`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user SSH config cannot be read.
+    pub fn is_configured(&self) -> Result<bool> {
+        if !self.polis_config_path.exists() {
+            return Ok(false);
+        }
+        if self.user_config_path.exists() {
+            let content = std::fs::read_to_string(&self.user_config_path)
+                .with_context(|| format!("read {}", self.user_config_path.display()))?;
+            if content.contains("Include ~/.polis/ssh_config") {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Writes the hardened polis SSH config to `~/.polis/ssh_config`.
+    ///
+    /// Sets file permissions to 600 and parent directory to 700 on Unix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be written or permissions cannot be set.
+    pub fn create_polis_config(&self) -> Result<()> {
+        const CONFIG: &str = "\
+# ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
+Host workspace
+    User polis
+    ProxyCommand polis _ssh-proxy
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.polis/known_hosts
+    ControlMaster auto
+    ControlPath ~/.polis/sockets/%r@%h:%p
+    ControlPersist 30s
+    ForwardAgent no
+    IdentitiesOnly yes
+";
+        if let Some(parent) = self.polis_config_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create dir {}", parent.display()))?;
+            set_permissions(parent, 0o700)?;
+        }
+        std::fs::write(&self.polis_config_path, CONFIG)
+            .with_context(|| format!("write {}", self.polis_config_path.display()))?;
+        set_permissions(&self.polis_config_path, 0o600)?;
+        Ok(())
+    }
+
+    /// Prepends `Include ~/.polis/ssh_config` to `~/.ssh/config`, creating
+    /// the file if absent. Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or written.
+    pub fn add_include_directive(&self) -> Result<()> {
+        const INCLUDE: &str = "Include ~/.polis/ssh_config\n";
+        if let Some(parent) = self.user_config_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create dir {}", parent.display()))?;
+            set_permissions(parent, 0o700)?;
+        }
+        if self.user_config_path.exists() {
+            let content = std::fs::read_to_string(&self.user_config_path)
+                .with_context(|| format!("read {}", self.user_config_path.display()))?;
+            if content.contains("Include ~/.polis/ssh_config") {
+                return Ok(());
+            }
+            std::fs::write(&self.user_config_path, format!("{INCLUDE}{content}"))
+                .with_context(|| format!("write {}", self.user_config_path.display()))?;
+        } else {
+            std::fs::write(&self.user_config_path, INCLUDE)
+                .with_context(|| format!("write {}", self.user_config_path.display()))?;
+        }
+        set_permissions(&self.user_config_path, 0o600)?;
+        Ok(())
+    }
+
+    /// Creates `~/.polis/sockets/` with permissions 700.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be created or permissions set.
+    pub fn create_sockets_dir(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.sockets_dir)
+            .with_context(|| format!("create dir {}", self.sockets_dir.display()))?;
+        set_permissions(&self.sockets_dir, 0o700)?;
+        Ok(())
+    }
+
+    /// Validates that `~/.polis/ssh_config` has permissions 600 (V-004).
+    ///
+    /// No-op if the file does not exist yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file has unsafe permissions.
+    pub fn validate_permissions(&self) -> Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if self.polis_config_path.exists() {
+                let mode = std::fs::metadata(&self.polis_config_path)
+                    .with_context(|| format!("stat {}", self.polis_config_path.display()))?
+                    .permissions()
+                    .mode()
+                    & 0o777;
+                anyhow::ensure!(
+                    mode == 0o600,
+                    "~/.polis/ssh_config has unsafe permissions {mode:o}. Run: chmod 600 ~/.polis/ssh_config"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SshConfigManager — RED tests (issue 13)
+// ---------------------------------------------------------------------------
+// ⚠️  Testability requirement: `SshConfigManager` must expose a
+// `with_paths(polis_config: PathBuf, user_config: PathBuf, sockets_dir: PathBuf) -> Self`
+// constructor so tests can inject temp directories instead of `$HOME`.
+// The production `new()` delegates to `with_paths(...)`.
+//
+// ⚠️  Testability requirement: extract `fn resolve_ide(name: &str) -> Result<(...)>`
+// from `open_ide` so the unknown-IDE error path can be tested without spawning
+// a real process.  Hand off to Senior Rust Engineer.
+#[cfg(test)]
+mod ssh_config_manager_tests {
+    use super::SshConfigManager;
+
+    fn manager_in(dir: &tempfile::TempDir) -> SshConfigManager {
+        SshConfigManager::with_paths(
+            dir.path().join("polis").join("ssh_config"),
+            dir.path().join("ssh").join("config"),
+            dir.path().join("polis").join("sockets"),
+        )
+    }
+
+    // -----------------------------------------------------------------------
+    // is_configured
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ssh_config_manager_is_configured_returns_false_when_polis_config_absent() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        assert!(!mgr.is_configured().expect("is_configured should not error"));
+    }
+
+    #[test]
+    fn test_ssh_config_manager_is_configured_returns_false_when_include_directive_absent() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        // Create polis config but no Include in user config
+        mgr.create_polis_config().expect("create_polis_config");
+        std::fs::create_dir_all(dir.path().join("ssh")).expect("mkdir");
+        std::fs::write(dir.path().join("ssh").join("config"), "Host *\n    ServerAliveInterval 60\n")
+            .expect("write user config");
+        assert!(!mgr.is_configured().expect("is_configured should not error"));
+    }
+
+    #[test]
+    fn test_ssh_config_manager_is_configured_returns_true_when_both_present() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_polis_config().expect("create_polis_config");
+        mgr.add_include_directive().expect("add_include_directive");
+        assert!(mgr.is_configured().expect("is_configured should not error"));
+    }
+
+    // -----------------------------------------------------------------------
+    // create_polis_config — security properties (V-001, V-002, V-011)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ssh_config_manager_create_polis_config_contains_forward_agent_no() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_polis_config().expect("create_polis_config");
+        let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
+            .expect("config file should exist");
+        assert!(content.contains("ForwardAgent no"), "V-001: ForwardAgent must be no");
+    }
+
+    #[test]
+    fn test_ssh_config_manager_create_polis_config_does_not_contain_forward_agent_yes() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_polis_config().expect("create_polis_config");
+        let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
+            .expect("config file should exist");
+        assert!(!content.contains("ForwardAgent yes"), "V-001: ForwardAgent yes must never appear");
+    }
+
+    #[test]
+    fn test_ssh_config_manager_create_polis_config_contains_strict_host_key_checking_yes() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_polis_config().expect("create_polis_config");
+        let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
+            .expect("config file should exist");
+        assert!(
+            content.contains("StrictHostKeyChecking yes"),
+            "V-002: StrictHostKeyChecking must be yes"
+        );
+    }
+
+    #[test]
+    fn test_ssh_config_manager_create_polis_config_contains_user_polis() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_polis_config().expect("create_polis_config");
+        let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
+            .expect("config file should exist");
+        assert!(content.contains("User polis"), "V-011: User must be polis");
+        assert!(!content.contains("User vscode"), "V-011: User vscode must not appear");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ssh_config_manager_create_polis_config_sets_file_permissions_600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_polis_config().expect("create_polis_config");
+        let mode = std::fs::metadata(dir.path().join("polis").join("ssh_config"))
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "V-004: ssh_config must be 600");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ssh_config_manager_create_polis_config_sets_parent_dir_permissions_700() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_polis_config().expect("create_polis_config");
+        let mode = std::fs::metadata(dir.path().join("polis"))
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700, "V-004: .polis dir must be 700");
+    }
+
+    // -----------------------------------------------------------------------
+    // add_include_directive
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ssh_config_manager_add_include_directive_prepends_to_existing_config() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        let ssh_dir = dir.path().join("ssh");
+        std::fs::create_dir_all(&ssh_dir).expect("mkdir");
+        std::fs::write(ssh_dir.join("config"), "Host *\n    ServerAliveInterval 60\n")
+            .expect("write");
+        mgr.add_include_directive().expect("add_include_directive");
+        let content =
+            std::fs::read_to_string(ssh_dir.join("config")).expect("config should exist");
+        assert!(
+            content.starts_with("Include ~/.polis/ssh_config\n"),
+            "Include must be at the top of ~/.ssh/config"
+        );
+    }
+
+    #[test]
+    fn test_ssh_config_manager_add_include_directive_creates_config_when_absent() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.add_include_directive().expect("add_include_directive");
+        let content = std::fs::read_to_string(dir.path().join("ssh").join("config"))
+            .expect("config should be created");
+        assert!(content.contains("Include ~/.polis/ssh_config"));
+    }
+
+    #[test]
+    fn test_ssh_config_manager_add_include_directive_is_idempotent() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.add_include_directive().expect("first call");
+        mgr.add_include_directive().expect("second call");
+        let content = std::fs::read_to_string(dir.path().join("ssh").join("config"))
+            .expect("config should exist");
+        let count = content.matches("Include ~/.polis/ssh_config").count();
+        assert_eq!(count, 1, "Include directive must appear exactly once");
+    }
+
+    // -----------------------------------------------------------------------
+    // create_sockets_dir
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ssh_config_manager_create_sockets_dir_creates_directory() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_sockets_dir().expect("create_sockets_dir");
+        assert!(dir.path().join("polis").join("sockets").is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ssh_config_manager_create_sockets_dir_sets_permissions_700() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_sockets_dir().expect("create_sockets_dir");
+        let mode = std::fs::metadata(dir.path().join("polis").join("sockets"))
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700, "V-007: sockets dir must be 700");
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_permissions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ssh_config_manager_validate_permissions_returns_ok_when_config_absent() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        // No config file — must not error
+        assert!(mgr.validate_permissions().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ssh_config_manager_validate_permissions_returns_err_when_permissions_wrong() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_in(&dir);
+        mgr.create_polis_config().expect("create_polis_config");
+        // Deliberately set wrong permissions
+        std::fs::set_permissions(
+            dir.path().join("polis").join("ssh_config"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .expect("set permissions");
+        assert!(
+            mgr.validate_permissions().is_err(),
+            "V-004: must reject config with permissions != 600"
+        );
+    }
+}
+
 #[cfg(test)]
 mod proptests {
     use super::{validate_host_key, KnownHostsManager};
@@ -340,6 +729,72 @@ mod proptests {
                 mgr.update(c).expect("update");
             }
             prop_assert!(mgr.remove().is_ok());
+        }
+    }
+}
+
+#[cfg(test)]
+mod ssh_config_manager_proptests {
+    use super::SshConfigManager;
+    use proptest::prelude::*;
+
+    fn manager_in(dir: &tempfile::TempDir) -> SshConfigManager {
+        SshConfigManager::with_paths(
+            dir.path().join("polis").join("ssh_config"),
+            dir.path().join("ssh").join("config"),
+            dir.path().join("polis").join("sockets"),
+        )
+    }
+
+    proptest! {
+        /// Calling add_include_directive N times always results in exactly one
+        /// Include directive — idempotency holds for any number of calls.
+        #[test]
+        #[allow(clippy::expect_used)]
+        fn prop_add_include_directive_idempotent_for_n_calls(n in 1usize..=5) {
+            let dir = tempfile::TempDir::new().expect("tempdir");
+            let mgr = manager_in(&dir);
+            for _ in 0..n {
+                mgr.add_include_directive().expect("add_include_directive");
+            }
+            let content = std::fs::read_to_string(dir.path().join("ssh").join("config"))
+                .expect("config should exist");
+            let count = content.matches("Include ~/.polis/ssh_config").count();
+            prop_assert_eq!(count, 1, "Include must appear exactly once after {} calls", n);
+        }
+
+        /// After full setup, is_configured returns true regardless of what was
+        /// already in the user SSH config.
+        #[test]
+        #[allow(clippy::expect_used)]
+        fn prop_is_configured_true_after_setup_regardless_of_existing_user_config(
+            existing in "[a-zA-Z0-9 \n]{0,200}"
+        ) {
+            let dir = tempfile::TempDir::new().expect("tempdir");
+            let mgr = manager_in(&dir);
+            // Pre-populate user SSH config with arbitrary content.
+            let ssh_dir = dir.path().join("ssh");
+            std::fs::create_dir_all(&ssh_dir).expect("mkdir");
+            std::fs::write(ssh_dir.join("config"), &existing).expect("write");
+
+            mgr.create_polis_config().expect("create_polis_config");
+            mgr.add_include_directive().expect("add_include_directive");
+
+            prop_assert!(mgr.is_configured().expect("is_configured"));
+        }
+
+        /// After create_polis_config, validate_permissions always returns Ok
+        /// (permissions are set correctly by create_polis_config itself).
+        #[cfg(unix)]
+        #[test]
+        #[allow(clippy::expect_used)]
+        fn prop_validate_permissions_ok_after_create_polis_config(
+            _seed in 0u32..20
+        ) {
+            let dir = tempfile::TempDir::new().expect("tempdir");
+            let mgr = manager_in(&dir);
+            mgr.create_polis_config().expect("create_polis_config");
+            prop_assert!(mgr.validate_permissions().is_ok());
         }
     }
 }

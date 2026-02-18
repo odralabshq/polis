@@ -119,6 +119,10 @@ impl Cli {
                     .context("cannot connect to workspace")?;
                 commands::logs::run(&ctx, &client, args).await
             }
+            Command::Connect(args) => {
+                let ctx = crate::output::OutputContext::new(no_color, quiet);
+                commands::connect::run(&ctx, args).await
+            }
             Command::SshProxy => commands::internal::ssh_proxy().await,
             Command::ExtractHostKey => commands::internal::extract_host_key().await,
             _ => anyhow::bail!("Command not yet implemented"),
