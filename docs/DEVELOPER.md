@@ -32,7 +32,7 @@ just test-bats
 
 ```
 polis/
-├── cli/polis.sh              # Main CLI script
+├── cli/blocked.sh            # HITL approval workflow (blocked/approve/deny/check)
 ├── tools/dev-vm.sh           # Development VM management
 ├── scripts/install.sh        # One-line installer
 ├── packer/                   # VM image build
@@ -80,6 +80,7 @@ Run `just --list` to see all available recipes.
 |--------|-------------|
 | `just test` | Run all tests (Rust, C, BATS unit) |
 | `just test-all` | Run all test tiers (unit + integration + e2e) |
+| `just test-clean` | Full clean → build → setup → up → test-all (stops on first failure) |
 | `just test-rust` | Run Rust tests |
 | `just test-c` | Run C tests |
 | `just test-bats` | Run BATS unit tests |
@@ -100,8 +101,9 @@ Run `just --list` to see all available recipes.
 
 | Recipe | Description |
 |--------|-------------|
-| `just clean` | Remove build artifacts, stop containers |
-| `just clean-all` | ⚠️ Also removes certs, secrets, .env |
+| `just down` | Stop containers, remove volumes + orphans |
+| `just clean` | `down` + `docker system prune -af --volumes` (wipes all images, cache, networks) |
+| `just clean-all` | ⚠️ `clean` + removes `certs/`, `secrets/`, `.env` |
 
 ---
 
@@ -242,8 +244,6 @@ Key rules:
 
 | Artifact | Description |
 |----------|-------------|
-| `polis.sh` | CLI script |
-| `polis.sh.sha256` | CLI checksum |
 | `polis-core-vX.X.X.tar.gz` | Source tarball |
 | `sbom-*.spdx.json` | Software Bill of Materials |
 | `polis-vm-vX.X.X-amd64.qcow2` | VM image (from build-vm) |
@@ -252,9 +252,6 @@ Key rules:
 ### Verifying Artifacts
 
 ```bash
-# Verify CLI attestation
-gh attestation verify polis.sh --owner OdraLabsHQ
-
 # Verify VM image attestation
 gh attestation verify polis-vm-v0.3.0-amd64.qcow2 --owner OdraLabsHQ
 
@@ -296,28 +293,7 @@ Output: `output/polis-vm-<version>-amd64.qcow2`
 
 ## Installation
 
-### One-Line Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
-```
-
-### What the Installer Does
-
-1. Checks for Multipass
-2. Downloads `polis.sh` from GitHub Releases
-3. Verifies SHA256 checksum
-4. Optionally verifies GitHub attestation (if `gh` CLI available)
-5. Creates symlink at `~/.local/bin/polis`
-
-### Manual Install
-
-```bash
-# Download specific version
-VERSION=v0.3.0
-curl -fsSL "https://github.com/OdraLabsHQ/polis/releases/download/${VERSION}/polis.sh" -o ~/.local/bin/polis
-chmod +x ~/.local/bin/polis
-```
+> The user-facing CLI is being rebuilt. Installation instructions will be updated when the new CLI is released.
 
 ---
 
@@ -368,11 +344,14 @@ docker compose logs -f gate
 
 ```bash
 # Stop and remove containers, volumes, networks
+just down
+
+# Also wipe all Docker images and build cache
 just clean
 
 # Also remove certs, secrets, .env (full reset)
 just clean-all
 
-# Rebuild from scratch
-just setup && just build && just up
+# Full clean-build-test cycle (CI equivalent)
+just test-clean
 ```

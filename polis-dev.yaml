@@ -98,7 +98,7 @@ final_message: |
   1. Mount your local polis directory: multipass mount ./polis polis-dev:/home/ubuntu/polis
   2. Access VM: multipass shell polis-dev
   3. Configure API keys: cd ~/polis && nano .env
-  4. Build from source: ./cli/polis.sh init --local
+  4. Build from source: just clean-all && just build && just setup && just up
   
   The VM has:
   - Docker Engine with docker-compose

@@ -52,6 +52,9 @@ test-e2e:
 # Run all test tiers (unit + integration + e2e)
 test-all: test test-integration test-e2e
 
+# Full clean-build-test cycle — CI equivalent, stops on first failure
+test-clean: clean-all build setup up test-all
+
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
     cargo fmt --all
@@ -94,14 +97,27 @@ setup: setup-ca setup-valkey setup-toolbox
     @echo "✓ All certificates and secrets generated"
 
 setup-ca:
-    ./cli/polis.sh setup-ca
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CA_DIR=certs/ca
+    CA_KEY="${CA_DIR}/ca.key"
+    CA_PEM="${CA_DIR}/ca.pem"
+    if [[ -f "$CA_KEY" && -f "$CA_PEM" ]]; then echo "CA already exists."; exit 0; fi
+    rm -f "$CA_KEY" "$CA_PEM"
+    mkdir -p "$CA_DIR"
+    openssl genrsa -out "$CA_KEY" 4096
+    openssl req -new -x509 -days 3650 -key "$CA_KEY" -out "$CA_PEM" \
+        -subj "/C=US/ST=Local/L=Local/O=Polis/OU=Gateway/CN=Polis CA"
+    chmod 644 "$CA_KEY" "$CA_PEM"
 
 setup-valkey:
     ./services/state/scripts/generate-certs.sh ./certs/valkey
     ./services/state/scripts/generate-secrets.sh ./secrets .
+    sudo chown 65532:65532 ./certs/valkey/server.key ./certs/valkey/client.key
 
 setup-toolbox:
     ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
+    sudo chown 65532:65532 ./certs/toolbox/toolbox.key
 
 # ── Dev VM ──────────────────────────────────────────────────────────
 dev-create:
@@ -118,16 +134,22 @@ dev-delete:
 
 # ── Lifecycle ───────────────────────────────────────────────────────
 up:
-    ./cli/polis.sh up
-
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker compose down --remove-orphans 2>/dev/null || true
+    sudo systemctl restart sysbox 2>/dev/null || true
+    timeout 15 bash -c 'until sudo systemctl is-active sysbox &>/dev/null; do sleep 1; done' || true
+    touch .env
+    docker compose -f docker-compose.yml --env-file .env up -d
+    docker compose -f docker-compose.yml --env-file .env ps
 down:
-    docker compose down
+    docker compose down --volumes --remove-orphans
 
 status:
-    ./cli/polis.sh status
+    docker compose -f docker-compose.yml --env-file .env ps
 
 logs service="":
-    ./cli/polis.sh logs {{service}}
+    docker compose -f docker-compose.yml --env-file .env logs --tail=50 -f {{service}}
 
 # ── Release ─────────────────────────────────────────────────────────
 package-vm arch="amd64":
@@ -139,10 +161,10 @@ package-vm arch="amd64":
 
 # ── Clean ───────────────────────────────────────────────────────────
 clean:
+    docker compose down --volumes --remove-orphans
+    docker system prune -af --volumes
     rm -rf output/ .build/
-    docker compose down -v --remove-orphans 2>/dev/null || true
 
 # WARNING: Removes certs, secrets, and .env
 clean-all: clean
     rm -rf certs/ secrets/ .env
-    docker system prune -af --volumes

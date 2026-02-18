@@ -3,7 +3,16 @@ set -euo pipefail
 
 echo "[workspace] Starting initialization..."
 
-# Update CA certificates
+# Update CA certificates — ensure Polis CA is in the system bundle.
+# The CA cert is bind-mounted read-only with non-root ownership, which
+# prevents update-ca-certificates from auto-detecting it on some Debian
+# versions. We copy it to /usr/share/ca-certificates/ (writable) first.
+if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]]; then
+    cp /usr/local/share/ca-certificates/polis-ca.crt \
+       /usr/share/ca-certificates/polis-ca.crt 2>/dev/null || true
+    grep -qxF 'polis-ca.crt' /etc/ca-certificates.conf 2>/dev/null || \
+        echo 'polis-ca.crt' >> /etc/ca-certificates.conf
+fi
 update-ca-certificates 2>/dev/null || true
 
 # Source shared network helpers
@@ -66,28 +75,9 @@ protect_sensitive_paths() {
 
 disable_ipv6 "workspace" || exit 1
 
-# Bootstrap mounted agents BEFORE routing through the proxy.
-# Agent install scripts (install.sh) need raw internet access to fetch packages
-# (apt-get, npm, git clone, etc.). The transparent proxy intercepts and may block
-# plain HTTP traffic, causing install failures (403 Forbidden from TPROXY).
-for agent_dir in /tmp/agents/*/; do
-    [ -d "$agent_dir" ] || continue
-    name=$(basename "$agent_dir")
-    echo "[workspace] Bootstrapping agent: ${name}"
-
-    # Run install.sh in a subshell so failures don't kill workspace init
-    if [ -x "${agent_dir}/install.sh" ]; then
-        if ! ("${agent_dir}/install.sh"); then
-            echo "[workspace] WARNING: ${name}/install.sh failed — agent may not work"
-            continue
-        fi
-    fi
-
-    # Service enablement is handled after routing is configured (with integrity checks)
-done
-
-# Configure default route to gate for TPROXY
-# Note: Docker doesn't configure gateways for internal networks, so we must do it manually
+# Configure default route to gate for TPROXY FIRST — the workspace is on an
+# internal-only Docker network with no default gateway. Without this route,
+# there is zero internet connectivity (install.sh, apt-get, curl all fail).
 echo "[workspace] Resolving gate IP..."
 GATE_IP=$(getent hosts gate | awk '{print $1}')
 
@@ -109,6 +99,34 @@ else
     echo "[workspace] ERROR: Failed to configure default route"
     exit 1
 fi
+
+# Bootstrap mounted agents AFTER routing is configured so they have internet.
+# Traffic goes through the gate's transparent proxy (TPROXY), which handles
+# HTTP/HTTPS fine for package downloads.
+for agent_dir in /tmp/agents/*/; do
+    [ -d "$agent_dir" ] || continue
+    name=$(basename "$agent_dir")
+    echo "[workspace] Bootstrapping agent: ${name}"
+
+    # Run install.sh in a subshell so failures don't kill workspace init
+    if [ -x "${agent_dir}/install.sh" ]; then
+        if ! ("${agent_dir}/install.sh"); then
+            echo "[workspace] WARNING: ${name}/install.sh failed — agent may not work"
+            continue
+        fi
+    fi
+
+    # Service enablement is handled below (with integrity checks)
+
+    # Symlink polis-* scripts into PATH so the agent can invoke them
+    # directly without searching the filesystem (find / returns exit 1
+    # due to permission-denied directories, confusing the agent).
+    for script in "${agent_dir}"/scripts/polis-*.sh; do
+        [ -f "$script" ] || continue
+        base=$(basename "$script" .sh)
+        ln -sf "$script" "/usr/local/bin/${base}"
+    done
+done
 
 # Protect sensitive directories (defense-in-depth, secondary to tmpfs mounts)
 protect_sensitive_paths
@@ -138,12 +156,18 @@ for agent_dir in /tmp/agents/*/; do
     fi
 done
 
-# Single daemon-reload, then enable all collected services
+# Single daemon-reload, then enable and start all collected services.
+# IMPORTANT: Use --no-block to avoid deadlock. Agent services declare
+# Requires=polis-init.service, so they wait for this script to finish.
+# Using "enable --now" (which blocks until the service is active) would
+# deadlock: init waits for agent → agent waits for init.
 if [ ${#agent_services[@]} -gt 0 ]; then
     systemctl daemon-reload
     for svc in "${agent_services[@]}"; do
-        systemctl enable --now "$svc" || \
+        systemctl enable "$svc" || \
             echo "[workspace] WARNING: failed to enable ${svc}"
+        systemctl start --no-block "$svc" || \
+            echo "[workspace] WARNING: failed to queue start for ${svc}"
     done
 fi
 

@@ -10,14 +10,13 @@ setup_file() {
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
     require_container "$CTR_WORKSPACE" "$CTR_SENTINEL" "$CTR_GATE"
-    relax_security_level 120
+    approve_host "api.anthropic.com" 600
+    approve_host "httpbin.org" 600
+    approve_host "www.google.com" 600
 }
 
 teardown_file() {
-    load "../../lib/test_helper.bash"
-    load "../../lib/constants.bash"
-    load "../../lib/guards.bash"
-    restore_security_level
+    true
 }
 
 setup() {
