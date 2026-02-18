@@ -125,7 +125,6 @@ up:
 
 down:
     docker compose down --volumes --remove-orphans
-    docker system prune -af --volumes
 
 status:
     ./cli/polis.sh status
@@ -143,10 +142,10 @@ package-vm arch="amd64":
 
 # ── Clean ───────────────────────────────────────────────────────────
 clean:
+    docker compose down --volumes --remove-orphans
+    docker system prune -af --volumes
     rm -rf output/ .build/
-    docker compose down -v --remove-orphans 2>/dev/null || true
 
 # WARNING: Removes certs, secrets, and .env
 clean-all: clean
     rm -rf certs/ secrets/ .env
-    docker system prune -af --volumes
