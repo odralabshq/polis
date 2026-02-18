@@ -1,3 +1,5 @@
+name: polis
+
 services:
   # =========================================================
   # RESOLVER (COREDNS / DNS Filtering)
