@@ -120,10 +120,11 @@ dev-delete:
 
 # ── Lifecycle ───────────────────────────────────────────────────────
 up:
+    docker compose stop 2>/dev/null || true
     ./cli/polis.sh up
 
 down:
-    docker compose down
+    docker compose down --volumes --remove-orphans
 
 status:
     ./cli/polis.sh status
