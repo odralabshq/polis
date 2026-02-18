@@ -234,9 +234,12 @@ jobs:
       - name: Load images
         run: zstd -d polis-images.tar.zst --stdout | docker load
 
+      - name: Install just
+        run: curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
       - name: Setup certificates and secrets
         run: |
-          chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
+          chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./tests/run-tests.sh
           ./cli/polis.sh setup-ca
           chmod 644 ./certs/ca/ca.pem
           chmod a+r ./certs/ca/ca.key
@@ -315,9 +318,12 @@ jobs:
       - name: Load images
         run: zstd -d polis-images.tar.zst --stdout | docker load
 
+      - name: Install just
+        run: curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
       - name: Setup certificates and secrets
         run: |
-          chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./agents/openclaw/install.sh ./agents/openclaw/scripts/*.sh ./tools/*.sh ./scripts/*.sh ./tests/run-tests.sh
+          chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./tests/run-tests.sh
           ./cli/polis.sh setup-ca
           chmod 644 ./certs/ca/ca.pem
           chmod a+r ./certs/ca/ca.key
