@@ -96,6 +96,7 @@ impl Cli {
                 commands::version::run(self.json);
                 Ok(())
             }
+            Command::Run(args) => commands::run::run(&args),
             _ => anyhow::bail!("Command not yet implemented"),
         }
     }

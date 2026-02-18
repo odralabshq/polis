@@ -232,12 +232,13 @@ fn test_unimplemented_command_exits_with_error() {
 
 #[test]
 fn test_run_accepts_agent_argument() {
-    // Should fail with "not implemented" but parse successfully
+    // run is now implemented — use a clean HOME so there is no existing state file
+    let dir = tempfile::TempDir::new().expect("tempdir");
     polis()
         .args(["run", "claude-dev"])
+        .env("HOME", dir.path())
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .success();
 }
 
 #[test]
@@ -374,14 +375,16 @@ mod proptests {
             cmd.assert().success();
         }
 
-        /// Run command accepts any agent name string
+        /// Run command accepts any agent name string and performs a fresh run
         #[test]
         fn prop_run_accepts_agent_name(agent in "[a-z][a-z0-9-]{0,20}") {
+            // Use a clean HOME per iteration to avoid state file cross-contamination
+            let dir = tempfile::TempDir::new().expect("tempdir");
             polis()
                 .args(["run", &agent])
+                .env("HOME", dir.path())
                 .assert()
-                .failure()
-                .stderr(predicate::str::contains("not yet implemented"));
+                .success();
         }
 
         /// Agents info accepts any agent name
