@@ -10,8 +10,10 @@ default:
 lint: lint-rust lint-c lint-shell
 
 lint-rust:
-    cargo fmt --all --check
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo fmt --all --check --manifest-path cli/Cargo.toml
+    cargo fmt --all --check --manifest-path services/toolbox/Cargo.toml
+    cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings
+    cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
 lint-c:
     find services/sentinel/modules -name '*.c' -print0 | \
@@ -24,7 +26,9 @@ lint-shell:
 test: test-rust test-c test-bats
 
 test-rust:
-    cargo test --workspace
+    cargo test --workspace --manifest-path cli/Cargo.toml
+    cargo test --workspace --manifest-path services/toolbox/Cargo.toml
+    cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 
 test-c:
     #!/usr/bin/env bash
@@ -57,7 +61,8 @@ test-clean: clean-all build setup up test-all
 
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
-    cargo fmt --all
+    cargo fmt --all --manifest-path cli/Cargo.toml
+    cargo fmt --all --manifest-path services/toolbox/Cargo.toml
 
 # ── Build ───────────────────────────────────────────────────────────
 build:

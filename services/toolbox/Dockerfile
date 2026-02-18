@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
 WORKDIR /build
-COPY services/toolbox/crates/ services/toolbox/crates/
-COPY lib/crates/ lib/crates/
-COPY Cargo.toml Cargo.lock ./
+COPY services/toolbox/crates/ crates/
+COPY services/toolbox/Cargo.toml services/toolbox/Cargo.lock* ./
+COPY lib/crates/ ../../lib/crates/
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \

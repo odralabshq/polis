@@ -1,3 +1,17 @@
+[workspace]
+members = [
+    ".",
+]
+resolver = "2"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+
 [package]
 name = "polis-cli"
 version = "0.1.0"
@@ -22,10 +36,10 @@ console = "0.16"
 indicatif = "0.18"
 polis-common = { path = "../lib/crates/polis-common" }
 chrono = "0.4"
-redis = { version = "0.27", features = ["tokio-comp", "tokio-rustls-comp", "streams"] }
+redis = { version = "1.0", features = ["tokio-comp", "tokio-rustls-comp", "streams"] }
 serde_json = "1.0"
-dirs = "5"
-dialoguer = "0.11"
+dirs = "6"
+dialoguer = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-std"] }
@@ -33,11 +47,11 @@ self_update = { version = "0.42", features = ["archive-tar", "compression-flate2
 semver = "1.0"
 
 [dev-dependencies]
-assert_cmd = "2.0"
+assert_cmd = "2.1"
 predicates = "3.1"
-proptest = "1.5"
+proptest = "1.10"
 serde_json = "1.0"
-tempfile = "3.14"  # isolated temp dirs for StateManager tests
+tempfile = "3.25"  # isolated temp dirs for StateManager tests
 
 [lints]
 workspace = true

@@ -154,7 +154,7 @@ fn parse_block_reason(s: &str) -> Result<BlockReason> {
 fn parse_activity_event(map: &HashMap<String, redis::Value>) -> Result<ActivityEvent> {
     let get_str = |key: &str| -> Option<String> {
         map.get(key)
-            .and_then(|v| redis::from_redis_value(v).ok())
+            .and_then(|v| redis::from_redis_value(v.clone()).ok())
     };
 
     let ts = get_str("ts")
