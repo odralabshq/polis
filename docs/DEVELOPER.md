@@ -26,7 +26,8 @@ just test-bats
 | just | Yes | `curl -sSf https://just.systems/install.sh \| bash` |
 | shellcheck | For linting | `sudo apt install shellcheck` |
 | Multipass | For dev VM | `sudo snap install multipass` |
-| Packer | For VM builds | `brew install packer` or download from hashicorp.com |
+| Packer | For VM builds | `just install-tools` (adds HashiCorp apt repo) |
+| QEMU + xorriso | For VM builds | `just install-tools` |
 
 ## Project Structure
 
@@ -263,6 +264,16 @@ gh attestation verify oci://ghcr.io/odralabshq/polis-gate-oss:v0.3.0 --owner Odr
 
 ## Building VM Images
 
+### Install Build Tools
+
+Packer is not in the default Ubuntu apt repos — it requires the HashiCorp apt repo. Run:
+
+```bash
+just install-tools
+```
+
+This installs: packer (via HashiCorp repo), qemu-system-x86, qemu-utils, ovmf, xorriso.
+
 ### Local Build
 
 ```bash
@@ -279,6 +290,50 @@ This runs:
 3. `packer build` - Create VM with Docker, Sysbox, and pre-loaded images
 
 Output: `output/polis-vm-<version>-amd64.qcow2`
+
+### KVM Acceleration
+
+Without KVM the QEMU build runs in software emulation and can take hours. Verify KVM is available:
+
+```bash
+ls /dev/kvm
+```
+
+**Native Linux**
+
+KVM should work out of the box. If `/dev/kvm` is missing:
+
+```bash
+# Load the module
+sudo modprobe kvm_intel   # or kvm_amd on AMD CPUs
+
+# Ensure your user has access
+sudo usermod -aG kvm $USER  # log out and back in
+```
+
+**Inside a VM (nested virtualization)**
+
+If developing inside a VM (e.g. Multipass on Windows), enable nested virtualization on the host first.
+
+Multipass / Hyper-V — PowerShell as Admin on Windows host:
+```powershell
+multipass stop polis-dev
+Set-VMProcessor -VMName "polis-dev" -ExposeVirtualizationExtensions $true
+multipass start polis-dev
+```
+
+VMware Workstation: VM Settings → Processors → enable "Virtualize Intel VT-x/EPT or AMD-V/RVI"
+
+VirtualBox — PowerShell on Windows host:
+```powershell
+VBoxManage modifyvm "polis-dev" --nested-hw-virt on
+```
+
+After enabling, restart the VM and confirm `/dev/kvm` exists. With KVM the full build takes ~10-20 min.
+
+**Monitoring the build**
+
+The VM runs headless. Once QEMU starts, just wait — Packer will print `Connected to SSH!` when cloud-init finishes (2-5 min with KVM), then run the provisioner scripts. Total build time is ~10-20 min.
 
 ### Packer Variables
 
@@ -325,6 +380,15 @@ sudo apt install shellcheck
 ```bash
 cd packer && packer init .
 ```
+
+**`E: Package 'packer' has no installation candidate`:**
+Packer isn't in the default Ubuntu repos. Use `just install-tools` — it adds the HashiCorp apt repo automatically.
+
+**`could not find a supported CD ISO creation command`:**
+```bash
+sudo apt-get install -y xorriso
+```
+Or just re-run `just install-tools` which includes xorriso.
 
 ### Logs
 
