@@ -219,9 +219,9 @@ jobs:
       - name: Install sysbox
         run: |
           docker rm -f $(docker ps -aq) 2>/dev/null || true
-          wget -q "https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
-          echo "${SYSBOX_SHA256}  sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb" | sha256sum -c -
-          sudo apt-get install -y jq "./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+          wget -q "https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
+          echo "${SYSBOX_SHA256}  sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb" | sha256sum -c -
+          sudo apt-get install -y jq "./sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
           sudo mkdir -p /etc/docker
           echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
@@ -303,9 +303,9 @@ jobs:
       - name: Install sysbox
         run: |
           docker rm -f $(docker ps -aq) 2>/dev/null || true
-          wget -q "https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
-          echo "${SYSBOX_SHA256}  sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb" | sha256sum -c -
-          sudo apt-get install -y jq "./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+          wget -q "https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
+          echo "${SYSBOX_SHA256}  sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb" | sha256sum -c -
+          sudo apt-get install -y jq "./sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
           sudo mkdir -p /etc/docker
           echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker

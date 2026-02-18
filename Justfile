@@ -6,6 +6,22 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
+# ── Install ─────────────────────────────────────────────────────────
+install-tools:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # HashiCorp repo for packer
+    if ! command -v packer &>/dev/null; then
+        sudo apt-get install -y gnupg curl
+        curl -fsSL https://apt.releases.hashicorp.com/gpg \
+            | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
+        echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/hashicorp.list
+        sudo apt-get update -qq
+        sudo apt-get install -y packer
+    fi
+    sudo apt-get install -y qemu-system-x86 qemu-utils ovmf xorriso
+
 # ── Lint ────────────────────────────────────────────────────────────
 lint: lint-rust lint-c lint-shell
 
@@ -73,12 +89,13 @@ build-service service:
     docker build -f services/{{service}}/Dockerfile .
 
 # Build VM image (requires packer)
-build-vm: build _export-images
+# Usage: just build-vm [arch=amd64|arm64] [headless=true|false]
+build-vm arch="amd64" headless="true": build _export-images
     #!/usr/bin/env bash
     set -euo pipefail
     cd packer
     packer init .
-    packer build -var "images_tar=${PWD}/../.build/polis-images.tar" polis-vm.pkr.hcl
+    packer build -var "images_tar=${PWD}/../.build/polis-images.tar" -var "arch={{arch}}" -var "headless={{headless}}" polis-vm.pkr.hcl
 
 # Internal: export Docker images for VM build
 _export-images:
@@ -161,8 +178,8 @@ package-vm arch="amd64":
     #!/usr/bin/env bash
     set -euo pipefail
     VERSION=$(git describe --tags --always)
-    cp output/polis-vm-*.qcow2 "polis-vm-${VERSION}-{{arch}}.qcow2"
-    sha256sum "polis-vm-${VERSION}-{{arch}}.qcow2" > "polis-vm-${VERSION}-{{arch}}.qcow2.sha256"
+    cp packer/output/polis-workspace-*.qcow2 "polis-workspace-${VERSION}-{{arch}}.qcow2"
+    sha256sum "polis-workspace-${VERSION}-{{arch}}.qcow2" > "polis-workspace-${VERSION}-{{arch}}.qcow2.sha256"
 
 # ── Clean ───────────────────────────────────────────────────────────
 clean:

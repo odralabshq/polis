@@ -175,7 +175,40 @@ cmd_unmount() {
     log_success "Unmounted."
 }
 
-cmd_rebuild() {
+cmd_pull() {
+    local version="${1:-latest}"
+    local arch="${2:-amd64}"
+    local dest="${PROJECT_ROOT}/.build/polis-workspace-${version}-${arch}.qcow2"
+    local repo="${POLIS_GITHUB_REPO:-odralabshq/polis}"
+
+    mkdir -p "${PROJECT_ROOT}/.build"
+
+    if [[ "${version}" == "latest" ]]; then
+        local tag
+        tag=$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+        dest="${PROJECT_ROOT}/.build/polis-workspace-${tag}-${arch}.qcow2"
+        log_info "Latest release: ${tag}"
+    fi
+
+    local url="https://github.com/${repo}/releases/download/${version}/polis-workspace-${version}-${arch}.qcow2"
+    log_step "Downloading VM image to ${dest}..."
+    curl -fL --progress-bar -o "${dest}" "${url}"
+
+    # Verify checksum
+    local sha_url="${url}.sha256"
+    local expected
+    expected=$(curl -fsSL "${sha_url}" | awk '{print $1}')
+    local actual
+    actual=$(sha256sum "${dest}" | awk '{print $1}')
+    if [[ "${expected}" != "${actual}" ]]; then
+        log_error "SHA256 mismatch! expected=${expected} actual=${actual}"
+        rm -f "${dest}"
+        exit 1
+    fi
+
+    log_success "VM image ready: ${dest}"
+    echo "${dest}"
+}
     vm_exists || { log_error "VM '${VM_NAME}' does not exist."; exit 1; }
     log_info "Rebuilding Polis..."
     multipass exec "${VM_NAME}" -- bash -c "
@@ -224,7 +257,7 @@ Commands:
   status      Show VM status
   mount       Mount project directory
   unmount     Unmount project directory
-  rebuild     Rebuild Polis in VM
+  pull        Download VM image from GitHub Releases (args: [version] [arch])
   fix-perms   Fix file ownership
   ssh-config  Print SSH config for VS Code
 
@@ -261,7 +294,7 @@ case "${1:-}" in
     status)    cmd_status ;;
     mount)     cmd_mount ;;
     unmount)   cmd_unmount ;;
-    rebuild)   cmd_rebuild ;;
+    pull)      cmd_pull "${2:-latest}" "${3:-amd64}" ;;
     fix-perms) cmd_fix_perms ;;
     ssh-config) cmd_ssh_config ;;
     *) show_usage; exit 1 ;;

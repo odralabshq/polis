@@ -71,16 +71,9 @@ HARDENING_CONFIG='{
 
 # Merge with existing config or create new
 if [[ -f "${DAEMON_JSON}" ]]; then
-    # Merge using Python (available on Ubuntu)
-    EXISTING=$(cat "${DAEMON_JSON}")
-    echo "${EXISTING}" "${HARDENING_CONFIG}" | python3 -c "
-import sys, json
-configs = [json.loads(line) for line in sys.stdin if line.strip()]
-merged = {}
-for c in configs:
-    merged.update(c)
-print(json.dumps(merged, indent=2))
-" | sudo tee "${DAEMON_JSON}" > /dev/null
+    echo "${HARDENING_CONFIG}" | sudo jq -s '.[0] * .[1]' "${DAEMON_JSON}" - \
+        | sudo tee "${DAEMON_JSON}.new" > /dev/null
+    sudo mv "${DAEMON_JSON}.new" "${DAEMON_JSON}"
 else
     echo "${HARDENING_CONFIG}" | sudo tee "${DAEMON_JSON}" > /dev/null
 fi
@@ -90,7 +83,7 @@ sudo systemctl restart docker
 
 TIMEOUT=30
 end_time=$((SECONDS + TIMEOUT))
-while ! docker info >/dev/null 2>&1; do
+while ! sudo docker info >/dev/null 2>&1; do
     if [[ ${SECONDS} -ge ${end_time} ]]; then
         echo "ERROR: Docker not ready after hardening" >&2
         exit 1

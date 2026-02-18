@@ -1,5 +1,12 @@
 # polis-vm.pkr.hcl - Packer template for Polis VM image
-# Builds a hardened Ubuntu 24.04 VM with Docker + Sysbox pre-installed
+# Builds a hardened Ubuntu 24.04 LTS Minimal VM with Docker + Sysbox pre-installed
+#
+# Distro Choice: Ubuntu 24.04 LTS (Noble Numbat) Minimal
+# - Sysbox: First-class support with official .deb packages
+# - eBPF: Kernel 6.8+ with full BTF/CO-RE support
+# - AppArmor: Enabled by default
+# - LTS: Supported until 2029 (standard), 2034 (ESM)
+# - Minimal image: ~248MB base (vs ~2GB full server), reduced attack surface
 
 packer {
   required_plugins {
@@ -48,8 +55,26 @@ variable "arch" {
 
 variable "ubuntu_serial" {
   type        = string
-  description = "Ubuntu cloud image release serial for reproducible builds"
-  default     = "20250115"
+  description = "Ubuntu minimal cloud image release serial for reproducible builds"
+  default     = "20260128"
+}
+
+variable "use_minimal_image" {
+  type        = bool
+  description = "Use Ubuntu Minimal cloud image (recommended: smaller footprint, reduced attack surface)"
+  default     = true
+}
+
+variable "headless" {
+  type        = bool
+  description = "Run QEMU headless (set false to open console for debugging)"
+  default     = true
+}
+
+variable "accelerator" {
+  type        = string
+  description = "QEMU accelerator: 'kvm' (native Linux, fast) or 'tcg' (inside VM without nested virt, slow)"
+  default     = "kvm"
 }
 
 # ============================================================================
@@ -57,8 +82,12 @@ variable "ubuntu_serial" {
 # ============================================================================
 
 locals {
-  ubuntu_url      = "https://cloud-images.ubuntu.com/releases/24.04/release-${var.ubuntu_serial}/ubuntu-24.04-server-cloudimg-${var.arch}.img"
-  ubuntu_checksum = "file:https://cloud-images.ubuntu.com/releases/24.04/release-${var.ubuntu_serial}/SHA256SUMS"
+  # Minimal image: ~248MB, reduced attack surface (recommended)
+  # Full image: ~2GB, more packages pre-installed
+  ubuntu_base_url = var.use_minimal_image ? "https://cloud-images.ubuntu.com/minimal/releases/noble/release" : "https://cloud-images.ubuntu.com/releases/24.04/release-${var.ubuntu_serial}"
+  ubuntu_img_name = var.use_minimal_image ? "ubuntu-24.04-minimal-cloudimg-${var.arch}.img" : "ubuntu-24.04-server-cloudimg-${var.arch}.img"
+  ubuntu_url      = "${local.ubuntu_base_url}/${local.ubuntu_img_name}"
+  ubuntu_checksum = "file:${local.ubuntu_base_url}/SHA256SUMS"
   sysbox_sha256   = var.arch == "amd64" ? var.sysbox_sha256_amd64 : var.sysbox_sha256_arm64
 }
 
@@ -71,21 +100,22 @@ source "qemu" "polis" {
   iso_checksum     = local.ubuntu_checksum
   disk_image       = true
   output_directory = "output"
-  vm_name          = "polis-vm-${var.polis_version}-${var.arch}.qcow2"
+  vm_name          = "polis-workspace-${var.polis_version}-${var.arch}.qcow2"
   format           = "qcow2"
   disk_size        = "20G"
   memory           = 4096
   cpus             = 2
-  headless         = true
+  accelerator      = var.accelerator
+  headless         = var.headless
   shutdown_command = "sudo shutdown -P now"
   ssh_username     = "ubuntu"
-  ssh_timeout      = "10m"
+  ssh_password     = "ubuntu"
+  ssh_timeout      = "20m"
 
-  # Packer generates ephemeral SSH keypair automatically
-  # Cloud-init disables password auth; we use ssh_handshake_attempts
+  # Retry until cloud-init finishes enabling password auth
   ssh_handshake_attempts = 100
 
-  # Cloud-init with password for initial boot (Packer injects key via ssh)
+  # Cloud-init: create packer user with password auth enabled
   cd_content = {
     "meta-data" = ""
     "user-data" = <<-EOF
@@ -99,7 +129,7 @@ source "qemu" "polis" {
         expire: false
         users:
           - name: ubuntu
-            password: packer
+            password: ubuntu
             type: text
       ssh_pwauth: true
     EOF
@@ -150,7 +180,9 @@ build {
     inline = [
       "sudo apt-get clean",
       "sudo rm -rf /var/lib/apt/lists/*",
-      "sudo cloud-init clean --logs"
+      "sudo cloud-init clean --logs",
+      "sudo passwd -l ubuntu",
+      "sudo passwd -l root"
     ]
   }
 }
