@@ -333,6 +333,6 @@ mod tests {
         let input = b"hello";
         let mut buf = tokio::io::BufWriter::new(Vec::new());
         bridge_io(&mut input.as_ref(), &mut buf).await.expect("bridge should succeed");
-        assert_eq!(buf.buffer(), b"hello");
+        assert_eq!(buf.get_ref(), b"hello");
     }
 }

@@ -14,6 +14,7 @@ pub enum BlockReason {
 /// Security level configuration.
 /// Controls how the DLP module handles requests to new/unknown domains.
 ///
+/// - `Relaxed`: All domains auto-allowed (no prompts for new domains)
 /// - `Balanced` (default): Known domains auto-allowed, new domains prompt user
 /// - `Strict`: All domains prompt user
 ///
@@ -22,6 +23,7 @@ pub enum BlockReason {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SecurityLevel {
+    Relaxed,
     #[default]
     Balanced,
     Strict,
@@ -32,6 +34,7 @@ impl SecurityLevel {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
+            Self::Relaxed => "All domains auto-allowed, no prompts for new domains",
             Self::Balanced => "Known domains auto-allowed, new domains prompt",
             Self::Strict => "All domains prompt for approval",
         }
@@ -41,6 +44,7 @@ impl SecurityLevel {
     #[must_use]
     pub const fn prompt_new_domains(self) -> bool {
         match self {
+            Self::Relaxed => false,
             Self::Balanced | Self::Strict => true,
         }
     }
@@ -49,7 +53,7 @@ impl SecurityLevel {
     #[must_use]
     pub const fn auto_allow_known(self) -> bool {
         match self {
-            Self::Balanced => true,
+            Self::Relaxed | Self::Balanced => true,
             Self::Strict => false,
         }
     }
@@ -60,7 +64,7 @@ impl SecurityLevel {
 #[must_use]
 pub fn migrate_security_level(value: &str) -> (SecurityLevel, bool) {
     match value.to_lowercase().as_str() {
-        "relaxed" => (SecurityLevel::Balanced, true),
+        "relaxed" => (SecurityLevel::Relaxed, false),
         "balanced" => (SecurityLevel::Balanced, false),
         "strict" => (SecurityLevel::Strict, false),
         _ => (SecurityLevel::Balanced, true),
@@ -370,10 +374,11 @@ mod tests {
         }
     }
 
-    // --- SecurityLevel serde round-trip (updated: no Relaxed variant) ---
+    // --- SecurityLevel serde round-trip ---
     #[test]
     fn test_security_level_serde_round_trip() {
         let variants = [
+            (SecurityLevel::Relaxed, "\"relaxed\""),
             (SecurityLevel::Balanced, "\"balanced\""),
             (SecurityLevel::Strict, "\"strict\""),
         ];
@@ -388,12 +393,6 @@ mod tests {
     #[test]
     fn test_security_level_default_is_balanced() {
         assert_eq!(SecurityLevel::default(), SecurityLevel::Balanced);
-    }
-
-    #[test]
-    fn test_security_level_relaxed_deserialize_fails() {
-        let result: Result<SecurityLevel, _> = serde_json::from_str("\"relaxed\"");
-        assert!(result.is_err(), "deserializing 'relaxed' should fail");
     }
 
     #[test]
@@ -426,13 +425,14 @@ mod tests {
     fn test_security_level_prompt_new_domains_both_true() {
         assert!(SecurityLevel::Balanced.prompt_new_domains());
         assert!(SecurityLevel::Strict.prompt_new_domains());
+        assert!(!SecurityLevel::Relaxed.prompt_new_domains());
     }
 
     #[test]
-    fn test_migrate_security_level_relaxed_returns_balanced_with_migration() {
+    fn test_migrate_security_level_relaxed_returns_relaxed_no_migration() {
         let (level, migrated) = migrate_security_level("relaxed");
-        assert_eq!(level, SecurityLevel::Balanced);
-        assert!(migrated, "relaxed should trigger migration");
+        assert_eq!(level, SecurityLevel::Relaxed);
+        assert!(!migrated, "relaxed is a valid level, no migration needed");
     }
 
     #[test]
@@ -463,7 +463,7 @@ mod tests {
         let (level3, _) = migrate_security_level("RELAXED");
         assert_eq!(level1, SecurityLevel::Balanced);
         assert_eq!(level2, SecurityLevel::Strict);
-        assert_eq!(level3, SecurityLevel::Balanced);
+        assert_eq!(level3, SecurityLevel::Relaxed);
     }
 
     // --- RequestStatus serde round-trip ---
@@ -737,7 +737,11 @@ mod proptests {
     }
 
     fn arb_security_level() -> impl Strategy<Value = SecurityLevel> {
-        prop_oneof![Just(SecurityLevel::Balanced), Just(SecurityLevel::Strict),]
+        prop_oneof![
+            Just(SecurityLevel::Relaxed),
+            Just(SecurityLevel::Balanced),
+            Just(SecurityLevel::Strict),
+        ]
     }
 
     proptest! {
@@ -818,8 +822,11 @@ mod proptests {
 
         /// SecurityLevel methods return consistent values
         #[test]
-        fn prop_security_level_prompt_new_domains_always_true(level in arb_security_level()) {
-            prop_assert!(level.prompt_new_domains());
+        fn prop_security_level_auto_allow_known_relaxed_and_balanced(level in arb_security_level()) {
+            match level {
+                SecurityLevel::Relaxed | SecurityLevel::Balanced => prop_assert!(level.auto_allow_known()),
+                SecurityLevel::Strict => prop_assert!(!level.auto_allow_known()),
+            }
         }
 
         /// migrate_security_level always returns a valid SecurityLevel
@@ -834,6 +841,7 @@ mod proptests {
         #[test]
         fn prop_migrate_security_level_case_insensitive(level in arb_security_level()) {
             let name = match level {
+                SecurityLevel::Relaxed => "relaxed",
                 SecurityLevel::Balanced => "balanced",
                 SecurityLevel::Strict => "strict",
             };

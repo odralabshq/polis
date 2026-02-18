@@ -222,8 +222,8 @@ fn test_unimplemented_command_exits_with_error() {
 // --- Subcommand argument tests ---
 
 #[test]
+#[ignore = "requires VM image"]
 fn test_run_accepts_agent_argument() {
-    // run is now implemented — use a clean HOME so there is no existing state file
     let dir = tempfile::TempDir::new().expect("tempdir");
     polis()
         .args(["run", "claude-dev"])
@@ -351,10 +351,10 @@ mod proptests {
             cmd.assert().success();
         }
 
-        /// Run command accepts any agent name string and performs a fresh run
+        /// Run command accepts any agent name string (requires VM image)
         #[test]
+        #[ignore = "requires VM image"]
         fn prop_run_accepts_agent_name(agent in "[a-z][a-z0-9-]{0,20}") {
-            // Use a clean HOME per iteration to avoid state file cross-contamination
             let dir = tempfile::TempDir::new().expect("tempdir");
             polis()
                 .args(["run", &agent])
