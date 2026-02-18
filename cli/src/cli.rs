@@ -97,6 +97,21 @@ impl Cli {
                 Ok(())
             }
             Command::Run(args) => commands::run::run(&args),
+            Command::Start => {
+                let state_mgr = crate::state::StateManager::new()?;
+                let driver = crate::workspace::DockerDriver;
+                commands::start::run(&state_mgr, &driver)
+            }
+            Command::Stop => {
+                let state_mgr = crate::state::StateManager::new()?;
+                let driver = crate::workspace::DockerDriver;
+                commands::stop::run(&state_mgr, &driver)
+            }
+            Command::Delete(args) => {
+                let state_mgr = crate::state::StateManager::new()?;
+                let driver = crate::workspace::DockerDriver;
+                commands::delete::run(&args, &state_mgr, &driver)
+            }
             _ => anyhow::bail!("Command not yet implemented"),
         }
     }
