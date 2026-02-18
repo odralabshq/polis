@@ -393,3 +393,141 @@ fn test_delete_all_confirmed_preserves_config_yaml() {
         "config.yaml must be preserved after delete --all"
     );
 }
+
+// ============================================================================
+// Property-based tests
+// ============================================================================
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn polis() -> Command {
+        Command::cargo_bin("polis").expect("polis binary should exist")
+    }
+
+    proptest! {
+        /// start with no state file always fails regardless of HOME contents
+        #[test]
+        fn prop_start_no_state_always_fails(_seed in 0u32..100) {
+            let dir = TempDir::new().expect("tempdir");
+            polis()
+                .arg("start")
+                .env("HOME", dir.path())
+                .assert()
+                .failure();
+        }
+
+        /// stop with no state file always fails regardless of HOME contents
+        #[test]
+        fn prop_stop_no_state_always_fails(_seed in 0u32..100) {
+            let dir = TempDir::new().expect("tempdir");
+            polis()
+                .arg("stop")
+                .env("HOME", dir.path())
+                .assert()
+                .failure();
+        }
+
+        /// Any non-"y" input to delete always exits 0 and preserves state file
+        #[test]
+        fn prop_delete_non_confirm_preserves_state(
+            input in "[^yY\n][^\n]*\n|[^\n]*\n"
+        ) {
+            let dir = TempDir::new().expect("tempdir");
+            write_state(&dir, "ws-prop01");
+            let before = std::fs::read_to_string(state_path(&dir)).expect("read before");
+
+            polis()
+                .arg("delete")
+                .env("HOME", dir.path())
+                .write_stdin(input.as_bytes())
+                .assert()
+                .success();
+
+            prop_assert!(state_path(&dir).exists(), "state.json must survive declined delete");
+            let after = std::fs::read_to_string(state_path(&dir)).expect("read after");
+            prop_assert_eq!(before, after);
+        }
+
+        /// Any non-"y" input to delete --all always exits 0 and preserves state file
+        #[test]
+        fn prop_delete_all_non_confirm_preserves_state(
+            input in "[^yY\n][^\n]*\n|[^\n]*\n"
+        ) {
+            let dir = TempDir::new().expect("tempdir");
+            write_state(&dir, "ws-prop02");
+            let before = std::fs::read_to_string(state_path(&dir)).expect("read before");
+
+            polis()
+                .args(["delete", "--all"])
+                .env("HOME", dir.path())
+                .write_stdin(input.as_bytes())
+                .assert()
+                .success();
+
+            prop_assert!(state_path(&dir).exists(), "state.json must survive declined delete --all");
+            let after = std::fs::read_to_string(state_path(&dir)).expect("read after");
+            prop_assert_eq!(before, after);
+        }
+
+        /// delete confirmed with any workspace_id removes state file
+        #[test]
+        fn prop_delete_confirmed_removes_state(ws_id in "[a-z]{2}-[a-z0-9]{4,8}") {
+            let dir = TempDir::new().expect("tempdir");
+            write_state(&dir, &ws_id);
+
+            polis()
+                .arg("delete")
+                .env("HOME", dir.path())
+                .write_stdin("y\n")
+                .assert()
+                .success();
+
+            prop_assert!(!state_path(&dir).exists(), "state.json must be removed after confirmed delete");
+        }
+
+        /// delete --all confirmed with any workspace_id preserves config.yaml
+        #[test]
+        fn prop_delete_all_confirmed_preserves_config(ws_id in "[a-z]{2}-[a-z0-9]{4,8}") {
+            let dir = TempDir::new().expect("tempdir");
+            write_state(&dir, &ws_id);
+            write_config(&dir);
+
+            polis()
+                .args(["delete", "--all"])
+                .env("HOME", dir.path())
+                .write_stdin("y\n")
+                .assert()
+                .success();
+
+            prop_assert!(config_path(&dir).exists(), "config.yaml must survive delete --all");
+        }
+
+        /// start/stop/delete output never contains forbidden vocabulary
+        #[test]
+        fn prop_lifecycle_output_no_forbidden_vocabulary(
+            cmd in prop_oneof![Just("start"), Just("stop"), Just("delete")],
+        ) {
+            let dir = TempDir::new().expect("tempdir");
+            let out = polis()
+                .arg(cmd)
+                .env("HOME", dir.path())
+                .write_stdin("n\n")
+                .output()
+                .expect("command should run");
+            let combined = format!(
+                "{} {}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr),
+            ).to_lowercase();
+            for forbidden in &["multipass", " docker", "container", " vm "] {
+                prop_assert!(
+                    !combined.contains(forbidden),
+                    "{cmd} output must not contain '{forbidden}'"
+                );
+            }
+        }
+    }
+}
