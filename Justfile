@@ -123,7 +123,8 @@ dev-delete:
 
 # ── Lifecycle ───────────────────────────────────────────────────────
 up:
-    docker compose stop 2>/dev/null || true
+    docker compose down --remove-orphans 2>/dev/null || true
+    sudo systemctl restart sysbox 2>/dev/null || true
     ./cli/polis.sh up
 
 down:
