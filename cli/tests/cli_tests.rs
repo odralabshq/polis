@@ -81,15 +81,6 @@ fn test_help_shows_status_command() {
 }
 
 #[test]
-fn test_help_shows_logs_command() {
-    polis()
-        .arg("--help")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("logs"));
-}
-
-#[test]
 fn test_help_shows_connect_command() {
     polis()
         .arg("--help")
@@ -242,24 +233,6 @@ fn test_run_accepts_agent_argument() {
 }
 
 #[test]
-fn test_logs_accepts_follow_flag() {
-    polis()
-        .args(["logs", "--follow"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("failed to connect to Valkey"));
-}
-
-#[test]
-fn test_logs_accepts_security_flag() {
-    polis()
-        .args(["logs", "--security"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("failed to connect to Valkey"));
-}
-
-#[test]
 fn test_delete_accepts_all_flag() {
     // --all is a valid flag; command prompts for confirmation and fails when stdin is closed
     polis()
@@ -336,7 +309,7 @@ mod proptests {
         #[test]
         fn prop_unknown_command_fails(cmd in "[a-z]{3,10}") {
             // Skip known commands
-            let known = ["run", "start", "stop", "delete", "status", "logs", 
+            let known = ["run", "start", "stop", "delete", "status",
                         "shell", "connect", "agents", "config", "doctor", 
                         "update", "version", "help"];
             if known.contains(&cmd.as_str()) {
