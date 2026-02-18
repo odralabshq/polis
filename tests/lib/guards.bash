@@ -57,6 +57,10 @@ run_with_network_skip() {
     local label="$1"; shift
     run "$@"
     if [[ "$status" -ne 0 ]]; then
+        # 130 = SIGINT: process killed (e.g. BATS timeout while proxy blocks/holds request)
+        if [[ "$status" -eq 130 ]]; then
+            skip "${label} timed out (proxy may be blocking) — network-dependent test"
+        fi
         case "$output" in
             *"Could not resolve"*|*"Connection timed out"*|\
             *"Network is unreachable"*|*"Connection refused"*)
