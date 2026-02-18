@@ -53,3 +53,9 @@ docs/reviews
 
 # Kiro
 .kiro/
+
+# Build artifacts
+.build/
+
+# Packer output (VM images)
+packer/output/
