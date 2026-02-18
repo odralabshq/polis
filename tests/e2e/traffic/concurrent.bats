@@ -7,6 +7,7 @@ setup_file() {
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
     require_container "$CTR_WORKSPACE"
+    approve_host "$HTTPBIN_HOST" 600
 }
 
 teardown_file() {

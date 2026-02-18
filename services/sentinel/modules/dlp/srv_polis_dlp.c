@@ -1335,10 +1335,13 @@ int dlp_process(ci_request_t *req)
         }
     }
 
-    /* If blocked, check if destination has a recent host-based approval.
-     * This allows retries to pass through after the user approved the
-     * original blocked request via the OTT approval flow. */
-    if (data->blocked == 1 && data->host[0] != '\0') {
+    /* If blocked by domain policy, check if destination has a recent
+     * host-based approval. Credential-based blocks are never cleared
+     * by host approval — only new_domain_prompt / new_domain_blocked
+     * are eligible (Requirement 2.4: credentials always blocked). */
+    if (data->blocked == 1 && data->host[0] != '\0' &&
+        (strcmp(data->matched_pattern, "new_domain_prompt") == 0 ||
+         strcmp(data->matched_pattern, "new_domain_blocked") == 0)) {
         if (ensure_gov_valkey_connected()) {
             char host_key[320];
             snprintf(host_key, sizeof(host_key),
