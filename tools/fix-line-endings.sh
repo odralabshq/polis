@@ -52,7 +52,7 @@ echo "Project root: ${PROJECT_ROOT}"
 echo ""
 
 # 1. Main CLI script
-fix_file "${PROJECT_ROOT}/cli/polis.sh"
+fix_file "${PROJECT_ROOT}/cli/blocked.sh"
 
 # 2. All scripts in polis/scripts/
 for f in "${PROJECT_ROOT}"/scripts/*.sh; do
