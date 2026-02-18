@@ -127,6 +127,10 @@ impl Cli {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::agents::run(&ctx, cmd, json)
             }
+            Command::Update => {
+                let ctx = crate::output::OutputContext::new(no_color, quiet);
+                commands::update::run(&ctx, &commands::update::GithubUpdateChecker).await
+            }
             Command::SshProxy => commands::internal::ssh_proxy().await,
             Command::ExtractHostKey => commands::internal::extract_host_key().await,
             _ => anyhow::bail!("Command not yet implemented"),

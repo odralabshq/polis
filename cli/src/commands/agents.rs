@@ -411,6 +411,10 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
     use super::{check_signature, load_manifest, validate_security_policy, SignatureStatus};
 
     // ── YAML fixtures ────────────────────────────────────────────────────────
