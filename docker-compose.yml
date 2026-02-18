@@ -1,3 +1,5 @@
+name: polis
+
 services:
   # =========================================================
   # RESOLVER (COREDNS / DNS Filtering)
@@ -387,6 +389,7 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      - DAC_OVERRIDE
     read_only: true
     security_opt:
       - no-new-privileges:true

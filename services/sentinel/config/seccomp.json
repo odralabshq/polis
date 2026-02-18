@@ -124,6 +124,7 @@
         "sendto",
         "set_robust_list",
         "set_tid_address",
+        "setpgid",
         "setsockopt",
         "shutdown",
         "sigaltstack",
@@ -138,6 +139,7 @@
         "uname",
         "unlink",
         "unlinkat",
+        "vfork",
         "wait4",
         "waitid",
         "waitpid",
@@ -145,7 +147,7 @@
         "writev"
       ],
       "action": "SCMP_ACT_ALLOW",
-      "comment": "Hardened syscall set for c-icap (sentinel). 91 unused syscalls removed: privilege-drop (runs as non-root), daemon-mode (disabled with -N), CommandsSocket (disabled), xattr/inotify/splice/timer/sync (never used). SysV IPC retained (compiled into libicapapi)."
+      "comment": "Hardened syscall set for c-icap (sentinel). vfork+setpgid added for dash entrypoint child process execution."
     }
   ]
 }

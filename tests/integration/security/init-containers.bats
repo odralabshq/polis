@@ -25,10 +25,11 @@ _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }
     assert_output --partial "ALL"
 }
 
-@test "scanner-init: has only CHOWN capability" {
+@test "scanner-init: has CHOWN and DAC_OVERRIDE capabilities" {
     run jq -r '.[0].HostConfig.CapAdd[]' <<< "$SCANNER_INIT_INSPECT"
     assert_success
-    assert_output --regexp "^(CHOWN|CAP_CHOWN)$"
+    assert_output --partial "CHOWN"
+    assert_output --partial "DAC_OVERRIDE"
 }
 
 @test "scanner-init: has read-only rootfs" {

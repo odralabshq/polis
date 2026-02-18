@@ -65,10 +65,7 @@ cd ~/polis
 nano .env  # Add ANTHROPIC_API_KEY or OPENAI_API_KEY
 
 # Initialize and start Polis
-./cli/polis.sh init --agent=openclaw
-
-# Initialize the agent and get your access token
-./cli/polis.sh openclaw init
+just clean-all && just build && just setup && just up
 ```
 
 Access the agent UI at `http://<VM_IP>:18789` (get IP with `multipass info polis-vm`).
@@ -114,7 +111,7 @@ To edit code with your local IDE:
 1. Install the **Remote - SSH** extension in VS Code.
 2. **Paste Config**: Use the SSH config block provided by the setup script output (press `F1` -> `Remote-SSH: Open SSH Configuration File...`).
 3. **Connect**: Press `F1`, select **"Remote-SSH: Connect to Host..."**, choose `polis-dev`, and open the `~/polis` folder.
-4. **Init**: Open a terminal in VS Code and run: `./cli/polis.sh init --local`
+4. **Init**: Open a terminal in VS Code and run: `just clean-all && just build && just setup && just up`
 
 ---
 
@@ -141,11 +138,10 @@ cd ~/polis
 git pull && git submodule update --init --recursive
 
 # Rebuild and restart from source
-./cli/polis.sh down
-./cli/polis.sh init --local --no-cache
+just clean-all && just build && just setup && just up
 
 # View all containers status
-./cli/polis.sh status
+just status
 ```
 
 ---
@@ -172,7 +168,7 @@ cd polis
 # Configure and start
 cp agents/openclaw/config/env.example .env
 nano .env  # Add your API keys
-./cli/polis.sh init --agent=openclaw
+just clean-all && just build && just setup && just up
 ```
 
 ## 🏗️ Architecture
@@ -359,16 +355,13 @@ docker info | grep sysbox
 **Gateway unhealthy / "not found" errors** — CRLF line endings (Windows/WSL2):
 
 ```bash
-dos2unix cli/polis.sh scripts/*.sh agents/openclaw/**/*.sh
+dos2unix Justfile cli/blocked.sh scripts/*.sh agents/openclaw/**/*.sh
 ```
 
 **Full reset:**
 
 ```bash
-polis down
-docker rmi $(docker images --filter "reference=polis-*" -q) 2>/dev/null
-rm -f certs/ca/ca.key certs/ca/ca.pem
-polis init --agent=openclaw
+just clean-all && just build && just setup && just up
 ```
 
 ## 🛡️ Security Framework Alignment
@@ -394,7 +387,7 @@ Polis provides defense-in-depth security but is not a silver bullet. Always revi
 On Windows hosts, files mounted into the Multipass VM often lose their Linux "execute" bit.
 
 - **Recommended Fix:** Clone the repository directly inside the VM to use the native Linux filesystem.
-- **Workaround:** If you must use a mount, prefix the script call with the shell: `bash ./cli/polis.sh ...`
+- **Workaround:** If you must use a mount, run scripts via: `bash ./Justfile` is not applicable — use `just <recipe>` directly inside the VM.
 
 ### 2. OCI Runtime Error: Permission Denied (`init.sh`)
 

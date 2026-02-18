@@ -1,5 +1,5 @@
 [package]
-name = "polis-mcp-agent"
+name = "polis-hitl-agent"
 version = "0.1.0"
 edition = "2021"
 

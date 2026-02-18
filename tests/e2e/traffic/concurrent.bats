@@ -7,14 +7,11 @@ setup_file() {
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
     require_container "$CTR_WORKSPACE"
-    relax_security_level
+    approve_host "$HTTPBIN_HOST" 600
 }
 
 teardown_file() {
-    load "../../lib/test_helper.bash"
-    load "../../lib/constants.bash"
-    load "../../lib/guards.bash"
-    restore_security_level
+    true
 }
 
 setup() {

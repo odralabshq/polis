@@ -51,7 +51,7 @@ spec:
       default: 18789
 
   resources:
-    memoryLimit: 4G
+    memoryLimit: 6G
     memoryReservation: 1G
 
   requirements:
