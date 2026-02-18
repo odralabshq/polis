@@ -183,10 +183,36 @@ fn fresh_run(state_mgr: &StateManager, agent: &str) -> Result<()> {
     ] {
         execute_stage(&mut run_state, next_stage);
         state_mgr.advance(&mut run_state, next_stage)?;
+        if next_stage == RunStage::Provisioned {
+            pin_host_key();
+        }
     }
 
     println!("{agent} is ready");
     Ok(())
+}
+
+/// Pins the workspace SSH host key into `~/.polis/known_hosts`.
+///
+/// Failures are non-fatal: a warning is printed and provisioning continues.
+fn pin_host_key() {
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("polis"));
+    let output = match std::process::Command::new(exe).args(["_extract-host-key"]).output() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("Warning: could not pin host key: {e}");
+            return;
+        }
+    };
+    if !output.status.success() {
+        eprintln!("Warning: could not pin host key — SSH may prompt for verification");
+        return;
+    }
+    let Ok(host_key) = String::from_utf8(output.stdout) else { return };
+    match crate::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim())) {
+        Ok(()) => println!("Host key pinned"),
+        Err(e) => eprintln!("Warning: could not save host key: {e}"),
+    }
 }
 
 /// Execute a single pipeline stage (stub — real provisioning is out of scope for issue 07).

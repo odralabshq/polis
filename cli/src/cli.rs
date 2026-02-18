@@ -120,6 +120,7 @@ impl Cli {
                 commands::logs::run(&ctx, &client, args).await
             }
             Command::SshProxy => commands::internal::ssh_proxy().await,
+            Command::ExtractHostKey => commands::internal::extract_host_key().await,
             _ => anyhow::bail!("Command not yet implemented"),
         }
     }

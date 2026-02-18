@@ -5,6 +5,8 @@ use clap::Parser;
 mod cli;
 mod commands;
 mod output;
+#[allow(dead_code)] // exists/remove used by tests and future commands (delete, connect)
+mod ssh;
 mod state;
 #[allow(dead_code)] // Metrics items used by future status command
 mod valkey;

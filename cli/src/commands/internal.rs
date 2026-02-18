@@ -146,6 +146,61 @@ pub async fn ssh_proxy() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Host key extraction
+// ---------------------------------------------------------------------------
+
+async fn extract_key_from(cmd: &str, args: &[&str]) -> Result<String> {
+    let output = tokio::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .await
+        .with_context(|| format!("failed to run {cmd}"))?;
+    anyhow::ensure!(output.status.success(), "{cmd} exec failed");
+    let key = String::from_utf8(output.stdout)
+        .context("host key output is not valid UTF-8")?
+        .trim()
+        .to_string();
+    crate::ssh::validate_host_key(&key)?;
+    Ok(key)
+}
+
+async fn extract_from_multipass() -> Result<String> {
+    extract_key_from(
+        "multipass",
+        &["exec", "polis", "--", "cat", "/etc/ssh/ssh_host_ed25519_key.pub"],
+    )
+    .await
+}
+
+async fn extract_from_docker() -> Result<String> {
+    extract_key_from(
+        "docker",
+        &["exec", "polis-workspace-1", "cat", "/etc/ssh/ssh_host_ed25519_key.pub"],
+    )
+    .await
+}
+
+/// Extracts the workspace SSH host key and prints it in `known_hosts` format.
+///
+/// Output: `workspace ssh-ed25519 <key-material>`
+///
+/// Invoked during provisioning via `polis _extract-host-key`.
+///
+/// # Errors
+///
+/// Returns an error if no backend is reachable or the host key cannot be extracted.
+pub async fn extract_host_key() -> Result<()> {
+    let backend = detect_backend(&SystemProber).await?;
+    let key = match backend {
+        Backend::Multipass => extract_from_multipass().await,
+        Backend::Docker => extract_from_docker().await,
+    }
+    .context("failed to extract host key")?;
+    println!("workspace {key}");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests (pre-existing RED phase — do not modify)
 // ---------------------------------------------------------------------------
 
