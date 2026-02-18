@@ -25,7 +25,7 @@
 | 05 | Valkey Metrics Integration | ❌ Removed | Removed entirely (2026-02-18): CLI reader, `MetricsSnapshot` type, `redis` dep, and `polis logs` command all deleted. Activity stream types (`ActivityEvent` etc.) retained in `polis-common` for future use. |
 | 06 | Status Command | ✅ Done | Multipass VM + container detection implemented. JSON schema correct. Human output shows workspace/security status. |
 | 07 | Run State Machine | ✅ Done | State machine structure, `StateManager`, checkpoint/resume, agent switching, `list_available_agents()` all implemented. `execute_stage()` now has real implementations: `ImageReady` checks local qcow2, `WorkspaceCreated` launches VM via multipass, `CredentialsSet` transfers CA cert, `Provisioned` runs docker compose, `AgentReady` waits for healthy. `get_default_agent()` reads `defaults.agent` from config. Unit + property tests added. |
-| 08 | Start/Stop/Delete | ⚠️ Partial | Commands exist, `WorkspaceDriver` trait exists. **Missing:** `DockerDriver` is all no-ops. `delete` doesn't remove certificates or SSH config as spec §10.1 requires. No real multipass/docker lifecycle calls. |
+| 08 | Start/Stop/Delete | ✅ Done | `MultipassDriver` implements real lifecycle: `is_running` parses multipass JSON, `start`/`stop`/`remove` call multipass commands, `remove_cached_images` clears `~/.polis/images/`. `delete` removes certs, `delete --all` also removes SSH config + known_hosts. Unit + property tests added. |
 | 09 | Valkey Streams Activity | ❌ Removed | Removed with issue 05 — `polis logs` command deleted. |
 | 10 | Logs Command | ❌ Removed | Removed with issue 05 — `polis logs` command deleted. |
 | 11 | SSH Proxy Command | ✅ Done | `_ssh-proxy` with multipass/docker backend detection, STDIO bridging, `bridge_io()` with property tests. |
@@ -44,8 +44,8 @@
 
 | Category | Count |
 |----------|-------|
-| ✅ Fully done | 13 |
-| ⚠️ Partial | 3 |
+| ✅ Fully done | 14 |
+| ⚠️ Partial | 2 |
 | ❌ Not started | 0 |
 | ❌ Removed | 3 |
 
@@ -53,18 +53,11 @@
 
 ## Remaining Gaps
 
-### 1. Start/Stop/Delete Commands (Issue 08)
-
-`DockerDriver` is all no-ops. Real multipass lifecycle calls needed:
-- `start` → `multipass start polis`
-- `stop` → `multipass exec polis -- docker compose stop` then `multipass stop polis`
-- `delete` → stop + `multipass delete polis && multipass purge` + remove certs/SSH config
-
-### 2. Update Command Signature Verification (Issue 16)
+### 1. Update Command Signature Verification (Issue 16)
 
 `verify_signature()` returns hardcoded placeholder. zipsign verification not wired.
 
-### 3. Doctor Command Health Checks (Issue 17)
+### 2. Doctor Command Health Checks (Issue 17)
 
 All check implementations are stubs:
 - `check_gate_health()` → hardcoded `true`
@@ -163,4 +156,4 @@ See `cli/src/commands/run.rs` for VM lifecycle:
 
 ---
 
-*Updated: 2026-02-18 15:23*
+*Updated: 2026-02-18 15:52*
