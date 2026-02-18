@@ -125,6 +125,7 @@ up:
 
 down:
     docker compose down --volumes --remove-orphans
+    docker system prune -af --volumes
 
 status:
     ./cli/polis.sh status
