@@ -186,3 +186,83 @@ _seed_blocked() {
     assert_success
     refute_output --partial "$rid"
 }
+
+# =============================================================================
+# Workspace-side shell tool tests
+# Verify polis-*.sh scripts work from inside the workspace container
+# =============================================================================
+
+@test "e2e: polis-security-status returns JSON from workspace" {
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" \
+        bash /tmp/agents/openclaw/scripts/polis-security-status.sh
+    assert_success
+    assert_output --partial '"status"'
+}
+
+@test "e2e: polis-list-pending returns JSON from workspace" {
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" \
+        bash /tmp/agents/openclaw/scripts/polis-list-pending.sh
+    assert_success
+    assert_output --partial '"pending"'
+}
+
+@test "e2e: polis-report-block from workspace stores request in Valkey" {
+    require_container "$CTR_WORKSPACE"
+    local rid="req-hitl-ws01"
+    _admin_cmd DEL "polis:blocked:${rid}" 2>/dev/null || true
+
+    run docker exec "$CTR_WORKSPACE" \
+        bash /tmp/agents/openclaw/scripts/polis-report-block.sh \
+        "$rid" "url_blocked" "https://ws-test.example.com"
+    assert_success
+    assert_output --partial '"requires_approval"'
+
+    run _admin_cmd EXISTS "polis:blocked:${rid}"
+    assert_output "1"
+
+    _admin_cmd DEL "polis:blocked:${rid}" 2>/dev/null || true
+}
+
+@test "e2e: polis-check-status from workspace returns pending" {
+    require_container "$CTR_WORKSPACE"
+    local rid="req-hitl-ws02"
+    _seed_blocked "$rid" "https://ws-check.example.com" "url_blocked"
+
+    run docker exec "$CTR_WORKSPACE" \
+        bash /tmp/agents/openclaw/scripts/polis-check-status.sh "$rid"
+    assert_success
+    assert_output --partial '"pending"'
+
+    _admin_cmd DEL "polis:blocked:${rid}" 2>/dev/null || true
+}
+
+@test "e2e: polis-check-status from workspace returns approved after CLI approval" {
+    require_container "$CTR_WORKSPACE"
+    local rid="req-hitl-ws03"
+
+    # Report via workspace shell script
+    docker exec "$CTR_WORKSPACE" \
+        bash /tmp/agents/openclaw/scripts/polis-report-block.sh \
+        "$rid" "url_blocked" "https://ws-approve.example.com" 2>/dev/null || true
+
+    # Approve via operator CLI
+    bash "${PROJECT_ROOT}/cli/blocked.sh" approve "$rid"
+
+    # Check from workspace
+    run docker exec "$CTR_WORKSPACE" \
+        bash /tmp/agents/openclaw/scripts/polis-check-status.sh "$rid"
+    assert_success
+    assert_output --partial '"approved"'
+
+    _admin_cmd DEL "polis:approved:${rid}" 2>/dev/null || true
+}
+
+@test "e2e: polis-check-status from workspace returns not_found for unknown" {
+    require_container "$CTR_WORKSPACE"
+    run docker exec "$CTR_WORKSPACE" \
+        bash /tmp/agents/openclaw/scripts/polis-check-status.sh "req-hitl-ws-unknown"
+    assert_success
+    assert_output --partial '"not_found"'
+}
