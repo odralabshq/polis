@@ -6,6 +6,15 @@ metadata:
   displayName: "CHANGEME"
   version: "0.1.0"
   description: "CHANGEME"
+  author: "your-name"
+  license: "MIT"
+  provider: "Provider Name"   # e.g., Anthropic, OpenAI, Custom
+  capabilities:               # User-facing capabilities
+    - code-generation
+    # - code-review
+    # - documentation
+    # - refactoring
+    # - testing
 
 spec:
   packaging: script
