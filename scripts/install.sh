@@ -71,15 +71,18 @@ resolve_version() {
 
 # Download and verify with SHA256
 download_and_verify() {
+    local arch
+    arch=$(check_arch)
     local base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
     local bin_dir="${INSTALL_DIR}/bin"
-    local checksum_file="/tmp/polis.sh.sha256.$$"
+    local binary_name="polis-linux-${arch}"
+    local checksum_file="/tmp/polis.sha256.$$"
 
     mkdir -p "${bin_dir}"
 
-    log_info "Downloading polis CLI..."
-    curl -fsSL "${base_url}/polis.sh" -o "${bin_dir}/polis"
-    curl -fsSL "${base_url}/polis.sh.sha256" -o "${checksum_file}"
+    log_info "Downloading polis CLI (${arch})..."
+    curl -fsSL "${base_url}/${binary_name}" -o "${bin_dir}/polis"
+    curl -fsSL "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
 
     log_info "Verifying SHA256 checksum..."
     local expected actual

@@ -119,7 +119,7 @@ cmd_create() {
         --cpus "${VM_CPUS}" \
         --memory "${VM_MEMORY}" \
         --disk "${VM_DISK}" \
-        --cloud-init "${PROJECT_ROOT}/polis-dev.yaml" \
+        --cloud-init "${PROJECT_ROOT}/cloud-init.yaml" \
         "${UBUNTU_VERSION}"
     
     log_info "Waiting for cloud-init..."

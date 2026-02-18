@@ -41,10 +41,14 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: |
+          cargo fmt --all --manifest-path cli/Cargo.toml -- --check
+          cargo fmt --all --manifest-path services/toolbox/Cargo.toml -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings
+          cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
   # ── Stage 1b: Lint C ──────────────────────────────────────────────
   lint-c:
@@ -78,7 +82,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
-      - run: cargo test --workspace
+      - name: Test CLI
+        run: cargo test --workspace --manifest-path cli/Cargo.toml
+
+      - name: Test Toolbox
+        run: cargo test --workspace --manifest-path services/toolbox/Cargo.toml
+
+      - name: Test polis-common
+        run: cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 
   # ── Stage 2b: Test C ──────────────────────────────────────────────
   test-c:
@@ -239,8 +250,8 @@ jobs:
 
       - name: Setup certificates and secrets
         run: |
-          chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./tests/run-tests.sh
-          ./cli/polis.sh setup-ca
+          chmod +x ./services/*/scripts/*.sh ./tests/run-tests.sh
+          just setup-ca
           chmod 644 ./certs/ca/ca.pem
           chmod a+r ./certs/ca/ca.key
           mkdir -p ./certs/toolbox
@@ -253,7 +264,7 @@ jobs:
           chmod 644 ./secrets/valkey_users.acl
 
       - name: Start containers
-        run: ./cli/polis.sh up
+        run: just up
 
       - name: Wait for healthy
         run: |
@@ -323,8 +334,8 @@ jobs:
 
       - name: Setup certificates and secrets
         run: |
-          chmod +x ./cli/polis.sh ./services/*/scripts/*.sh ./tests/run-tests.sh
-          ./cli/polis.sh setup-ca
+          chmod +x ./services/*/scripts/*.sh ./tests/run-tests.sh
+          just setup-ca
           chmod 644 ./certs/ca/ca.pem
           chmod a+r ./certs/ca/ca.key
           mkdir -p ./certs/toolbox
@@ -339,7 +350,7 @@ jobs:
       - name: Start containers
         run: |
           docker compose --profile test up -d httpbin 2>/dev/null || true
-          ./cli/polis.sh up
+          just up
 
       - name: Wait for healthy
         run: |

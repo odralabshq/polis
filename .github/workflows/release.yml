@@ -1,10 +1,9 @@
-# Release Workflow for polis-core
-# Builds 6 Docker images (gateway, icap, workspace, scanner, resolver, toolbox),
-# signs them with cosign, generates SBOMs, creates SLSA attestations,
-# and creates a GitHub Release with source tarball.
+# Release Workflow for Polis
+# Builds Docker images, bakes them into VM, builds CLI, creates release.
 #
-# Usage: Go to Actions > Release > Run workflow > Enter version (e.g., v0.1.0)
-# Or push a tag matching v* to trigger automatically.
+# Flow: Docker build → Export → Packer VM → CLI binary → GitHub Release
+#
+# Usage: Push a v* tag or manually trigger via Actions UI
 
 name: Release
 
@@ -15,13 +14,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v0.1.0, v1.2.3-rc1)'
+        description: 'Version (e.g., v0.3.0)'
         required: true
         type: string
+      push_docker:
+        description: 'Push Docker images to GHCR (for developers)'
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}/polis
+  SYSBOX_VERSION: "0.6.7"
+  SYSBOX_SHA256_AMD64: "b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
 
 permissions:
   contents: write
@@ -39,14 +44,17 @@ jobs:
     outputs:
       version: ${{ steps.validate.outputs.version }}
       is_prerelease: ${{ steps.validate.outputs.is_prerelease }}
+      push_docker: ${{ steps.validate.outputs.push_docker }}
     steps:
       - name: Validate version format
         id: validate
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             VERSION="${{ inputs.version }}"
+            PUSH_DOCKER="${{ inputs.push_docker }}"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
+            PUSH_DOCKER="true"  # Always push on tag
           else
             echo "::error::Could not determine version"
             exit 1
@@ -58,45 +66,26 @@ jobs:
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "push_docker=$PUSH_DOCKER" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *"-"* ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "✓ Version $VERSION is valid"
+          echo "✓ Version $VERSION validated (push_docker=$PUSH_DOCKER)"
 
   # =========================================================
-  # Build, push, sign, and attest each Docker image
+  # Build Docker images and export tarball
   # =========================================================
   docker:
-    name: "Docker: ${{ matrix.image }}"
+    name: Build Docker Images
     needs: validate
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: gateway
-            dockerfile: services/gate/Dockerfile
-            description: Polis Gateway (g3proxy)
-          - image: icap
-            dockerfile: services/sentinel/Dockerfile
-            description: Polis ICAP (c-icap + SquidClamav)
-          - image: workspace
-            dockerfile: services/workspace/Dockerfile
-            description: Polis Workspace (base)
-          - image: scanner
-            dockerfile: services/scanner/Dockerfile
-            description: Polis Scanner (ClamAV)
-          - image: resolver
-            dockerfile: services/resolver/Dockerfile
-            description: Polis Resolver (CoreDNS)
-          - image: toolbox
-            dockerfile: services/toolbox/Dockerfile
-            description: Polis Toolbox (MCP server)
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
 
       - name: Generate CA certificate for build
         run: |
@@ -109,67 +98,143 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Login to GitHub Container Registry
+        if: needs.validate.outputs.push_docker == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
-        id: build-push
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss:${{ needs.validate.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss:latest
-          labels: |
-            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
-            org.opencontainers.image.description=${{ matrix.description }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - name: Build all images
+        run: docker compose build
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
-        with:
-          cosign-release: 'v3.0.3'
-
-      - name: Sign container image
+      - name: Push images to GHCR (optional)
+        if: needs.validate.outputs.push_docker == 'true'
         run: |
-          cosign sign --yes \
-            "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss@${{ steps.build-push.outputs.digest }}"
+          VERSION="${{ needs.validate.outputs.version }}"
+          IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'polis-.*-oss:latest')
+          for img in $IMAGES; do
+            base=$(echo "$img" | sed 's/:latest$//')
+            ghcr_img="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${base#polis-}"
+            
+            docker tag "$img" "${ghcr_img}:${VERSION}"
+            docker tag "$img" "${ghcr_img}:latest"
+            docker push "${ghcr_img}:${VERSION}"
+            docker push "${ghcr_img}:latest"
+            echo "✓ Pushed ${ghcr_img}:${VERSION}"
+          done
 
-      - name: Generate SBOM
-        uses: anchore/sbom-action@28d71544de8eaf1b958d335707167c5f783590ad # v0.22.2
-        with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss:${{ needs.validate.outputs.version }}
-          format: spdx-json
-          output-file: sbom-${{ matrix.image }}.spdx.json
+      - name: Export images tarball
+        run: |
+          IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'polis-.*-oss:latest' | tr '\n' ' ')
+          mkdir -p .build
+          docker save -o .build/polis-images.tar $IMAGES
+          echo "✓ Exported: $IMAGES"
 
-      - name: Attest image provenance
-        uses: actions/attest-build-provenance@7668571508540a607bdfd90a87a560489fe372eb # v2.1.0
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image }}-oss
-          subject-digest: ${{ steps.build-push.outputs.digest }}
-          push-to-registry: true
-
-      - name: Upload SBOM artifact
+      - name: Upload images tarball
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
-          name: sbom-${{ matrix.image }}
-          path: sbom-${{ matrix.image }}.spdx.json
-          retention-days: 5
+          name: docker-images
+          path: .build/polis-images.tar
+          retention-days: 1
 
   # =========================================================
-  # Create GitHub Release with source tarball + SBOMs
+  # Build VM image with Docker images baked in
+  # =========================================================
+  vm:
+    name: Build VM Image
+    needs: [validate, docker]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download images tarball
+        uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # v4.2.0
+        with:
+          name: docker-images
+          path: .build
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@1aa358be5cf73883762b302a3a03abd66e75b232 # v3.1.0
+
+      - name: Init Packer
+        run: packer init packer/
+
+      - name: Build VM image
+        run: |
+          packer build \
+            -var "polis_version=${{ needs.validate.outputs.version }}" \
+            -var "images_tar=${PWD}/.build/polis-images.tar" \
+            -var "sysbox_version=${SYSBOX_VERSION}" \
+            -var "sysbox_sha256_amd64=${SYSBOX_SHA256_AMD64}" \
+            -var "arch=amd64" \
+            packer/polis-vm.pkr.hcl
+
+      - name: Generate checksum
+        run: |
+          cd output
+          sha256sum *.qcow2 > checksums.sha256
+
+      - name: Attest VM provenance
+        uses: actions/attest-build-provenance@7668571508540a607bdfd90a87a560489fe372eb # v2.1.0
+        with:
+          subject-path: output/*.qcow2
+
+      - name: Upload VM artifact
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: vm-image
+          path: |
+            output/*.qcow2
+            output/checksums.sha256
+          retention-days: 1
+
+  # =========================================================
+  # Build CLI binary
+  # =========================================================
+  cli:
+    name: Build CLI
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
+
+      - name: Build CLI
+        run: |
+          cd cli
+          cargo build --release
+          cp target/release/polis ../polis-linux-amd64
+
+      - name: Generate checksum
+        run: sha256sum polis-linux-amd64 > polis-linux-amd64.sha256
+
+      - name: Attest CLI provenance
+        uses: actions/attest-build-provenance@7668571508540a607bdfd90a87a560489fe372eb # v2.1.0
+        with:
+          subject-path: polis-linux-amd64
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: cli-binary
+          path: |
+            polis-linux-amd64
+            polis-linux-amd64.sha256
+          retention-days: 1
+
+  # =========================================================
+  # Create GitHub Release
   # =========================================================
   release:
     name: Create Release
-    needs: [validate, docker]
+    needs: [validate, vm, cli]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -183,57 +248,31 @@ jobs:
           git tag -a "${{ needs.validate.outputs.version }}" -m "Release ${{ needs.validate.outputs.version }}"
           git push origin "${{ needs.validate.outputs.version }}"
 
-      - name: Download SBOM artifacts
+      - name: Download VM artifact
         uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # v4.2.0
         with:
-          pattern: sbom-*
-          merge-multiple: true
-          path: ./sboms
+          name: vm-image
+          path: ./vm
 
-      - name: Generate CLI checksum
-        run: sha256sum cli/polis.sh > cli/polis.sh.sha256
-
-      - name: Attest CLI script provenance
-        uses: actions/attest-build-provenance@7668571508540a607bdfd90a87a560489fe372eb # v2.1.0
+      - name: Download CLI artifact
+        uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # v4.2.0
         with:
-          subject-path: cli/polis.sh
-
-      - name: Check if VM artifacts exist
-        id: check-vm
-        run: |
-          # VM artifacts come from build-vm.yml workflow (separate workflow)
-          # For now, VM images are released separately via build-vm.yml
-          echo "available=false" >> "$GITHUB_OUTPUT"
-
-      - name: Create source tarball
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          tar czf "polis-core-${VERSION}.tar.gz" \
-            --exclude='.git' \
-            --exclude='certs/ca/*.key' \
-            --exclude='.env' \
-            --transform "s,^,polis-core-${VERSION}/," \
-            services config docs lib scripts tests tools \
-            README.md .gitignore Cargo.toml Cargo.lock docker-compose.yml
+          name: cli-binary
+          path: ./cli-bin
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: ${{ needs.validate.outputs.version }}
-          name: Release ${{ needs.validate.outputs.version }}
+          name: Polis ${{ needs.validate.outputs.version }}
           draft: false
           prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: |
-            cli/polis.sh
-            cli/polis.sh.sha256
+            vm/*.qcow2
+            vm/checksums.sha256
+            cli-bin/polis-linux-amd64
+            cli-bin/polis-linux-amd64.sha256
             scripts/install.sh
-            polis-core-${{ needs.validate.outputs.version }}.tar.gz
-            sboms/sbom-gateway.spdx.json
-            sboms/sbom-icap.spdx.json
-            sboms/sbom-workspace.spdx.json
-            sboms/sbom-scanner.spdx.json
-            sboms/sbom-resolver.spdx.json
-            sboms/sbom-toolbox.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

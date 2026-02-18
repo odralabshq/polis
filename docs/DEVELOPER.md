@@ -33,9 +33,9 @@ just test-bats
 
 ```
 polis/
-├── cli/blocked.sh            # HITL approval workflow (blocked/approve/deny/check)
+├── cli/src/                  # Rust CLI (polis binary)
 ├── tools/dev-vm.sh           # Development VM management
-├── scripts/install.sh        # One-line installer
+├── cloud-init.yaml           # Cloud-init config for dev VMs
 ├── packer/                   # VM image build
 │   ├── polis-vm.pkr.hcl      # Packer template
 │   └── scripts/              # Provisioner scripts
@@ -361,9 +361,16 @@ The VM runs headless. Once QEMU starts, just wait — Packer will print `Connect
 
 ---
 
-## Installation
+## Polis CLI
 
-> The user-facing CLI is being rebuilt. Installation instructions will be updated when the new CLI is released.
+The user-facing CLI is built in Rust under `cli/src/`. To build and install locally:
+
+```bash
+cd cli && cargo build --release
+cp target/release/polis ~/.local/bin/
+```
+
+Or use the pre-built binary from GitHub releases.
 
 ---
 
