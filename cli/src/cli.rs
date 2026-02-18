@@ -99,17 +99,17 @@ impl Cli {
             Command::Run(args) => commands::run::run(&args),
             Command::Start => {
                 let state_mgr = crate::state::StateManager::new()?;
-                let driver = crate::workspace::DockerDriver;
+                let driver = crate::workspace::MultipassDriver;
                 commands::start::run(&state_mgr, &driver)
             }
             Command::Stop => {
                 let state_mgr = crate::state::StateManager::new()?;
-                let driver = crate::workspace::DockerDriver;
+                let driver = crate::workspace::MultipassDriver;
                 commands::stop::run(&state_mgr, &driver)
             }
             Command::Delete(args) => {
                 let state_mgr = crate::state::StateManager::new()?;
-                let driver = crate::workspace::DockerDriver;
+                let driver = crate::workspace::MultipassDriver;
                 commands::delete::run(&args, &state_mgr, &driver)
             }
             Command::Connect(args) => {
