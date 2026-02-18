@@ -128,6 +128,10 @@ impl Cli {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::agents::run(&ctx, cmd, json)
             }
+            Command::Config(cmd) => {
+                let ctx = crate::output::OutputContext::new(no_color, quiet);
+                commands::config::run(&ctx, cmd)
+            }
             Command::Update => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::update::run(&ctx, &commands::update::GithubUpdateChecker).await

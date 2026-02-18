@@ -303,8 +303,8 @@ fn test_config_show_subcommand() {
     polis()
         .args(["config", "show"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .success()
+        .stdout(predicate::str::contains("security.level"));
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn test_config_set_subcommand() {
         .args(["config", "set", "key", "value"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .stderr(predicate::str::contains("unknown config key"));
 }
 
 
@@ -400,17 +400,18 @@ mod proptests {
                 .stderr(predicate::str::contains("not found"));
         }
 
-        /// Config set accepts any key-value pair
+        /// Config set rejects unknown keys and invalid values
         #[test]
         fn prop_config_set_accepts_kv(
             key in "[a-z][a-z0-9_.]{0,20}",
             value in "[a-zA-Z0-9_.]{1,50}",  // No leading dash to avoid flag parsing
         ) {
+            prop_assume!(key != "security.level" && key != "defaults.agent");
             polis()
                 .args(["config", "set", &key, &value])
                 .assert()
                 .failure()
-                .stderr(predicate::str::contains("not yet implemented"));
+                .stderr(predicate::str::contains("unknown config key"));
         }
     }
 }
