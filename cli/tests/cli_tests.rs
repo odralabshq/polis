@@ -261,11 +261,12 @@ fn test_logs_accepts_security_flag() {
 
 #[test]
 fn test_delete_accepts_all_flag() {
+    // --all is a valid flag; command prompts for confirmation and fails when stdin is closed
     polis()
         .args(["delete", "--all"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not yet implemented"));
+        .stderr(predicate::str::contains("no input provided"));
 }
 
 #[test]

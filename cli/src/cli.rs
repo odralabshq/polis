@@ -119,6 +119,7 @@ impl Cli {
                     .context("cannot connect to workspace")?;
                 commands::logs::run(&ctx, &client, args).await
             }
+            Command::SshProxy => commands::internal::ssh_proxy().await,
             _ => anyhow::bail!("Command not yet implemented"),
         }
     }
