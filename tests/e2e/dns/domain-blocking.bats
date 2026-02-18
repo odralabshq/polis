@@ -2,6 +2,15 @@
 # bats file_tags=e2e,dns
 # DNS resolution and domain accessibility from the workspace container
 
+setup_file() {
+    load "../../lib/test_helper.bash"
+    load "../../lib/constants.bash"
+    load "../../lib/guards.bash"
+    approve_host "deb.debian.org" 600
+    approve_host "registry.npmjs.org" 600
+    approve_host "httpbin.org" 600
+}
+
 setup() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
