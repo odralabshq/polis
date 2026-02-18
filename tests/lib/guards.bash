@@ -17,6 +17,18 @@ require_network() {
     timeout 3 bash -c "echo > /dev/tcp/$host/$port" 2>/dev/null || skip "$host:$port unreachable"
 }
 
+# Pre-approve a host in Valkey so HITL does not block it during tests.
+# Usage: approve_host <host> [ttl_seconds]
+approve_host() {
+    local host="$1" ttl="${2:-600}"
+    docker exec "$CTR_STATE" sh -c "
+        REDISCLI_AUTH=\$(cat /run/secrets/valkey_mcp_admin_password) \
+        valkey-cli --tls --cert /etc/valkey/tls/client.crt \
+            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
+            --user mcp-admin --no-auth-warning \
+            SETEX 'polis:approved:host:${host}' ${ttl} '1'" 2>/dev/null || true
+}
+
 relax_security_level() {
     local ttl="${1:-600}"
     # Retry setting security level (state container may still be initializing)

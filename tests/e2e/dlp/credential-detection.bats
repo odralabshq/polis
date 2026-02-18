@@ -11,6 +11,8 @@ setup_file() {
     load "../../lib/guards.bash"
     require_container "$CTR_WORKSPACE" "$CTR_SENTINEL" "$CTR_GATE"
     relax_security_level 120
+    approve_host "api.anthropic.com" 120
+    approve_host "httpbin.org" 120
 }
 
 teardown_file() {
