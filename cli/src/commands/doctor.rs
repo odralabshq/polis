@@ -592,7 +592,7 @@ async fn check_certificates() -> (bool, i64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DoctorChecks, ImageCheckResult, NetworkChecks, SecurityChecks, WorkspaceChecks, collect_issues};
+    use super::{DoctorChecks, ImageCheckResult, NetworkChecks, SecurityChecks, VersionDrift, WorkspaceChecks, collect_issues};
 
     fn all_healthy() -> DoctorChecks {
         DoctorChecks {
@@ -731,11 +731,89 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // read_image_json — unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_read_image_json_valid_json_extracts_version_and_sha256() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("image.json"),
+            r#"{"version":"v0.3.0","sha256":"abcdef123456789012345678","arch":"amd64","downloaded_at":"2024-01-01T00:00:00Z","source":"https://example.com"}"#,
+        )
+        .expect("write");
+        let (version, sha256_preview) = super::read_image_json(dir.path());
+        assert_eq!(version.as_deref(), Some("v0.3.0"));
+        assert_eq!(sha256_preview.as_deref(), Some("abcdef123456"));
+    }
+
+    #[test]
+    fn test_read_image_json_missing_file_returns_none_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (version, sha256_preview) = super::read_image_json(dir.path());
+        assert!(version.is_none());
+        assert!(sha256_preview.is_none());
+    }
+
+    #[test]
+    fn test_read_image_json_malformed_json_returns_none_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("image.json"), b"not json").expect("write");
+        let (version, sha256_preview) = super::read_image_json(dir.path());
+        assert!(version.is_none());
+        assert!(sha256_preview.is_none());
+    }
+
+    #[test]
+    fn test_read_image_json_missing_version_field_returns_none_version() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("image.json"),
+            r#"{"sha256":"abcdef123456789012345678"}"#,
+        )
+        .expect("write");
+        let (version, sha256_preview) = super::read_image_json(dir.path());
+        assert!(version.is_none());
+        assert_eq!(sha256_preview.as_deref(), Some("abcdef123456"));
+    }
+
+    #[test]
+    fn test_read_image_json_sha256_preview_truncated_to_12_chars() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("image.json"),
+            r#"{"version":"v0.3.0","sha256":"aabbccddeeff00112233445566778899"}"#,
+        )
+        .expect("write");
+        let (_, sha256_preview) = super::read_image_json(dir.path());
+        assert_eq!(sha256_preview.as_deref(), Some("aabbccddeeff"));
+    }
+
+    #[test]
+    fn test_image_check_result_default_is_not_cached() {
+        let r = ImageCheckResult::default();
+        assert!(!r.cached);
+        assert!(r.version.is_none());
+        assert!(r.sha256_preview.is_none());
+        assert!(r.polis_image_override.is_none());
+        assert!(r.version_drift.is_none());
+    }
+
+    #[test]
+    fn test_version_drift_fields_accessible() {
+        let d = VersionDrift {
+            current: "v0.3.0".to_string(),
+            latest: "v0.3.1".to_string(),
+        };
+        assert_eq!(d.current, "v0.3.0");
+        assert_eq!(d.latest, "v0.3.1");
+    }
+
+    // -----------------------------------------------------------------------
     // Property tests
     // -----------------------------------------------------------------------
 
-    mod proptests {
-        use super::*;
+    mod proptests {        use super::*;
         use proptest::prelude::*;
 
         prop_compose! {
@@ -881,6 +959,34 @@ mod tests {
                     issues.iter().any(|i| i.to_lowercase().contains("cert")),
                     "expected cert issue for {days} days"
                 );
+            }
+
+            /// `read_image_json` never panics on arbitrary file content.
+            #[test]
+            fn prop_read_image_json_never_panics(content in ".*") {
+                let dir = tempfile::tempdir().expect("tempdir");
+                std::fs::write(dir.path().join("image.json"), content.as_bytes())
+                    .expect("write");
+                let _ = super::super::read_image_json(dir.path());
+            }
+
+            /// `sha256_preview` is always at most 12 characters.
+            #[test]
+            fn prop_read_image_json_sha256_preview_at_most_12_chars(
+                sha256 in "[a-f0-9]{0,64}",
+            ) {
+                let dir = tempfile::tempdir().expect("tempdir");
+                let json = format!(r#"{{"version":"v0.3.0","sha256":"{sha256}"}}"#);
+                std::fs::write(dir.path().join("image.json"), json.as_bytes())
+                    .expect("write");
+                let (_, preview) = super::super::read_image_json(dir.path());
+                if let Some(p) = preview {
+                    prop_assert!(
+                        p.len() <= 12,
+                        "sha256_preview must be ≤ 12 chars, got {len}: {p}",
+                        len = p.len()
+                    );
+                }
             }
         }
     }
