@@ -66,6 +66,17 @@ jobs:
           find services/sentinel/modules -name '*.c' -print0 | \
             xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
 
+  # ── Stage 1c: Lint Shell ──────────────────────────────────────────
+  lint-shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh packer/scripts/*.sh
+
   # ── Stage 2a: Test Rust ───────────────────────────────────────────
   test-rust:
     runs-on: ubuntu-24.04
