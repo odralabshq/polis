@@ -874,4 +874,144 @@ mod tests {
     fn test_base64_decode_invalid_char_returns_err() {
         assert!(base64_decode("!!!").is_err());
     }
+
+    // -----------------------------------------------------------------------
+    // validate_version_tag — unit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_version_tag_valid_release_returns_ok() {
+        assert!(validate_version_tag("v0.3.0").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_tag_valid_prerelease_rc_returns_ok() {
+        assert!(validate_version_tag("v1.0.0-rc.1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_tag_valid_prerelease_beta_returns_ok() {
+        assert!(validate_version_tag("v2.0.0-beta.3").is_ok());
+    }
+
+    #[test]
+    fn test_validate_version_tag_no_v_prefix_returns_error() {
+        let err = validate_version_tag("0.3.0").unwrap_err();
+        assert!(err.to_string().contains("invalid version tag"));
+    }
+
+    #[test]
+    fn test_validate_version_tag_empty_returns_error() {
+        assert!(validate_version_tag("").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_tag_latest_returns_error() {
+        assert!(validate_version_tag("latest").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_tag_injection_semicolon_returns_error() {
+        // V-004: shell metacharacter must be rejected
+        assert!(validate_version_tag("v0.3.1; curl evil.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_tag_partial_semver_v1_returns_error() {
+        assert!(validate_version_tag("v1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_tag_partial_semver_v1_2_returns_error() {
+        assert!(validate_version_tag("v1.2").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_tag_prerelease_with_special_chars_returns_error() {
+        assert!(validate_version_tag("v1.0.0-rc!1").is_err());
+    }
+
+    #[test]
+    fn test_validate_version_tag_prerelease_with_space_returns_error() {
+        assert!(validate_version_tag("v1.0.0-rc 1").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // VersionsManifest serde — unit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_versions_manifest_deserialize_valid_json_returns_struct() {
+        let json = r#"{
+            "manifest_version": 1,
+            "vm_image": { "version": "v0.3.0", "asset": "polis-workspace-v0.3.0-amd64.qcow2" },
+            "containers": { "polis-gate-oss": "v0.3.1" }
+        }"#;
+        let m: VersionsManifest = serde_json::from_str(json).expect("valid JSON");
+        assert_eq!(m.manifest_version, 1);
+        assert_eq!(m.vm_image.version, "v0.3.0");
+        assert_eq!(m.containers["polis-gate-oss"], "v0.3.1");
+    }
+
+    #[test]
+    fn test_versions_manifest_deserialize_missing_manifest_version_returns_error() {
+        let json = r#"{ "vm_image": { "version": "v0.3.0", "asset": "x.qcow2" }, "containers": {} }"#;
+        assert!(serde_json::from_str::<VersionsManifest>(json).is_err());
+    }
+
+    #[test]
+    fn test_versions_manifest_serialize_deserialize_roundtrip() {
+        let original = VersionsManifest {
+            manifest_version: 1,
+            vm_image: VmImageVersion {
+                version: "v0.3.0".to_string(),
+                asset: "polis-workspace-v0.3.0-amd64.qcow2".to_string(),
+            },
+            containers: [("polis-gate-oss".to_string(), "v0.3.1".to_string())]
+                .into_iter()
+                .collect(),
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let restored: VersionsManifest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.manifest_version, original.manifest_version);
+        assert_eq!(restored.vm_image.version, original.vm_image.version);
+        assert_eq!(restored.containers, original.containers);
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_version_tag — property
+    // -----------------------------------------------------------------------
+
+    proptest! {
+        /// Any vX.Y.Z tag (no pre-release) is always accepted.
+        #[test]
+        fn prop_validate_version_tag_valid_semver_always_ok(
+            major in 0u32..100,
+            minor in 0u32..100,
+            patch in 0u32..100,
+        ) {
+            let tag = format!("v{major}.{minor}.{patch}");
+            prop_assert!(validate_version_tag(&tag).is_ok(), "tag {tag} should be valid");
+        }
+
+        /// Tags without a `v` prefix are always rejected.
+        #[test]
+        fn prop_validate_version_tag_no_v_prefix_always_err(
+            major in 0u32..100,
+            minor in 0u32..100,
+            patch in 0u32..100,
+        ) {
+            let tag = format!("{major}.{minor}.{patch}");
+            prop_assert!(validate_version_tag(&tag).is_err(), "tag {tag} should be invalid");
+        }
+
+        /// Tags containing shell metacharacters are always rejected (V-004).
+        #[test]
+        fn prop_validate_version_tag_shell_metachar_always_err(
+            meta in proptest::sample::select(vec![";", "|", "&", "$", "`", "\n", " "]),
+        ) {
+            let tag = format!("v0.3.0-rc{meta}1");
+            prop_assert!(validate_version_tag(&tag).is_err(), "tag with {meta:?} should be invalid");
+        }
+    }
 }

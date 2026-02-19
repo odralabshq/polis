@@ -533,7 +533,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// Serialize all tests that read/write POLIS_IMAGE to prevent races.
+    /// Serialize all tests that read/write `POLIS_IMAGE` to prevent races.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // ── get_image_path ───────────────────────────────────────────────────────
