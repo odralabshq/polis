@@ -261,10 +261,7 @@ spec:
         assert_eq!(manifest.metadata.name, "claude-dev");
         assert_eq!(manifest.metadata.display_name, "Claude Dev");
         assert_eq!(manifest.metadata.version, "1.0.0");
-        assert_eq!(
-            manifest.metadata.provider.as_deref(),
-            Some("Anthropic")
-        );
+        assert_eq!(manifest.metadata.provider.as_deref(), Some("Anthropic"));
         assert_eq!(
             manifest.metadata.capabilities,
             vec!["code-generation", "code-review", "documentation"]
@@ -297,15 +294,13 @@ spec:
 
     #[test]
     fn test_agent_metadata_provider_absent_defaults_to_none() {
-        let manifest: AgentManifest =
-            serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
         assert_eq!(manifest.metadata.provider, None);
     }
 
     #[test]
     fn test_agent_metadata_capabilities_absent_defaults_to_empty_vec() {
-        let manifest: AgentManifest =
-            serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
         assert!(manifest.metadata.capabilities.is_empty());
     }
 
@@ -329,7 +324,10 @@ spec:
     user: polis
 "#;
         let result: Result<AgentManifest, _> = serde_yaml::from_str(yaml);
-        assert!(result.is_err(), "manifest without 'name' should fail to parse");
+        assert!(
+            result.is_err(),
+            "manifest without 'name' should fail to parse"
+        );
     }
 
     #[test]
@@ -344,16 +342,19 @@ spec:
     fn test_effective_provider_explicit_provider_returns_it() {
         let manifest: AgentManifest =
             serde_yaml::from_str(FULL_MANIFEST_YAML).expect("should parse");
-        let provider = manifest.metadata.effective_provider(manifest.spec.requirements.as_ref());
+        let provider = manifest
+            .metadata
+            .effective_provider(manifest.spec.requirements.as_ref());
         assert_eq!(provider, "Anthropic");
     }
 
     #[test]
     fn test_effective_provider_anthropic_key_derives_anthropic() {
-        let manifest: AgentManifest =
-            serde_yaml::from_str(OPENCLAW_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml::from_str(OPENCLAW_YAML).expect("should parse");
         // openclaw has ANTHROPIC_API_KEY first in envOneOf
-        let provider = manifest.metadata.effective_provider(manifest.spec.requirements.as_ref());
+        let provider = manifest
+            .metadata
+            .effective_provider(manifest.spec.requirements.as_ref());
         assert_eq!(provider, "Anthropic");
     }
 
@@ -379,7 +380,9 @@ spec:
       - OPENAI_API_KEY
 "#;
         let manifest: AgentManifest = serde_yaml::from_str(yaml).expect("should parse");
-        let provider = manifest.metadata.effective_provider(manifest.spec.requirements.as_ref());
+        let provider = manifest
+            .metadata
+            .effective_provider(manifest.spec.requirements.as_ref());
         assert_eq!(provider, "OpenAI");
     }
 
@@ -405,7 +408,9 @@ spec:
       - OPENROUTER_API_KEY
 "#;
         let manifest: AgentManifest = serde_yaml::from_str(yaml).expect("should parse");
-        let provider = manifest.metadata.effective_provider(manifest.spec.requirements.as_ref());
+        let provider = manifest
+            .metadata
+            .effective_provider(manifest.spec.requirements.as_ref());
         assert_eq!(provider, "OpenRouter");
     }
 
@@ -431,14 +436,15 @@ spec:
       - CUSTOM_API_KEY
 "#;
         let manifest: AgentManifest = serde_yaml::from_str(yaml).expect("should parse");
-        let provider = manifest.metadata.effective_provider(manifest.spec.requirements.as_ref());
+        let provider = manifest
+            .metadata
+            .effective_provider(manifest.spec.requirements.as_ref());
         assert_eq!(provider, "Unknown");
     }
 
     #[test]
     fn test_effective_provider_no_requirements_returns_unknown() {
-        let manifest: AgentManifest =
-            serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
         let provider = manifest.metadata.effective_provider(None);
         assert_eq!(provider, "Unknown");
     }
@@ -466,7 +472,9 @@ spec:
       - ANTHROPIC_API_KEY
 "#;
         let manifest: AgentManifest = serde_yaml::from_str(yaml).expect("should parse");
-        let provider = manifest.metadata.effective_provider(manifest.spec.requirements.as_ref());
+        let provider = manifest
+            .metadata
+            .effective_provider(manifest.spec.requirements.as_ref());
         assert_eq!(provider, "CustomCorp");
     }
 

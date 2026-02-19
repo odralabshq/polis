@@ -385,7 +385,8 @@ mod tests {
         for (variant, expected_json) in &variants {
             let json = serde_json::to_string(variant).expect("serialize SecurityLevel");
             assert_eq!(&json, expected_json);
-            let deserialized: SecurityLevel = serde_json::from_str(&json).expect("deserialize SecurityLevel");
+            let deserialized: SecurityLevel =
+                serde_json::from_str(&json).expect("deserialize SecurityLevel");
             assert_eq!(&deserialized, variant);
         }
     }
@@ -606,8 +607,14 @@ mod tests {
 
     #[test]
     fn test_run_stage_next() {
-        assert_eq!(RunStage::ImageReady.next(), Some(RunStage::WorkspaceCreated));
-        assert_eq!(RunStage::WorkspaceCreated.next(), Some(RunStage::CredentialsSet));
+        assert_eq!(
+            RunStage::ImageReady.next(),
+            Some(RunStage::WorkspaceCreated)
+        );
+        assert_eq!(
+            RunStage::WorkspaceCreated.next(),
+            Some(RunStage::CredentialsSet)
+        );
         assert_eq!(RunStage::CredentialsSet.next(), Some(RunStage::Provisioned));
         assert_eq!(RunStage::Provisioned.next(), Some(RunStage::AgentReady));
         assert_eq!(RunStage::AgentReady.next(), None);
@@ -627,7 +634,8 @@ mod tests {
             detail: None,
         };
         let json = serde_json::to_string(&event).expect("serialize ActivityEvent");
-        let deserialized: ActivityEvent = serde_json::from_str(&json).expect("deserialize ActivityEvent");
+        let deserialized: ActivityEvent =
+            serde_json::from_str(&json).expect("deserialize ActivityEvent");
         assert_eq!(deserialized.ts, event.ts);
         assert_eq!(deserialized.event_type, event.event_type);
         assert_eq!(deserialized.dest, event.dest);
@@ -661,10 +669,14 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&status).expect("serialize StatusOutput");
-        let deserialized: StatusOutput = serde_json::from_str(&json).expect("deserialize StatusOutput");
+        let deserialized: StatusOutput =
+            serde_json::from_str(&json).expect("deserialize StatusOutput");
         assert_eq!(deserialized.workspace.status, WorkspaceState::Running);
         assert_eq!(deserialized.workspace.uptime_seconds, Some(3600));
-        assert_eq!(deserialized.agent.as_ref().map(|a| a.name.as_str()), Some("claude-dev"));
+        assert_eq!(
+            deserialized.agent.as_ref().map(|a| a.name.as_str()),
+            Some("claude-dev")
+        );
         assert!(deserialized.security.traffic_inspection);
     }
 

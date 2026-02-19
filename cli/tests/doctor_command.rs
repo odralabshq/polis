@@ -7,13 +7,13 @@
 //! tests can inject a fake. The Senior Rust Engineer must extract the
 //! `HealthProbe` trait before the unit tests in doctor.rs compile.
 
-#![allow(clippy::expect_used, deprecated)]
+#![allow(clippy::expect_used)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 #[test]
@@ -57,8 +57,7 @@ fn test_doctor_json_has_status_field() {
         .stdout
         .clone();
 
-    let v: serde_json::Value =
-        serde_json::from_slice(&output).expect("valid JSON");
+    let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
     let status = v["status"].as_str().expect("status must be a string");
     assert!(
         status == "healthy" || status == "unhealthy",
@@ -77,9 +76,18 @@ fn test_doctor_json_has_required_check_sections() {
         .clone();
 
     let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
-    assert!(v["checks"]["workspace"].is_object(), "checks.workspace must be an object");
-    assert!(v["checks"]["network"].is_object(), "checks.network must be an object");
-    assert!(v["checks"]["security"].is_object(), "checks.security must be an object");
+    assert!(
+        v["checks"]["workspace"].is_object(),
+        "checks.workspace must be an object"
+    );
+    assert!(
+        v["checks"]["network"].is_object(),
+        "checks.network must be an object"
+    );
+    assert!(
+        v["checks"]["security"].is_object(),
+        "checks.security must be an object"
+    );
 }
 
 #[test]

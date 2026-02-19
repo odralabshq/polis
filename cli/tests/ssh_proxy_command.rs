@@ -9,7 +9,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 // ---------------------------------------------------------------------------

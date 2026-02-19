@@ -7,21 +7,25 @@
 //! All filesystem-touching tests set `POLIS_CONFIG` to a temp path so they
 //! never read or write `~/.polis/config.yaml`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used, deprecated)]
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 /// Returns a `TempDir` and the path string for a config file inside it.
 /// The file does NOT exist yet — callers that need an empty baseline use this.
 fn temp_config_path() -> (TempDir, String) {
     let dir = TempDir::new().expect("temp dir");
-    let path = dir.path().join("config.yaml").to_string_lossy().into_owned();
+    let path = dir
+        .path()
+        .join("config.yaml")
+        .to_string_lossy()
+        .into_owned();
     (dir, path)
 }
 
@@ -205,9 +209,7 @@ fn test_config_set_invalid_value_returns_error_with_valid_values() {
         .assert()
         .failure()
         // Error must list the valid values
-        .stderr(
-            predicate::str::contains("balanced").or(predicate::str::contains("strict")),
-        );
+        .stderr(predicate::str::contains("balanced").or(predicate::str::contains("strict")));
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +286,10 @@ fn test_config_set_creates_file_with_0o600_permissions() {
         .env("POLIS_CONFIG", &path)
         .assert()
         .success();
-    let mode = std::fs::metadata(&path).expect("file should exist").permissions().mode();
+    let mode = std::fs::metadata(&path)
+        .expect("file should exist")
+        .permissions()
+        .mode();
     assert_eq!(mode & 0o777, 0o600, "expected 0o600, got {mode:o}");
 }
 

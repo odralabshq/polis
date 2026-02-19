@@ -3,8 +3,9 @@
 //! Tests for spec 03-output-styling.md
 
 #[cfg(test)]
+#[allow(clippy::similar_names, clippy::module_inception)]
 mod tests {
-    use crate::output::{progress, OutputContext, Styles};
+    use crate::output::{OutputContext, Styles, progress};
     use owo_colors::OwoColorize;
 
     // --- Styles tests ---
@@ -46,7 +47,10 @@ mod tests {
     fn test_output_context_no_color_flag_disables_colors() {
         let ctx = OutputContext::new(true, false);
         let styled = format!("{}", "test".style(ctx.styles.success));
-        assert!(!styled.contains("\x1b["), "should not contain ANSI codes when no_color=true");
+        assert!(
+            !styled.contains("\x1b["),
+            "should not contain ANSI codes when no_color=true"
+        );
     }
 
     #[test]
@@ -212,7 +216,7 @@ mod tests {
 // ============================================================================
 
 mod proptests {
-    use crate::output::{progress, OutputContext, Styles};
+    use crate::output::{OutputContext, Styles, progress};
     use owo_colors::OwoColorize;
     use proptest::prelude::*;
 

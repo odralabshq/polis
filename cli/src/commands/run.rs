@@ -88,7 +88,7 @@ fn resolve_agent(requested: Option<&str>) -> Result<String> {
 /// Returns an error if the home directory cannot be determined or the config
 /// file exists but cannot be parsed.
 fn get_default_agent() -> Result<Option<String>> {
-    use crate::commands::config::{load_config, get_config_path};
+    use crate::commands::config::{get_config_path, load_config};
     let path = get_config_path()?;
     let config = load_config(&path)?;
     Ok(config.defaults.agent)
@@ -102,8 +102,8 @@ fn get_default_agent() -> Result<Option<String>> {
 ///
 /// Returns an error if the home directory cannot be determined.
 fn list_available_agents() -> Result<Vec<String>> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
     let agents_dir = home.join(".polis").join("agents");
     if !agents_dir.exists() {
         return Ok(Vec::new());
@@ -113,7 +113,9 @@ fn list_available_agents() -> Result<Vec<String>> {
         .with_context(|| format!("reading agents dir {}", agents_dir.display()))?
     {
         let entry = entry.context("reading dir entry")?;
-        if entry.path().join("agent.yaml").exists() && let Some(name) = entry.file_name().to_str() {
+        if entry.path().join("agent.yaml").exists()
+            && let Some(name) = entry.file_name().to_str()
+        {
             names.push(name.to_string());
         }
     }
@@ -226,7 +228,10 @@ fn fresh_run(state_mgr: &StateManager, agent: &str) -> Result<()> {
 /// Failures are non-fatal: a warning is printed and provisioning continues.
 fn pin_host_key() {
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("polis"));
-    let output = match std::process::Command::new(exe).args(["_extract-host-key"]).output() {
+    let output = match std::process::Command::new(exe)
+        .args(["_extract-host-key"])
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             eprintln!("Warning: could not pin host key: {e}");
@@ -237,7 +242,9 @@ fn pin_host_key() {
         eprintln!("Warning: could not pin host key — SSH may prompt for verification");
         return;
     }
-    let Ok(host_key) = String::from_utf8(output.stdout) else { return };
+    let Ok(host_key) = String::from_utf8(output.stdout) else {
+        return;
+    };
     match crate::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim())) {
         Ok(()) => println!("Host key pinned"),
         Err(e) => eprintln!("Warning: could not save host key: {e}"),
@@ -303,7 +310,11 @@ fn get_image_path() -> PathBuf {
         PathBuf::from("packer/output/polis-workspace-dev-amd64.qcow2"),
         // User's polis directory
         dirs::home_dir()
-            .map(|h| h.join(".polis").join("images").join("polis-workspace-dev-amd64.qcow2"))
+            .map(|h| {
+                h.join(".polis")
+                    .join("images")
+                    .join("polis-workspace-dev-amd64.qcow2")
+            })
             .unwrap_or_default(),
     ];
 
@@ -321,8 +332,8 @@ fn get_image_path() -> PathBuf {
 fn compute_image_hash(path: &PathBuf) -> Result<String> {
     use std::io::Read;
 
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("opening image {}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("opening image {}", path.display()))?;
 
     // Read first 64KB for a quick hash (full hash would be slow for 3GB file)
     let mut buffer = vec![0u8; 65536];
@@ -359,11 +370,7 @@ fn create_workspace() -> Result<()> {
 
     let output = Command::new("multipass")
         .args([
-            "launch",
-            &image_url,
-            "--name", VM_NAME,
-            "--cpus", VM_CPUS,
-            "--memory", VM_MEMORY,
+            "launch", &image_url, "--name", VM_NAME, "--cpus", VM_CPUS, "--memory", VM_MEMORY,
             "--disk", VM_DISK,
         ])
         .output()
@@ -425,10 +432,7 @@ fn provision_workspace() -> Result<()> {
     // Services auto-start via systemd polis.service on boot
     // Just ensure the service is started (idempotent)
     let output = Command::new("multipass")
-        .args([
-            "exec", VM_NAME, "--",
-            "sudo", "systemctl", "start", "polis",
-        ])
+        .args(["exec", VM_NAME, "--", "sudo", "systemctl", "start", "polis"])
         .output()
         .context("failed to start polis service")?;
 
@@ -450,8 +454,15 @@ fn wait_for_workspace_healthy() {
     for attempt in 1..=max_attempts {
         let output = Command::new("multipass")
             .args([
-                "exec", VM_NAME, "--",
-                "docker", "compose", "ps", "--format", "json", "workspace",
+                "exec",
+                VM_NAME,
+                "--",
+                "docker",
+                "compose",
+                "ps",
+                "--format",
+                "json",
+                "workspace",
             ])
             .output();
 
@@ -493,7 +504,6 @@ fn generate_workspace_id() -> String {
     format!("polis-{ts:08x}")
 }
 
-
 // ============================================================================
 // Unit Tests
 // ============================================================================
@@ -510,7 +520,8 @@ mod tests {
     fn test_get_image_path_returns_packer_output_as_default() {
         let path = get_image_path();
         assert!(
-            path.to_string_lossy().contains("polis-workspace-dev-amd64.qcow2"),
+            path.to_string_lossy()
+                .contains("polis-workspace-dev-amd64.qcow2"),
             "path should contain image filename"
         );
     }
@@ -549,7 +560,10 @@ mod tests {
 
         let hash1 = compute_image_hash(&path1).unwrap();
         let hash2 = compute_image_hash(&path2).unwrap();
-        assert_ne!(hash1, hash2, "different content should produce different hash");
+        assert_ne!(
+            hash1, hash2,
+            "different content should produce different hash"
+        );
     }
 
     #[test]
@@ -630,7 +644,7 @@ mod proptests {
         fn prop_generate_workspace_id_format(_seed in 0u32..1000) {
             let id = generate_workspace_id();
             prop_assert!(id.starts_with("polis-"));
-            let suffix = id.strip_prefix("polis-").unwrap();
+            let suffix = id.strip_prefix("polis-").expect("prefix exists");
             prop_assert_eq!(suffix.len(), 8);
             prop_assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
         }
@@ -643,4 +657,3 @@ mod proptests {
         }
     }
 }
-

@@ -7,14 +7,14 @@
 //! (marked with NOTE) will remain RED even after wiring until a `WorkspaceDriver`
 //! trait is introduced — see the testability recommendation at the bottom of this file.
 
-#![allow(clippy::expect_used, deprecated)]
+#![allow(clippy::expect_used)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 /// Write a minimal valid state.json into `<dir>/.polis/state.json`.
@@ -148,8 +148,7 @@ fn test_stop_already_stopped_shows_info_and_exits_zero() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("already stopped")
-                .or(predicate::str::contains("not running")),
+            predicate::str::contains("already stopped").or(predicate::str::contains("not running")),
         );
 }
 
@@ -228,7 +227,10 @@ fn test_delete_declined_exits_zero_and_preserves_state_file() {
         "state.json must still exist after declined delete"
     );
     let after = std::fs::read_to_string(state_path(&dir)).expect("read state after");
-    assert_eq!(before, after, "state.json must be unchanged after declined delete");
+    assert_eq!(
+        before, after,
+        "state.json must be unchanged after declined delete"
+    );
 }
 
 #[test]
@@ -339,7 +341,10 @@ fn test_delete_all_declined_exits_zero_and_preserves_state_file() {
         "state.json must still exist after declined delete --all"
     );
     let after = std::fs::read_to_string(state_path(&dir)).expect("read state after");
-    assert_eq!(before, after, "state.json must be unchanged after declined delete --all");
+    assert_eq!(
+        before, after,
+        "state.json must be unchanged after declined delete --all"
+    );
 }
 
 #[test]
@@ -413,7 +418,7 @@ mod proptests {
     use proptest::prelude::*;
 
     fn polis() -> Command {
-        Command::cargo_bin("polis").expect("polis binary should exist")
+        Command::new(assert_cmd::cargo::cargo_bin!("polis"))
     }
 
     proptest! {

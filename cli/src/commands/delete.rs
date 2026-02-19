@@ -14,7 +14,11 @@ use crate::workspace::WorkspaceDriver;
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be removed or state cannot be cleared.
-pub fn run(args: &DeleteArgs, state_mgr: &StateManager, driver: &dyn WorkspaceDriver) -> Result<()> {
+pub fn run(
+    args: &DeleteArgs,
+    state_mgr: &StateManager,
+    driver: &dyn WorkspaceDriver,
+) -> Result<()> {
     if args.all {
         delete_all(state_mgr, driver)
     } else {
@@ -124,8 +128,8 @@ fn remove_known_hosts() -> Result<()> {
 
 /// Get a path under `~/.polis/`.
 fn get_polis_path(name: &str) -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
     Ok(home.join(".polis").join(name))
 }
 
@@ -136,8 +140,7 @@ fn get_polis_path(name: &str) -> Result<PathBuf> {
 /// Returns an error if the directory exists but cannot be removed.
 pub fn remove_dir_if_exists(path: &std::path::Path) -> Result<()> {
     if path.exists() {
-        std::fs::remove_dir_all(path)
-            .with_context(|| format!("removing {}", path.display()))?;
+        std::fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))?;
     }
     Ok(())
 }
@@ -149,8 +152,7 @@ pub fn remove_dir_if_exists(path: &std::path::Path) -> Result<()> {
 /// Returns an error if the file exists but cannot be removed.
 pub fn remove_file_if_exists(path: &std::path::Path) -> Result<()> {
     if path.exists() {
-        std::fs::remove_file(path)
-            .with_context(|| format!("removing {}", path.display()))?;
+        std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
     }
     Ok(())
 }

@@ -2,13 +2,13 @@
 //!
 //! These tests verify the CLI structure and argument parsing per spec 02-cli-crate-skeleton.md
 
-#![allow(clippy::expect_used, deprecated)]
+#![allow(clippy::expect_used)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 // --- Help and version tests ---
@@ -16,10 +16,9 @@ fn polis() -> Command {
 #[test]
 fn test_cli_no_args_shows_help_and_exits_zero() {
     // clap with arg_required_else_help shows help on stderr and exits 2
-    polis()
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains("Secure workspaces for AI coding agents"));
+    polis().assert().code(2).stderr(predicate::str::contains(
+        "Secure workspaces for AI coding agents",
+    ));
 }
 
 #[test]
@@ -156,10 +155,7 @@ fn test_help_hides_extract_host_key_command() {
 
 #[test]
 fn test_ssh_proxy_help_accessible_directly() {
-    polis()
-        .args(["_ssh-proxy", "--help"])
-        .assert()
-        .success();
+    polis().args(["_ssh-proxy", "--help"]).assert().success();
 }
 
 // --- Global flags tests ---
@@ -175,18 +171,12 @@ fn test_global_json_flag_accepted() {
 
 #[test]
 fn test_global_quiet_flag_accepted() {
-    polis()
-        .args(["--quiet", "version"])
-        .assert()
-        .success();
+    polis().args(["--quiet", "version"]).assert().success();
 }
 
 #[test]
 fn test_global_no_color_flag_accepted() {
-    polis()
-        .args(["--no-color", "version"])
-        .assert()
-        .success();
+    polis().args(["--no-color", "version"]).assert().success();
 }
 
 #[test]
@@ -255,11 +245,9 @@ fn test_connect_accepts_ide_option() {
 
 #[test]
 fn test_agents_list_subcommand() {
-    polis()
-        .args(["agents", "list"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("No agents installed").or(predicate::str::contains("NAME")));
+    polis().args(["agents", "list"]).assert().success().stdout(
+        predicate::str::contains("No agents installed").or(predicate::str::contains("NAME")),
+    );
 }
 
 #[test]
@@ -289,7 +277,6 @@ fn test_config_set_subcommand() {
         .stderr(predicate::str::contains("unknown config key"));
 }
 
-
 // ============================================================================
 // Property-Based Tests
 // ============================================================================
@@ -301,7 +288,7 @@ mod proptests {
     use proptest::prelude::*;
 
     fn polis() -> Command {
-        Command::cargo_bin("polis").expect("polis binary should exist")
+        Command::new(assert_cmd::cargo::cargo_bin!("polis"))
     }
 
     proptest! {
@@ -310,12 +297,12 @@ mod proptests {
         fn prop_unknown_command_fails(cmd in "[a-z]{3,10}") {
             // Skip known commands
             let known = ["run", "start", "stop", "delete", "status",
-                        "shell", "connect", "agents", "config", "doctor", 
+                        "shell", "connect", "agents", "config", "doctor",
                         "update", "version", "help"];
             if known.contains(&cmd.as_str()) {
                 return Ok(());
             }
-            
+
             polis()
                 .arg(&cmd)
                 .assert()
@@ -329,7 +316,7 @@ mod proptests {
                 .args(["version", "--json"])
                 .output()
                 .expect("command should run");
-            
+
             let stdout = String::from_utf8_lossy(&output.stdout);
             prop_assert!(stdout.contains(r#""version":"#), "should contain version key");
             prop_assert!(stdout.trim().ends_with('}'), "should end with brace");
@@ -347,7 +334,7 @@ mod proptests {
             if quiet { cmd.arg("--quiet"); }
             if no_color { cmd.arg("--no-color"); }
             cmd.arg("version");
-            
+
             cmd.assert().success();
         }
 

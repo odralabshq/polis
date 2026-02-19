@@ -13,7 +13,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 #[test]
@@ -38,16 +38,12 @@ fn test_update_command_does_not_say_not_yet_implemented() {
 fn test_update_command_network_failure_shows_actionable_error() {
     // In CI the GitHub API is unreachable or rate-limited.
     // The error must mention something meaningful (not a bare panic or placeholder).
-    polis()
-        .arg("update")
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("update")
-                .or(predicate::str::contains("network"))
-                .or(predicate::str::contains("GitHub"))
-                .or(predicate::str::contains("rate"))
-                .or(predicate::str::contains("connect"))
-                .or(predicate::str::contains("check")),
-        );
+    polis().arg("update").assert().failure().stderr(
+        predicate::str::contains("update")
+            .or(predicate::str::contains("network"))
+            .or(predicate::str::contains("GitHub"))
+            .or(predicate::str::contains("rate"))
+            .or(predicate::str::contains("connect"))
+            .or(predicate::str::contains("check")),
+    );
 }

@@ -41,7 +41,10 @@ mod tests {
     fn test_version_json_has_version_field() {
         let out = version_json("1.2.3").expect("must not fail");
         let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
-        assert!(v["version"].is_string(), "must have a 'version' string field");
+        assert!(
+            v["version"].is_string(),
+            "must have a 'version' string field"
+        );
     }
 
     #[test]

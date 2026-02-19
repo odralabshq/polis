@@ -88,7 +88,12 @@ impl Cli {
     ///
     /// Returns an error if the command fails or is not yet implemented.
     pub async fn run(self) -> Result<()> {
-        let Cli { no_color, quiet, json, command } = self;
+        let Cli {
+            no_color,
+            quiet,
+            json,
+            command,
+        } = self;
         let no_color = no_color || std::env::var("NO_COLOR").is_ok();
         match command {
             Command::Version => commands::version::run(json),

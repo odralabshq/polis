@@ -19,7 +19,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 // ── polis status --json ───────────────────────────────────────────────────────
@@ -28,10 +28,7 @@ fn polis() -> Command {
 /// EARS: WHEN `polis status --json` is run THEN it exits successfully.
 #[test]
 fn test_status_json_exits_successfully() {
-    polis()
-        .args(["status", "--json"])
-        .assert()
-        .success();
+    polis().args(["status", "--json"]).assert().success();
 }
 
 /// EARS: WHEN `polis status --json` is run THEN stdout is valid JSON.
@@ -61,7 +58,10 @@ fn test_status_json_schema_has_workspace() {
         .clone();
 
     let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
-    assert!(v["workspace"].is_object(), "status JSON must have a 'workspace' object");
+    assert!(
+        v["workspace"].is_object(),
+        "status JSON must have a 'workspace' object"
+    );
     assert!(
         v["workspace"]["status"].is_string(),
         "workspace.status must be a string"
@@ -80,7 +80,10 @@ fn test_status_json_schema_has_security() {
         .clone();
 
     let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
-    assert!(v["security"].is_object(), "status JSON must have a 'security' object");
+    assert!(
+        v["security"].is_object(),
+        "status JSON must have a 'security' object"
+    );
     assert!(
         v["security"]["traffic_inspection"].is_boolean(),
         "security.traffic_inspection must be a boolean"
@@ -99,7 +102,10 @@ fn test_status_json_schema_has_events() {
         .clone();
 
     let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
-    assert!(v["events"].is_object(), "status JSON must have an 'events' object");
+    assert!(
+        v["events"].is_object(),
+        "status JSON must have an 'events' object"
+    );
     assert!(
         v["events"]["count"].is_number(),
         "events.count must be a number"
@@ -140,7 +146,10 @@ fn test_version_json_outputs_valid_json() {
 
     let text = String::from_utf8(output).expect("utf8");
     let v: serde_json::Value = serde_json::from_str(&text).expect("stdout must be valid JSON");
-    assert!(v["version"].is_string(), "version JSON must have a 'version' string field");
+    assert!(
+        v["version"].is_string(),
+        "version JSON must have a 'version' string field"
+    );
 }
 
 /// NFR: `polis version --json` output must be pretty-printed (multi-line).
@@ -193,14 +202,22 @@ fn test_agents_list_json_schema_fields() {
         .stdout
         .clone();
 
-    let arr: Vec<serde_json::Value> =
-        serde_json::from_slice(&output).expect("valid JSON array");
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&output).expect("valid JSON array");
 
     for entry in &arr {
         assert!(entry["name"].is_string(), "agent entry must have 'name'");
-        assert!(entry["provider"].is_string(), "agent entry must have 'provider'");
-        assert!(entry["version"].is_string(), "agent entry must have 'version'");
-        assert!(entry["capabilities"].is_array(), "agent entry must have 'capabilities' array");
+        assert!(
+            entry["provider"].is_string(),
+            "agent entry must have 'provider'"
+        );
+        assert!(
+            entry["version"].is_string(),
+            "agent entry must have 'version'"
+        );
+        assert!(
+            entry["capabilities"].is_array(),
+            "agent entry must have 'capabilities' array"
+        );
     }
 }
 

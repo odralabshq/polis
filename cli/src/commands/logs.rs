@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Args;
 
 /// Arguments for the logs command.

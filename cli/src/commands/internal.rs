@@ -92,9 +92,15 @@ async fn proxy_via_multipass() -> Result<()> {
     // Run sshd in inetd mode (-i) directly on stdin/stdout
     let mut child = tokio::process::Command::new("multipass")
         .args([
-            "exec", "polis", "--",
-            "docker", "exec", "-i", "polis-workspace",
-            "/usr/sbin/sshd", "-i",
+            "exec",
+            "polis",
+            "--",
+            "docker",
+            "exec",
+            "-i",
+            "polis-workspace",
+            "/usr/sbin/sshd",
+            "-i",
         ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -176,9 +182,14 @@ async fn extract_from_multipass() -> Result<String> {
     extract_key_from(
         "multipass",
         &[
-            "exec", "polis", "--",
-            "docker", "exec", "polis-workspace",
-            "cat", "/etc/ssh/ssh_host_ed25519_key.pub",
+            "exec",
+            "polis",
+            "--",
+            "docker",
+            "exec",
+            "polis-workspace",
+            "cat",
+            "/etc/ssh/ssh_host_ed25519_key.pub",
         ],
     )
     .await
@@ -187,7 +198,12 @@ async fn extract_from_multipass() -> Result<String> {
 async fn extract_from_docker() -> Result<String> {
     extract_key_from(
         "docker",
-        &["exec", "polis-workspace-1", "cat", "/etc/ssh/ssh_host_ed25519_key.pub"],
+        &[
+            "exec",
+            "polis-workspace-1",
+            "cat",
+            "/etc/ssh/ssh_host_ed25519_key.pub",
+        ],
     )
     .await
 }
@@ -218,7 +234,7 @@ pub async fn extract_host_key() -> Result<()> {
 
 #[cfg(test)]
 mod proptests {
-    use super::{bridge_io, detect_backend, Backend, BackendProber};
+    use super::{Backend, BackendProber, bridge_io, detect_backend};
     use proptest::prelude::*;
 
     struct FixedProber(bool);
@@ -281,7 +297,7 @@ mod proptests {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_backend, Backend, BackendProber};
+    use super::{Backend, BackendProber, detect_backend};
 
     struct AlwaysMultipass;
     impl BackendProber for AlwaysMultipass {
@@ -299,13 +315,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_backend_returns_multipass_when_available() {
-        let backend = detect_backend(&AlwaysMultipass).await.expect("should detect backend");
+        let backend = detect_backend(&AlwaysMultipass)
+            .await
+            .expect("should detect backend");
         assert!(matches!(backend, Backend::Multipass));
     }
 
     #[tokio::test]
     async fn test_detect_backend_returns_docker_when_multipass_unavailable() {
-        let backend = detect_backend(&NeverMultipass).await.expect("should detect backend");
+        let backend = detect_backend(&NeverMultipass)
+            .await
+            .expect("should detect backend");
         assert!(matches!(backend, Backend::Docker));
     }
 
@@ -315,7 +335,9 @@ mod tests {
     async fn test_bridge_io_forwards_bytes_from_reader_to_writer() {
         let input = b"SSH-2.0-OpenSSH_8.9\r\n";
         let mut writer = Vec::new();
-        bridge_io(&mut input.as_ref(), &mut writer).await.expect("bridge should succeed");
+        bridge_io(&mut input.as_ref(), &mut writer)
+            .await
+            .expect("bridge should succeed");
         assert_eq!(writer, input);
     }
 
@@ -332,7 +354,9 @@ mod tests {
         // Verifies that a non-empty payload is fully flushed to the writer.
         let input = b"hello";
         let mut buf = tokio::io::BufWriter::new(Vec::new());
-        bridge_io(&mut input.as_ref(), &mut buf).await.expect("bridge should succeed");
+        bridge_io(&mut input.as_ref(), &mut buf)
+            .await
+            .expect("bridge should succeed");
         assert_eq!(buf.get_ref(), b"hello");
     }
 }

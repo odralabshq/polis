@@ -48,7 +48,9 @@ pub struct SecurityConfig {
 
 impl Default for SecurityConfig {
     fn default() -> Self {
-        Self { level: default_security_level() }
+        Self {
+            level: default_security_level(),
+        }
     }
 }
 
@@ -122,8 +124,11 @@ fn set_config(ctx: &OutputContext, key: &str, value: &str) -> Result<()> {
     match key {
         "security.level" => config.security.level = value.to_string(),
         "defaults.agent" => {
-            config.defaults.agent =
-                if value == "null" { None } else { Some(value.to_string()) };
+            config.defaults.agent = if value == "null" {
+                None
+            } else {
+                Some(value.to_string())
+            };
         }
         _ => anyhow::bail!("unknown config key: {key}"),
     }
@@ -152,8 +157,8 @@ pub fn get_config_path() -> Result<PathBuf> {
     if let Ok(val) = std::env::var("POLIS_CONFIG") {
         return Ok(PathBuf::from(val));
     }
-    let home = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
     Ok(home.join(".polis").join("config.yaml"))
 }
 
@@ -166,10 +171,9 @@ pub fn load_config(path: &Path) -> Result<PolisConfig> {
     if !path.exists() {
         return Ok(PolisConfig::default());
     }
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
-    serde_yaml::from_str(&content)
-        .with_context(|| format!("cannot parse {}", path.display()))
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    serde_yaml::from_str(&content).with_context(|| format!("cannot parse {}", path.display()))
 }
 
 fn save_config(path: &Path, config: &PolisConfig) -> Result<()> {
@@ -178,8 +182,7 @@ fn save_config(path: &Path, config: &PolisConfig) -> Result<()> {
             .with_context(|| format!("cannot create {}", parent.display()))?;
     }
     let content = serde_yaml::to_string(config).context("cannot serialize config")?;
-    std::fs::write(path, content)
-        .with_context(|| format!("cannot write {}", path.display()))?;
+    std::fs::write(path, content).with_context(|| format!("cannot write {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

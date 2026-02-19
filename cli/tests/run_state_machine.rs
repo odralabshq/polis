@@ -1,7 +1,7 @@
 //! Integration tests for `polis run` state machine (issue 07).
 //!
 //! These tests require multipass and a VM image to be available.
-//! Run with: cargo test --test run_state_machine -- --ignored
+//! Run with: `cargo test --test run_state_machine -- --ignored`
 
 #![allow(clippy::expect_used)]
 
@@ -9,9 +9,8 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
-#[allow(deprecated)]
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 /// Write a valid state.json into a temp dir and return the dir.
@@ -110,7 +109,10 @@ fn test_run_agent_switch_declined_makes_no_changes() {
 
     // State file must be unchanged
     let after = std::fs::read_to_string(&state_path).expect("read state after");
-    assert_eq!(before, after, "state must not change when switch is declined");
+    assert_eq!(
+        before, after,
+        "state must not change when switch is declined"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -149,8 +151,14 @@ fn test_run_state_file_contains_valid_json_after_stage() {
         serde_json::from_str(&content).expect("state.json must be valid JSON");
     assert!(v.get("stage").is_some(), "state must have 'stage' field");
     assert!(v.get("agent").is_some(), "state must have 'agent' field");
-    assert!(v.get("workspace_id").is_some(), "state must have 'workspace_id' field");
-    assert!(v.get("started_at").is_some(), "state must have 'started_at' field");
+    assert!(
+        v.get("workspace_id").is_some(),
+        "state must have 'workspace_id' field"
+    );
+    assert!(
+        v.get("started_at").is_some(),
+        "state must have 'started_at' field"
+    );
 }
 
 // ---------------------------------------------------------------------------

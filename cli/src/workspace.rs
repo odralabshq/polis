@@ -122,8 +122,8 @@ impl WorkspaceDriver for MultipassDriver {
     }
 
     fn remove_cached_images(&self) -> Result<()> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+        let home =
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
 
         // Remove cached VM images from ~/.polis/images/
         let images_dir = home.join(".polis").join("images");
@@ -170,10 +170,7 @@ impl WorkspaceDriver for MockDriver {
 /// Returns `None` if the JSON structure is invalid or state is missing.
 #[must_use]
 pub fn parse_multipass_state<'a>(json: &'a serde_json::Value, vm_name: &str) -> Option<&'a str> {
-    json.get("info")?
-        .get(vm_name)?
-        .get("state")?
-        .as_str()
+    json.get("info")?.get(vm_name)?.get("state")?.as_str()
 }
 
 #[cfg(test)]

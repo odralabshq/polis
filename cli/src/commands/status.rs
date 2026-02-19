@@ -119,7 +119,17 @@ async fn check_multipass_status() -> Option<WorkspaceState> {
 /// Check if polis-workspace container is running inside VM.
 async fn check_workspace_container() -> bool {
     let output = tokio::process::Command::new("multipass")
-        .args(["exec", "polis", "--", "docker", "compose", "ps", "--format", "json", "workspace"])
+        .args([
+            "exec",
+            "polis",
+            "--",
+            "docker",
+            "compose",
+            "ps",
+            "--format",
+            "json",
+            "workspace",
+        ])
         .output()
         .await;
 
@@ -142,7 +152,9 @@ async fn check_workspace_container() -> bool {
 /// Check security services inside multipass VM.
 async fn get_security_status() -> SecurityStatus {
     let output = tokio::process::Command::new("multipass")
-        .args(["exec", "polis", "--", "docker", "compose", "ps", "--format", "json"])
+        .args([
+            "exec", "polis", "--", "docker", "compose", "ps", "--format", "json",
+        ])
         .output()
         .await;
 
@@ -153,7 +165,7 @@ async fn get_security_status() -> SecurityStatus {
                 traffic_inspection: false,
                 credential_protection: false,
                 malware_scanning: false,
-            }
+            };
         }
     };
 
@@ -188,7 +200,17 @@ async fn get_security_status() -> SecurityStatus {
 /// Check agent status inside multipass VM.
 async fn get_agent_status() -> Option<AgentStatus> {
     let output = tokio::process::Command::new("multipass")
-        .args(["exec", "polis", "--", "docker", "compose", "ps", "--format", "json", "workspace"])
+        .args([
+            "exec",
+            "polis",
+            "--",
+            "docker",
+            "compose",
+            "ps",
+            "--format",
+            "json",
+            "workspace",
+        ])
         .output()
         .await
         .ok()?;
@@ -221,7 +243,10 @@ async fn get_agent_status() -> Option<AgentStatus> {
 
 /// Print human-readable status output.
 fn print_human_readable(ctx: &OutputContext, status: &StatusOutput) {
-    ctx.kv("Workspace:", workspace_state_display(status.workspace.status));
+    ctx.kv(
+        "Workspace:",
+        workspace_state_display(status.workspace.status),
+    );
 
     if let Some(agent) = &status.agent {
         ctx.kv(
@@ -339,8 +364,14 @@ mod tests {
     fn test_workspace_state_display_all() {
         assert_eq!(workspace_state_display(WorkspaceState::Running), "running");
         assert_eq!(workspace_state_display(WorkspaceState::Stopped), "stopped");
-        assert_eq!(workspace_state_display(WorkspaceState::Starting), "starting");
-        assert_eq!(workspace_state_display(WorkspaceState::Stopping), "stopping");
+        assert_eq!(
+            workspace_state_display(WorkspaceState::Starting),
+            "starting"
+        );
+        assert_eq!(
+            workspace_state_display(WorkspaceState::Stopping),
+            "stopping"
+        );
         assert_eq!(workspace_state_display(WorkspaceState::Error), "error");
     }
 
@@ -354,7 +385,10 @@ mod tests {
 
     #[test]
     fn test_format_agent_line() {
-        assert_eq!(format_agent_line("claude-dev", AgentHealth::Healthy), "claude-dev (healthy)");
+        assert_eq!(
+            format_agent_line("claude-dev", AgentHealth::Healthy),
+            "claude-dev (healthy)"
+        );
     }
 
     #[test]
@@ -376,10 +410,23 @@ mod tests {
 
     fn test_status() -> StatusOutput {
         StatusOutput {
-            workspace: WorkspaceStatus { status: WorkspaceState::Running, uptime_seconds: Some(9240) },
-            agent: Some(AgentStatus { name: "claude-dev".to_string(), status: AgentHealth::Healthy }),
-            security: SecurityStatus { traffic_inspection: true, credential_protection: true, malware_scanning: true },
-            events: SecurityEvents { count: 2, severity: EventSeverity::Warning },
+            workspace: WorkspaceStatus {
+                status: WorkspaceState::Running,
+                uptime_seconds: Some(9240),
+            },
+            agent: Some(AgentStatus {
+                name: "claude-dev".to_string(),
+                status: AgentHealth::Healthy,
+            }),
+            security: SecurityStatus {
+                traffic_inspection: true,
+                credential_protection: true,
+                malware_scanning: true,
+            },
+            events: SecurityEvents {
+                count: 2,
+                severity: EventSeverity::Warning,
+            },
         }
     }
 
@@ -395,10 +442,20 @@ mod tests {
     #[test]
     fn test_status_json_omits_none_fields() {
         let status = StatusOutput {
-            workspace: WorkspaceStatus { status: WorkspaceState::Stopped, uptime_seconds: None },
+            workspace: WorkspaceStatus {
+                status: WorkspaceState::Stopped,
+                uptime_seconds: None,
+            },
             agent: None,
-            security: SecurityStatus { traffic_inspection: false, credential_protection: false, malware_scanning: false },
-            events: SecurityEvents { count: 0, severity: EventSeverity::None },
+            security: SecurityStatus {
+                traffic_inspection: false,
+                credential_protection: false,
+                malware_scanning: false,
+            },
+            events: SecurityEvents {
+                count: 0,
+                severity: EventSeverity::None,
+            },
         };
         let json = serde_json::to_string(&status).expect("serialize");
         assert!(!json.contains("uptime_seconds"));
@@ -432,7 +489,7 @@ mod proptests {
             Just(WorkspaceState::Stopping),
             Just(WorkspaceState::Error),
         ]) {
-            prop_assert!(workspace_state_display(state).chars().all(|c| c.is_lowercase()));
+            prop_assert!(workspace_state_display(state).chars().all(char::is_lowercase));
         }
 
         #[test]
@@ -442,7 +499,7 @@ mod proptests {
             Just(AgentHealth::Starting),
             Just(AgentHealth::Stopped),
         ]) {
-            prop_assert!(agent_health_display(health).chars().all(|c| c.is_lowercase()));
+            prop_assert!(agent_health_display(health).chars().all(char::is_lowercase));
         }
 
         #[test]

@@ -102,7 +102,12 @@ impl HealthProbe for SystemProbe {
     }
 
     async fn check_security(&self) -> Result<SecurityChecks> {
-        let (process_isolation, traffic_inspection, (malware_db_current, malware_db_age_hours), (certificates_valid, certificates_expire_days)) = tokio::join!(
+        let (
+            process_isolation,
+            traffic_inspection,
+            (malware_db_current, malware_db_age_hours),
+            (certificates_valid, certificates_expire_days),
+        ) = tokio::join!(
             check_process_isolation(),
             check_gate_health(),
             check_malware_db(),
@@ -130,15 +135,24 @@ pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
     run_with(ctx, json, &SystemProbe).await
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> Result<()> {
     let (workspace, network, security) = tokio::try_join!(
         probe.check_workspace(),
         probe.check_network(),
         probe.check_security(),
     )?;
-    let checks = DoctorChecks { workspace, network, security };
+    let checks = DoctorChecks {
+        workspace,
+        network,
+        security,
+    };
     let issues = collect_issues(&checks);
-    let status = if issues.is_empty() { "healthy" } else { "unhealthy" };
+    let status = if issues.is_empty() {
+        "healthy"
+    } else {
+        "unhealthy"
+    };
 
     if json {
         let out = serde_json::json!({
@@ -164,7 +178,10 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
             },
             "issues": issues,
         });
-        println!("{}", serde_json::to_string_pretty(&out).context("JSON serialization")?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).context("JSON serialization")?
+        );
         return Ok(());
     }
 
@@ -175,9 +192,20 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     println!("  Workspace:");
     print_check(ctx, checks.workspace.ready, "Ready to start");
     if checks.workspace.disk_space_ok {
-        print_check(ctx, true, &format!("{} GB disk space available", checks.workspace.disk_space_gb));
+        print_check(
+            ctx,
+            true,
+            &format!("{} GB disk space available", checks.workspace.disk_space_gb),
+        );
     } else {
-        print_check(ctx, false, &format!("Low disk space ({} GB available, need 10 GB)", checks.workspace.disk_space_gb));
+        print_check(
+            ctx,
+            false,
+            &format!(
+                "Low disk space ({} GB available, need 10 GB)",
+                checks.workspace.disk_space_gb
+            ),
+        );
     }
     println!();
 
@@ -187,17 +215,36 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     println!();
 
     println!("  Security:");
-    print_check(ctx, checks.security.process_isolation, "Process isolation active");
-    print_check(ctx, checks.security.traffic_inspection, "Traffic inspection responding");
-    print_check(ctx, checks.security.malware_db_current, &format!(
-        "Malware scanner database current (updated: {}h ago)",
-        checks.security.malware_db_age_hours,
-    ));
+    print_check(
+        ctx,
+        checks.security.process_isolation,
+        "Process isolation active",
+    );
+    print_check(
+        ctx,
+        checks.security.traffic_inspection,
+        "Traffic inspection responding",
+    );
+    print_check(
+        ctx,
+        checks.security.malware_db_current,
+        &format!(
+            "Malware scanner database current (updated: {}h ago)",
+            checks.security.malware_db_age_hours,
+        ),
+    );
     let expire_days = checks.security.certificates_expire_days;
     if expire_days > 30 {
-        print_check(ctx, true, "Certificates valid (no immediate action required)");
+        print_check(
+            ctx,
+            true,
+            "Certificates valid (no immediate action required)",
+        );
     } else if expire_days > 0 {
-        println!("    {} Certificates expire soon", "⚠".style(ctx.styles.warning));
+        println!(
+            "    {} Certificates expire soon",
+            "⚠".style(ctx.styles.warning)
+        );
     } else {
         print_check(ctx, false, "Certificates expired");
     }
@@ -301,7 +348,9 @@ async fn check_process_isolation() -> bool {
 /// Check if the gate container is running inside the multipass VM.
 async fn check_gate_health() -> bool {
     let output = tokio::process::Command::new("multipass")
-        .args(["exec", "polis", "--", "docker", "compose", "ps", "--format", "json", "gate"])
+        .args([
+            "exec", "polis", "--", "docker", "compose", "ps", "--format", "json", "gate",
+        ])
         .output()
         .await;
 
@@ -311,27 +360,43 @@ async fn check_gate_health() -> bool {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().next().and_then(|line| {
-        serde_json::from_str::<serde_json::Value>(line)
-            .ok()
-            .and_then(|c| c.get("State")?.as_str().map(|s| s == "running"))
-    }).unwrap_or(false)
+    stdout
+        .lines()
+        .next()
+        .and_then(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|c| c.get("State")?.as_str().map(|s| s == "running"))
+        })
+        .unwrap_or(false)
 }
 
 /// Check `ClamAV` database freshness inside the multipass VM.
 async fn check_malware_db() -> (bool, u64) {
     let output = tokio::process::Command::new("multipass")
-        .args(["exec", "polis", "--", "stat", "-c", "%Y", "/var/lib/clamav/daily.cvd"])
+        .args([
+            "exec",
+            "polis",
+            "--",
+            "stat",
+            "-c",
+            "%Y",
+            "/var/lib/clamav/daily.cvd",
+        ])
         .output()
         .await;
 
-    let Ok(output) = output else { return (false, 0) };
+    let Ok(output) = output else {
+        return (false, 0);
+    };
     if !output.status.success() {
         return (false, 0);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let Ok(mtime) = stdout.trim().parse::<u64>() else { return (false, 0) };
+    let Ok(mtime) = stdout.trim().parse::<u64>() else {
+        return (false, 0);
+    };
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -347,13 +412,22 @@ async fn check_malware_db() -> (bool, u64) {
 async fn check_certificates() -> (bool, i64) {
     let output = tokio::process::Command::new("multipass")
         .args([
-            "exec", "polis", "--",
-            "openssl", "x509", "-enddate", "-noout", "-in", "/etc/polis/certs/ca/ca.crt",
+            "exec",
+            "polis",
+            "--",
+            "openssl",
+            "x509",
+            "-enddate",
+            "-noout",
+            "-in",
+            "/etc/polis/certs/ca/ca.crt",
         ])
         .output()
         .await;
 
-    let Ok(output) = output else { return (false, 0) };
+    let Ok(output) = output else {
+        return (false, 0);
+    };
     if !output.status.success() {
         return (false, 0);
     }
@@ -380,7 +454,7 @@ async fn check_certificates() -> (bool, i64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_issues, DoctorChecks, NetworkChecks, SecurityChecks, WorkspaceChecks};
+    use super::{DoctorChecks, NetworkChecks, SecurityChecks, WorkspaceChecks, collect_issues};
 
     fn all_healthy() -> DoctorChecks {
         DoctorChecks {
@@ -418,7 +492,9 @@ mod tests {
 
         let issues = collect_issues(&checks);
         assert!(
-            issues.iter().any(|i: &String| i.contains("disk") || i.contains("Disk")),
+            issues
+                .iter()
+                .any(|i: &String| i.contains("disk") || i.contains("Disk")),
             "expected a disk issue, got: {issues:?}"
         );
     }
@@ -430,7 +506,9 @@ mod tests {
 
         let issues = collect_issues(&checks);
         assert!(
-            issues.iter().any(|i: &String| i.to_lowercase().contains("dns")),
+            issues
+                .iter()
+                .any(|i: &String| i.to_lowercase().contains("dns")),
             "expected a DNS issue, got: {issues:?}"
         );
     }
@@ -442,7 +520,10 @@ mod tests {
 
         let issues = collect_issues(&checks);
         assert!(
-            issues.iter().any(|i: &String| i.to_lowercase().contains("traffic") || i.to_lowercase().contains("inspection")),
+            issues
+                .iter()
+                .any(|i: &String| i.to_lowercase().contains("traffic")
+                    || i.to_lowercase().contains("inspection")),
             "expected a traffic inspection issue, got: {issues:?}"
         );
     }
@@ -454,7 +535,9 @@ mod tests {
 
         let issues = collect_issues(&checks);
         assert!(
-            issues.iter().any(|i: &String| i.to_lowercase().contains("cert")),
+            issues
+                .iter()
+                .any(|i: &String| i.to_lowercase().contains("cert")),
             "expected a certificate issue, got: {issues:?}"
         );
     }
@@ -468,7 +551,9 @@ mod tests {
 
         let issues = collect_issues(&checks);
         assert!(
-            !issues.iter().any(|i: &String| i.to_lowercase().contains("cert")),
+            !issues
+                .iter()
+                .any(|i: &String| i.to_lowercase().contains("cert")),
             "expiring-soon certs should be a warning, not an issue, got: {issues:?}"
         );
     }

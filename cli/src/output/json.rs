@@ -111,13 +111,15 @@ mod tests {
         let out = format_error("Failed to connect to workspace", "CODE")
             .expect("format_error must not fail");
         let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
-        assert_eq!(v["message"].as_str(), Some("Failed to connect to workspace"));
+        assert_eq!(
+            v["message"].as_str(),
+            Some("Failed to connect to workspace")
+        );
     }
 
     #[test]
     fn test_format_error_has_code() {
-        let out = format_error("msg", "WORKSPACE_UNREACHABLE")
-            .expect("format_error must not fail");
+        let out = format_error("msg", "WORKSPACE_UNREACHABLE").expect("format_error must not fail");
         let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
         assert_eq!(v["code"].as_str(), Some("WORKSPACE_UNREACHABLE"));
     }

@@ -88,7 +88,10 @@ fn list_agents(ctx: &OutputContext, json: bool) -> Result<()> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&entries).context("serialise agents")?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&entries).context("serialise agents")?
+        );
         return Ok(());
     }
 
@@ -105,13 +108,23 @@ fn list_agents(ctx: &OutputContext, json: bool) -> Result<()> {
     println!();
     println!("  Available agents:");
     println!();
-    println!("  {:<14} {:<12} {:<10} CAPABILITIES", "NAME", "PROVIDER", "VERSION");
+    println!(
+        "  {:<14} {:<12} {:<10} CAPABILITIES",
+        "NAME", "PROVIDER", "VERSION"
+    );
 
     for a in &agents {
         let provider = a.metadata.effective_provider(a.spec.requirements.as_ref());
         let caps = a.metadata.capabilities.join(", ");
-        let caps = if caps.len() > 30 { format!("{}...", &caps[..27]) } else { caps };
-        println!("  {:<14} {:<12} {:<10} {}", a.metadata.name, provider, a.metadata.version, caps);
+        let caps = if caps.len() > 30 {
+            format!("{}...", &caps[..27])
+        } else {
+            caps
+        };
+        println!(
+            "  {:<14} {:<12} {:<10} {}",
+            a.metadata.name, provider, a.metadata.version, caps
+        );
     }
 
     println!();
@@ -122,7 +135,10 @@ fn show_agent_info(ctx: &OutputContext, name: &str, json: bool) -> Result<()> {
     let a = load_agent(name)?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&a).context("serialise agent")?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&a).context("serialise agent")?
+        );
         return Ok(());
     }
 
@@ -132,7 +148,10 @@ fn show_agent_info(ctx: &OutputContext, name: &str, json: bool) -> Result<()> {
     println!();
     println!("  Display Name:  {}", a.metadata.display_name);
     println!("  Version:       {}", a.metadata.version);
-    println!("  Provider:      {}", a.metadata.effective_provider(a.spec.requirements.as_ref()));
+    println!(
+        "  Provider:      {}",
+        a.metadata.effective_provider(a.spec.requirements.as_ref())
+    );
 
     if let Some(author) = &a.metadata.author {
         println!("  Author:        {author}");
@@ -156,16 +175,20 @@ fn show_agent_info(ctx: &OutputContext, name: &str, json: bool) -> Result<()> {
     }
 
     if let Some(reqs) = &a.spec.requirements
-        && !reqs.env_one_of.is_empty() {
-            println!();
-            println!("  Requirements:");
-            println!("    One of: {}", reqs.env_one_of.join(", "));
-        }
+        && !reqs.env_one_of.is_empty()
+    {
+        println!();
+        println!("  Requirements:");
+        println!("    One of: {}", reqs.env_one_of.join(", "));
+    }
 
     if let Some(res) = &a.spec.resources {
         println!();
         println!("  Resources:");
-        println!("    Memory: {} (limit), {} (reserved)", res.memory_limit, res.memory_reservation);
+        println!(
+            "    Memory: {} (limit), {} (reserved)",
+            res.memory_limit, res.memory_reservation
+        );
     }
 
     println!();
@@ -180,7 +203,10 @@ fn add_agent(ctx: &OutputContext, path: &str) -> Result<()> {
     println!("  Validating agent...");
 
     let manifest_path = source.join("agent.yaml");
-    anyhow::ensure!(manifest_path.exists(), "agent.yaml not found — not a valid agent directory");
+    anyhow::ensure!(
+        manifest_path.exists(),
+        "agent.yaml not found — not a valid agent directory"
+    );
     println!("    ✓ agent.yaml found");
 
     let manifest = load_manifest(&manifest_path)?;
@@ -245,8 +271,8 @@ fn add_agent(ctx: &OutputContext, path: &str) -> Result<()> {
 ///
 /// Returns an error if the file cannot be read or the YAML is invalid.
 pub fn load_manifest(path: &Path) -> Result<AgentManifest> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     serde_yaml::from_str(&content)
         .with_context(|| format!("invalid agent.yaml at {}", path.display()))
 }
@@ -285,8 +311,8 @@ pub fn check_signature(path: &Path) -> Result<SignatureStatus> {
     }
 
     // Minimal format check: a raw ed25519 signature is exactly 64 bytes.
-    let bytes = std::fs::read(&sig_path)
-        .with_context(|| format!("cannot read {}", sig_path.display()))?;
+    let bytes =
+        std::fs::read(&sig_path).with_context(|| format!("cannot read {}", sig_path.display()))?;
 
     if bytes.len() != 64 {
         return Ok(SignatureStatus::Invalid {
@@ -302,7 +328,10 @@ pub fn check_signature(path: &Path) -> Result<SignatureStatus> {
     // and surface the key_id as a placeholder until key distribution is wired.
     Ok(SignatureStatus::Valid {
         signer: "unknown".to_string(),
-        key_id: format!("0x{:02X}{:02X}{:02X}{:02X}", bytes[0], bytes[1], bytes[2], bytes[3]),
+        key_id: format!(
+            "0x{:02X}{:02X}{:02X}{:02X}",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        ),
     })
 }
 
@@ -327,15 +356,17 @@ pub fn discover_agents() -> Result<Vec<AgentManifest>> {
         if !base.is_dir() {
             continue;
         }
-        for entry in std::fs::read_dir(&base)
-            .with_context(|| format!("cannot read {}", base.display()))?
+        for entry in
+            std::fs::read_dir(&base).with_context(|| format!("cannot read {}", base.display()))?
         {
-            let entry = entry.with_context(|| format!("cannot read entry in {}", base.display()))?;
+            let entry =
+                entry.with_context(|| format!("cannot read entry in {}", base.display()))?;
             let manifest_path = entry.path().join("agent.yaml");
             if manifest_path.is_file()
-                && let Ok(m) = load_manifest(&manifest_path) {
-                    agents.push(m);
-                }
+                && let Ok(m) = load_manifest(&manifest_path)
+            {
+                agents.push(m);
+            }
         }
     }
 
@@ -379,11 +410,8 @@ pub fn install_agent(source: &Path, name: &str) -> Result<()> {
 }
 
 fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)
-        .with_context(|| format!("cannot create {}", dst.display()))?;
-    for entry in
-        std::fs::read_dir(src).with_context(|| format!("cannot read {}", src.display()))?
-    {
+    std::fs::create_dir_all(dst).with_context(|| format!("cannot create {}", dst.display()))?;
+    for entry in std::fs::read_dir(src).with_context(|| format!("cannot read {}", src.display()))? {
         let entry = entry.with_context(|| format!("cannot read entry in {}", src.display()))?;
         let dst_path = dst.join(entry.file_name());
         let ft = entry.file_type().context("cannot determine file type")?;
@@ -409,13 +437,13 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
 // Depends on: 14-agent-manifest-extension (AgentManifest types — already done)
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::doc_markdown)]
 mod tests {
     use std::fs;
 
     use tempfile::TempDir;
 
-    use super::{check_signature, load_manifest, validate_security_policy, SignatureStatus};
+    use super::{SignatureStatus, check_signature, load_manifest, validate_security_policy};
 
     // ── YAML fixtures ────────────────────────────────────────────────────────
 
@@ -577,8 +605,11 @@ spec:
     fn test_check_signature_corrupt_sig_returns_invalid() {
         let dir = TempDir::new().expect("tempdir");
         fs::write(dir.path().join("agent.yaml"), VALID_YAML).expect("write");
-        fs::write(dir.path().join("agent.yaml.sig"), b"not-a-valid-ed25519-signature")
-            .expect("write sig");
+        fs::write(
+            dir.path().join("agent.yaml.sig"),
+            b"not-a-valid-ed25519-signature",
+        )
+        .expect("write sig");
 
         let status = check_signature(dir.path()).expect("should not error");
 

@@ -4,13 +4,13 @@
 //! terminal correctly. `polis doctor` is the best existing command that
 //! exercises the styling system (header + success/error markers).
 
-#![allow(clippy::expect_used, deprecated)]
+#![allow(clippy::expect_used)]
 
 use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ mod proptests {
     use proptest::prelude::*;
 
     fn polis() -> Command {
-        Command::cargo_bin("polis").expect("polis binary should exist")
+        Command::new(assert_cmd::cargo::cargo_bin!("polis"))
     }
 
     proptest! {

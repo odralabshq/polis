@@ -87,7 +87,10 @@ fn show_connection_options(_ctx: &OutputContext) {
 pub fn resolve_ide(name: &str) -> Result<(&'static str, &'static [&'static str])> {
     match name.to_lowercase().as_str() {
         "vscode" | "code" => Ok(("code", &["--remote", "ssh-remote+workspace", "/workspace"])),
-        "cursor" => Ok(("cursor", &["--remote", "ssh-remote+workspace", "/workspace"])),
+        "cursor" => Ok((
+            "cursor",
+            &["--remote", "ssh-remote+workspace", "/workspace"],
+        )),
         _ => anyhow::bail!("Unknown IDE: {name}. Supported: vscode, cursor"),
     }
 }

@@ -16,8 +16,8 @@ impl StateManager {
     ///
     /// Returns an error if the home directory cannot be determined.
     pub fn new() -> Result<Self> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+        let home =
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
         Ok(Self::with_path(home.join(".polis").join("state.json")))
     }
 
@@ -114,7 +114,9 @@ mod tests {
     #[test]
     fn test_state_manager_load_returns_none_when_no_file() {
         let dir = TempDir::new().expect("tempdir");
-        let result = mgr(&dir).load().expect("load should not error on missing file");
+        let result = mgr(&dir)
+            .load()
+            .expect("load should not error on missing file");
         assert!(result.is_none());
     }
 
@@ -188,10 +190,19 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let m = mgr(&dir);
         let mut state = make_state(); // stage = Provisioned
-        m.advance(&mut state, RunStage::AgentReady).expect("advance");
-        assert_eq!(state.stage, RunStage::AgentReady, "in-memory stage must update");
+        m.advance(&mut state, RunStage::AgentReady)
+            .expect("advance");
+        assert_eq!(
+            state.stage,
+            RunStage::AgentReady,
+            "in-memory stage must update"
+        );
         let on_disk = m.load().expect("load").expect("state present");
-        assert_eq!(on_disk.stage, RunStage::AgentReady, "disk stage must update");
+        assert_eq!(
+            on_disk.stage,
+            RunStage::AgentReady,
+            "disk stage must update"
+        );
     }
 
     #[cfg(unix)]

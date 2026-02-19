@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
-use zipsign_api::{verify::verify_tar, VerifyingKey, PUBLIC_KEY_LENGTH};
+use zipsign_api::{PUBLIC_KEY_LENGTH, VerifyingKey, verify::verify_tar};
 
 use crate::output::OutputContext;
 
@@ -116,7 +116,11 @@ pub async fn run(ctx: &OutputContext, checker: &impl UpdateChecker) -> Result<()
                 "✓".style(ctx.styles.success),
             );
         }
-        UpdateInfo::Available { version, release_notes, download_url } => {
+        UpdateInfo::Available {
+            version,
+            release_notes,
+            download_url,
+        } => {
             println!("  Current: v{current}");
             println!("  Latest:  v{version}");
             println!();
@@ -165,10 +169,7 @@ pub async fn run(ctx: &OutputContext, checker: &impl UpdateChecker) -> Result<()
             checker.perform_update(&version).context("update failed")?;
 
             println!();
-            println!(
-                "  {} Updated to v{version}",
-                "✓".style(ctx.styles.success),
-            );
+            println!("  {} Updated to v{version}", "✓".style(ctx.styles.success),);
             println!();
             println!("  Restart your terminal or run: exec polis");
         }
@@ -203,7 +204,11 @@ fn check_for_update(current: &str) -> Result<UpdateInfo> {
         return Ok(UpdateInfo::UpToDate);
     }
 
-    let release_notes = latest.body.as_deref().map(parse_release_notes).unwrap_or_default();
+    let release_notes = latest
+        .body
+        .as_deref()
+        .map(parse_release_notes)
+        .unwrap_or_default();
 
     let asset_name = get_asset_name()?;
     let download_url = latest
@@ -271,8 +276,8 @@ fn verify_signature(download_url: &str) -> Result<SignatureInfo> {
     let sha256 = hex_encode(&hash);
 
     // Decode the embedded public key
-    let key_bytes = base64_decode(POLIS_PUBLIC_KEY_B64)
-        .context("invalid embedded public key encoding")?;
+    let key_bytes =
+        base64_decode(POLIS_PUBLIC_KEY_B64).context("invalid embedded public key encoding")?;
 
     anyhow::ensure!(
         key_bytes.len() == PUBLIC_KEY_LENGTH,
@@ -289,8 +294,7 @@ fn verify_signature(download_url: &str) -> Result<SignatureInfo> {
 
     // Verify the signature
     let mut cursor = Cursor::new(&data);
-    verify_tar(&mut cursor, &[verifying_key], None)
-        .context("signature verification failed")?;
+    verify_tar(&mut cursor, &[verifying_key], None).context("signature verification failed")?;
 
     Ok(SignatureInfo {
         signer: SIGNER_NAME.to_string(),
@@ -375,7 +379,11 @@ mod tests {
         let notes = parse_release_notes(body);
         assert_eq!(
             notes,
-            vec!["Improved credential detection", "Faster workspace startup", "Bug fixes"]
+            vec![
+                "Improved credential detection",
+                "Faster workspace startup",
+                "Bug fixes"
+            ]
         );
     }
 
@@ -401,7 +409,10 @@ mod tests {
 
     #[test]
     fn test_parse_release_notes_limits_to_five_items() {
-        let body = (1..=10).map(|i| format!("- item {i}")).collect::<Vec<_>>().join("\n");
+        let body = (1..=10)
+            .map(|i| format!("- item {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let notes = parse_release_notes(&body);
         assert_eq!(notes.len(), 5);
     }
@@ -413,7 +424,10 @@ mod tests {
     #[test]
     fn test_get_asset_name_current_platform_returns_tar_gz() {
         let name = get_asset_name().expect("current platform should be supported");
-        assert!(name.ends_with(".tar.gz"), "asset name should be a .tar.gz: {name}");
+        assert!(
+            name.ends_with(".tar.gz"),
+            "asset name should be a .tar.gz: {name}"
+        );
     }
 
     #[test]

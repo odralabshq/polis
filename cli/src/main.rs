@@ -1,5 +1,7 @@
 //! Polis CLI - Secure workspaces for AI coding agents
 
+#![cfg_attr(test, allow(clippy::expect_used))]
+
 use clap::Parser;
 
 mod cli;

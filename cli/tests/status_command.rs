@@ -10,7 +10,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 // ── Human-readable output ─────────────────────────────────────────────────────
@@ -147,7 +147,9 @@ fn test_status_json_events_severity_valid() {
         .clone();
 
     let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
-    let severity = v["events"]["severity"].as_str().expect("severity is string");
+    let severity = v["events"]["severity"]
+        .as_str()
+        .expect("severity is string");
     let valid_severities = ["none", "info", "warning", "error"];
     assert!(
         valid_severities.contains(&severity),
@@ -168,7 +170,10 @@ fn test_status_json_events_count_non_negative() {
 
     let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
     let count = v["events"]["count"].as_u64().expect("count is u64");
-    assert!(count < u32::MAX as u64, "events.count should be reasonable");
+    assert!(
+        count < u64::from(u32::MAX),
+        "events.count should be reasonable"
+    );
 }
 
 // ── Quiet mode ────────────────────────────────────────────────────────────────
@@ -199,7 +204,7 @@ fn test_status_no_color_no_ansi() {
     );
 }
 
-/// EARS: WHEN NO_COLOR env is set THEN output has no ANSI codes.
+/// EARS: WHEN `NO_COLOR` env is set THEN output has no ANSI codes.
 #[test]
 fn test_status_no_color_env_no_ansi() {
     let output = polis()
@@ -233,7 +238,7 @@ fn test_status_json_workspace_status_is_valid_enum() {
 
     let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
     let status = v["workspace"]["status"].as_str().expect("status string");
-    
+
     // Must be one of: running, stopped, starting, stopping, error
     assert!(
         ["running", "stopped", "starting", "stopping", "error"].contains(&status),
@@ -254,13 +259,17 @@ fn test_status_workspace_state_reflects_container() {
 
     let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
     let status = v["workspace"]["status"].as_str().expect("status string");
-    
+
     // If security services are all inactive, workspace shouldn't be "running"
     // (unless container is actually running)
-    let traffic = v["security"]["traffic_inspection"].as_bool().unwrap_or(false);
-    let cred = v["security"]["credential_protection"].as_bool().unwrap_or(false);
+    let traffic = v["security"]["traffic_inspection"]
+        .as_bool()
+        .unwrap_or(false);
+    let cred = v["security"]["credential_protection"]
+        .as_bool()
+        .unwrap_or(false);
     let malware = v["security"]["malware_scanning"].as_bool().unwrap_or(false);
-    
+
     if !traffic && !cred && !malware {
         // Services not running - workspace is either starting, stopped, or error
         assert!(

@@ -9,7 +9,7 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::cargo_bin("polis").expect("polis binary should exist")
+    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ fn test_extract_host_key_no_backend_exits_with_error() {
 // Output format
 // ---------------------------------------------------------------------------
 
-/// When a backend is available, output must be a single known_hosts line
+/// When a backend is available, output must be a single `known_hosts` line
 /// starting with "workspace ssh-ed25519 ".
 ///
 /// This test is skipped in CI (no backend) via the `POLIS_BACKEND_AVAILABLE`

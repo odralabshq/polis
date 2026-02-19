@@ -31,8 +31,8 @@ impl KnownHostsManager {
     ///
     /// Returns an error if the home directory cannot be determined.
     pub fn new() -> Result<Self> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+        let home =
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
         Ok(Self::with_path(home.join(".polis").join("known_hosts")))
     }
 
@@ -113,8 +113,7 @@ mod tests {
         KnownHostsManager::with_path(dir.path().join("known_hosts"))
     }
 
-    const VALID_KEY: &str =
-        "workspace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyMaterialHere";
+    const VALID_KEY: &str = "workspace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyMaterialHere";
 
     // -----------------------------------------------------------------------
     // KnownHostsManager::exists
@@ -144,8 +143,8 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.update(VALID_KEY).expect("update should succeed");
-        let content = std::fs::read_to_string(dir.path().join("known_hosts"))
-            .expect("file should exist");
+        let content =
+            std::fs::read_to_string(dir.path().join("known_hosts")).expect("file should exist");
         assert_eq!(content, VALID_KEY);
     }
 
@@ -154,7 +153,8 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let nested = dir.path().join("a").join("b");
         let mgr = KnownHostsManager::with_path(nested.join("known_hosts"));
-        mgr.update(VALID_KEY).expect("update should create parent dirs");
+        mgr.update(VALID_KEY)
+            .expect("update should create parent dirs");
         assert!(nested.exists());
     }
 
@@ -162,10 +162,11 @@ mod tests {
     fn test_known_hosts_manager_update_overwrites_existing_content() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
-        mgr.update("workspace ssh-ed25519 OldKey").expect("first update");
+        mgr.update("workspace ssh-ed25519 OldKey")
+            .expect("first update");
         mgr.update(VALID_KEY).expect("second update");
-        let content = std::fs::read_to_string(dir.path().join("known_hosts"))
-            .expect("file should exist");
+        let content =
+            std::fs::read_to_string(dir.path().join("known_hosts")).expect("file should exist");
         assert_eq!(content, VALID_KEY);
     }
 
@@ -274,8 +275,8 @@ impl SshConfigManager {
     ///
     /// Returns an error if the home directory cannot be determined.
     pub fn new() -> Result<Self> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+        let home =
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
         Ok(Self::with_paths(
             home.join(".polis").join("ssh_config"),
             home.join(".ssh").join("config"),
@@ -290,7 +291,11 @@ impl SshConfigManager {
         user_config_path: std::path::PathBuf,
         sockets_dir: std::path::PathBuf,
     ) -> Self {
-        Self { polis_config_path, user_config_path, sockets_dir }
+        Self {
+            polis_config_path,
+            user_config_path,
+            sockets_dir,
+        }
     }
 
     /// Returns `true` if the polis SSH config exists **and** the Include
@@ -454,8 +459,11 @@ mod ssh_config_manager_tests {
         // Create polis config but no Include in user config
         mgr.create_polis_config().expect("create_polis_config");
         std::fs::create_dir_all(dir.path().join("ssh")).expect("mkdir");
-        std::fs::write(dir.path().join("ssh").join("config"), "Host *\n    ServerAliveInterval 60\n")
-            .expect("write user config");
+        std::fs::write(
+            dir.path().join("ssh").join("config"),
+            "Host *\n    ServerAliveInterval 60\n",
+        )
+        .expect("write user config");
         assert!(!mgr.is_configured().expect("is_configured should not error"));
     }
 
@@ -479,7 +487,10 @@ mod ssh_config_manager_tests {
         mgr.create_polis_config().expect("create_polis_config");
         let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
             .expect("config file should exist");
-        assert!(content.contains("ForwardAgent no"), "V-001: ForwardAgent must be no");
+        assert!(
+            content.contains("ForwardAgent no"),
+            "V-001: ForwardAgent must be no"
+        );
     }
 
     #[test]
@@ -489,7 +500,10 @@ mod ssh_config_manager_tests {
         mgr.create_polis_config().expect("create_polis_config");
         let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
             .expect("config file should exist");
-        assert!(!content.contains("ForwardAgent yes"), "V-001: ForwardAgent yes must never appear");
+        assert!(
+            !content.contains("ForwardAgent yes"),
+            "V-001: ForwardAgent yes must never appear"
+        );
     }
 
     #[test]
@@ -513,7 +527,10 @@ mod ssh_config_manager_tests {
         let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
             .expect("config file should exist");
         assert!(content.contains("User polis"), "V-011: User must be polis");
-        assert!(!content.contains("User vscode"), "V-011: User vscode must not appear");
+        assert!(
+            !content.contains("User vscode"),
+            "V-011: User vscode must not appear"
+        );
     }
 
     #[cfg(unix)]
@@ -554,11 +571,13 @@ mod ssh_config_manager_tests {
         let mgr = manager_in(&dir);
         let ssh_dir = dir.path().join("ssh");
         std::fs::create_dir_all(&ssh_dir).expect("mkdir");
-        std::fs::write(ssh_dir.join("config"), "Host *\n    ServerAliveInterval 60\n")
-            .expect("write");
+        std::fs::write(
+            ssh_dir.join("config"),
+            "Host *\n    ServerAliveInterval 60\n",
+        )
+        .expect("write");
         mgr.add_include_directive().expect("add_include_directive");
-        let content =
-            std::fs::read_to_string(ssh_dir.join("config")).expect("config should exist");
+        let content = std::fs::read_to_string(ssh_dir.join("config")).expect("config should exist");
         assert!(
             content.starts_with("Include ~/.polis/ssh_config\n"),
             "Include must be at the top of ~/.ssh/config"
@@ -647,7 +666,7 @@ mod ssh_config_manager_tests {
 
 #[cfg(test)]
 mod proptests {
-    use super::{validate_host_key, KnownHostsManager};
+    use super::{KnownHostsManager, validate_host_key};
     use proptest::prelude::*;
 
     proptest! {
