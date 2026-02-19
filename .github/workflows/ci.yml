@@ -15,13 +15,13 @@ env:
   SYSBOX_VERSION: "0.6.7"
   SYSBOX_SHA256: "b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
   POLIS_IMAGES: >-
-    polis-resolver-oss:latest
-    polis-gate-oss:latest
-    polis-certgen-oss:latest
-    polis-sentinel-oss:latest
-    polis-scanner-oss:latest
-    polis-workspace-oss:latest
-    polis-toolbox-oss:latest
+    ghcr.io/odralabshq/polis-resolver-oss:v0.3.0
+    ghcr.io/odralabshq/polis-gate-oss:v0.3.0
+    ghcr.io/odralabshq/polis-certgen-oss:v0.3.0
+    ghcr.io/odralabshq/polis-sentinel-oss:v0.3.0
+    ghcr.io/odralabshq/polis-scanner-oss:v0.3.0
+    ghcr.io/odralabshq/polis-workspace-oss:v0.3.0
+    ghcr.io/odralabshq/polis-toolbox-oss:v0.3.0
 
 jobs:
   # ── Stage 1a: Lint Rust ───────────────────────────────────────────
@@ -222,6 +222,10 @@ jobs:
           - polis-resolver-oss
           - polis-toolbox-oss
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
       - name: Download image artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -233,7 +237,7 @@ jobs:
       - name: Scan ${{ matrix.image }} with Trivy
         uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
         with:
-          image-ref: '${{ matrix.image }}:latest'
+          image-ref: 'ghcr.io/odralabshq/${{ matrix.image }}:v0.3.0'
           format: 'sarif'
           output: 'trivy-${{ matrix.image }}.sarif'
           severity: 'HIGH,CRITICAL'
