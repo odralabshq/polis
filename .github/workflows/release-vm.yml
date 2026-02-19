@@ -77,8 +77,9 @@ jobs:
           PACKER_LOG: 1
 
       - name: Package VM
+        env:
+          VERSION: ${{ github.event.inputs.version }}
         run: |
-          VERSION="${{ github.event.inputs.version }}"
           ARTIFACT="polis-workspace-${VERSION}-amd64.qcow2"
           cp packer/output/polis-workspace-*.qcow2 "${ARTIFACT}"
           sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256"
