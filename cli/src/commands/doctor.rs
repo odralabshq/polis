@@ -166,7 +166,6 @@ pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
     run_with(ctx, json, &SystemProbe).await
 }
 
-#[allow(clippy::too_many_lines)]
 async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> Result<()> {
     let (workspace, network, security) = tokio::try_join!(
         probe.check_workspace(),
@@ -221,10 +220,36 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     println!("  {}", "Polis Health Check".style(ctx.styles.header));
     println!();
 
+    print_workspace_section(ctx, &checks.workspace);
+
+    println!("  Network:");
+    print_check(ctx, checks.network.internet, "Internet connectivity");
+    print_check(ctx, checks.network.dns, "DNS resolution working");
+    println!();
+
+    print_security_section(ctx, &checks.security);
+
+    println!();
+    if issues.is_empty() {
+        println!("  {} Everything looks good!", "✓".style(ctx.styles.success));
+    } else {
+        println!(
+            "  {} Found {} issues. Run with --verbose for details.",
+            "✗".style(ctx.styles.error),
+            issues.len(),
+        );
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Print the workspace section of the human-readable health report.
+fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
     println!("  Workspace:");
-    print_check(ctx, checks.workspace.ready, "Ready to start");
-    // Image cache status
-    let img = &checks.workspace.image;
+    print_check(ctx, ws.ready, "Ready to start");
+
+    let img = &ws.image;
     if img.cached {
         let version_str = img.version.as_deref().unwrap_or("unknown");
         let sha_str = img
@@ -245,11 +270,12 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
         print_check(ctx, false, "No workspace image cached");
         println!("      Run 'polis init' to download the image (~3.2 GB)");
     }
-    if checks.workspace.disk_space_ok {
+
+    if ws.disk_space_ok {
         print_check(
             ctx,
             true,
-            &format!("{} GB disk space available", checks.workspace.disk_space_gb),
+            &format!("{} GB disk space available", ws.disk_space_gb),
         );
     } else {
         print_check(
@@ -257,14 +283,14 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
             false,
             &format!(
                 "Low disk space ({} GB available, need 10 GB)",
-                checks.workspace.disk_space_gb
+                ws.disk_space_gb
             ),
         );
     }
     println!();
 
     // POLIS_IMAGE override warning (V-011, F-006)
-    if let Some(override_path) = &checks.workspace.image.polis_image_override {
+    if let Some(override_path) = &img.polis_image_override {
         println!(
             "  {} POLIS_IMAGE override active: {override_path}",
             "⚠".style(ctx.styles.warning)
@@ -280,32 +306,27 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
         println!("    Unset with: unset POLIS_IMAGE");
         println!();
     }
+}
 
-    println!("  Network:");
-    print_check(ctx, checks.network.internet, "Internet connectivity");
-    print_check(ctx, checks.network.dns, "DNS resolution working");
-    println!();
-
+/// Print the security section of the human-readable health report.
+fn print_security_section(ctx: &OutputContext, sec: &SecurityChecks) {
     println!("  Security:");
+    print_check(ctx, sec.process_isolation, "Process isolation active");
     print_check(
         ctx,
-        checks.security.process_isolation,
-        "Process isolation active",
-    );
-    print_check(
-        ctx,
-        checks.security.traffic_inspection,
+        sec.traffic_inspection,
         "Traffic inspection responding",
     );
     print_check(
         ctx,
-        checks.security.malware_db_current,
+        sec.malware_db_current,
         &format!(
             "Malware scanner database current (updated: {}h ago)",
-            checks.security.malware_db_age_hours,
+            sec.malware_db_age_hours,
         ),
     );
-    let expire_days = checks.security.certificates_expire_days;
+
+    let expire_days = sec.certificates_expire_days;
     if expire_days > 30 {
         print_check(
             ctx,
@@ -320,20 +341,6 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     } else {
         print_check(ctx, false, "Certificates expired");
     }
-
-    println!();
-    if issues.is_empty() {
-        println!("  {} Everything looks good!", "✓".style(ctx.styles.success));
-    } else {
-        println!(
-            "  {} Found {} issues. Run with --verbose for details.",
-            "✗".style(ctx.styles.error),
-            issues.len(),
-        );
-    }
-    println!();
-
-    Ok(())
 }
 
 fn print_check(ctx: &OutputContext, ok: bool, msg: &str) {

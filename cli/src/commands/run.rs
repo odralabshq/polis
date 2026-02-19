@@ -446,8 +446,20 @@ fn provision_workspace(mp: &impl Multipass) -> Result<()> {
     Ok(())
 }
 
+/// Parse container state and health from `docker compose ps --format json` output.
+fn parse_container_health(output: &std::process::Output) -> Option<(String, String)> {
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().next()?;
+    let container: serde_json::Value = serde_json::from_str(line).ok()?;
+    let state = container.get("State")?.as_str()?.to_owned();
+    let health = container.get("Health")?.as_str()?.to_owned();
+    Some((state, health))
+}
+
 /// Wait for the workspace container to become healthy.
-#[allow(clippy::cognitive_complexity)] // NOSONAR: Polling loop with nested checks is inherently complex
 fn wait_for_workspace_healthy(mp: &impl Multipass) {
     println!("  Waiting for workspace to be ready...");
 
@@ -455,27 +467,19 @@ fn wait_for_workspace_healthy(mp: &impl Multipass) {
     let delay = Duration::from_secs(2);
 
     for attempt in 1..=max_attempts {
-        let output = mp.exec(&["docker", "compose", "ps", "--format", "json", "workspace"]);
+        let Ok(output) = mp.exec(&["docker", "compose", "ps", "--format", "json", "workspace"])
+        else {
+            std::thread::sleep(delay);
+            continue;
+        };
 
-        if let Ok(output) = output
-            && output.status.success()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = stdout.lines().next()
-                && let Ok(container) = serde_json::from_str::<serde_json::Value>(line)
-            {
-                let state = container.get("State").and_then(|s| s.as_str());
-                let health = container.get("Health").and_then(|h| h.as_str());
-
-                if state == Some("running") {
-                    if health == Some("healthy") {
-                        println!("  Workspace is healthy");
-                        return;
-                    }
-                    if attempt % 5 == 0 {
-                        println!("  Workspace starting (attempt {attempt}/{max_attempts})...");
-                    }
-                }
+        if let Some((state, health)) = parse_container_health(&output) {
+            if state == "running" && health == "healthy" {
+                println!("  Workspace is healthy");
+                return;
+            }
+            if state == "running" && attempt % 5 == 0 {
+                println!("  Workspace starting (attempt {attempt}/{max_attempts})...");
             }
         }
 
