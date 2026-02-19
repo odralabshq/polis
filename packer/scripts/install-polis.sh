@@ -1,6 +1,7 @@
 #!/bin/bash
 # install-polis.sh — Install Polis orchestration files into VM image
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 echo "==> Installing Polis orchestration files..."
 

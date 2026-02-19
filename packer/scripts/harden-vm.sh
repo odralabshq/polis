@@ -3,6 +3,7 @@
 # Addresses: V8 (VM hardening - sysctl, AppArmor, auditd, Docker daemon)
 
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 echo "==> Applying VM hardening..."
 
