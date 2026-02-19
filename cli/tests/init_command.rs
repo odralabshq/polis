@@ -249,6 +249,65 @@ fn test_init_check_not_cached_prints_download_hint() {
         .stdout(predicate::str::contains("Download with: polis init"));
 }
 
+#[test]
+fn test_init_check_malformed_image_json_treated_as_not_cached() {
+    let dir = TempDir::new().expect("tempdir");
+    let images = dir.path().join(".polis").join("images");
+    std::fs::create_dir_all(&images).expect("mkdir");
+    std::fs::write(images.join("image.json"), b"not valid json").expect("write");
+
+    let port = serve_once(github_releases_json("v0.3.1", "amd64"));
+    polis()
+        .args(["init", "--check"])
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No image cached."));
+}
+
+#[test]
+fn test_init_check_github_api_403_exits_nonzero_with_rate_limit_message() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_status(403, "Forbidden"));
+    polis()
+        .args(["init", "--check"])
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("GitHub API rate limit exceeded"));
+}
+
+#[test]
+fn test_init_check_github_api_empty_releases_exits_nonzero() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_200(b"[]"));
+    polis()
+        .args(["init", "--check"])
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No VM image found in recent GitHub releases."));
+}
+
+#[test]
+fn test_init_check_does_not_create_image_file() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(github_releases_json("v0.3.1", "amd64"));
+    polis()
+        .args(["init", "--check"])
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .success();
+    assert!(
+        !dir.path().join(".polis").join("images").join("polis-workspace.qcow2").exists(),
+        "--check must not write any image file"
+    );
+}
+
 // ── --force skips cache ───────────────────────────────────────────────────────
 
 #[test]
@@ -492,15 +551,47 @@ mod proptests {
         }
 
         /// --check with no cache always exits 0 and mentions `polis init`.
+        /// Uses mock POLIS_GITHUB_API_URL — structurally required since run_check
+        /// now always calls resolve_latest_image_url().
         #[test]
-        fn prop_init_check_no_cache_always_succeeds(_seed in 0u32..100) {
+        fn prop_init_check_no_cache_always_succeeds(_seed in 0u32..10) {
             let dir = TempDir::new().expect("tempdir");
+            let port = serve_once(github_releases_json("v0.3.1", "amd64"));
             polis()
                 .args(["init", "--check"])
                 .env("HOME", dir.path())
+                .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
                 .assert()
                 .success()
                 .stdout(predicate::str::contains("polis init"));
+        }
+
+        /// --check --force always fails regardless of other state.
+        #[test]
+        fn prop_init_check_and_force_always_fails(_seed in 0u32..10) {
+            let dir = TempDir::new().expect("tempdir");
+            let output = polis()
+                .args(["init", "--check", "--force"])
+                .env("HOME", dir.path())
+                .output()
+                .expect("command ran");
+            prop_assert!(!output.status.success());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            prop_assert!(stderr.contains("mutually exclusive"), "got: {stderr}");
+        }
+
+        /// --check --image <url> always fails regardless of URL value.
+        #[test]
+        fn prop_init_check_and_image_always_fails(url in "https://[a-z]{3,10}\\.example\\.com/[a-z]{3,10}\\.qcow2") {
+            let dir = TempDir::new().expect("tempdir");
+            let output = polis()
+                .args(["init", "--check", "--image", &url])
+                .env("HOME", dir.path())
+                .output()
+                .expect("command ran");
+            prop_assert!(!output.status.success());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            prop_assert!(stderr.contains("--check cannot be used with --image"), "got: {stderr}");
         }
     }
 }
