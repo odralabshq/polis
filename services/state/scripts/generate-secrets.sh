@@ -118,4 +118,16 @@ if [[ -f "$ENV_FILE" ]]; then
     sed -i '/^VALKEY_RESPMOD_PASS=/d' "$ENV_FILE"
 fi
 
+echo ".env cleaned (passwords removed, now using Docker secrets)"
+
+echo ""
 echo "=== Secrets generation complete ==="
+echo "Files created in: ${OUTPUT_DIR}"
+echo "  valkey_password.txt              (healthcheck)"
+echo "  valkey_dlp_password.txt          (DLP reader)"
+echo "  valkey_mcp_agent_password.txt    (MCP agent)"
+echo "  valkey_mcp_admin_password.txt    (MCP admin)"
+echo "  valkey_reqmod_password.txt       (ICAP REQMOD)"
+echo "  valkey_respmod_password.txt      (ICAP RESPMOD)"
+echo "  valkey_log_writer_password.txt   (log writer)"
+echo "  valkey_users.acl                 (ACL with hashes)"
