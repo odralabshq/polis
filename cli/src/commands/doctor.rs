@@ -312,11 +312,7 @@ fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
 fn print_security_section(ctx: &OutputContext, sec: &SecurityChecks) {
     println!("  Security:");
     print_check(ctx, sec.process_isolation, "Process isolation active");
-    print_check(
-        ctx,
-        sec.traffic_inspection,
-        "Traffic inspection responding",
-    );
+    print_check(ctx, sec.traffic_inspection, "Traffic inspection responding");
     print_check(
         ctx,
         sec.malware_db_current,

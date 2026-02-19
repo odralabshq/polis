@@ -38,6 +38,7 @@ check_arch() {
             exit 1
             ;;
     esac
+    return 0
 }
 
 # Check for Multipass (V9 - no auto-install)
@@ -62,7 +63,7 @@ check_multipass() {
 resolve_version() {
     if [[ "${VERSION}" == "latest" ]]; then
         local response http_code body
-        response=$(curl -fsSL -w "\n%{http_code}" \
+        response=$(curl -fsSL --proto '=https' -w "\n%{http_code}" \
             "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
             2>&1) || true
         http_code=$(echo "${response}" | tail -1)
@@ -86,6 +87,7 @@ resolve_version() {
         fi
     fi
     log_info "Installing Polis ${VERSION}"
+    return 0
 }
 
 # Download and verify with SHA256

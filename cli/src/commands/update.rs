@@ -499,7 +499,21 @@ pub fn update_containers(
     let rollback = capture_rollback_info(&updates, mp)?;
 
     // Pull all images first (F-002 atomicity — no compose changes until all pulls succeed)
-    for u in &updates {
+    if !pull_all_images(&updates, ctx, mp)? {
+        return Ok(());
+    }
+
+    // Update compose tags, restart, and rollback on failure
+    apply_updates_with_rollback(&updates, &rollback, ctx, mp)
+}
+
+/// Pull all container images. Returns `false` if any pull fails (no changes made).
+fn pull_all_images(
+    updates: &[ContainerUpdate],
+    ctx: &OutputContext,
+    mp: &impl Multipass,
+) -> Result<bool> {
+    for u in updates {
         if !ctx.quiet {
             println!("  Pulling {} {}...", u.image_name, u.target_version);
         }
@@ -508,47 +522,50 @@ pub fn update_containers(
                 "  Pull failed for {}:{}. No changes made.",
                 u.image_name, u.target_version
             );
-            return Ok(());
+            return Ok(false);
         }
     }
+    Ok(true)
+}
 
-    // Update compose tags and restart
+/// Apply compose tag updates, restart services, and rollback on failure (F-003).
+fn apply_updates_with_rollback(
+    updates: &[ContainerUpdate],
+    rollback: &RollbackInfo,
+    ctx: &OutputContext,
+    mp: &impl Multipass,
+) -> Result<()> {
     let service_keys: Vec<&str> = updates.iter().map(|u| u.service_key.as_str()).collect();
 
     let apply_result = (|| -> Result<()> {
-        for u in &updates {
+        for u in updates {
             let new_ref = ghcr_ref(&u.image_name, &u.target_version);
             update_compose_tag(&u.service_key, &new_ref, mp)?;
         }
         restart_services(&service_keys, mp)
     })();
 
-    match apply_result {
-        Ok(()) => {
-            println!();
-            println!("  {} Updated", "✓".style(ctx.styles.success));
-        }
-        Err(e) => {
-            eprintln!("  Restart failed. Rolling back...");
-            // Restore previous refs (F-003)
-            let rollback_result = (|| -> Result<()> {
-                for (svc, prev_ref) in &rollback.previous_refs {
-                    update_compose_tag(svc, prev_ref, mp)?;
-                }
-                restart_services(&service_keys, mp)
-            })();
-
-            match rollback_result {
-                Ok(()) => anyhow::bail!("Update rolled back: {e}"),
-                Err(rb_err) => anyhow::bail!(
-                    "CRITICAL: Rollback failed. Manual intervention required.\n\
-                     Restore {COMPOSE_PATH} from backup.\n\
-                     Rollback error: {rb_err}"
-                ),
+    if let Err(e) = apply_result {
+        eprintln!("  Restart failed. Rolling back...");
+        let rollback_result = (|| -> Result<()> {
+            for (svc, prev_ref) in &rollback.previous_refs {
+                update_compose_tag(svc, prev_ref, mp)?;
             }
+            restart_services(&service_keys, mp)
+        })();
+
+        match rollback_result {
+            Ok(()) => anyhow::bail!("Update rolled back: {e}"),
+            Err(rb_err) => anyhow::bail!(
+                "CRITICAL: Rollback failed. Manual intervention required.\n\
+                 Restore {COMPOSE_PATH} from backup.\n\
+                 Rollback error: {rb_err}"
+            ),
         }
     }
 
+    println!();
+    println!("  {} Updated", "✓".style(ctx.styles.success));
     Ok(())
 }
 
