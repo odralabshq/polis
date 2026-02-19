@@ -229,7 +229,6 @@ mod proptests {
 
     fn arb_run_stage() -> impl Strategy<Value = RunStage> {
         prop_oneof![
-            Just(RunStage::ImageReady),
             Just(RunStage::WorkspaceCreated),
             Just(RunStage::CredentialsSet),
             Just(RunStage::Provisioned),

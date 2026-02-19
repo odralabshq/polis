@@ -197,16 +197,19 @@ fn switch_agent(state_mgr: &StateManager, run_state: RunState, target_agent: &st
 ///
 /// Returns an error if any stage fails.
 fn fresh_run(state_mgr: &StateManager, agent: &str) -> Result<()> {
+    // Pre-flight: verify image exists and is intact before touching any state.
+    let image_path = get_image_path()?;
+    let image_sha = verify_image_at_launch(&image_path)?;
+
     let mut run_state = RunState {
-        stage: RunStage::ImageReady,
+        stage: RunStage::WorkspaceCreated,
         agent: agent.to_string(),
         workspace_id: generate_workspace_id(),
         started_at: Utc::now(),
-        image_sha256: None,
+        image_sha256: Some(image_sha),
     };
 
     for next_stage in [
-        RunStage::ImageReady,
         RunStage::WorkspaceCreated,
         RunStage::CredentialsSet,
         RunStage::Provisioned,
@@ -256,14 +259,10 @@ fn pin_host_key() {
 /// # Errors
 ///
 /// Returns an error if the stage operation fails.
-fn execute_stage(run_state: &mut RunState, stage: RunStage) -> Result<()> {
+fn execute_stage(_run_state: &mut RunState, stage: RunStage) -> Result<()> {
     println!("{}...", stage.description());
 
     match stage {
-        RunStage::ImageReady => {
-            let sha = ensure_image_ready()?;
-            run_state.image_sha256 = Some(sha);
-        }
         RunStage::WorkspaceCreated => {
             create_workspace()?;
         }
@@ -283,69 +282,79 @@ fn execute_stage(run_state: &mut RunState, stage: RunStage) -> Result<()> {
     Ok(())
 }
 
-/// Ensure the VM image is available locally.
+/// Resolve the VM image path.
 ///
-/// Returns the SHA256 hash of the image.
-fn ensure_image_ready() -> Result<String> {
-    let image_path = get_image_path();
-
-    if image_path.exists() {
-        println!("  Using local image: {}", image_path.display());
-        return compute_image_hash(&image_path);
+/// Priority:
+/// 1. `POLIS_IMAGE` env var (dev/CI override)
+/// 2. `~/.polis/images/polis-workspace.qcow2` (standard cache from `polis init`)
+///
+/// # Errors
+///
+/// Returns an error if no image is found at either location.
+fn get_image_path() -> Result<PathBuf> {
+    if let Ok(override_path) = std::env::var("POLIS_IMAGE") {
+        let p = PathBuf::from(&override_path);
+        anyhow::ensure!(
+            p.exists(),
+            "POLIS_IMAGE points to non-existent file: {override_path}"
+        );
+        return Ok(p);
     }
 
-    anyhow::bail!(
-        "VM image not found at {}\n\
-         Build it with: cd packer && packer build .\n\
-         Or download from GitHub releases.",
-        image_path.display()
-    );
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let path = home.join(".polis/images/polis-workspace.qcow2");
+
+    if !path.exists() {
+        anyhow::bail!(
+            "No workspace image found.\n\n\
+             Run 'polis init' to download the image (~3.2 GB)."
+        );
+    }
+    Ok(path)
 }
 
-/// Get the path to the VM image.
-fn get_image_path() -> PathBuf {
-    // Check for image in standard locations
-    let candidates = [
-        // Relative to current working directory (dev workflow)
-        PathBuf::from("packer/output/polis-workspace-dev-amd64.qcow2"),
-        // User's polis directory
-        dirs::home_dir()
-            .map(|h| {
-                h.join(".polis")
-                    .join("images")
-                    .join("polis-workspace-dev-amd64.qcow2")
-            })
-            .unwrap_or_default(),
-    ];
+/// Verify image integrity before launching the VM (TOCTOU fix V-005).
+///
+/// For standard images: re-verify SHA-256 against the stored checksum.
+/// For `POLIS_IMAGE` overrides without a sidecar: warn but allow.
+///
+/// Returns the hex-encoded SHA-256 hash.
+///
+/// # Errors
+///
+/// Returns an error if the checksum is missing (non-override), mismatched, or
+/// the file cannot be read.
+fn verify_image_at_launch(image_path: &std::path::Path) -> Result<String> {
+    // The sidecar sits next to the image with an extra ".sha256" extension.
+    // e.g. polis-workspace.qcow2 → polis-workspace.qcow2.sha256
+    let mut sidecar = image_path.as_os_str().to_owned();
+    sidecar.push(".sha256");
+    let checksum_path = std::path::PathBuf::from(sidecar);
 
-    for path in &candidates {
-        if path.exists() {
-            return path.clone();
+    if !checksum_path.exists() {
+        if std::env::var("POLIS_IMAGE").is_ok() {
+            eprintln!("Warning: using custom image from POLIS_IMAGE (no checksum verification)");
+            return crate::commands::init::sha256_file(image_path);
         }
+        anyhow::bail!("Image checksum missing. Re-run: polis init");
     }
 
-    // Return the first candidate as the expected path
-    candidates[0].clone()
-}
+    let expected = std::fs::read_to_string(&checksum_path)
+        .with_context(|| format!("reading checksum {}", checksum_path.display()))?;
+    let expected = expected.split_whitespace().next().unwrap_or_default().to_string();
 
-/// Compute SHA256 hash of the image file.
-fn compute_image_hash(path: &PathBuf) -> Result<String> {
-    use std::io::Read;
+    println!("  Verifying image integrity...");
+    let actual = crate::commands::init::sha256_file(image_path)?;
 
-    let mut file =
-        std::fs::File::open(path).with_context(|| format!("opening image {}", path.display()))?;
-
-    // Read first 64KB for a quick hash (full hash would be slow for 3GB file)
-    let mut buffer = vec![0u8; 65536];
-    let bytes_read = file.read(&mut buffer).context("reading image")?;
-    buffer.truncate(bytes_read);
-
-    // Simple hash of the header bytes
-    let hash: u64 = buffer.iter().fold(0u64, |acc, &b| {
-        acc.wrapping_mul(31).wrapping_add(u64::from(b))
-    });
-
-    Ok(format!("{hash:016x}"))
+    anyhow::ensure!(
+        actual == expected,
+        "Image integrity check failed (file may have been modified).\n\
+         Expected: {expected}\n\
+         Actual:   {actual}\n\n\
+         Re-download with: polis init --force"
+    );
+    Ok(actual)
 }
 
 /// Create the workspace VM via multipass.
@@ -363,7 +372,7 @@ fn create_workspace() -> Result<()> {
     }
 
     // Launch new VM from local image
-    let image_path = get_image_path();
+    let image_path = get_image_path()?;
     let image_url = format!("file://{}", image_path.canonicalize()?.display());
 
     println!("  Launching workspace from {}", image_path.display());
@@ -496,13 +505,22 @@ fn wait_for_workspace_healthy() {
     eprintln!("  Warning: workspace health check timed out");
 }
 
+/// Generate a workspace ID with 64 bits of entropy (V-010).
+///
+/// Uses `RandomState` (`SipHash` with random keys) seeded with a nanosecond
+/// timestamp for 64 bits of entropy, producing a 16-character hex suffix.
 fn generate_workspace_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    format!("polis-{ts:08x}")
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
+    format!("polis-{:016x}", hasher.finish())
 }
 
 // ============================================================================
@@ -510,7 +528,7 @@ fn generate_workspace_id() -> String {
 // ============================================================================
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, unsafe_code)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -518,59 +536,96 @@ mod tests {
     // ── get_image_path ───────────────────────────────────────────────────────
 
     #[test]
-    fn test_get_image_path_returns_packer_output_as_default() {
-        let path = get_image_path();
-        assert!(
-            path.to_string_lossy()
-                .contains("polis-workspace-dev-amd64.qcow2"),
-            "path should contain image filename"
+    fn test_get_image_path_polis_image_env_existing_file_returns_ok() {
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("custom.qcow2");
+        std::fs::write(&img, b"fake").unwrap();
+        // SAFETY: single-threaded test
+        unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
+        let result = get_image_path();
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        assert_eq!(result.unwrap(), img);
+    }
+
+    #[test]
+    fn test_get_image_path_polis_image_env_missing_file_returns_error() {
+        // SAFETY: single-threaded test
+        unsafe { std::env::set_var("POLIS_IMAGE", "/nonexistent/custom.qcow2") };
+        let result = get_image_path();
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("POLIS_IMAGE points to non-existent file"), "got: {err}");
+    }
+
+    #[test]
+    fn test_get_image_path_no_image_returns_error_with_hint() {
+        // SAFETY: single-threaded test
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        // We can't guarantee ~/.polis/images/polis-workspace.qcow2 doesn't exist
+        // on the test machine, so only assert the error message when it fails.
+        if get_image_path().is_err() {
+            let err = get_image_path().unwrap_err().to_string();
+            assert!(err.contains("polis init"), "got: {err}");
+        }
+    }
+
+    // ── verify_image_at_launch ───────────────────────────────────────────────
+
+    #[test]
+    fn test_verify_image_at_launch_matching_checksum_returns_hash() {
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("polis-workspace.qcow2");
+        std::fs::write(&img, b"hello").unwrap();
+        // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        let expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
+        std::fs::write(&sidecar, format!("{expected}  polis-workspace.qcow2\n")).unwrap();
+        // SAFETY: single-threaded test
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        let hash = verify_image_at_launch(&img).unwrap();
+        assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn test_verify_image_at_launch_mismatched_checksum_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("polis-workspace.qcow2");
+        std::fs::write(&img, b"hello").unwrap();
+        let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
+        std::fs::write(&sidecar, format!("{}  polis-workspace.qcow2\n", "a".repeat(64))).unwrap();
+        // SAFETY: single-threaded test
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        let err = verify_image_at_launch(&img).unwrap_err().to_string();
+        assert!(err.contains("Image integrity check failed"), "got: {err}");
+    }
+
+    #[test]
+    fn test_verify_image_at_launch_missing_sidecar_no_polis_image_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("polis-workspace.qcow2");
+        std::fs::write(&img, b"hello").unwrap();
+        // No sidecar file, no POLIS_IMAGE override.
+        // SAFETY: single-threaded test
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        let err = verify_image_at_launch(&img).unwrap_err().to_string();
+        assert!(err.contains("Image checksum missing"), "got: {err}");
+    }
+
+    #[test]
+    fn test_verify_image_at_launch_missing_sidecar_with_polis_image_warns_and_returns_hash() {
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("custom.qcow2");
+        std::fs::write(&img, b"hello").unwrap();
+        // No sidecar, but POLIS_IMAGE is set → warn and return hash.
+        // SAFETY: single-threaded test
+        unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
+        let result = verify_image_at_launch(&img);
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
-    }
-
-    // ── compute_image_hash ───────────────────────────────────────────────────
-
-    #[test]
-    fn test_compute_image_hash_returns_hex_string() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("test.qcow2");
-        std::fs::write(&path, b"test image content").unwrap();
-
-        let hash = compute_image_hash(&path).unwrap();
-        assert_eq!(hash.len(), 16, "hash should be 16 hex chars");
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn test_compute_image_hash_is_deterministic() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("test.qcow2");
-        std::fs::write(&path, b"deterministic content").unwrap();
-
-        let hash1 = compute_image_hash(&path).unwrap();
-        let hash2 = compute_image_hash(&path).unwrap();
-        assert_eq!(hash1, hash2, "same content should produce same hash");
-    }
-
-    #[test]
-    fn test_compute_image_hash_different_content_different_hash() {
-        let dir = TempDir::new().unwrap();
-        let path1 = dir.path().join("a.qcow2");
-        let path2 = dir.path().join("b.qcow2");
-        std::fs::write(&path1, b"content A").unwrap();
-        std::fs::write(&path2, b"content B").unwrap();
-
-        let hash1 = compute_image_hash(&path1).unwrap();
-        let hash2 = compute_image_hash(&path2).unwrap();
-        assert_ne!(
-            hash1, hash2,
-            "different content should produce different hash"
-        );
-    }
-
-    #[test]
-    fn test_compute_image_hash_nonexistent_file_returns_error() {
-        let path = PathBuf::from("/nonexistent/path/image.qcow2");
-        assert!(compute_image_hash(&path).is_err());
     }
 
     // ── generate_workspace_id ────────────────────────────────────────────────
@@ -582,10 +637,10 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_workspace_id_has_hex_suffix() {
+    fn test_generate_workspace_id_has_16_char_hex_suffix() {
         let id = generate_workspace_id();
         let suffix = id.strip_prefix("polis-").unwrap();
-        assert_eq!(suffix.len(), 8, "suffix should be 8 hex chars");
+        assert_eq!(suffix.len(), 16, "suffix should be 16 hex chars");
         assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
@@ -613,40 +668,15 @@ mod tests {
 mod proptests {
     use super::*;
     use proptest::prelude::*;
-    use tempfile::TempDir;
 
     proptest! {
-        /// compute_image_hash is deterministic for any content
-        #[test]
-        fn prop_compute_image_hash_deterministic(content in proptest::collection::vec(any::<u8>(), 1..1000)) {
-            let dir = TempDir::new().expect("tempdir");
-            let path = dir.path().join("test.qcow2");
-            std::fs::write(&path, &content).expect("write");
-
-            let hash1 = compute_image_hash(&path).expect("hash1");
-            let hash2 = compute_image_hash(&path).expect("hash2");
-            prop_assert_eq!(hash1, hash2);
-        }
-
-        /// compute_image_hash always returns 16 hex chars
-        #[test]
-        fn prop_compute_image_hash_format(content in proptest::collection::vec(any::<u8>(), 1..1000)) {
-            let dir = TempDir::new().expect("tempdir");
-            let path = dir.path().join("test.qcow2");
-            std::fs::write(&path, &content).expect("write");
-
-            let hash = compute_image_hash(&path).expect("hash");
-            prop_assert_eq!(hash.len(), 16);
-            prop_assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
-        }
-
         /// generate_workspace_id always matches expected format
         #[test]
         fn prop_generate_workspace_id_format(_seed in 0u32..1000) {
             let id = generate_workspace_id();
             prop_assert!(id.starts_with("polis-"));
             let suffix = id.strip_prefix("polis-").expect("prefix exists");
-            prop_assert_eq!(suffix.len(), 8);
+            prop_assert_eq!(suffix.len(), 16);
             prop_assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
         }
 
