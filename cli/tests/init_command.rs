@@ -111,9 +111,11 @@ fn test_init_image_directory_path_exits_nonzero_with_message() {
 #[test]
 fn test_init_check_no_cache_exits_zero_with_message() {
     let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(github_releases_json("v0.3.1", "amd64"));
     polis()
         .args(["init", "--check"])
         .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
         .assert()
         .success()
         .stdout(predicate::str::contains("polis init"));
@@ -140,12 +142,111 @@ fn test_init_check_with_cached_image_and_metadata_reports_up_to_date() {
     });
     std::fs::write(images.join("image.json"), meta.to_string()).expect("write metadata");
 
+    let port = serve_once(github_releases_json("v0.3.0", "amd64"));
     polis()
         .args(["init", "--check"])
         .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
         .assert()
         .success()
         .stdout(predicate::str::contains("up to date").or(predicate::str::contains("v0.3.0")));
+}
+
+// ── --check mutual exclusion with --image ─────────────────────────────────────
+
+#[test]
+fn test_init_check_and_image_together_exits_nonzero_with_message() {
+    let dir = TempDir::new().expect("tempdir");
+    polis()
+        .args(["init", "--check", "--image", "https://example.com/img.qcow2"])
+        .env("HOME", dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--check cannot be used with --image"));
+}
+
+// ── --check with mock GitHub API ──────────────────────────────────────────────
+
+/// Build a minimal GitHub releases JSON array with one release at `tag`.
+fn github_releases_json(tag: &str, arch: &str) -> Vec<u8> {
+    let body = serde_json::json!([{
+        "tag_name": tag,
+        "assets": [
+            {
+                "name": format!("polis-workspace-{arch}.qcow2"),
+                "browser_download_url": format!("https://example.com/{tag}/polis-workspace-{arch}.qcow2")
+            },
+            {
+                "name": format!("polis-workspace-{arch}.qcow2.sha256"),
+                "browser_download_url": format!("https://example.com/{tag}/polis-workspace-{arch}.qcow2.sha256")
+            }
+        ]
+    }]);
+    http_200(body.to_string().as_bytes())
+}
+
+#[test]
+fn test_init_check_up_to_date_prints_up_to_date() {
+    let dir = TempDir::new().expect("tempdir");
+    let images = dir.path().join(".polis").join("images");
+    std::fs::create_dir_all(&images).expect("mkdir");
+
+    let meta = serde_json::json!({
+        "version": "v0.3.0",
+        "sha256": "abcdef012345abcdef012345abcdef012345abcdef012345abcdef012345abcd",
+        "arch": "amd64",
+        "downloaded_at": "2026-01-01T00:00:00Z",
+        "source": "https://example.com/image.qcow2"
+    });
+    std::fs::write(images.join("image.json"), meta.to_string()).expect("write metadata");
+
+    let port = serve_once(github_releases_json("v0.3.0", "amd64"));
+    polis()
+        .args(["init", "--check"])
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Up to date."));
+}
+
+#[test]
+fn test_init_check_update_available_prints_update_hint() {
+    let dir = TempDir::new().expect("tempdir");
+    let images = dir.path().join(".polis").join("images");
+    std::fs::create_dir_all(&images).expect("mkdir");
+
+    let meta = serde_json::json!({
+        "version": "v0.3.0",
+        "sha256": "abcdef012345abcdef012345abcdef012345abcdef012345abcdef012345abcd",
+        "arch": "amd64",
+        "downloaded_at": "2026-01-01T00:00:00Z",
+        "source": "https://example.com/image.qcow2"
+    });
+    std::fs::write(images.join("image.json"), meta.to_string()).expect("write metadata");
+
+    let port = serve_once(github_releases_json("v0.3.1", "amd64"));
+    polis()
+        .args(["init", "--check"])
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("polis init --force"));
+}
+
+#[test]
+fn test_init_check_not_cached_prints_download_hint() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(github_releases_json("v0.3.1", "amd64"));
+    polis()
+        .args(["init", "--check"])
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No image cached."))
+        .stdout(predicate::str::contains("Download with: polis init"));
 }
 
 // ── --force skips cache ───────────────────────────────────────────────────────

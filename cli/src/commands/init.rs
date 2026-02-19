@@ -80,13 +80,20 @@ pub fn run(args: &InitArgs) -> Result<()> {
         !(args.check && args.force),
         "--check and --force are mutually exclusive"
     );
+    anyhow::ensure!(
+        !(args.check && args.image.is_some()),
+        "--check cannot be used with --image"
+    );
 
     let images_dir = images_dir()?;
     std::fs::create_dir_all(&images_dir)
         .with_context(|| format!("failed to create image directory: {}", images_dir.display()))?;
 
-    let source = resolve_source(args.image.as_deref())?;
+    if args.check {
+        return run_check(&images_dir);
+    }
 
+    let source = resolve_source(args.image.as_deref())?;
     let cached_image = images_dir.join(IMAGE_FILENAME);
 
     if !args.force && cached_image.exists()
@@ -100,14 +107,43 @@ pub fn run(args: &InitArgs) -> Result<()> {
         return Ok(());
     }
 
-    if args.check {
-        println!("Image not cached. Run `polis init` to download.");
-        return Ok(());
-    }
-
     let meta = acquire_image(&source, &images_dir)?;
     write_metadata(&images_dir, &meta)?;
     println!("Run 'polis run' to create a workspace.");
+    Ok(())
+}
+
+/// Dry-run check: compare cached image version against the latest GitHub release.
+///
+/// Exits 0 for all outcomes (up-to-date, update available, not cached).
+/// Treats a malformed `image.json` as "not cached".
+///
+/// # Errors
+///
+/// Returns an error if the GitHub API call fails.
+fn run_check(images_dir: &Path) -> Result<()> {
+    let cached_version = load_metadata(images_dir).ok().flatten().map(|m| m.version);
+    let latest = resolve_latest_image_url()?.tag;
+    match cached_version {
+        Some(ref current) if current == &latest => {
+            println!("  Current: {current} (cached)");
+            println!("  Latest:  {latest}");
+            println!();
+            println!("  Up to date.");
+        }
+        Some(current) => {
+            println!("  Current: {current} (cached)");
+            println!("  Latest:  {latest} (available)");
+            println!();
+            println!("  Update with: polis init --force");
+        }
+        None => {
+            println!("  No image cached.");
+            println!("  Latest: {latest}");
+            println!();
+            println!("  Download with: polis init");
+        }
+    }
     Ok(())
 }
 
@@ -677,6 +713,13 @@ mod tests {
         let args = InitArgs { image: None, force: true, check: true };
         let err = run(&args).unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn test_run_check_and_image_together_returns_error() {
+        let args = InitArgs { image: Some("https://example.com/img.qcow2".to_string()), force: false, check: true };
+        let err = run(&args).unwrap_err();
+        assert!(err.to_string().contains("--check cannot be used with --image"));
     }
 
     // ── stubs return errors ───────────────────────────────────────────────────
