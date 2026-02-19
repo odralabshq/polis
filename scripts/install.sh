@@ -21,10 +21,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_ok() { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
+log_ok() { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
 # Check architecture
 check_arch() {
