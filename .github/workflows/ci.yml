@@ -160,7 +160,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           driver-opts: |
             image=moby/buildkit:v0.19.0@sha256:14aa1b4dd92ea0a4cd03a54d0c6079046ea98cd0c0ae6176bdd7036ba370cbbe
@@ -180,7 +180,7 @@ jobs:
           docker save ${{ env.POLIS_IMAGES }} | zstd -T0 -3 -o polis-images.tar.zst
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v6.0.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: polis-images
           path: polis-images.tar.zst
@@ -223,7 +223,7 @@ jobs:
           - polis-toolbox-oss
     steps:
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: polis-images
 
@@ -240,7 +240,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
         with:
           sarif_file: 'trivy-${{ matrix.image }}.sarif'
           category: 'trivy-${{ matrix.image }}'
@@ -267,7 +267,7 @@ jobs:
         run: source ./scripts/ci-helpers.sh && install_sysbox
 
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: polis-images
 
@@ -314,7 +314,7 @@ jobs:
         run: source ./scripts/ci-helpers.sh && install_sysbox
 
       - name: Download image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.2.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: polis-images
 
@@ -360,7 +360,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload Semgrep SARIF
-        uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
         with:
           sarif_file: semgrep.sarif
           category: semgrep-sast
@@ -386,7 +386,7 @@ jobs:
           soft_fail: true
 
       - name: Upload Checkov SARIF
-        uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
         with:
           sarif_file: results.sarif
           category: checkov-iac
