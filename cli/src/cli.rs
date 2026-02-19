@@ -62,6 +62,9 @@ pub enum Command {
     #[command(subcommand)]
     Config(commands::config::ConfigCommand),
 
+    /// Download and verify the workspace VM image
+    Init(commands::init::InitArgs),
+
     /// Diagnose issues
     Doctor,
 
@@ -133,6 +136,7 @@ impl Cli {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::update::run(&ctx, &commands::update::GithubUpdateChecker).await
             }
+            Command::Init(args) => commands::init::run(&args),
             Command::Doctor => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::doctor::run(&ctx, json).await

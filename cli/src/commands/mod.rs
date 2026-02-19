@@ -1,6 +1,7 @@
 //! Command implementations
 
 pub mod agents;
+pub mod init;
 pub mod config;
 pub mod connect;
 pub mod delete;
