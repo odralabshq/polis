@@ -163,11 +163,13 @@ setup-ca:
     chmod 644 "$CA_KEY" "$CA_PEM"
 
 setup-valkey:
+    sudo rm -f ./certs/valkey/*.key ./certs/valkey/*.crt 2>/dev/null || true
     ./services/state/scripts/generate-certs.sh ./certs/valkey
     ./services/state/scripts/generate-secrets.sh ./secrets .
     sudo chown 65532:65532 ./certs/valkey/server.key ./certs/valkey/client.key
 
 setup-toolbox:
+    sudo rm -f ./certs/toolbox/*.key ./certs/toolbox/*.pem 2>/dev/null || true
     ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
     sudo chown 65532:65532 ./certs/toolbox/toolbox.key
 
