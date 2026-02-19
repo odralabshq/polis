@@ -24,13 +24,7 @@ pub trait Multipass {
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn launch(
-        &self,
-        image_url: &str,
-        cpus: &str,
-        memory: &str,
-        disk: &str,
-    ) -> Result<Output>;
+    fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str) -> Result<Output>;
 
     /// Run `multipass start polis`.
     ///
@@ -65,13 +59,7 @@ impl Multipass for MultipassCli {
             .context("failed to run multipass info")
     }
 
-    fn launch(
-        &self,
-        image_url: &str,
-        cpus: &str,
-        memory: &str,
-        disk: &str,
-    ) -> Result<Output> {
+    fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str) -> Result<Output> {
         Command::new("multipass")
             .args([
                 "launch", image_url, "--name", VM_NAME, "--cpus", cpus, "--memory", memory,
@@ -90,11 +78,7 @@ impl Multipass for MultipassCli {
 
     fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output> {
         Command::new("multipass")
-            .args([
-                "transfer",
-                local_path,
-                &format!("{VM_NAME}:{remote_path}"),
-            ])
+            .args(["transfer", local_path, &format!("{VM_NAME}:{remote_path}")])
             .output()
             .context("failed to run multipass transfer")
     }

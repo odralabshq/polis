@@ -84,8 +84,16 @@ fn encode_b64(input: &[u8]) -> String {
     let mut i = 0;
     while i < input.len() {
         let b0 = input[i] as usize;
-        let b1 = if i + 1 < input.len() { input[i + 1] as usize } else { 0 };
-        let b2 = if i + 2 < input.len() { input[i + 2] as usize } else { 0 };
+        let b1 = if i + 1 < input.len() {
+            input[i + 1] as usize
+        } else {
+            0
+        };
+        let b2 = if i + 2 < input.len() {
+            input[i + 2] as usize
+        } else {
+            0
+        };
         out.push(ALPHABET[b0 >> 2] as char);
         out.push(ALPHABET[((b0 & 3) << 4) | (b1 >> 4)] as char);
         if i + 1 < input.len() {
@@ -170,9 +178,7 @@ fn test_versions_manifest_public_api_missing_field_returns_error() {
         "vm_image": { "version": "v0.3.0", "asset": "x.qcow2" },
         "containers": {}
     });
-    assert!(
-        serde_json::from_value::<polis_cli::commands::update::VersionsManifest>(json).is_err()
-    );
+    assert!(serde_json::from_value::<polis_cli::commands::update::VersionsManifest>(json).is_err());
 }
 
 // ── Signed-tar fixture tests ──────────────────────────────────────────────────
@@ -185,11 +191,8 @@ fn test_make_signed_tar_produces_verifiable_archive() {
     let (signed_bytes, _vk_b64) = make_signed_tar("versions.json", content);
 
     let mut unsigned = Cursor::new(Vec::new());
-    zipsign_api::unsign::copy_and_unsign_tar(
-        &mut Cursor::new(&signed_bytes),
-        &mut unsigned,
-    )
-    .expect("unsign should succeed");
+    zipsign_api::unsign::copy_and_unsign_tar(&mut Cursor::new(&signed_bytes), &mut unsigned)
+        .expect("unsign should succeed");
     unsigned.set_position(0);
 
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(unsigned));

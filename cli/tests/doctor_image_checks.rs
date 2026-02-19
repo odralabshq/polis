@@ -87,14 +87,10 @@ fn test_doctor_json_image_version_drift_is_null_or_object() {
 
 #[test]
 fn test_doctor_text_output_contains_image_status_line() {
-    polis()
-        .arg("doctor")
-        .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("Image cached")
-                .or(predicate::str::contains("No workspace image cached")),
-        );
+    polis().arg("doctor").assert().success().stdout(
+        predicate::str::contains("Image cached")
+            .or(predicate::str::contains("No workspace image cached")),
+    );
 }
 
 // ── POLIS_IMAGE override (V-011, F-006) ───────────────────────────────────────

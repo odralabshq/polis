@@ -1,11 +1,11 @@
 //! Command implementations
 
 pub mod agents;
-pub mod init;
 pub mod config;
 pub mod connect;
 pub mod delete;
 pub mod doctor;
+pub mod init;
 pub mod internal;
 pub mod logs;
 pub mod run;

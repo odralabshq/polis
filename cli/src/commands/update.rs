@@ -8,7 +8,9 @@ use dialoguer::Confirm;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zipsign_api::{PUBLIC_KEY_LENGTH, VerifyingKey, unsign::copy_and_unsign_tar, verify::verify_tar};
+use zipsign_api::{
+    PUBLIC_KEY_LENGTH, VerifyingKey, unsign::copy_and_unsign_tar, verify::verify_tar,
+};
 
 use crate::output::OutputContext;
 
@@ -65,8 +67,8 @@ pub fn validate_version_tag(tag: &str) -> Result<()> {
     let bare = tag
         .strip_prefix('v')
         .ok_or_else(|| anyhow::anyhow!("invalid version tag: {tag}"))?;
-    let ver = semver::Version::parse(bare)
-        .with_context(|| format!("invalid version tag: {tag}"))?;
+    let ver =
+        semver::Version::parse(bare).with_context(|| format!("invalid version tag: {tag}"))?;
     // Validate pre-release identifiers contain only [a-zA-Z0-9.]
     anyhow::ensure!(
         ver.pre.is_empty()
@@ -114,7 +116,9 @@ pub fn load_versions_manifest() -> Result<VersionsManifest> {
 
     let body: serde_json::Value = match req.call() {
         Ok(resp) => {
-            let s = resp.into_string().context("failed to read GitHub API response")?;
+            let s = resp
+                .into_string()
+                .context("failed to read GitHub API response")?;
             serde_json::from_str(&s).context("failed to parse GitHub API response")?
         }
         Err(ureq::Error::Status(403, _)) => anyhow::bail!(
@@ -165,13 +169,12 @@ pub fn load_versions_manifest() -> Result<VersionsManifest> {
 
     // Extract JSON from the signed tar
     let json_bytes = extract_tar_content(&signed_bytes)?;
-    let manifest: VersionsManifest = serde_json::from_slice(&json_bytes)
-        .with_context(|| {
-            format!(
-                "failed to parse versions.json: {}",
-                String::from_utf8_lossy(&json_bytes)
-            )
-        })?;
+    let manifest: VersionsManifest = serde_json::from_slice(&json_bytes).with_context(|| {
+        format!(
+            "failed to parse versions.json: {}",
+            String::from_utf8_lossy(&json_bytes)
+        )
+    })?;
 
     anyhow::ensure!(
         manifest.manifest_version == 1,
@@ -179,8 +182,12 @@ pub fn load_versions_manifest() -> Result<VersionsManifest> {
         manifest.manifest_version
     );
 
-    validate_version_tag(&manifest.vm_image.version)
-        .with_context(|| format!("invalid version tag in manifest: {}", manifest.vm_image.version))?;
+    validate_version_tag(&manifest.vm_image.version).with_context(|| {
+        format!(
+            "invalid version tag in manifest: {}",
+            manifest.vm_image.version
+        )
+    })?;
     for version in manifest.containers.values() {
         validate_version_tag(version)
             .with_context(|| format!("invalid version tag in manifest: {version}"))?;
@@ -339,9 +346,7 @@ fn get_deployed_version(service_key: &str, mp: &impl Multipass) -> Result<Option
 /// Returns an error only if `multipass exec` itself cannot be spawned.
 fn pull_container_image(service_key: &str, mp: &impl Multipass) -> Result<bool> {
     let output = mp
-        .exec(&[
-            "docker", "compose", "-f", COMPOSE_PATH, "pull", service_key,
-        ])
+        .exec(&["docker", "compose", "-f", COMPOSE_PATH, "pull", service_key])
         .context("failed to run multipass exec docker compose pull")?;
 
     Ok(output.status.success())
@@ -394,9 +399,7 @@ fn update_compose_tag(service_key: &str, image_ref: &str, mp: &impl Multipass) -
 ///
 /// Returns an error if the restart command fails.
 fn restart_services(service_keys: &[&str], mp: &impl Multipass) -> Result<()> {
-    let mut args = vec![
-        "docker", "compose", "-f", COMPOSE_PATH, "up", "-d",
-    ];
+    let mut args = vec!["docker", "compose", "-f", COMPOSE_PATH, "up", "-d"];
     args.extend_from_slice(service_keys);
 
     let output = mp
@@ -413,9 +416,7 @@ fn restart_services(service_keys: &[&str], mp: &impl Multipass) -> Result<()> {
 
 /// Check whether the workspace VM is running.
 fn is_vm_running(mp: &impl Multipass) -> bool {
-    mp.vm_info()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    mp.vm_info().map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Compute the list of container updates by comparing the manifest against deployed versions.
@@ -423,7 +424,10 @@ fn is_vm_running(mp: &impl Multipass) -> bool {
 /// # Errors
 ///
 /// Returns an error if any version tag in the manifest fails validation.
-fn compute_container_updates(manifest: &VersionsManifest, mp: &impl Multipass) -> Result<Vec<ContainerUpdate>> {
+fn compute_container_updates(
+    manifest: &VersionsManifest,
+    mp: &impl Multipass,
+) -> Result<Vec<ContainerUpdate>> {
     let mut updates = Vec::new();
     for (image_name, target_version) in &manifest.containers {
         validate_version_tag(target_version)
@@ -451,7 +455,11 @@ fn compute_container_updates(manifest: &VersionsManifest, mp: &impl Multipass) -
 /// # Errors
 ///
 /// Returns an error if the VM is not running, any pull fails, or rollback fails.
-pub fn update_containers(manifest: &VersionsManifest, ctx: &OutputContext, mp: &impl Multipass) -> Result<()> {
+pub fn update_containers(
+    manifest: &VersionsManifest,
+    ctx: &OutputContext,
+    mp: &impl Multipass,
+) -> Result<()> {
     if !is_vm_running(mp) {
         anyhow::bail!("Workspace is not running. Start it with: polis start");
     }
@@ -470,7 +478,10 @@ pub fn update_containers(manifest: &VersionsManifest, ctx: &OutputContext, mp: &
     println!("  {:<24} {:<12} Available", "Container", "Current");
     println!("  {}", "─".repeat(52));
     for u in &updates {
-        println!("  {:<24} {:<12} {}", u.image_name, u.current_version, u.target_version);
+        println!(
+            "  {:<24} {:<12} {}",
+            u.image_name, u.current_version, u.target_version
+        );
     }
     println!();
 
@@ -621,7 +632,11 @@ impl UpdateChecker for GithubUpdateChecker {
 /// Returns an error if the version check, signature verification, download, or
 /// user prompt fails.
 #[allow(clippy::unused_async)] // async contract: will gain awaits when download is made async
-pub async fn run(ctx: &OutputContext, checker: &impl UpdateChecker, mp: &impl Multipass) -> Result<()> {
+pub async fn run(
+    ctx: &OutputContext,
+    checker: &impl UpdateChecker,
+    mp: &impl Multipass,
+) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
 
     if !ctx.quiet {
@@ -909,7 +924,13 @@ mod tests {
         fn vm_info(&self) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: vm_info not expected")
         }
-        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
+        fn launch(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: launch not expected")
         }
         fn start(&self) -> anyhow::Result<std::process::Output> {
@@ -1295,7 +1316,8 @@ mod tests {
 
     #[test]
     fn test_versions_manifest_deserialize_missing_manifest_version_returns_error() {
-        let json = r#"{ "vm_image": { "version": "v0.3.0", "asset": "x.qcow2" }, "containers": {} }"#;
+        let json =
+            r#"{ "vm_image": { "version": "v0.3.0", "asset": "x.qcow2" }, "containers": {} }"#;
         assert!(serde_json::from_str::<VersionsManifest>(json).is_err());
     }
 
@@ -1408,7 +1430,10 @@ mod tests {
     #[test]
     fn test_ghcr_ref_empty_version_still_formats() {
         let r = ghcr_ref("polis-gate-oss", "");
-        assert!(r.ends_with(':'), "empty version should produce trailing colon");
+        assert!(
+            r.ends_with(':'),
+            "empty version should produce trailing colon"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1432,11 +1457,7 @@ mod tests {
             ("polis-toolbox-oss", "toolbox"),
         ];
         for (input, expected) in cases {
-            assert_eq!(
-                container_to_service_key(input),
-                expected,
-                "input: {input}"
-            );
+            assert_eq!(container_to_service_key(input), expected, "input: {input}");
         }
     }
 
@@ -1476,7 +1497,10 @@ mod tests {
         let result = compute_container_updates(&manifest, &StubMultipass);
         assert!(result.is_err(), "invalid tag must return error");
         assert!(
-            result.unwrap_err().to_string().contains("invalid version tag"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid version tag"),
             "error must mention invalid version tag"
         );
     }

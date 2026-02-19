@@ -250,7 +250,10 @@ mod tests {
         state_mgr.clear().unwrap();
 
         let state_path = dir.path().join(".polis").join("state.json");
-        assert!(!state_path.exists(), "state.json must be removed after delete");
+        assert!(
+            !state_path.exists(),
+            "state.json must be removed after delete"
+        );
     }
 
     #[test]
@@ -264,7 +267,10 @@ mod tests {
         }
         state_mgr.clear().unwrap();
 
-        assert!(config_path.exists(), "config.yaml must be preserved after delete");
+        assert!(
+            config_path.exists(),
+            "config.yaml must be preserved after delete"
+        );
     }
 }
 

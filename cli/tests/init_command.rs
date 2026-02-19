@@ -158,11 +158,18 @@ fn test_init_check_with_cached_image_and_metadata_reports_up_to_date() {
 fn test_init_check_and_image_together_exits_nonzero_with_message() {
     let dir = TempDir::new().expect("tempdir");
     polis()
-        .args(["init", "--check", "--image", "https://example.com/img.qcow2"])
+        .args([
+            "init",
+            "--check",
+            "--image",
+            "https://example.com/img.qcow2",
+        ])
         .env("HOME", dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--check cannot be used with --image"));
+        .stderr(predicate::str::contains(
+            "--check cannot be used with --image",
+        ));
 }
 
 // ── --check with mock GitHub API ──────────────────────────────────────────────
@@ -289,7 +296,9 @@ fn test_init_check_github_api_empty_releases_exits_nonzero() {
         .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
         .assert()
         .failure()
-        .stderr(predicate::str::contains("No VM image found in recent GitHub releases."));
+        .stderr(predicate::str::contains(
+            "No VM image found in recent GitHub releases.",
+        ));
 }
 
 #[test]
@@ -303,7 +312,11 @@ fn test_init_check_does_not_create_image_file() {
         .assert()
         .success();
     assert!(
-        !dir.path().join(".polis").join("images").join("polis-workspace.qcow2").exists(),
+        !dir.path()
+            .join(".polis")
+            .join("images")
+            .join("polis-workspace.qcow2")
+            .exists(),
         "--check must not write any image file"
     );
 }
@@ -355,7 +368,9 @@ fn test_init_no_flags_no_cache_hits_github_resolver_stub() {
                 .or(predicate::str::contains("GitHub API rate limit exceeded"))
                 .or(predicate::str::contains("GitHub API error"))
                 .or(predicate::str::contains("GitHub repository not found"))
-                .or(predicate::str::contains("failed to parse GitHub API response")),
+                .or(predicate::str::contains(
+                    "failed to parse GitHub API response",
+                )),
         );
 }
 
@@ -443,9 +458,10 @@ fn test_init_http_url_no_cache_hits_download_stub() {
         .env("HOME", dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("download interrupted").or(
-            predicate::str::contains("download failed"),
-        ));
+        .stderr(
+            predicate::str::contains("download interrupted")
+                .or(predicate::str::contains("download failed")),
+        );
 }
 
 #[test]
@@ -517,8 +533,15 @@ fn test_init_http_url_200_download_succeeds_then_hits_verify_stub() {
         .stderr(predicate::str::contains("failed to read checksum file"));
 
     // Dest file was written before verify was called.
-    let dest = dir.path().join(".polis").join("images").join("polis-workspace.qcow2");
-    assert!(dest.exists(), "dest file should exist after successful download");
+    let dest = dir
+        .path()
+        .join(".polis")
+        .join("images")
+        .join("polis-workspace.qcow2");
+    assert!(
+        dest.exists(),
+        "dest file should exist after successful download"
+    );
 }
 
 // ── property tests ────────────────────────────────────────────────────────────

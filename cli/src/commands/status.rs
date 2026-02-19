@@ -109,9 +109,7 @@ fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
 
 /// Check if polis-workspace container is running inside VM.
 fn check_workspace_container(mp: &impl Multipass) -> bool {
-    let output = mp.exec(&[
-        "docker", "compose", "ps", "--format", "json", "workspace",
-    ]);
+    let output = mp.exec(&["docker", "compose", "ps", "--format", "json", "workspace"]);
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -175,9 +173,7 @@ fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
 /// Check agent status inside multipass VM.
 fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
     let output = mp
-        .exec(&[
-            "docker", "compose", "ps", "--format", "json", "workspace",
-        ])
+        .exec(&["docker", "compose", "ps", "--format", "json", "workspace"])
         .ok()?;
 
     if !output.status.success() {

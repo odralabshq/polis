@@ -55,7 +55,10 @@ fn test_container_update_debug_format_contains_fields() {
 #[test]
 fn test_rollback_info_debug_format_contains_fields() {
     let r = RollbackInfo {
-        previous_refs: vec![("gate".to_string(), "ghcr.io/odralabshq/polis-gate-oss:v0.3.0".to_string())],
+        previous_refs: vec![(
+            "gate".to_string(),
+            "ghcr.io/odralabshq/polis-gate-oss:v0.3.0".to_string(),
+        )],
     };
     let debug = format!("{r:?}");
     assert!(debug.contains("gate"));

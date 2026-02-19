@@ -410,7 +410,10 @@ fn read_image_json(images_dir: &Path) -> (Option<String>, Option<String>) {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
         return (None, None);
     };
-    let version = val.get("version").and_then(|v| v.as_str()).map(str::to_owned);
+    let version = val
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
     let sha256_preview = val
         .get("sha256")
         .and_then(|v| v.as_str())
@@ -592,7 +595,10 @@ async fn check_certificates() -> (bool, i64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DoctorChecks, ImageCheckResult, NetworkChecks, SecurityChecks, VersionDrift, WorkspaceChecks, collect_issues};
+    use super::{
+        DoctorChecks, ImageCheckResult, NetworkChecks, SecurityChecks, VersionDrift,
+        WorkspaceChecks, collect_issues,
+    };
 
     fn all_healthy() -> DoctorChecks {
         DoctorChecks {
@@ -813,7 +819,8 @@ mod tests {
     // Property tests
     // -----------------------------------------------------------------------
 
-    mod proptests {        use super::*;
+    mod proptests {
+        use super::*;
         use proptest::prelude::*;
 
         prop_compose! {

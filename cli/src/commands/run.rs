@@ -141,7 +141,11 @@ fn prompt_agent_selection(agents: &[String]) -> Result<String> {
 /// # Errors
 ///
 /// Returns an error if any remaining stage fails.
-fn resume_run(state_mgr: &StateManager, mut run_state: RunState, mp: &impl Multipass) -> Result<()> {
+fn resume_run(
+    state_mgr: &StateManager,
+    mut run_state: RunState,
+    mp: &impl Multipass,
+) -> Result<()> {
     println!("Resuming from: {}", run_state.stage.description());
     let mut next = run_state.stage.next();
     while let Some(next_stage) = next {
@@ -158,7 +162,12 @@ fn resume_run(state_mgr: &StateManager, mut run_state: RunState, mp: &impl Multi
 /// # Errors
 ///
 /// Returns an error if the user declines or the switch fails.
-fn switch_agent(state_mgr: &StateManager, run_state: RunState, target_agent: &str, mp: &impl Multipass) -> Result<()> {
+fn switch_agent(
+    state_mgr: &StateManager,
+    run_state: RunState,
+    target_agent: &str,
+    mp: &impl Multipass,
+) -> Result<()> {
     println!();
     println!("  Workspace is running {}.", run_state.agent);
     println!();
@@ -339,7 +348,11 @@ fn verify_image_at_launch(image_path: &std::path::Path) -> Result<String> {
 
     let expected = std::fs::read_to_string(&checksum_path)
         .with_context(|| format!("reading checksum {}", checksum_path.display()))?;
-    let expected = expected.split_whitespace().next().unwrap_or_default().to_string();
+    let expected = expected
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_string();
 
     println!("  Verifying image integrity...");
     let actual = crate::commands::init::sha256_file(image_path)?;
@@ -442,9 +455,7 @@ fn wait_for_workspace_healthy(mp: &impl Multipass) {
     let delay = Duration::from_secs(2);
 
     for attempt in 1..=max_attempts {
-        let output = mp.exec(&[
-            "docker", "compose", "ps", "--format", "json", "workspace",
-        ]);
+        let output = mp.exec(&["docker", "compose", "ps", "--format", "json", "workspace"]);
 
         if let Ok(output) = output
             && output.status.success()
@@ -511,7 +522,9 @@ mod tests {
 
     #[test]
     fn test_get_image_path_polis_image_env_existing_file_returns_ok() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("custom.qcow2");
         std::fs::write(&img, b"fake").unwrap();
@@ -524,18 +537,25 @@ mod tests {
 
     #[test]
     fn test_get_image_path_polis_image_env_missing_file_returns_error() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::set_var("POLIS_IMAGE", "/nonexistent/custom.qcow2") };
         let result = get_image_path();
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("POLIS_IMAGE points to non-existent file"), "got: {err}");
+        assert!(
+            err.contains("POLIS_IMAGE points to non-existent file"),
+            "got: {err}"
+        );
     }
 
     #[test]
     fn test_get_image_path_no_image_returns_error_with_hint() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         if get_image_path().is_err() {
@@ -548,7 +568,9 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_matching_checksum_returns_hash() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
@@ -562,12 +584,18 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_mismatched_checksum_returns_error() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
         let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
-        std::fs::write(&sidecar, format!("{}  polis-workspace.qcow2\n", "a".repeat(64))).unwrap();
+        std::fs::write(
+            &sidecar,
+            format!("{}  polis-workspace.qcow2\n", "a".repeat(64)),
+        )
+        .unwrap();
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         let err = verify_image_at_launch(&img).unwrap_err().to_string();
@@ -576,12 +604,18 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_mismatched_checksum_error_contains_force_hint() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
         let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
-        std::fs::write(&sidecar, format!("{}  polis-workspace.qcow2\n", "a".repeat(64))).unwrap();
+        std::fs::write(
+            &sidecar,
+            format!("{}  polis-workspace.qcow2\n", "a".repeat(64)),
+        )
+        .unwrap();
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         let err = verify_image_at_launch(&img).unwrap_err().to_string();
@@ -590,7 +624,9 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_missing_sidecar_no_polis_image_returns_error() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
@@ -602,7 +638,9 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_missing_sidecar_with_polis_image_warns_and_returns_hash() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("custom.qcow2");
         std::fs::write(&img, b"hello").unwrap();
@@ -680,7 +718,13 @@ mod tests {
                 Ok(fail_output())
             }
         }
-        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
+        fn launch(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> anyhow::Result<std::process::Output> {
             Ok(ok_output(b""))
         }
         fn start(&self) -> anyhow::Result<std::process::Output> {
@@ -702,7 +746,9 @@ mod tests {
 
     #[test]
     fn test_fresh_run_with_mock_multipass_succeeds() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("test.qcow2");
         std::fs::write(&img, b"fake-image").unwrap();
@@ -719,7 +765,9 @@ mod tests {
 
     #[test]
     fn test_fresh_run_creates_state_file() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("test.qcow2");
         std::fs::write(&img, b"fake-image").unwrap();
@@ -737,7 +785,9 @@ mod tests {
 
     #[test]
     fn test_fresh_run_state_file_contains_valid_json() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _g = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("test.qcow2");
         std::fs::write(&img, b"fake-image").unwrap();

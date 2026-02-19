@@ -96,7 +96,8 @@ pub fn run(args: &InitArgs) -> Result<()> {
     let source = resolve_source(args.image.as_deref())?;
     let cached_image = images_dir.join(IMAGE_FILENAME);
 
-    if !args.force && cached_image.exists()
+    if !args.force
+        && cached_image.exists()
         && let Some(meta) = load_metadata(&images_dir)?
     {
         println!(
@@ -205,7 +206,11 @@ fn acquire_image(source: &ImageSource, images_dir: &Path) -> Result<ImageMetadat
         }
         ImageSource::GitHubLatest => {
             let resolved = resolve_latest_image_url()?;
-            download_with_resume(&resolved.image_url, &dest, &DownloadContext { quiet: false })?;
+            download_with_resume(
+                &resolved.image_url,
+                &dest,
+                &DownloadContext { quiet: false },
+            )?;
             download_with_resume(
                 &resolved.checksum_url,
                 &sidecar,
@@ -229,7 +234,8 @@ fn acquire_image(source: &ImageSource, images_dir: &Path) -> Result<ImageMetadat
 ///
 /// Returns an error if the home directory cannot be determined.
 fn images_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
     Ok(home.join(".polis").join("images"))
 }
 
@@ -245,10 +251,10 @@ fn load_metadata(images_dir: &Path) -> Result<Option<ImageMetadata>> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let meta = serde_json::from_str(&content)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let content =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let meta =
+        serde_json::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
     Ok(Some(meta))
 }
 
@@ -419,9 +425,11 @@ pub(crate) fn verify_image_integrity(image_path: &Path, sidecar_path: &Path) -> 
     let sidecar_bytes = std::fs::read(sidecar_path)
         .with_context(|| format!("failed to read checksum file: {}", sidecar_path.display()))?;
 
-    let key_bytes =
-        base64_decode(POLIS_PUBLIC_KEY_B64).context("invalid embedded public key")?;
-    anyhow::ensure!(key_bytes.len() == PUBLIC_KEY_LENGTH, "public key length mismatch");
+    let key_bytes = base64_decode(POLIS_PUBLIC_KEY_B64).context("invalid embedded public key")?;
+    anyhow::ensure!(
+        key_bytes.len() == PUBLIC_KEY_LENGTH,
+        "public key length mismatch"
+    );
     let key_array: [u8; PUBLIC_KEY_LENGTH] = key_bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("invalid embedded public key"))?;
@@ -479,10 +487,9 @@ pub(crate) fn sha256_file(path: &Path) -> Result<String> {
 fn extract_checksum_from_signed_file(checksum_path: &Path) -> Result<String> {
     let content = std::fs::read_to_string(checksum_path)
         .with_context(|| format!("failed to read checksum file: {}", checksum_path.display()))?;
-    let hex = content
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("malformed checksum file: expected 64-character hex SHA-256"))?;
+    let hex = content.split_whitespace().next().ok_or_else(|| {
+        anyhow::anyhow!("malformed checksum file: expected 64-character hex SHA-256")
+    })?;
     anyhow::ensure!(
         hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()),
         "malformed checksum file: expected 64-character hex SHA-256"
@@ -517,8 +524,8 @@ pub(crate) const GITHUB_RELEASES_URL: &str =
 pub(crate) fn resolve_latest_image_url() -> Result<ResolvedRelease> {
     let arch = current_arch()?;
 
-    let url = std::env::var("POLIS_GITHUB_API_URL")
-        .unwrap_or_else(|_| GITHUB_RELEASES_URL.to_string());
+    let url =
+        std::env::var("POLIS_GITHUB_API_URL").unwrap_or_else(|_| GITHUB_RELEASES_URL.to_string());
 
     let token = std::env::var("GITHUB_TOKEN").unwrap_or_default();
     let req = ureq::get(&url)
@@ -532,7 +539,9 @@ pub(crate) fn resolve_latest_image_url() -> Result<ResolvedRelease> {
 
     let body: serde_json::Value = match req.call() {
         Ok(resp) => {
-            let s = resp.into_string().context("failed to read GitHub API response")?;
+            let s = resp
+                .into_string()
+                .context("failed to read GitHub API response")?;
             serde_json::from_str(&s).context("failed to parse GitHub API response")?
         }
         Err(ureq::Error::Status(403, _)) => anyhow::bail!(
@@ -564,10 +573,7 @@ fn parse_releases(releases: &serde_json::Value, arch: &str) -> Result<ResolvedRe
         .context("failed to parse GitHub API response")?;
 
     for release in releases {
-        let tag = release["tag_name"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let tag = release["tag_name"].as_str().unwrap_or_default().to_string();
         let Some(assets) = release["assets"].as_array() else {
             continue;
         };
@@ -576,9 +582,7 @@ fn parse_releases(releases: &serde_json::Value, arch: &str) -> Result<ResolvedRe
             assets
                 .iter()
                 .find(|a: &&serde_json::Value| {
-                    a["name"]
-                        .as_str()
-                        .is_some_and(|n| n.ends_with(suffix))
+                    a["name"].as_str().is_some_and(|n| n.ends_with(suffix))
                 })
                 .and_then(|a| a["browser_download_url"].as_str())
                 .map(str::to_string)
@@ -595,9 +599,7 @@ fn parse_releases(releases: &serde_json::Value, arch: &str) -> Result<ResolvedRe
         }
     }
 
-    anyhow::bail!(
-        "No VM image found in recent GitHub releases.\nUse: polis init --image <url>"
-    )
+    anyhow::bail!("No VM image found in recent GitHub releases.\nUse: polis init --image <url>")
 }
 
 // ============================================================================
@@ -614,7 +616,10 @@ mod tests {
 
     #[test]
     fn test_resolve_source_none_returns_github_latest() {
-        assert!(matches!(resolve_source(None).unwrap(), ImageSource::GitHubLatest));
+        assert!(matches!(
+            resolve_source(None).unwrap(),
+            ImageSource::GitHubLatest
+        ));
     }
 
     #[test]
@@ -633,7 +638,9 @@ mod tests {
     fn test_resolve_source_https_url_preserves_url_string() {
         let url = "https://example.com/image.qcow2";
         let src = resolve_source(Some(url)).unwrap();
-        let ImageSource::HttpUrl(got) = src else { panic!("expected HttpUrl") };
+        let ImageSource::HttpUrl(got) = src else {
+            panic!("expected HttpUrl")
+        };
         assert_eq!(got, url);
     }
 
@@ -683,7 +690,9 @@ mod tests {
             source: "https://example.com/image.qcow2".to_string(),
         };
         write_metadata(dir.path(), &meta).unwrap();
-        let loaded = load_metadata(dir.path()).unwrap().expect("metadata should exist");
+        let loaded = load_metadata(dir.path())
+            .unwrap()
+            .expect("metadata should exist");
         assert_eq!(loaded.version, meta.version);
         assert_eq!(loaded.sha256, meta.sha256);
         assert_eq!(loaded.arch, meta.arch);
@@ -702,7 +711,10 @@ mod tests {
     #[test]
     fn test_current_arch_returns_known_value() {
         let arch = current_arch().unwrap();
-        assert!(arch == "amd64" || arch == "arm64", "unexpected arch: {arch}");
+        assert!(
+            arch == "amd64" || arch == "arm64",
+            "unexpected arch: {arch}"
+        );
     }
 
     // ── run — argument validation ─────────────────────────────────────────────
@@ -710,16 +722,27 @@ mod tests {
     #[test]
     fn test_run_check_and_force_together_returns_error() {
         // Mutual exclusion check fires before HOME is consulted — no env override needed.
-        let args = InitArgs { image: None, force: true, check: true };
+        let args = InitArgs {
+            image: None,
+            force: true,
+            check: true,
+        };
         let err = run(&args).unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"));
     }
 
     #[test]
     fn test_run_check_and_image_together_returns_error() {
-        let args = InitArgs { image: Some("https://example.com/img.qcow2".to_string()), force: false, check: true };
+        let args = InitArgs {
+            image: Some("https://example.com/img.qcow2".to_string()),
+            force: false,
+            check: true,
+        };
         let err = run(&args).unwrap_err();
-        assert!(err.to_string().contains("--check cannot be used with --image"));
+        assert!(
+            err.to_string()
+                .contains("--check cannot be used with --image")
+        );
     }
 
     // ── stubs return errors ───────────────────────────────────────────────────
@@ -831,8 +854,7 @@ mod tests {
     #[test]
     fn test_extract_checksum_missing_file_returns_error() {
         let dir = TempDir::new().unwrap();
-        let err =
-            extract_checksum_from_signed_file(&dir.path().join("missing")).unwrap_err();
+        let err = extract_checksum_from_signed_file(&dir.path().join("missing")).unwrap_err();
         assert!(
             err.to_string().contains("failed to read checksum file"),
             "got: {err}"
@@ -870,10 +892,19 @@ mod tests {
 
     #[test]
     fn test_parse_releases_matching_pair_returns_resolved_release() {
-        let json = serde_json::json!([release_json("v0.3.0", &[
-            ("polis-workspace-v0.3.0-amd64.qcow2",        "https://example.com/img.qcow2"),
-            ("polis-workspace-v0.3.0-amd64.qcow2.sha256", "https://example.com/img.sha256"),
-        ])]);
+        let json = serde_json::json!([release_json(
+            "v0.3.0",
+            &[
+                (
+                    "polis-workspace-v0.3.0-amd64.qcow2",
+                    "https://example.com/img.qcow2"
+                ),
+                (
+                    "polis-workspace-v0.3.0-amd64.qcow2.sha256",
+                    "https://example.com/img.sha256"
+                ),
+            ]
+        )]);
         let r = parse_releases(&json, "amd64").unwrap();
         assert_eq!(r.tag, "v0.3.0");
         assert_eq!(r.image_url, "https://example.com/img.qcow2");
@@ -882,9 +913,13 @@ mod tests {
 
     #[test]
     fn test_parse_releases_qcow2_without_sha256_skips_release() {
-        let json = serde_json::json!([release_json("v0.3.0", &[
-            ("polis-workspace-v0.3.0-amd64.qcow2", "https://example.com/img.qcow2"),
-        ])]);
+        let json = serde_json::json!([release_json(
+            "v0.3.0",
+            &[(
+                "polis-workspace-v0.3.0-amd64.qcow2",
+                "https://example.com/img.qcow2"
+            ),]
+        )]);
         let err = parse_releases(&json, "amd64").unwrap_err();
         assert!(err.to_string().contains("No VM image found"), "got: {err}");
     }
@@ -899,7 +934,8 @@ mod tests {
     fn test_parse_releases_not_an_array_returns_error() {
         let err = parse_releases(&serde_json::json!({}), "amd64").unwrap_err();
         assert!(
-            err.to_string().contains("failed to parse GitHub API response"),
+            err.to_string()
+                .contains("failed to parse GitHub API response"),
             "got: {err}"
         );
     }
@@ -907,14 +943,32 @@ mod tests {
     #[test]
     fn test_parse_releases_first_matching_release_wins() {
         let json = serde_json::json!([
-            release_json("v0.3.0", &[
-                ("polis-workspace-v0.3.0-amd64.qcow2",        "https://example.com/v0.3.0.qcow2"),
-                ("polis-workspace-v0.3.0-amd64.qcow2.sha256", "https://example.com/v0.3.0.sha256"),
-            ]),
-            release_json("v0.2.0", &[
-                ("polis-workspace-v0.2.0-amd64.qcow2",        "https://example.com/v0.2.0.qcow2"),
-                ("polis-workspace-v0.2.0-amd64.qcow2.sha256", "https://example.com/v0.2.0.sha256"),
-            ]),
+            release_json(
+                "v0.3.0",
+                &[
+                    (
+                        "polis-workspace-v0.3.0-amd64.qcow2",
+                        "https://example.com/v0.3.0.qcow2"
+                    ),
+                    (
+                        "polis-workspace-v0.3.0-amd64.qcow2.sha256",
+                        "https://example.com/v0.3.0.sha256"
+                    ),
+                ]
+            ),
+            release_json(
+                "v0.2.0",
+                &[
+                    (
+                        "polis-workspace-v0.2.0-amd64.qcow2",
+                        "https://example.com/v0.2.0.qcow2"
+                    ),
+                    (
+                        "polis-workspace-v0.2.0-amd64.qcow2.sha256",
+                        "https://example.com/v0.2.0.sha256"
+                    ),
+                ]
+            ),
         ]);
         let r = parse_releases(&json, "amd64").unwrap();
         assert_eq!(r.tag, "v0.3.0");
@@ -922,10 +976,19 @@ mod tests {
 
     #[test]
     fn test_parse_releases_skips_wrong_arch_assets() {
-        let json = serde_json::json!([release_json("v0.3.0", &[
-            ("polis-workspace-v0.3.0-arm64.qcow2",        "https://example.com/arm64.qcow2"),
-            ("polis-workspace-v0.3.0-arm64.qcow2.sha256", "https://example.com/arm64.sha256"),
-        ])]);
+        let json = serde_json::json!([release_json(
+            "v0.3.0",
+            &[
+                (
+                    "polis-workspace-v0.3.0-arm64.qcow2",
+                    "https://example.com/arm64.qcow2"
+                ),
+                (
+                    "polis-workspace-v0.3.0-arm64.qcow2.sha256",
+                    "https://example.com/arm64.sha256"
+                ),
+            ]
+        )]);
         let err = parse_releases(&json, "amd64").unwrap_err();
         assert!(err.to_string().contains("No VM image found"), "got: {err}");
     }
@@ -1016,9 +1079,12 @@ mod tests {
         let port = serve_responses(vec![http_status(404, "Not Found")]);
         let ctx = DownloadContext { quiet: true };
 
-        let err = download_with_resume(&format!("http://127.0.0.1:{port}/img"), &dest, &ctx)
-            .unwrap_err();
-        assert!(err.to_string().contains("download failed: HTTP 404"), "got: {err}");
+        let err =
+            download_with_resume(&format!("http://127.0.0.1:{port}/img"), &dest, &ctx).unwrap_err();
+        assert!(
+            err.to_string().contains("download failed: HTTP 404"),
+            "got: {err}"
+        );
     }
 
     #[test]
