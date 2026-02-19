@@ -82,8 +82,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
-      - name: Test CLI
-        run: cargo test --workspace --manifest-path cli/Cargo.toml
+      - name: Test CLI (skip proptests)
+        run: cargo test --workspace --manifest-path cli/Cargo.toml -- --skip proptests
 
       - name: Test Toolbox
         run: cargo test --workspace --manifest-path services/toolbox/Cargo.toml
@@ -91,7 +91,26 @@ jobs:
       - name: Test polis-common
         run: cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 
-  # ── Stage 2b: Test C ──────────────────────────────────────────────
+  # ── Stage 2b: Test Rust Proptests ─────────────────────────────────
+  test-rust-proptests:
+    needs: [lint-rust]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Test CLI proptests
+        run: cargo test --workspace --manifest-path cli/Cargo.toml -- proptests
+
+  # ── Stage 2c: Test C ──────────────────────────────────────────────
   test-c:
     needs: [lint-c]
     runs-on: ubuntu-24.04

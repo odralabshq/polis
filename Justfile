@@ -39,12 +39,15 @@ lint-shell:
     shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh packer/scripts/*.sh
 
 # ── Test ────────────────────────────────────────────────────────────
-test: test-rust test-c test-bats
+test: test-rust test-c test-unit
 
 test-rust:
-    cargo test --workspace --manifest-path cli/Cargo.toml
+    cargo test --workspace --manifest-path cli/Cargo.toml -- --skip proptests
     cargo test --workspace --manifest-path services/toolbox/Cargo.toml
     cargo test --manifest-path lib/crates/polis-common/Cargo.toml
+
+test-rust-proptests:
+    cargo test --workspace --manifest-path cli/Cargo.toml -- proptests
 
 test-c:
     #!/usr/bin/env bash
@@ -55,7 +58,7 @@ test-c:
         "$bin"
     done
 
-test-bats:
+test-unit:
     ./tests/run-tests.sh unit
 
 # Alias for test-c
