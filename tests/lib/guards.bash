@@ -17,9 +17,8 @@ require_agents_mounted() {
     docker exec "$CTR_WORKSPACE" test -f /tmp/agents/openclaw/scripts/polis-toolbox-call.sh 2>/dev/null \
         || skip "Agent scripts not mounted in workspace (compose.override.yaml not generated)"
 }
-    local host="$1" port="${2:-443}"
-    timeout 3 bash -c "echo > /dev/tcp/$host/$port" 2>/dev/null || skip "$host:$port unreachable"
-}
+
+require_network() {
 
 # Pre-approve a host in Valkey so HITL does not block it during tests.
 # Usage: approve_host <host> [ttl_seconds]
