@@ -81,8 +81,8 @@ download_and_verify() {
     mkdir -p "${bin_dir}"
 
     log_info "Downloading polis CLI (${arch})..."
-    curl -fsSL "${base_url}/${binary_name}" -o "${bin_dir}/polis"
-    curl -fsSL "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
+    curl -fsSL --proto '=https' "${base_url}/${binary_name}" -o "${bin_dir}/polis"
+    curl -fsSL --proto '=https' "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
 
     log_info "Verifying SHA256 checksum..."
     local expected actual

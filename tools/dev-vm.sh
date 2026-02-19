@@ -186,19 +186,19 @@ cmd_pull() {
 
     if [[ "${version}" == "latest" ]]; then
         local tag
-        tag=$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+        tag=$(curl -fsSL --proto '=https' "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
         dest="${PROJECT_ROOT}/.build/polis-workspace-${tag}-${arch}.qcow2"
         log_info "Latest release: ${tag}"
     fi
 
     local url="https://github.com/${repo}/releases/download/${version}/polis-workspace-${version}-${arch}.qcow2"
     log_step "Downloading VM image to ${dest}..."
-    curl -fL --progress-bar -o "${dest}" "${url}"
+    curl -fL --proto '=https' --progress-bar -o "${dest}" "${url}"
 
     # Verify checksum
     local sha_url="${url}.sha256"
     local expected
-    expected=$(curl -fsSL "${sha_url}" | awk '{print $1}')
+    expected=$(curl -fsSL --proto '=https' "${sha_url}" | awk '{print $1}')
     local actual
     actual=$(sha256sum "${dest}" | awk '{print $1}')
     if [[ "${expected}" != "${actual}" ]]; then
