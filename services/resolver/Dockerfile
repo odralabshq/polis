@@ -16,15 +16,15 @@ RUN sed -i '/^forward:forward/i blocklist:github.com/relekang/coredns-blocklist'
     && go generate && go get github.com/relekang/coredns-blocklist \
     && CGO_ENABLED=0 go build -o /coredns
 
-FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
-
-# DHI debian-base includes ca-certificates; no apt-get available in minimal image
+# Static distroless image: CA certs + tzdata only, no glibc/shell/package manager
+# Eliminates ~95% of CVEs from debian-base while CoreDNS is CGO_ENABLED=0 static binary
+FROM dhi.io/static@sha256:22b2b8a083432d7a8ccc097a65b433595e0be7c00b66b71baedb50bd3b9a24c0
 
 COPY --from=builder /coredns /usr/local/bin/coredns
 
 EXPOSE 53/udp 53/tcp
 
-# DHI images run as nonroot (UID 65532) by default
+# DHI static runs as nonroot (UID 65532) by default
 USER nonroot
 ENTRYPOINT ["/usr/local/bin/coredns"]
 CMD ["-conf", "/etc/coredns/Corefile"]

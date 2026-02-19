@@ -42,8 +42,8 @@ setup() {
     assert_success
 }
 
-@test "dockerfile: resolver uses DHI debian-base runtime with digest" {
-    run grep -E "^FROM dhi\.io/debian-base.*@sha256:" "$RESOLVER_DOCKERFILE"
+@test "dockerfile: resolver uses DHI static runtime with digest" {
+    run grep -E "^FROM dhi\.io/static@sha256:" "$RESOLVER_DOCKERFILE"
     assert_success
 }
 
