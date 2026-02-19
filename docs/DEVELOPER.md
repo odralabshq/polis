@@ -173,9 +173,6 @@ Or use CLI flags: `./tools/dev-vm.sh create --cpus=8 --memory=16G`
 # All unit tests
 just test-bats
 
-# Specific test file
-./tests/bats/bats-core/bin/bats tests/unit/scripts/dev-vm-validation.bats
-
 # Integration tests (start containers first)
 just up
 just test-integration
