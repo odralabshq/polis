@@ -1,7 +1,10 @@
 //! `polis doctor` — system health diagnostics.
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
+use serde::Serialize;
 
 use crate::output::OutputContext;
 
@@ -27,6 +30,32 @@ pub struct WorkspaceChecks {
     pub disk_space_gb: u64,
     /// Whether disk space meets the 10 GB minimum.
     pub disk_space_ok: bool,
+    /// Image cache status.
+    pub image: ImageCheckResult,
+}
+
+/// Result of image health checks.
+#[derive(Debug, Default, Serialize)]
+pub struct ImageCheckResult {
+    /// Whether a cached image exists at `~/.polis/images/polis-workspace.qcow2`.
+    pub cached: bool,
+    /// Version from `image.json` (if available).
+    pub version: Option<String>,
+    /// SHA-256 preview (first 12 hex chars) from `image.json`.
+    pub sha256_preview: Option<String>,
+    /// Value of `POLIS_IMAGE` env var if set (override active).
+    pub polis_image_override: Option<String>,
+    /// Whether cached version differs from latest available.
+    pub version_drift: Option<VersionDrift>,
+}
+
+/// Version drift between cached and latest available image.
+#[derive(Debug, Serialize)]
+pub struct VersionDrift {
+    /// Currently cached version.
+    pub current: String,
+    /// Latest available version.
+    pub latest: String,
 }
 
 /// Network health checks.
@@ -88,11 +117,13 @@ pub struct SystemProbe;
 
 impl HealthProbe for SystemProbe {
     async fn check_workspace(&self) -> Result<WorkspaceChecks> {
-        let disk_space_gb = disk_space_gb().await?;
+        let (disk_space_gb, image) = tokio::join!(disk_space_gb(), check_image());
+        let disk_space_gb = disk_space_gb?;
         Ok(WorkspaceChecks {
             ready: true,
             disk_space_gb,
             disk_space_ok: disk_space_gb >= 10,
+            image,
         })
     }
 
@@ -162,6 +193,7 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
                     "ready": checks.workspace.ready,
                     "disk_space_gb": checks.workspace.disk_space_gb,
                     "disk_space_ok": checks.workspace.disk_space_ok,
+                    "image": checks.workspace.image,
                 },
                 "network": {
                     "internet": checks.network.internet,
@@ -191,6 +223,28 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
 
     println!("  Workspace:");
     print_check(ctx, checks.workspace.ready, "Ready to start");
+    // Image cache status
+    let img = &checks.workspace.image;
+    if img.cached {
+        let version_str = img.version.as_deref().unwrap_or("unknown");
+        let sha_str = img
+            .sha256_preview
+            .as_deref()
+            .map(|s| format!(" (SHA256: {s}...)"))
+            .unwrap_or_default();
+        print_check(ctx, true, &format!("Image cached: {version_str}{sha_str}"));
+        if let Some(drift) = &img.version_drift {
+            println!(
+                "    {} Newer image available: {}",
+                "⚠".style(ctx.styles.warning),
+                drift.latest
+            );
+            println!("      Update with: polis init --force");
+        }
+    } else {
+        print_check(ctx, false, "No workspace image cached");
+        println!("      Run 'polis init' to download the image (~3.2 GB)");
+    }
     if checks.workspace.disk_space_ok {
         print_check(
             ctx,
@@ -208,6 +262,24 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
         );
     }
     println!();
+
+    // POLIS_IMAGE override warning (V-011, F-006)
+    if let Some(override_path) = &checks.workspace.image.polis_image_override {
+        println!(
+            "  {} POLIS_IMAGE override active: {override_path}",
+            "⚠".style(ctx.styles.warning)
+        );
+        if std::path::Path::new(override_path).exists() {
+            println!("    This overrides the default image in ~/.polis/images/");
+        } else {
+            println!(
+                "    {} POLIS_IMAGE set but file not found: {override_path}",
+                "⚠".style(ctx.styles.warning)
+            );
+        }
+        println!("    Unset with: unset POLIS_IMAGE");
+        println!();
+    }
 
     println!("  Network:");
     print_check(ctx, checks.network.internet, "Internet connectivity");
@@ -299,6 +371,72 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
 }
 
 // ── System check helpers ──────────────────────────────────────────────────────
+
+/// Check image cache status, metadata, `POLIS_IMAGE` override, and version drift.
+async fn check_image() -> ImageCheckResult {
+    let Some(home) = dirs::home_dir() else {
+        return ImageCheckResult::default();
+    };
+    let images_dir = home.join(".polis/images");
+    let cached = images_dir.join("polis-workspace.qcow2").exists();
+
+    let (version, sha256_preview) = if cached {
+        read_image_json(&images_dir)
+    } else {
+        (None, None)
+    };
+
+    let polis_image_override = std::env::var("POLIS_IMAGE").ok();
+
+    let version_drift = match version.clone() {
+        Some(current) => check_version_drift(current).await,
+        None => None,
+    };
+
+    ImageCheckResult {
+        cached,
+        version,
+        sha256_preview,
+        polis_image_override,
+        version_drift,
+    }
+}
+
+/// Read version and SHA-256 preview from `image.json`. Fails silently.
+fn read_image_json(images_dir: &Path) -> (Option<String>, Option<String>) {
+    let Ok(content) = std::fs::read_to_string(images_dir.join("image.json")) else {
+        return (None, None);
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return (None, None);
+    };
+    let version = val.get("version").and_then(|v| v.as_str()).map(str::to_owned);
+    let sha256_preview = val
+        .get("sha256")
+        .and_then(|v| v.as_str())
+        .map(|s| s.chars().take(12).collect());
+    (version, sha256_preview)
+}
+
+/// Compare cached version against latest GitHub release. Returns `None` on any failure.
+async fn check_version_drift(current: String) -> Option<VersionDrift> {
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::task::spawn_blocking(crate::commands::init::resolve_latest_image_url),
+    )
+    .await;
+    let Ok(Ok(Ok(resolved))) = result else {
+        return None;
+    };
+    if resolved.tag == current {
+        None
+    } else {
+        Some(VersionDrift {
+            current,
+            latest: resolved.tag,
+        })
+    }
+}
 
 async fn disk_space_gb() -> Result<u64> {
     let out = tokio::process::Command::new("df")
@@ -454,7 +592,7 @@ async fn check_certificates() -> (bool, i64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DoctorChecks, NetworkChecks, SecurityChecks, WorkspaceChecks, collect_issues};
+    use super::{DoctorChecks, ImageCheckResult, NetworkChecks, SecurityChecks, WorkspaceChecks, collect_issues};
 
     fn all_healthy() -> DoctorChecks {
         DoctorChecks {
@@ -462,6 +600,13 @@ mod tests {
                 ready: true,
                 disk_space_gb: 45,
                 disk_space_ok: true,
+                image: ImageCheckResult {
+                    cached: true,
+                    version: Some("v0.3.0".to_string()),
+                    sha256_preview: Some("a1b2c3d4e5f6".to_string()),
+                    polis_image_override: None,
+                    version_drift: None,
+                },
             },
             network: NetworkChecks {
                 internet: true,
@@ -565,6 +710,7 @@ mod tests {
                 ready: true,
                 disk_space_gb: 2,
                 disk_space_ok: false,
+                image: ImageCheckResult::default(),
             },
             network: NetworkChecks {
                 internet: true,
@@ -601,6 +747,7 @@ mod tests {
                     ready,
                     disk_space_gb,
                     disk_space_ok: disk_space_gb >= 10,
+                    image: ImageCheckResult::default(),
                 }
             }
         }
@@ -663,6 +810,7 @@ mod tests {
                         ready: true,
                         disk_space_gb,
                         disk_space_ok: true,
+                        image: ImageCheckResult::default(),
                     },
                     network: NetworkChecks {
                         internet: true,
@@ -689,6 +837,7 @@ mod tests {
                         ready: true,
                         disk_space_gb,
                         disk_space_ok: false,
+                        image: ImageCheckResult::default(),
                     },
                     network: NetworkChecks { internet: true, dns: true },
                     security: SecurityChecks {
@@ -715,6 +864,7 @@ mod tests {
                         ready: true,
                         disk_space_gb: 50,
                         disk_space_ok: true,
+                        image: ImageCheckResult::default(),
                     },
                     network: NetworkChecks { internet: true, dns: true },
                     security: SecurityChecks {
