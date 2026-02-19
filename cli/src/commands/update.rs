@@ -1508,19 +1508,8 @@ mod tests {
     // update_containers — unit (VM not running path)
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn test_update_containers_vm_not_running_returns_error() {
-        // In the test environment multipass is not installed → is_vm_running() returns false.
-        let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.1")]);
-        let ctx = crate::output::OutputContext::new(true, true);
-        let result = update_containers(&manifest, &ctx);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Workspace is not running"),
-            "error must mention workspace not running"
-        );
-    }
+    // NOTE: update_containers() calls is_vm_running() which spawns multipass.
+    // Unit tests must not depend on external processes. This path will be
+    // covered once VmChecker trait injection is implemented (testability
+    // recommendation in update.rs). Tests live in tests/container_update.rs.
 }
