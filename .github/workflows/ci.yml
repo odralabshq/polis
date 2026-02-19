@@ -68,7 +68,6 @@ jobs:
 
   # ── Stage 2a: Test Rust ───────────────────────────────────────────
   test-rust:
-    needs: [lint-rust]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -93,7 +92,6 @@ jobs:
 
   # ── Stage 2b: Test Rust Proptests ─────────────────────────────────
   test-rust-proptests:
-    needs: [lint-rust]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -112,7 +110,6 @@ jobs:
 
   # ── Stage 2c: Test C ──────────────────────────────────────────────
   test-c:
-    needs: [lint-c]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -198,10 +195,12 @@ jobs:
       - name: Run unit tests
         run: ./tests/run-tests.sh unit
 
-  # ── Stage 3c: Scan images ─────────────────────────────────────────
+  # ── Stage 3c: Scan images (Trivy) ─────────────────────────────────
   scan-images:
     runs-on: ubuntu-24.04
     needs: build-containers
+    permissions:
+      security-events: write
     strategy:
       matrix:
         image:
@@ -220,14 +219,21 @@ jobs:
       - name: Load images
         run: zstd -d polis-images.tar.zst --stdout | docker load
 
-      - name: Scan ${{ matrix.image }} with Snyk
-        uses: snyk/actions/docker@9adf32b1121593767fc3c057af55b55db032dc04
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      - name: Scan ${{ matrix.image }} with Trivy
+        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
         with:
-          image: ${{ matrix.image }}:latest
-          args: --severity-threshold=high
-        continue-on-error: true
+          image-ref: '${{ matrix.image }}:latest'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.image }}.sarif'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        with:
+          sarif_file: 'trivy-${{ matrix.image }}.sarif'
+          category: 'trivy-${{ matrix.image }}'
+        if: always()
 
   # ── Stage 4: Integration tests ────────────────────────────────────
   integration-tests:
@@ -399,50 +405,55 @@ jobs:
           done
           docker ps -a
 
-  # ── Security: Snyk Code (SAST) ────────────────────────────────────
-  security-snyk-code:
+  # ── Security: Semgrep SAST ─────────────────────────────────────────
+  security-semgrep:
     runs-on: ubuntu-24.04
     permissions:
       security-events: write
+      contents: read
+    container:
+      image: semgrep/semgrep
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04
-
-      - name: Snyk Code test (SAST)
-        run: snyk code test --severity-threshold=high --sarif-file-output=snyk-code.sarif
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      - name: Semgrep scan
+        run: semgrep scan --config auto --sarif -o semgrep.sarif
         continue-on-error: true
 
-      - uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+      - name: Upload Semgrep SARIF
+        uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
         with:
-          sarif_file: snyk-code.sarif
+          sarif_file: semgrep.sarif
+          category: semgrep-sast
         if: always()
 
-  # ── Security: Snyk IaC ────────────────────────────────────────────
-  security-snyk-iac:
+  # ── Security: Checkov IaC ──────────────────────────────────────────
+  security-checkov:
     runs-on: ubuntu-24.04
     permissions:
       security-events: write
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04
-
-      - name: Snyk IaC test
-        run: snyk iac test --severity-threshold=high --sarif-file-output=snyk-iac.sarif
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        continue-on-error: true
-
-      - uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+      - name: Checkov IaC scan
+        uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
         with:
-          sarif_file: snyk-iac.sarif
+          directory: .
+          framework: dockerfile,github_actions,yaml
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: true
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov-iac
         if: always()
 
   # ── Security: SonarCloud ──────────────────────────────────────────
