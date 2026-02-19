@@ -597,6 +597,116 @@ mod tests {
         assert!(resolve_latest_image_url().is_err());
     }
 
+    // ── sha256_file ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_sha256_file_known_content_returns_correct_hash() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("f");
+        std::fs::write(&path, b"hello").unwrap();
+        assert_eq!(
+            sha256_file(&path).unwrap(),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    #[test]
+    fn test_sha256_file_empty_file_returns_empty_hash() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("f");
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(
+            sha256_file(&path).unwrap(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_sha256_file_missing_file_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let err = sha256_file(&dir.path().join("missing")).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to open image file"),
+            "got: {err}"
+        );
+    }
+
+    // ── extract_checksum_from_signed_file ─────────────────────────────────────
+
+    #[test]
+    fn test_extract_checksum_valid_sha256sum_format_returns_hex() {
+        let dir = TempDir::new().unwrap();
+        let hex = "a".repeat(64);
+        let path = dir.path().join("img.sha256");
+        std::fs::write(&path, format!("{hex}  img.qcow2\n")).unwrap();
+        assert_eq!(extract_checksum_from_signed_file(&path).unwrap(), hex);
+    }
+
+    #[test]
+    fn test_extract_checksum_empty_file_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("img.sha256");
+        std::fs::write(&path, b"").unwrap();
+        let err = extract_checksum_from_signed_file(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("malformed checksum file"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_extract_checksum_short_hex_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("img.sha256");
+        std::fs::write(&path, "abc123  img.qcow2\n").unwrap();
+        let err = extract_checksum_from_signed_file(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("malformed checksum file"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_extract_checksum_non_hex_chars_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("img.sha256");
+        // 64 chars but contains non-hex 'g'
+        std::fs::write(&path, format!("{}  img.qcow2\n", "g".repeat(64))).unwrap();
+        let err = extract_checksum_from_signed_file(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("malformed checksum file"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_extract_checksum_missing_file_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let err =
+            extract_checksum_from_signed_file(&dir.path().join("missing")).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to read checksum file"),
+            "got: {err}"
+        );
+    }
+
+    // ── verify_image_integrity ────────────────────────────────────────────────
+
+    #[test]
+    fn test_verify_image_integrity_invalid_signature_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("img.qcow2");
+        let sidecar = dir.path().join("img.qcow2.sha256");
+        std::fs::write(&img, b"fake image").unwrap();
+        std::fs::write(&sidecar, b"not a valid zipsign tar").unwrap();
+        let err = verify_image_integrity(&img, &sidecar).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("image checksum signature verification failed"),
+            "got: {err}"
+        );
+    }
+
     // ── partial_path ──────────────────────────────────────────────────────────
 
     #[test]
@@ -807,6 +917,47 @@ mod tests {
                 prop_assert_eq!(loaded.sha256, sha256);
                 prop_assert_eq!(loaded.arch, arch);
                 prop_assert_eq!(loaded.source, source);
+            }
+
+            /// sha256_file output is always 64 lowercase hex characters.
+            #[test]
+            fn prop_sha256_file_output_is_64_lowercase_hex(
+                content in prop::collection::vec(any::<u8>(), 0..1024)
+            ) {
+                let dir = TempDir::new().expect("tempdir");
+                let path = dir.path().join("f");
+                std::fs::write(&path, &content).expect("write");
+                let hash = sha256_file(&path).expect("hash");
+                prop_assert_eq!(hash.len(), 64);
+                prop_assert!(
+                    hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                    "non-lowercase-hex in output: {hash}"
+                );
+            }
+
+            /// sha256_file is deterministic: same content always yields the same hash.
+            #[test]
+            fn prop_sha256_file_deterministic(
+                content in prop::collection::vec(any::<u8>(), 0..512)
+            ) {
+                let dir = TempDir::new().expect("tempdir");
+                let path = dir.path().join("f");
+                std::fs::write(&path, &content).expect("write");
+                let h1 = sha256_file(&path).expect("hash1");
+                let h2 = sha256_file(&path).expect("hash2");
+                prop_assert_eq!(h1, h2);
+            }
+
+            /// extract_checksum roundtrips any valid 64-char lowercase hex string.
+            #[test]
+            fn prop_extract_checksum_valid_hex_roundtrip(
+                hex in "[a-f0-9]{64}"
+            ) {
+                let dir = TempDir::new().expect("tempdir");
+                let path = dir.path().join("img.sha256");
+                std::fs::write(&path, format!("{hex}  img.qcow2\n")).expect("write");
+                let extracted = extract_checksum_from_signed_file(&path).expect("extract");
+                prop_assert_eq!(extracted, hex);
             }
         }
     }
