@@ -14,6 +14,10 @@ packer {
       version = ">= 1.1.0"
       source  = "github.com/hashicorp/qemu"
     }
+    goss = {
+      version = ">= 3.2.0"
+      source  = "github.com/YaleUniversity/goss"
+    }
   }
 }
 
@@ -190,6 +194,17 @@ build {
   # Install Polis orchestration (compose, certs, systemd service)
   provisioner "shell" {
     script = "scripts/install-polis.sh"
+  }
+
+  # Validate VM image with Goss tests before finalizing
+  provisioner "goss" {
+    tests     = ["goss/goss.yaml"]
+    vars_file = "goss/goss-vars.yaml"
+    vars_env = {
+      SYSBOX_VERSION = var.sysbox_version
+    }
+    retry_timeout = "30s"
+    sleep         = "2s"
   }
 
   # Cleanup

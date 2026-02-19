@@ -56,3 +56,21 @@ export CTR_HTTPBIN="polis-httpbin"
 export HTTPBIN_HOST="10.20.1.100:8080"
 # Gate HTTP proxy — used to route workspace traffic through g3proxy→ICAP to httpbin
 export HTTP_PROXY_VIA_GATE="http://${IP_GATE_INT}:8080"
+
+# ============================================================================
+# Packer / VM Image
+# ============================================================================
+
+# Packer paths
+export PACKER_DIR="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}/packer"
+export PACKER_TEMPLATE="${PACKER_DIR}/polis-vm.pkr.hcl"
+export PACKER_SCRIPTS="${PACKER_DIR}/scripts"
+export PACKER_GOSS_DIR="${PACKER_DIR}/goss"
+
+# Goss test files
+export GOSS_MAIN="${PACKER_GOSS_DIR}/goss.yaml"
+export GOSS_VARS="${PACKER_GOSS_DIR}/goss-vars.yaml"
+
+# VM output
+export VM_OUTPUT_DIR="${PACKER_DIR}/output"
+export VM_IMAGE_NAME="polis-workspace"

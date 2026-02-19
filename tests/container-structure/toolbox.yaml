@@ -1,0 +1,20 @@
+# container-structure-test for polis-toolbox
+# Validates Rust MCP agent binary
+
+schemaVersion: '2.0.0'
+
+metadataTest:
+  user: "65532"
+
+fileExistenceTests:
+  - name: 'polis-mcp-agent binary'
+    path: '/usr/local/bin/polis-mcp-agent'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
+
+commandTests:
+  - name: 'polis-mcp-agent help'
+    command: '/usr/local/bin/polis-mcp-agent'
+    args: ['--help']
+    exitCode: 0
+    expectedOutput: ['polis']

@@ -1,0 +1,8 @@
+# goss.yaml - Main Goss test file for Polis VM image validation
+# Includes all component test files
+
+gossfile:
+  goss-docker.yaml: {}
+  goss-sysbox.yaml: {}
+  goss-hardening.yaml: {}
+  goss-polis.yaml: {}
