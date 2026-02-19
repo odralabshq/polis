@@ -195,9 +195,9 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     ));
     let expire_days = checks.security.certificates_expire_days;
     if expire_days > 30 {
-        print_check(ctx, true, &format!("Certificates valid (expires: {expire_days} days)"));
+        print_check(ctx, true, "Certificates valid (no immediate action required)");
     } else if expire_days > 0 {
-        println!("    {} Certificates expire soon ({expire_days} days)", "⚠".style(ctx.styles.warning));
+        println!("    {} Certificates expire soon", "⚠".style(ctx.styles.warning));
     } else {
         print_check(ctx, false, "Certificates expired");
     }
