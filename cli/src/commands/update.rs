@@ -1,12 +1,14 @@
 //! `polis update` — self-update with signature verification (V-008).
 
+use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use owo_colors::OwoColorize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zipsign_api::{PUBLIC_KEY_LENGTH, VerifyingKey, verify::verify_tar};
+use zipsign_api::{PUBLIC_KEY_LENGTH, VerifyingKey, unsign::copy_and_unsign_tar, verify::verify_tar};
 
 use crate::output::OutputContext;
 
@@ -20,6 +22,218 @@ const SIGNER_NAME: &str = "Odra Labs";
 
 /// Short key fingerprint for display.
 const KEY_FINGERPRINT: &str = "polis-release-v1";
+
+// ── Manifest types ────────────────────────────────────────────────────────────
+
+/// Signed versions manifest published as a GitHub release asset.
+/// Controls which versions of each component are current.
+#[allow(dead_code)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VersionsManifest {
+    /// Schema version for forward compatibility.
+    pub manifest_version: u32,
+    /// VM image version info.
+    pub vm_image: VmImageVersion,
+    /// Container image versions, keyed by service name.
+    pub containers: BTreeMap<String, String>,
+}
+
+/// VM image version within the manifest.
+#[allow(dead_code)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VmImageVersion {
+    /// Semver tag (e.g., `"v0.3.0"`).
+    pub version: String,
+    /// Asset filename (e.g., `"polis-workspace-v0.3.0-amd64.qcow2"`).
+    pub asset: String,
+}
+
+/// Validate a version tag against strict semver format.
+///
+/// Accepted: `v0.3.0`, `v1.0.0-rc.1`, `v2.0.0-beta.3`
+/// Rejected: `v0.3.1; curl evil.com`, `latest`, `v1`, empty string
+///
+/// Uses `semver::Version::parse()` after stripping the `v` prefix.
+/// Pre-release identifiers are additionally checked to contain only
+/// `[a-zA-Z0-9.]` characters (V-004).
+///
+/// # Errors
+///
+/// Returns an error if the tag does not match the expected semver pattern.
+#[allow(dead_code)]
+pub fn validate_version_tag(tag: &str) -> Result<()> {
+    let bare = tag
+        .strip_prefix('v')
+        .ok_or_else(|| anyhow::anyhow!("invalid version tag: {tag}"))?;
+    let ver = semver::Version::parse(bare)
+        .with_context(|| format!("invalid version tag: {tag}"))?;
+    // Validate pre-release identifiers contain only [a-zA-Z0-9.]
+    anyhow::ensure!(
+        ver.pre.is_empty()
+            || ver
+                .pre
+                .as_str()
+                .chars()
+                .all(|c: char| c.is_ascii_alphanumeric() || c == '.'),
+        "invalid version tag: {tag}"
+    );
+    Ok(())
+}
+
+/// Download and verify the signed `versions.json` manifest from the latest
+/// GitHub release.
+///
+/// # Verification chain
+/// 1. Find `versions.json` asset in the latest release
+/// 2. Download the signed tar
+/// 3. Verify ed25519 signature via zipsign
+/// 4. Extract JSON content from the tar
+/// 5. Parse into [`VersionsManifest`]
+/// 6. Validate `manifest_version == 1`
+/// 7. Validate all version tags
+///
+/// # Errors
+///
+/// Returns an error if download fails, signature is invalid, JSON is
+/// malformed, `manifest_version` is unsupported, or any version tag fails
+/// validation.
+#[allow(dead_code)]
+pub fn load_versions_manifest() -> Result<VersionsManifest> {
+    let url = std::env::var("POLIS_GITHUB_API_URL")
+        .unwrap_or_else(|_| crate::commands::init::GITHUB_RELEASES_URL.to_string());
+
+    let token = std::env::var("GITHUB_TOKEN").unwrap_or_default();
+    let req = ureq::get(&url)
+        .set("Accept", "application/vnd.github+json")
+        .set("User-Agent", "polis-cli");
+    let req = if token.is_empty() {
+        req
+    } else {
+        req.set("Authorization", &format!("Bearer {token}"))
+    };
+
+    let body: serde_json::Value = match req.call() {
+        Ok(resp) => {
+            let s = resp.into_string().context("failed to read GitHub API response")?;
+            serde_json::from_str(&s).context("failed to parse GitHub API response")?
+        }
+        Err(ureq::Error::Status(403, _)) => anyhow::bail!(
+            "GitHub API rate limit exceeded (60 requests/hour unauthenticated).\nSet GITHUB_TOKEN env var or use: polis init --image <direct-url>"
+        ),
+        Err(ureq::Error::Status(404, _)) => {
+            anyhow::bail!("GitHub repository not found: OdraLabsHQ/polis")
+        }
+        Err(ureq::Error::Status(code, _)) => anyhow::bail!("GitHub API error: HTTP {code}"),
+        Err(e) => return Err(anyhow::anyhow!(e)),
+    };
+
+    let releases = body
+        .as_array()
+        .context("failed to parse GitHub API response")?;
+    let latest = releases
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("versions.json not found in latest release"))?;
+
+    let assets = latest["assets"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("versions.json not found in latest release"))?;
+
+    let download_url = assets
+        .iter()
+        .find(|a| a["name"].as_str() == Some("versions.json"))
+        .and_then(|a| a["browser_download_url"].as_str())
+        .ok_or_else(|| anyhow::anyhow!("versions.json not found in latest release"))?
+        .to_string();
+
+    // Download the signed tar
+    let response = ureq::get(&download_url)
+        .call()
+        .context("failed to download versions.json")?;
+    let mut signed_bytes = Vec::new();
+    response
+        .into_reader()
+        .read_to_end(&mut signed_bytes)
+        .context("failed to read versions.json")?;
+
+    // Verify signature before trusting any content (V-002)
+    let verifying_key = build_verifying_key()?;
+    let mut cursor = Cursor::new(&signed_bytes);
+    verify_tar(&mut cursor, &[verifying_key], None).context(
+        "versions.json signature verification failed \
+         — the manifest may have been tampered with",
+    )?;
+
+    // Extract JSON from the signed tar
+    let json_bytes = extract_tar_content(&signed_bytes)?;
+    let manifest: VersionsManifest = serde_json::from_slice(&json_bytes)
+        .with_context(|| {
+            format!(
+                "failed to parse versions.json: {}",
+                String::from_utf8_lossy(&json_bytes)
+            )
+        })?;
+
+    anyhow::ensure!(
+        manifest.manifest_version == 1,
+        "unsupported manifest version: {}. Update your CLI: polis update",
+        manifest.manifest_version
+    );
+
+    validate_version_tag(&manifest.vm_image.version)
+        .with_context(|| format!("invalid version tag in manifest: {}", manifest.vm_image.version))?;
+    for version in manifest.containers.values() {
+        validate_version_tag(version)
+            .with_context(|| format!("invalid version tag in manifest: {version}"))?;
+    }
+
+    Ok(manifest)
+}
+
+/// Build the [`VerifyingKey`] from the embedded public key constant.
+///
+/// # Errors
+///
+/// Returns an error if the key is malformed.
+#[allow(dead_code)]
+fn build_verifying_key() -> Result<VerifyingKey> {
+    let key_bytes =
+        base64_decode(POLIS_PUBLIC_KEY_B64).context("invalid embedded public key encoding")?;
+    anyhow::ensure!(
+        key_bytes.len() == PUBLIC_KEY_LENGTH,
+        "embedded public key has wrong length: expected {PUBLIC_KEY_LENGTH}, got {}",
+        key_bytes.len()
+    );
+    let key_array: [u8; PUBLIC_KEY_LENGTH] = key_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("public key conversion failed"))?;
+    VerifyingKey::from_bytes(&key_array).context("invalid embedded public key")
+}
+
+/// Extract the first file entry's content from a zipsign-signed tar archive.
+///
+/// # Errors
+///
+/// Returns an error if the tar cannot be read or contains no entries.
+#[allow(dead_code)]
+fn extract_tar_content(signed_bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut unsigned = Cursor::new(Vec::new());
+    copy_and_unsign_tar(&mut Cursor::new(signed_bytes), &mut unsigned)
+        .context("failed to unsign versions.json tar")?;
+    unsigned.set_position(0);
+
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(unsigned));
+    let mut entry = archive
+        .entries()
+        .context("failed to read tar entries")?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("versions.json tar is empty"))??;
+
+    let mut content = Vec::new();
+    entry
+        .read_to_end(&mut content)
+        .context("failed to read versions.json content")?;
+    Ok(content)
+}
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

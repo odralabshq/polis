@@ -466,7 +466,7 @@ pub struct ResolvedRelease {
 }
 
 /// GitHub Releases API endpoint — up to 10 most recent releases.
-const GITHUB_RELEASES_URL: &str =
+pub(crate) const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/OdraLabsHQ/polis/releases?per_page=10";
 
 /// Resolve the latest image URL and version tag from the GitHub API.
