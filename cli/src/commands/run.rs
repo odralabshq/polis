@@ -533,14 +533,18 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Serialize all tests that read/write POLIS_IMAGE to prevent races.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // ── get_image_path ───────────────────────────────────────────────────────
 
     #[test]
     fn test_get_image_path_polis_image_env_existing_file_returns_ok() {
+        let _g = ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("custom.qcow2");
         std::fs::write(&img, b"fake").unwrap();
-        // SAFETY: single-threaded test
+        // SAFETY: protected by ENV_LOCK
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
         let result = get_image_path();
         unsafe { std::env::remove_var("POLIS_IMAGE") };
@@ -549,7 +553,8 @@ mod tests {
 
     #[test]
     fn test_get_image_path_polis_image_env_missing_file_returns_error() {
-        // SAFETY: single-threaded test
+        let _g = ENV_LOCK.lock().unwrap();
+        // SAFETY: protected by ENV_LOCK
         unsafe { std::env::set_var("POLIS_IMAGE", "/nonexistent/custom.qcow2") };
         let result = get_image_path();
         unsafe { std::env::remove_var("POLIS_IMAGE") };
@@ -559,10 +564,9 @@ mod tests {
 
     #[test]
     fn test_get_image_path_no_image_returns_error_with_hint() {
-        // SAFETY: single-threaded test
+        let _g = ENV_LOCK.lock().unwrap();
+        // SAFETY: protected by ENV_LOCK
         unsafe { std::env::remove_var("POLIS_IMAGE") };
-        // We can't guarantee ~/.polis/images/polis-workspace.qcow2 doesn't exist
-        // on the test machine, so only assert the error message when it fails.
         if get_image_path().is_err() {
             let err = get_image_path().unwrap_err().to_string();
             assert!(err.contains("polis init"), "got: {err}");
@@ -573,39 +577,53 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_matching_checksum_returns_hash() {
+        let _g = ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
-        // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
         let expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
         let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
         std::fs::write(&sidecar, format!("{expected}  polis-workspace.qcow2\n")).unwrap();
-        // SAFETY: single-threaded test
+        // SAFETY: protected by ENV_LOCK
         unsafe { std::env::remove_var("POLIS_IMAGE") };
-        let hash = verify_image_at_launch(&img).unwrap();
-        assert_eq!(hash, expected);
+        assert_eq!(verify_image_at_launch(&img).unwrap(), expected);
     }
 
     #[test]
     fn test_verify_image_at_launch_mismatched_checksum_returns_error() {
+        let _g = ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
         let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
         std::fs::write(&sidecar, format!("{}  polis-workspace.qcow2\n", "a".repeat(64))).unwrap();
-        // SAFETY: single-threaded test
+        // SAFETY: protected by ENV_LOCK
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         let err = verify_image_at_launch(&img).unwrap_err().to_string();
         assert!(err.contains("Image integrity check failed"), "got: {err}");
     }
 
     #[test]
-    fn test_verify_image_at_launch_missing_sidecar_no_polis_image_returns_error() {
+    fn test_verify_image_at_launch_mismatched_checksum_error_contains_force_hint() {
+        let _g = ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
-        // No sidecar file, no POLIS_IMAGE override.
-        // SAFETY: single-threaded test
+        let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
+        std::fs::write(&sidecar, format!("{}  polis-workspace.qcow2\n", "a".repeat(64))).unwrap();
+        // SAFETY: protected by ENV_LOCK
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        let err = verify_image_at_launch(&img).unwrap_err().to_string();
+        assert!(err.contains("polis init --force"), "got: {err}");
+    }
+
+    #[test]
+    fn test_verify_image_at_launch_missing_sidecar_no_polis_image_returns_error() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("polis-workspace.qcow2");
+        std::fs::write(&img, b"hello").unwrap();
+        // SAFETY: protected by ENV_LOCK
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         let err = verify_image_at_launch(&img).unwrap_err().to_string();
         assert!(err.contains("Image checksum missing"), "got: {err}");
@@ -613,11 +631,11 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_missing_sidecar_with_polis_image_warns_and_returns_hash() {
+        let _g = ENV_LOCK.lock().unwrap();
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("custom.qcow2");
         std::fs::write(&img, b"hello").unwrap();
-        // No sidecar, but POLIS_IMAGE is set → warn and return hash.
-        // SAFETY: single-threaded test
+        // SAFETY: protected by ENV_LOCK
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
         let result = verify_image_at_launch(&img);
         unsafe { std::env::remove_var("POLIS_IMAGE") };
@@ -665,9 +683,14 @@ mod tests {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, unsafe_code)]
 mod proptests {
     use super::*;
     use proptest::prelude::*;
+    use tempfile::TempDir;
+
+    /// Same lock as in `tests` — proptest runs on the same thread pool.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     proptest! {
         /// generate_workspace_id always matches expected format
@@ -685,6 +708,43 @@ mod proptests {
         fn prop_resolve_agent_explicit_returns_same(agent in "[a-z][a-z0-9-]{1,30}") {
             let result = resolve_agent(Some(&agent)).expect("resolve");
             prop_assert_eq!(result, agent);
+        }
+
+        /// verify_image_at_launch with the correct checksum always succeeds
+        #[test]
+        fn prop_verify_image_at_launch_correct_checksum_always_succeeds(
+            content in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..512)
+        ) {
+            let _g = ENV_LOCK.lock().expect("lock");
+            let dir = TempDir::new().expect("tempdir");
+            let img = dir.path().join("polis-workspace.qcow2");
+            std::fs::write(&img, &content).expect("write image");
+            let hash = crate::commands::init::sha256_file(&img).expect("sha256");
+            let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
+            std::fs::write(&sidecar, format!("{hash}  polis-workspace.qcow2\n")).expect("write sidecar");
+            // SAFETY: protected by ENV_LOCK
+            unsafe { std::env::remove_var("POLIS_IMAGE") };
+            let result = verify_image_at_launch(&img);
+            prop_assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+            prop_assert_eq!(result.unwrap(), hash);
+        }
+
+        /// verify_image_at_launch with a wrong checksum always fails
+        #[test]
+        fn prop_verify_image_at_launch_wrong_checksum_always_fails(
+            content in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..512)
+        ) {
+            let _g = ENV_LOCK.lock().expect("lock");
+            let dir = TempDir::new().expect("tempdir");
+            let img = dir.path().join("polis-workspace.qcow2");
+            std::fs::write(&img, &content).expect("write image");
+            // Write a checksum that is guaranteed wrong: all 'a's
+            let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
+            std::fs::write(&sidecar, format!("{}  polis-workspace.qcow2\n", "a".repeat(64))).expect("write sidecar");
+            // SAFETY: protected by ENV_LOCK
+            unsafe { std::env::remove_var("POLIS_IMAGE") };
+            let result = verify_image_at_launch(&img);
+            prop_assert!(result.is_err(), "expected Err for wrong checksum");
         }
     }
 }

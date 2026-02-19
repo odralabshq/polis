@@ -141,6 +141,29 @@ mod tests {
     }
 
     #[test]
+    fn test_state_manager_load_image_ready_stage_deserializes_as_workspace_created() {
+        // Backward-compat migration: state.json files written before issue 06
+        // used "image_ready" as the stage value. The #[serde(alias)] on
+        // WorkspaceCreated must make these load without error.
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("state.json");
+        std::fs::write(
+            &path,
+            br#"{"stage":"image_ready","agent":"claude-dev","workspace_id":"ws-abc123","started_at":"2026-02-17T14:30:00Z"}"#,
+        )
+        .expect("write legacy state");
+        let loaded = StateManager::with_path(path)
+            .load()
+            .expect("load must not error")
+            .expect("state must be present");
+        assert_eq!(
+            loaded.stage,
+            RunStage::WorkspaceCreated,
+            "image_ready must deserialize as WorkspaceCreated"
+        );
+    }
+
+    #[test]
     fn test_state_manager_save_creates_parent_directory() {
         let dir = TempDir::new().expect("tempdir");
         let nested = dir.path().join("a").join("b").join("state.json");

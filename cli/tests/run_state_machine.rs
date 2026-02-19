@@ -26,6 +26,38 @@ fn state_dir_with(stage: &str, agent: &str) -> TempDir {
 }
 
 // ---------------------------------------------------------------------------
+// Image resolution — no multipass required (fails before VM launch)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_run_no_image_exits_nonzero_with_polis_init_hint() {
+    // When no image exists at POLIS_IMAGE or ~/.polis/images/, polis run must
+    // exit non-zero and tell the user to run 'polis init'.
+    let dir = TempDir::new().expect("tempdir");
+    polis()
+        .arg("run")
+        .env("HOME", dir.path())
+        .env_remove("POLIS_IMAGE")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("polis init"));
+}
+
+#[test]
+fn test_run_polis_image_nonexistent_exits_nonzero_with_error() {
+    // When POLIS_IMAGE points to a file that does not exist, polis run must
+    // exit non-zero with a message naming the bad path.
+    let dir = TempDir::new().expect("tempdir");
+    polis()
+        .arg("run")
+        .env("HOME", dir.path())
+        .env("POLIS_IMAGE", "/nonexistent/path/image.qcow2")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("POLIS_IMAGE"));
+}
+
+// ---------------------------------------------------------------------------
 // Fresh run — no existing state (requires multipass + VM image)
 // ---------------------------------------------------------------------------
 
