@@ -40,27 +40,27 @@ service:
 # Docker images loaded
 command:
   images-resolver:
-    exec: "docker images --format '{{.Repository}}' | grep -q polis-resolver"
+    exec: "docker images --format '{{"{{"}}.Repository{{"}}"}}' | grep -q polis-resolver"
     exit-status: 0
 
   images-gate:
-    exec: "docker images --format '{{.Repository}}' | grep -q polis-gate"
+    exec: "docker images --format '{{"{{"}}.Repository{{"}}"}}' | grep -q polis-gate"
     exit-status: 0
 
   images-sentinel:
-    exec: "docker images --format '{{.Repository}}' | grep -q polis-sentinel"
+    exec: "docker images --format '{{"{{"}}.Repository{{"}}"}}' | grep -q polis-sentinel"
     exit-status: 0
 
   images-scanner:
-    exec: "docker images --format '{{.Repository}}' | grep -q polis-scanner"
+    exec: "docker images --format '{{"{{"}}.Repository{{"}}"}}' | grep -q polis-scanner"
     exit-status: 0
 
   images-workspace:
-    exec: "docker images --format '{{.Repository}}' | grep -q polis-workspace"
+    exec: "docker images --format '{{"{{"}}.Repository{{"}}"}}' | grep -q polis-workspace"
     exit-status: 0
 
   images-toolbox:
-    exec: "docker images --format '{{.Repository}}' | grep -q polis-toolbox"
+    exec: "docker images --format '{{"{{"}}.Repository{{"}}"}}' | grep -q polis-toolbox"
     exit-status: 0
 
 # netcat installed for SSH proxy
