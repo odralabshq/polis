@@ -28,7 +28,7 @@ file:
   # Systemd service
   /etc/systemd/system/polis.service:
     exists: true
-    contains:
+    contents:
       - "After=docker.service"
       - "ExecStart=/usr/bin/docker compose up -d"
 

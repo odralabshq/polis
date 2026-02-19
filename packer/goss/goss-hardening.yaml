@@ -3,7 +3,7 @@
 file:
   /etc/sysctl.d/99-polis-hardening.conf:
     exists: true
-    contains:
+    contents:
       - "kernel.randomize_va_space = 2"
       - "kernel.dmesg_restrict = 1"
       - "kernel.kptr_restrict = 2"
@@ -12,7 +12,7 @@ file:
 
   /etc/audit/rules.d/docker.rules:
     exists: true
-    contains:
+    contents:
       - "/usr/bin/docker"
       - "/var/lib/docker"
 

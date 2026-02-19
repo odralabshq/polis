@@ -17,7 +17,7 @@ file:
   /etc/docker/daemon.json:
     exists: true
     mode: "0644"
-    contains:
+    contents:
       - '"no-new-privileges": true'
       - '"live-restore": true'
       - '"userland-proxy": false'
