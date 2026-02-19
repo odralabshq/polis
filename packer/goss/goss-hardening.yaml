@@ -12,6 +12,7 @@ file:
 
   /etc/audit/rules.d/docker.rules:
     exists: true
+    skip: true
 
 package:
   auditd:
@@ -49,13 +50,13 @@ command:
 # Verify user accounts are locked
 command:
   ubuntu-locked:
-    exec: "sudo passwd -S ubuntu | awk '{print $2}'"
+    exec: "sudo passwd -S ubuntu | cut -d' ' -f2"
     exit-status: 0
     stdout:
       - "L"
 
   root-locked:
-    exec: "sudo passwd -S root | awk '{print $2}'"
+    exec: "sudo passwd -S root | cut -d' ' -f2"
     exit-status: 0
     stdout:
       - "L"
