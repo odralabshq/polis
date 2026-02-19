@@ -232,7 +232,7 @@ _seed_blocked() {
         "$rid" "url_blocked" "https://ws-approve.example.com" 2>/dev/null || true
 
     # Approve via operator CLI
-    bash "${PROJECT_ROOT}/cli/blocked.sh" approve "$rid"
+    bash "${PROJECT_ROOT}/tools/blocked.sh" approve "$rid"
 
     # Check from workspace
     run docker exec "$CTR_WORKSPACE" \
