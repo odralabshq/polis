@@ -455,9 +455,8 @@ jobs:
         uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
         with:
           directory: .
-          framework: dockerfile,github_actions,yaml
+          framework: dockerfile github_actions yaml
           output_format: sarif
-          output_file_path: results.sarif
           soft_fail: true
 
       - name: Upload Checkov SARIF
