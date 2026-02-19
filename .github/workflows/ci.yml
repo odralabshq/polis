@@ -327,10 +327,10 @@ jobs:
       - name: Setup certificates and secrets
         run: source ./scripts/ci-helpers.sh && setup_certs_and_secrets
 
+      - name: Generate agent compose override
+        run: just setup-agents
+
       - name: Start containers
-        run: |
-          docker compose --profile test up -d httpbin 2>/dev/null || true
-          just up
 
       - name: Wait for healthy
         run: source ./scripts/ci-helpers.sh && wait_for_healthy

@@ -12,7 +12,11 @@ require_container() {
     done
 }
 
-require_network() {
+require_agents_mounted() {
+    require_container "$CTR_WORKSPACE"
+    docker exec "$CTR_WORKSPACE" test -f /tmp/agents/openclaw/scripts/polis-toolbox-call.sh 2>/dev/null \
+        || skip "Agent scripts not mounted in workspace (compose.override.yaml not generated)"
+}
     local host="$1" port="${2:-443}"
     timeout 3 bash -c "echo > /dev/tcp/$host/$port" 2>/dev/null || skip "$host:$port unreachable"
 }

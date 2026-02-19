@@ -177,7 +177,7 @@ _seed_blocked() {
 # =============================================================================
 
 @test "e2e: polis-security-status returns JSON from workspace" {
-    require_container "$CTR_WORKSPACE"
+    require_agents_mounted
     run docker exec "$CTR_WORKSPACE" \
         bash /tmp/agents/openclaw/scripts/polis-security-status.sh
     assert_success
@@ -185,7 +185,7 @@ _seed_blocked() {
 }
 
 @test "e2e: polis-list-pending returns JSON from workspace" {
-    require_container "$CTR_WORKSPACE"
+    require_agents_mounted
     run docker exec "$CTR_WORKSPACE" \
         bash /tmp/agents/openclaw/scripts/polis-list-pending.sh
     assert_success
@@ -193,7 +193,7 @@ _seed_blocked() {
 }
 
 @test "e2e: polis-report-block from workspace stores request in Valkey" {
-    require_container "$CTR_WORKSPACE"
+    require_agents_mounted
     local rid="req-hitl-ws01"
     _admin_cmd DEL "polis:blocked:${rid}" 2>/dev/null || true
 
@@ -210,7 +210,7 @@ _seed_blocked() {
 }
 
 @test "e2e: polis-check-status from workspace returns pending" {
-    require_container "$CTR_WORKSPACE"
+    require_agents_mounted
     local rid="req-hitl-ws02"
     _seed_blocked "$rid" "https://ws-check.example.com" "url_blocked"
 
@@ -223,7 +223,7 @@ _seed_blocked() {
 }
 
 @test "e2e: polis-check-status from workspace returns approved after CLI approval" {
-    require_container "$CTR_WORKSPACE"
+    require_agents_mounted
     local rid="req-hitl-ws03"
 
     # Report via workspace shell script
@@ -244,7 +244,7 @@ _seed_blocked() {
 }
 
 @test "e2e: polis-check-status from workspace returns not_found for unknown" {
-    require_container "$CTR_WORKSPACE"
+    require_agents_mounted
     run docker exec "$CTR_WORKSPACE" \
         bash /tmp/agents/openclaw/scripts/polis-check-status.sh "req-hitl-ws-unknown"
     assert_success
