@@ -19,6 +19,9 @@ require_agents_mounted() {
 }
 
 require_network() {
+    local host="$1" port="${2:-443}"
+    timeout 3 bash -c "echo > /dev/tcp/$host/$port" 2>/dev/null || skip "$host:$port unreachable"
+}
 
 # Pre-approve a host in Valkey so HITL does not block it during tests.
 # Usage: approve_host <host> [ttl_seconds]
