@@ -6,12 +6,45 @@
 
 #![allow(clippy::expect_used)]
 
+use std::io::{Read, Write};
+use std::net::TcpListener;
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
 fn polis() -> Command {
     Command::new(assert_cmd::cargo::cargo_bin!("polis"))
+}
+
+/// Spin up a one-shot HTTP server that serves `response` to the first connection.
+/// Returns the bound port.
+fn serve_once(response: Vec<u8>) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(&response);
+        }
+    });
+    port
+}
+
+fn http_200(body: &[u8]) -> Vec<u8> {
+    let mut r = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    r.extend_from_slice(body);
+    r
+}
+
+fn http_status(code: u16, reason: &str) -> Vec<u8> {
+    format!("HTTP/1.1 {code} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        .into_bytes()
 }
 
 // ── help / registration ──────────────────────────────────────────────────────
@@ -144,7 +177,7 @@ fn test_init_force_with_local_image_skips_cache_and_attempts_acquire() {
         .env("HOME", dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("issue 03"));
+        .stderr(predicate::str::contains("failed to read checksum file"));
 }
 
 // ── no --force, no cache → hits acquire stubs ────────────────────────────────
@@ -163,12 +196,15 @@ fn test_init_no_flags_no_cache_hits_github_resolver_stub() {
 #[test]
 fn test_init_http_url_no_cache_hits_download_stub() {
     let dir = TempDir::new().expect("tempdir");
+    // Connection refused — real download attempt, not a stub bail.
     polis()
-        .args(["init", "--image", "https://example.com/image.qcow2"])
+        .args(["init", "--image", "http://127.0.0.1:1/image.qcow2"])
         .env("HOME", dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("issue 02"));
+        .stderr(predicate::str::contains("download interrupted").or(
+            predicate::str::contains("download failed"),
+        ));
 }
 
 #[test]
@@ -182,7 +218,7 @@ fn test_init_local_file_no_cache_hits_verify_stub() {
         .env("HOME", dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("issue 03"));
+        .stderr(predicate::str::contains("failed to read checksum file"));
 }
 
 // ── images dir is created ─────────────────────────────────────────────────────
@@ -203,6 +239,47 @@ fn test_init_creates_images_directory_when_missing() {
     assert!(dir.path().join(".polis").join("images").is_dir());
 }
 
+// ── download_with_resume — integration ───────────────────────────────────────
+
+#[test]
+fn test_init_http_url_connection_refused_exits_nonzero() {
+    let dir = TempDir::new().expect("tempdir");
+    polis()
+        .args(["init", "--image", "http://127.0.0.1:1/image.qcow2"])
+        .env("HOME", dir.path())
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_init_http_url_404_exits_nonzero_with_http_error_message() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_status(404, "Not Found"));
+    polis()
+        .args(["init", "--image", &format!("http://127.0.0.1:{port}/img")])
+        .env("HOME", dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("download failed: HTTP 404"));
+}
+
+#[test]
+fn test_init_http_url_200_download_succeeds_then_hits_verify_stub() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_200(b"fake qcow2 content"));
+    polis()
+        .args(["init", "--image", &format!("http://127.0.0.1:{port}/img")])
+        .env("HOME", dir.path())
+        .assert()
+        .failure()
+        // Download succeeded; verify fires next — sidecar absent → read error.
+        .stderr(predicate::str::contains("failed to read checksum file"));
+
+    // Dest file was written before verify was called.
+    let dest = dir.path().join(".polis").join("images").join("polis-workspace.qcow2");
+    assert!(dest.exists(), "dest file should exist after successful download");
+}
+
 // ── property tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -211,23 +288,24 @@ mod proptests {
     use proptest::prelude::*;
 
     proptest! {
-        /// Any http/https URL triggers the download stub (issue 02), not a parse error.
+        /// Any http/https URL triggers a real download attempt (not a parse error).
         #[test]
         fn prop_init_http_url_reaches_download_stub(
             path in "[a-z0-9]{3,20}"
         ) {
             let dir = TempDir::new().expect("tempdir");
-            let url = format!("https://example.com/{path}.qcow2");
+            // Port 1 is always refused — transport error, not an arg-parse error.
+            let url = format!("http://127.0.0.1:1/{path}.qcow2");
             let output = polis()
                 .args(["init", "--image", &url])
                 .env("HOME", dir.path())
                 .output()
                 .expect("command ran");
             let stderr = String::from_utf8_lossy(&output.stderr);
-            // Must fail at stub 02, not at argument parsing
+            prop_assert!(!output.status.success(), "expected failure");
             prop_assert!(
-                stderr.contains("issue 02"),
-                "expected issue 02 stub error, got: {stderr}"
+                !stderr.contains("Image file not found") && !stderr.contains("Not a regular file"),
+                "got arg-parse error instead of download error: {stderr}"
             );
         }
 

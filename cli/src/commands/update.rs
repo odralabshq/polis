@@ -13,7 +13,7 @@ use crate::output::OutputContext;
 /// Embedded ed25519 public key for release signature verification.
 /// This key is set during the release build process.
 /// Format: 32-byte ed25519 public key, base64-encoded.
-const POLIS_PUBLIC_KEY_B64: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+pub(crate) const POLIS_PUBLIC_KEY_B64: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 /// Signer identity displayed to users.
 const SIGNER_NAME: &str = "Odra Labs";
@@ -304,7 +304,7 @@ fn verify_signature(download_url: &str) -> Result<SignatureInfo> {
 }
 
 /// Encode bytes as lowercase hex string.
-fn hex_encode(bytes: &[u8]) -> String {
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for &b in bytes {
@@ -315,7 +315,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 /// Minimal base64 decoder (standard alphabet, no padding required).
-fn base64_decode(input: &str) -> Result<Vec<u8>> {
+pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>> {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     fn decode_char(c: u8) -> Option<u8> {
