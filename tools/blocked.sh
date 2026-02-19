@@ -19,6 +19,7 @@ _valkey_cmd() {
         --cacert /etc/valkey/tls/ca.crt \
         -a "$pass" --user mcp-admin --no-auth-warning \
         "$@"
+    return $?
 }
 
 case "${1:-pending}" in

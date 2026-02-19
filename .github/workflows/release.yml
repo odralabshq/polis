@@ -174,7 +174,7 @@ jobs:
       - name: Generate checksum
         run: |
           cd output
-          sha256sum *.qcow2 > checksums.sha256
+          sha256sum ./*.qcow2 > checksums.sha256
 
       - name: Attest VM provenance
         uses: actions/attest-build-provenance@7668571508540a607bdfd90a87a560489fe372eb # v2.1.0

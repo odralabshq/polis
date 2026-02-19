@@ -445,6 +445,7 @@ fn provision_workspace() -> Result<()> {
 }
 
 /// Wait for the workspace container to become healthy.
+#[allow(clippy::cognitive_complexity)] // NOSONAR: Polling loop with nested checks is inherently complex
 fn wait_for_workspace_healthy() {
     println!("  Waiting for workspace to be ready...");
 

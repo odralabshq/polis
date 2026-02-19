@@ -209,6 +209,7 @@ cmd_pull() {
 
     log_success "VM image ready: ${dest}"
     echo "${dest}"
+    return 0
 }
 
 cmd_rebuild() {

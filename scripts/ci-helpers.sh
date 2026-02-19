@@ -14,6 +14,7 @@ install_sysbox() {
     sudo mkdir -p /etc/docker
     echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
     sudo systemctl restart docker
+    return 0
 }
 
 setup_certs_and_secrets() {
@@ -29,6 +30,7 @@ setup_certs_and_secrets() {
     touch .env
     ./services/state/scripts/generate-secrets.sh ./secrets .
     chmod 644 ./secrets/valkey_users.acl
+    return 0
 }
 
 wait_for_healthy() {
@@ -63,6 +65,7 @@ show_logs_on_failure() {
         docker logs "$c" 2>&1 | tail -30 || true
     done
     docker ps -a
+    return 0
 }
 
 # Allow sourcing or direct execution
