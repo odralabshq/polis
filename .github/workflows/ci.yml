@@ -445,14 +445,14 @@ jobs:
         with:
           directory: .
           framework: dockerfile,github_actions,yaml
-          output_format: cli,sarif
-          output_file_path: console,checkov.sarif
+          output_format: sarif
+          output_file_path: results.sarif
           soft_fail: true
 
       - name: Upload Checkov SARIF
         uses: github/codeql-action/upload-sarif@f5c2471be782132e47a6e6f9c725e56730d6e9a3 # v3.32.3
         with:
-          sarif_file: checkov.sarif
+          sarif_file: results.sarif
           category: checkov-iac
         if: always()
 
