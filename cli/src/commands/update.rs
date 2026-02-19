@@ -235,6 +235,342 @@ fn extract_tar_content(signed_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(content)
 }
 
+// ── Container update flow (issue 08) ─────────────────────────────────────────
+
+/// VM name used by multipass.
+const VM_NAME: &str = "polis";
+
+/// GHCR registry prefix for Polis container images.
+const GHCR_PREFIX: &str = "ghcr.io/odralabshq";
+
+/// Path to `docker-compose.yml` inside the VM.
+const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
+
+/// A planned container update with current and target versions.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct ContainerUpdate {
+    /// Service name in `docker-compose.yml` (e.g., `"gate"`).
+    pub service_key: String,
+    /// Full image name (e.g., `"polis-gate-oss"`).
+    pub image_name: String,
+    /// Currently deployed version tag (e.g., `"v0.3.0"`).
+    pub current_version: String,
+    /// Target version from `versions.json`.
+    pub target_version: String,
+}
+
+/// Rollback information captured before applying updates.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct RollbackInfo {
+    /// `(service_key, previous_ghcr_image_ref)` pairs.
+    pub previous_refs: Vec<(String, String)>,
+}
+
+/// Build the full GHCR image reference.
+///
+/// # Example
+///
+/// ```text
+/// ghcr_ref("polis-gate-oss", "v0.3.1")
+/// // → "ghcr.io/odralabshq/polis-gate-oss:v0.3.1"
+/// ```
+fn ghcr_ref(image_name: &str, version: &str) -> String {
+    format!("{GHCR_PREFIX}/{image_name}:{version}")
+}
+
+/// Map a `versions.json` container name to its `docker-compose.yml` service key.
+///
+/// Strips the `polis-` prefix and `-oss` suffix.
+/// Falls back to the original name if the pattern does not match.
+///
+/// # Example
+///
+/// ```text
+/// container_to_service_key("polis-gate-oss") // → "gate"
+/// ```
+fn container_to_service_key(container_name: &str) -> &str {
+    container_name
+        .strip_prefix("polis-")
+        .and_then(|s| s.strip_suffix("-oss"))
+        .unwrap_or(container_name)
+}
+
+/// Read the currently deployed image tag for a service from the compose file inside the VM.
+///
+/// Returns `None` if the VM is not running or the service is not found.
+///
+/// # Errors
+///
+/// Returns an error if the `multipass exec` call fails unexpectedly.
+fn get_deployed_version(service_key: &str) -> Result<Option<String>> {
+    let output = std::process::Command::new("multipass")
+        .args([
+            "exec",
+            VM_NAME,
+            "--",
+            "yq",
+            &format!(".services.{service_key}.image"),
+            COMPOSE_PATH,
+        ])
+        .output()
+        .context("failed to run multipass exec yq")?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let image_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if image_ref.is_empty() || image_ref == "null" {
+        return Ok(None);
+    }
+
+    // Extract version tag from "ghcr.io/odralabshq/polis-gate-oss:v0.3.0"
+    let version = image_ref
+        .rsplit_once(':')
+        .map(|(_, tag)| tag.to_string())
+        .unwrap_or(image_ref);
+
+    Ok(Some(version))
+}
+
+/// Pull a container image inside the VM via `docker compose pull`.
+///
+/// Returns `false` if the pull fails (caller decides whether to abort).
+///
+/// # Errors
+///
+/// Returns an error only if `multipass exec` itself cannot be spawned.
+fn pull_container_image(service_key: &str) -> Result<bool> {
+    let output = std::process::Command::new("multipass")
+        .args([
+            "exec",
+            VM_NAME,
+            "--",
+            "docker",
+            "compose",
+            "-f",
+            COMPOSE_PATH,
+            "pull",
+            service_key,
+        ])
+        .output()
+        .context("failed to run multipass exec docker compose pull")?;
+
+    Ok(output.status.success())
+}
+
+/// Capture the current image refs for all services being updated (for rollback).
+///
+/// # Errors
+///
+/// Returns an error if any `multipass exec` call fails.
+fn capture_rollback_info(updates: &[ContainerUpdate]) -> Result<RollbackInfo> {
+    let mut previous_refs = Vec::with_capacity(updates.len());
+    for u in updates {
+        let output = std::process::Command::new("multipass")
+            .args([
+                "exec",
+                VM_NAME,
+                "--",
+                "yq",
+                &format!(".services.{}.image", u.service_key),
+                COMPOSE_PATH,
+            ])
+            .output()
+            .context("failed to read current image ref for rollback")?;
+
+        let image_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        previous_refs.push((u.service_key.clone(), image_ref));
+    }
+    Ok(RollbackInfo { previous_refs })
+}
+
+/// Update a single service's image tag in `docker-compose.yml` inside the VM via `yq`.
+///
+/// # Errors
+///
+/// Returns an error if the `yq` command fails.
+fn update_compose_tag(service_key: &str, image_ref: &str) -> Result<()> {
+    let expr = format!(".services.{service_key}.image = \"{image_ref}\"");
+    let output = std::process::Command::new("multipass")
+        .args(["exec", VM_NAME, "--", "yq", "-i", &expr, COMPOSE_PATH])
+        .output()
+        .context("failed to run multipass exec yq -i")?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to update docker-compose.yml: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
+}
+
+/// Restart the given services inside the VM via `docker compose up -d`.
+///
+/// # Errors
+///
+/// Returns an error if the restart command fails.
+fn restart_services(service_keys: &[&str]) -> Result<()> {
+    let mut args = vec![
+        "exec",
+        VM_NAME,
+        "--",
+        "docker",
+        "compose",
+        "-f",
+        COMPOSE_PATH,
+        "up",
+        "-d",
+    ];
+    args.extend_from_slice(service_keys);
+
+    let output = std::process::Command::new("multipass")
+        .args(&args)
+        .output()
+        .context("failed to run multipass exec docker compose up -d")?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
+}
+
+/// Check whether the workspace VM is running.
+fn is_vm_running() -> bool {
+    std::process::Command::new("multipass")
+        .args(["info", VM_NAME, "--format", "json"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Compute the list of container updates by comparing the manifest against deployed versions.
+///
+/// # Errors
+///
+/// Returns an error if any version tag in the manifest fails validation.
+fn compute_container_updates(manifest: &VersionsManifest) -> Result<Vec<ContainerUpdate>> {
+    let mut updates = Vec::new();
+    for (image_name, target_version) in &manifest.containers {
+        validate_version_tag(target_version)
+            .with_context(|| format!("invalid version tag in manifest: {target_version}"))?;
+
+        let service_key = container_to_service_key(image_name).to_string();
+        let current_version = get_deployed_version(&service_key)
+            .unwrap_or(None)
+            .unwrap_or_else(|| "unknown".to_string());
+
+        if current_version != *target_version {
+            updates.push(ContainerUpdate {
+                service_key,
+                image_name: image_name.clone(),
+                current_version,
+                target_version: target_version.clone(),
+            });
+        }
+    }
+    Ok(updates)
+}
+
+/// Run the container update flow: pull → update compose → restart → rollback on failure.
+///
+/// # Errors
+///
+/// Returns an error if the VM is not running, any pull fails, or rollback fails.
+pub fn update_containers(manifest: &VersionsManifest, ctx: &OutputContext) -> Result<()> {
+    if !is_vm_running() {
+        anyhow::bail!("Workspace is not running. Start it with: polis start");
+    }
+
+    let updates = compute_container_updates(manifest)?;
+
+    if updates.is_empty() {
+        println!(
+            "  {} All containers up to date",
+            "✓".style(ctx.styles.success)
+        );
+        return Ok(());
+    }
+
+    // Display update table
+    println!("  {:<24} {:<12} Available", "Container", "Current");
+    println!("  {}", "─".repeat(52));
+    for u in &updates {
+        println!("  {:<24} {:<12} {}", u.image_name, u.current_version, u.target_version);
+    }
+    println!();
+
+    let confirmed = Confirm::new()
+        .with_prompt(format!("Update {} container(s)?", updates.len()))
+        .default(true)
+        .interact()
+        .context("reading confirmation")?;
+
+    if !confirmed {
+        return Ok(());
+    }
+
+    // Capture rollback info before any changes
+    let rollback = capture_rollback_info(&updates)?;
+
+    // Pull all images first (F-002 atomicity — no compose changes until all pulls succeed)
+    for u in &updates {
+        if !ctx.quiet {
+            println!("  Pulling {} {}...", u.image_name, u.target_version);
+        }
+        if !pull_container_image(&u.service_key)? {
+            println!(
+                "  Pull failed for {}:{}. No changes made.",
+                u.image_name, u.target_version
+            );
+            return Ok(());
+        }
+    }
+
+    // Update compose tags and restart
+    let service_keys: Vec<&str> = updates.iter().map(|u| u.service_key.as_str()).collect();
+
+    let apply_result = (|| -> Result<()> {
+        for u in &updates {
+            let new_ref = ghcr_ref(&u.image_name, &u.target_version);
+            update_compose_tag(&u.service_key, &new_ref)?;
+        }
+        restart_services(&service_keys)
+    })();
+
+    match apply_result {
+        Ok(()) => {
+            println!();
+            println!("  {} Updated", "✓".style(ctx.styles.success));
+        }
+        Err(e) => {
+            eprintln!("  Restart failed. Rolling back...");
+            // Restore previous refs (F-003)
+            let rollback_result = (|| -> Result<()> {
+                for (svc, prev_ref) in &rollback.previous_refs {
+                    update_compose_tag(svc, prev_ref)?;
+                }
+                restart_services(&service_keys)
+            })();
+
+            match rollback_result {
+                Ok(()) => anyhow::bail!("Update rolled back: {e}"),
+                Err(rb_err) => anyhow::bail!(
+                    "CRITICAL: Rollback failed. Manual intervention required.\n\
+                     Restore {COMPOSE_PATH} from backup.\n\
+                     Rollback error: {rb_err}"
+                ),
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// Information about an available update.
@@ -386,6 +722,20 @@ pub async fn run(ctx: &OutputContext, checker: &impl UpdateChecker) -> Result<()
             println!("  {} Updated to v{version}", "✓".style(ctx.styles.success),);
             println!();
             println!("  Restart your terminal or run: exec polis");
+        }
+    }
+
+    // Container update check (issue 08)
+    println!();
+    if !ctx.quiet {
+        println!("  Checking container updates...");
+        println!();
+    }
+    match load_versions_manifest() {
+        Ok(manifest) => update_containers(&manifest, ctx)?,
+        Err(e) => {
+            // Non-fatal: container update check failure should not block CLI update
+            eprintln!("  Warning: could not load versions manifest: {e}");
         }
     }
 
