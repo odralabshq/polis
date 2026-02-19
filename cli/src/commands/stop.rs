@@ -28,3 +28,56 @@ pub fn run(state_mgr: &StateManager, driver: &dyn WorkspaceDriver) -> Result<()>
 
     Ok(())
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::workspace::MockDriver;
+    use tempfile::TempDir;
+
+    fn state_mgr_with_state(dir: &TempDir) -> StateManager {
+        let polis_dir = dir.path().join(".polis");
+        std::fs::create_dir_all(&polis_dir).expect("create .polis dir");
+        let state_path = polis_dir.join("state.json");
+        std::fs::write(
+            &state_path,
+            r#"{"stage":"agent_ready","agent":"claude-dev","workspace_id":"ws-test01","started_at":"2026-02-17T14:30:00Z"}"#,
+        )
+        .expect("write state");
+        StateManager::with_path(state_path)
+    }
+
+    #[test]
+    fn test_stop_already_stopped_exits_ok() {
+        let dir = TempDir::new().expect("tempdir");
+        let mgr = state_mgr_with_state(&dir);
+        let driver = MockDriver { running: false };
+
+        let result = run(&mgr, &driver);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_stop_running_workspace_exits_ok() {
+        let dir = TempDir::new().expect("tempdir");
+        let mgr = state_mgr_with_state(&dir);
+        let driver = MockDriver { running: true };
+
+        let result = run(&mgr, &driver);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_stop_preserves_state_file() {
+        let dir = TempDir::new().expect("tempdir");
+        let mgr = state_mgr_with_state(&dir);
+        let driver = MockDriver { running: true };
+
+        run(&mgr, &driver).expect("stop should succeed");
+
+        // State file must still exist — stop preserves data
+        let reloaded = mgr.load().expect("load").expect("state should exist");
+        assert_eq!(reloaded.workspace_id, "ws-test01");
+    }
+}

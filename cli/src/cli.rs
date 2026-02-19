@@ -102,9 +102,13 @@ impl Cli {
             Command::Version => commands::version::run(json),
             Command::Status => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::status::run(&ctx, json).await
+                let mp = crate::multipass::MultipassCli;
+                commands::status::run(&ctx, json, &mp).await
             }
-            Command::Run(args) => commands::run::run(&args),
+            Command::Run(args) => {
+                let mp = crate::multipass::MultipassCli;
+                commands::run::run(&args, &mp)
+            }
             Command::Start => {
                 let state_mgr = crate::state::StateManager::new()?;
                 let driver = crate::workspace::MultipassDriver;
@@ -134,7 +138,8 @@ impl Cli {
             }
             Command::Update => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::update::run(&ctx, &commands::update::GithubUpdateChecker).await
+                let mp = crate::multipass::MultipassCli;
+                commands::update::run(&ctx, &commands::update::GithubUpdateChecker, &mp).await
             }
             Command::Init(args) => commands::init::run(&args),
             Command::Doctor => {

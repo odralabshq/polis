@@ -6,6 +6,7 @@ use clap::Parser;
 
 mod cli;
 mod commands;
+mod multipass;
 mod output;
 #[allow(dead_code)] // exists/remove used by tests and future commands (delete, connect)
 mod ssh;

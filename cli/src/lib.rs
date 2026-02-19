@@ -3,6 +3,7 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 pub mod commands;
+pub mod multipass;
 pub mod output;
 pub mod ssh;
 pub mod state;

@@ -1,7 +1,6 @@
 //! Run command — state machine for checkpoint/resume and agent switching.
 
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -9,10 +8,8 @@ use chrono::Utc;
 use clap::Args;
 use polis_common::types::{RunStage, RunState};
 
+use crate::multipass::Multipass;
 use crate::state::StateManager;
-
-/// VM name used by multipass.
-const VM_NAME: &str = "polis";
 
 /// Default VM resources.
 const VM_CPUS: &str = "2";
@@ -31,7 +28,7 @@ pub struct RunArgs {
 /// # Errors
 ///
 /// Returns an error if agent resolution, state loading, or stage execution fails.
-pub fn run(args: &RunArgs) -> Result<()> {
+pub fn run(args: &RunArgs, mp: &impl Multipass) -> Result<()> {
     let state_mgr = StateManager::new()?;
 
     let existing = match state_mgr.load() {
@@ -45,9 +42,9 @@ pub fn run(args: &RunArgs) -> Result<()> {
     let target_agent = resolve_agent(args.agent.as_deref())?;
 
     match existing {
-        Some(state) if state.agent == target_agent => resume_run(&state_mgr, state),
-        Some(state) => switch_agent(&state_mgr, state, &target_agent),
-        None => fresh_run(&state_mgr, &target_agent),
+        Some(state) if state.agent == target_agent => resume_run(&state_mgr, state, mp),
+        Some(state) => switch_agent(&state_mgr, state, &target_agent, mp),
+        None => fresh_run(&state_mgr, &target_agent, mp),
     }
 }
 
@@ -144,11 +141,11 @@ fn prompt_agent_selection(agents: &[String]) -> Result<String> {
 /// # Errors
 ///
 /// Returns an error if any remaining stage fails.
-fn resume_run(state_mgr: &StateManager, mut run_state: RunState) -> Result<()> {
+fn resume_run(state_mgr: &StateManager, mut run_state: RunState, mp: &impl Multipass) -> Result<()> {
     println!("Resuming from: {}", run_state.stage.description());
     let mut next = run_state.stage.next();
     while let Some(next_stage) = next {
-        execute_stage(&mut run_state, next_stage)?;
+        execute_stage(&mut run_state, next_stage, mp)?;
         state_mgr.advance(&mut run_state, next_stage)?;
         next = next_stage.next();
     }
@@ -161,7 +158,7 @@ fn resume_run(state_mgr: &StateManager, mut run_state: RunState) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the user declines or the switch fails.
-fn switch_agent(state_mgr: &StateManager, run_state: RunState, target_agent: &str) -> Result<()> {
+fn switch_agent(state_mgr: &StateManager, run_state: RunState, target_agent: &str, mp: &impl Multipass) -> Result<()> {
     println!();
     println!("  Workspace is running {}.", run_state.agent);
     println!();
@@ -185,7 +182,7 @@ fn switch_agent(state_mgr: &StateManager, run_state: RunState, target_agent: &st
         started_at: Utc::now(),
         image_sha256: run_state.image_sha256,
     };
-    execute_stage(&mut new_state, RunStage::AgentReady)?;
+    execute_stage(&mut new_state, RunStage::AgentReady, mp)?;
     state_mgr.advance(&mut new_state, RunStage::AgentReady)?;
     println!("{target_agent} is ready");
     Ok(())
@@ -196,7 +193,7 @@ fn switch_agent(state_mgr: &StateManager, run_state: RunState, target_agent: &st
 /// # Errors
 ///
 /// Returns an error if any stage fails.
-fn fresh_run(state_mgr: &StateManager, agent: &str) -> Result<()> {
+fn fresh_run(state_mgr: &StateManager, agent: &str, mp: &impl Multipass) -> Result<()> {
     // Pre-flight: verify image exists and is intact before touching any state.
     let image_path = get_image_path()?;
     let image_sha = verify_image_at_launch(&image_path)?;
@@ -215,7 +212,7 @@ fn fresh_run(state_mgr: &StateManager, agent: &str) -> Result<()> {
         RunStage::Provisioned,
         RunStage::AgentReady,
     ] {
-        execute_stage(&mut run_state, next_stage)?;
+        execute_stage(&mut run_state, next_stage, mp)?;
         state_mgr.advance(&mut run_state, next_stage)?;
         if next_stage == RunStage::Provisioned {
             pin_host_key();
@@ -259,23 +256,23 @@ fn pin_host_key() {
 /// # Errors
 ///
 /// Returns an error if the stage operation fails.
-fn execute_stage(_run_state: &mut RunState, stage: RunStage) -> Result<()> {
+fn execute_stage(_run_state: &mut RunState, stage: RunStage, mp: &impl Multipass) -> Result<()> {
     println!("{}...", stage.description());
 
     match stage {
         RunStage::WorkspaceCreated => {
-            create_workspace()?;
+            create_workspace(mp)?;
         }
         RunStage::CredentialsSet => {
-            configure_credentials()?;
+            configure_credentials(mp)?;
         }
         RunStage::Provisioned => {
-            provision_workspace()?;
+            provision_workspace(mp)?;
         }
         RunStage::AgentReady => {
             // Agent installation is a no-op for now — workspace container
             // starts automatically with docker compose.
-            wait_for_workspace_healthy();
+            wait_for_workspace_healthy(mp);
         }
     }
 
@@ -358,17 +355,13 @@ fn verify_image_at_launch(image_path: &std::path::Path) -> Result<String> {
 }
 
 /// Create the workspace VM via multipass.
-fn create_workspace() -> Result<()> {
+fn create_workspace(mp: &impl Multipass) -> Result<()> {
     // Check if VM already exists
-    let info = Command::new("multipass")
-        .args(["info", VM_NAME, "--format", "json"])
-        .output();
-
-    if let Ok(output) = info
+    if let Ok(output) = mp.vm_info()
         && output.status.success()
     {
         println!("  Workspace already exists, starting...");
-        return start_vm();
+        return start_vm(mp);
     }
 
     // Launch new VM from local image
@@ -377,12 +370,8 @@ fn create_workspace() -> Result<()> {
 
     println!("  Launching workspace from {}", image_path.display());
 
-    let output = Command::new("multipass")
-        .args([
-            "launch", &image_url, "--name", VM_NAME, "--cpus", VM_CPUS, "--memory", VM_MEMORY,
-            "--disk", VM_DISK,
-        ])
-        .output()
+    let output = mp
+        .launch(&image_url, VM_CPUS, VM_MEMORY, VM_DISK)
         .context("failed to run multipass launch")?;
 
     if !output.status.success() {
@@ -395,11 +384,8 @@ fn create_workspace() -> Result<()> {
 }
 
 /// Start an existing VM.
-fn start_vm() -> Result<()> {
-    let output = Command::new("multipass")
-        .args(["start", VM_NAME])
-        .output()
-        .context("failed to run multipass start")?;
+fn start_vm(mp: &impl Multipass) -> Result<()> {
+    let output = mp.start().context("failed to run multipass start")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -410,18 +396,13 @@ fn start_vm() -> Result<()> {
 }
 
 /// Configure credentials inside the VM.
-fn configure_credentials() -> Result<()> {
+fn configure_credentials(mp: &impl Multipass) -> Result<()> {
     // Transfer CA certificate if it exists
     let ca_cert = PathBuf::from("certs/ca/ca.pem");
     if ca_cert.exists() {
         println!("  Transferring CA certificate...");
-        let output = Command::new("multipass")
-            .args([
-                "transfer",
-                &ca_cert.to_string_lossy(),
-                &format!("{VM_NAME}:/tmp/ca.pem"),
-            ])
-            .output()
+        let output = mp
+            .transfer(&ca_cert.to_string_lossy(), "/tmp/ca.pem")
             .context("failed to transfer CA cert")?;
 
         if !output.status.success() {
@@ -435,14 +416,13 @@ fn configure_credentials() -> Result<()> {
 }
 
 /// Provision the workspace by ensuring services are running.
-fn provision_workspace() -> Result<()> {
+fn provision_workspace(mp: &impl Multipass) -> Result<()> {
     println!("  Starting services...");
 
     // Services auto-start via systemd polis.service on boot
     // Just ensure the service is started (idempotent)
-    let output = Command::new("multipass")
-        .args(["exec", VM_NAME, "--", "sudo", "systemctl", "start", "polis"])
-        .output()
+    let output = mp
+        .exec(&["sudo", "systemctl", "start", "polis"])
         .context("failed to start polis service")?;
 
     if !output.status.success() {
@@ -455,26 +435,16 @@ fn provision_workspace() -> Result<()> {
 
 /// Wait for the workspace container to become healthy.
 #[allow(clippy::cognitive_complexity)] // NOSONAR: Polling loop with nested checks is inherently complex
-fn wait_for_workspace_healthy() {
+fn wait_for_workspace_healthy(mp: &impl Multipass) {
     println!("  Waiting for workspace to be ready...");
 
     let max_attempts = 30;
     let delay = Duration::from_secs(2);
 
     for attempt in 1..=max_attempts {
-        let output = Command::new("multipass")
-            .args([
-                "exec",
-                VM_NAME,
-                "--",
-                "docker",
-                "compose",
-                "ps",
-                "--format",
-                "json",
-                "workspace",
-            ])
-            .output();
+        let output = mp.exec(&[
+            "docker", "compose", "ps", "--format", "json", "workspace",
+        ]);
 
         if let Ok(output) = output
             && output.status.success()
@@ -527,20 +497,21 @@ fn generate_workspace_id() -> String {
 // Unit Tests
 // ============================================================================
 
+/// Serialize all tests that read/write `POLIS_IMAGE` across both test modules.
+#[cfg(test)]
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, unsafe_code)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// Serialize all tests that read/write `POLIS_IMAGE` to prevent races.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     // ── get_image_path ───────────────────────────────────────────────────────
 
     #[test]
     fn test_get_image_path_polis_image_env_existing_file_returns_ok() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("custom.qcow2");
         std::fs::write(&img, b"fake").unwrap();
@@ -553,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_get_image_path_polis_image_env_missing_file_returns_error() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::set_var("POLIS_IMAGE", "/nonexistent/custom.qcow2") };
         let result = get_image_path();
@@ -564,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_get_image_path_no_image_returns_error_with_hint() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         if get_image_path().is_err() {
@@ -577,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_matching_checksum_returns_hash() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
@@ -591,7 +562,7 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_mismatched_checksum_returns_error() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
@@ -605,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_mismatched_checksum_error_contains_force_hint() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
@@ -619,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_missing_sidecar_no_polis_image_returns_error() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
@@ -631,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_verify_image_at_launch_missing_sidecar_with_polis_image_warns_and_returns_hash() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("custom.qcow2");
         std::fs::write(&img, b"hello").unwrap();
@@ -676,6 +647,138 @@ mod tests {
         let result = resolve_agent(Some("nonexistent-xyz-123")).unwrap();
         assert_eq!(result, "nonexistent-xyz-123");
     }
+
+    // ── MockMultipass for run pipeline tests ─────────────────────────────────
+
+    use std::os::unix::process::ExitStatusExt;
+
+    fn ok_output(stdout: &[u8]) -> std::process::Output {
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn fail_output() -> std::process::Output {
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(256), // exit code 1
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
+
+    struct MockMultipass {
+        vm_exists: bool,
+    }
+
+    impl crate::multipass::Multipass for MockMultipass {
+        fn vm_info(&self) -> anyhow::Result<std::process::Output> {
+            if self.vm_exists {
+                Ok(ok_output(b"{}"))
+            } else {
+                Ok(fail_output())
+            }
+        }
+        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
+            Ok(ok_output(b""))
+        }
+        fn start(&self) -> anyhow::Result<std::process::Output> {
+            Ok(ok_output(b""))
+        }
+        fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
+            Ok(ok_output(b""))
+        }
+        fn exec(&self, args: &[&str]) -> anyhow::Result<std::process::Output> {
+            if args.contains(&"docker") {
+                Ok(ok_output(br#"{"State":"running","Health":"healthy"}"#))
+            } else {
+                Ok(ok_output(b""))
+            }
+        }
+    }
+
+    // ── fresh run ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_fresh_run_with_mock_multipass_succeeds() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("test.qcow2");
+        std::fs::write(&img, b"fake-image").unwrap();
+        // SAFETY: protected by ENV_LOCK
+        unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
+
+        let state_mgr = StateManager::with_path(dir.path().join("state.json"));
+        let mp = MockMultipass { vm_exists: false };
+        let result = fresh_run(&state_mgr, "test-agent", &mp);
+
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        assert!(result.is_ok(), "fresh run should succeed: {result:?}");
+    }
+
+    #[test]
+    fn test_fresh_run_creates_state_file() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("test.qcow2");
+        std::fs::write(&img, b"fake-image").unwrap();
+        // SAFETY: protected by ENV_LOCK
+        unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
+
+        let state_path = dir.path().join("state.json");
+        let state_mgr = StateManager::with_path(state_path.clone());
+        let mp = MockMultipass { vm_exists: false };
+        let _ = fresh_run(&state_mgr, "test-agent", &mp);
+
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+        assert!(state_path.exists(), "state.json must be created after run");
+    }
+
+    #[test]
+    fn test_fresh_run_state_file_contains_valid_json() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("test.qcow2");
+        std::fs::write(&img, b"fake-image").unwrap();
+        // SAFETY: protected by ENV_LOCK
+        unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
+
+        let state_path = dir.path().join("state.json");
+        let state_mgr = StateManager::with_path(state_path.clone());
+        let mp = MockMultipass { vm_exists: false };
+        let _ = fresh_run(&state_mgr, "test-agent", &mp);
+
+        unsafe { std::env::remove_var("POLIS_IMAGE") };
+
+        let content = std::fs::read_to_string(&state_path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
+        assert!(v.get("stage").is_some(), "must have 'stage'");
+        assert!(v.get("agent").is_some(), "must have 'agent'");
+        assert!(v.get("workspace_id").is_some(), "must have 'workspace_id'");
+        assert!(v.get("started_at").is_some(), "must have 'started_at'");
+    }
+
+    // ── resume run ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_resume_run_from_provisioned_stage_succeeds() {
+        let dir = TempDir::new().unwrap();
+        let state_path = dir.path().join("state.json");
+        let state_mgr = StateManager::with_path(state_path);
+
+        let run_state = polis_common::types::RunState {
+            stage: polis_common::types::RunStage::Provisioned,
+            agent: "test-agent".to_string(),
+            workspace_id: "ws-test01".to_string(),
+            started_at: chrono::Utc::now(),
+            image_sha256: None,
+        };
+
+        let mp = MockMultipass { vm_exists: true };
+        let result = resume_run(&state_mgr, run_state, &mp);
+        assert!(result.is_ok(), "resume run should succeed: {result:?}");
+    }
 }
 
 // ============================================================================
@@ -688,9 +791,6 @@ mod proptests {
     use super::*;
     use proptest::prelude::*;
     use tempfile::TempDir;
-
-    /// Same lock as in `tests` — proptest runs on the same thread pool.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     proptest! {
         /// generate_workspace_id always matches expected format
@@ -715,7 +815,7 @@ mod proptests {
         fn prop_verify_image_at_launch_correct_checksum_always_succeeds(
             content in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..512)
         ) {
-            let _g = ENV_LOCK.lock().expect("lock");
+            let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let dir = TempDir::new().expect("tempdir");
             let img = dir.path().join("polis-workspace.qcow2");
             std::fs::write(&img, &content).expect("write image");
@@ -734,7 +834,7 @@ mod proptests {
         fn prop_verify_image_at_launch_wrong_checksum_always_fails(
             content in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..512)
         ) {
-            let _g = ENV_LOCK.lock().expect("lock");
+            let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let dir = TempDir::new().expect("tempdir");
             let img = dir.path().join("polis-workspace.qcow2");
             std::fs::write(&img, &content).expect("write image");

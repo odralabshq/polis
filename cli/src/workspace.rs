@@ -45,6 +45,8 @@ pub trait WorkspaceDriver {
     fn remove_cached_images(&self) -> Result<()>;
 }
 
+// TODO: refactor to compose over crate::multipass::Multipass trait
+// to eliminate duplicated vm_info/start/exec calls (audit F-003).
 /// Production driver — delegates to multipass for VM lifecycle.
 pub struct MultipassDriver;
 

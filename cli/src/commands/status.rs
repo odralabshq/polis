@@ -4,27 +4,23 @@
 
 #![allow(dead_code)] // Helper functions used only in tests
 
-use std::time::Duration;
-
 use anyhow::Result;
 use polis_common::types::{
     AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
     WorkspaceState, WorkspaceStatus,
 };
-use tokio::time::timeout;
 
+use crate::multipass::Multipass;
 use crate::output::OutputContext;
-
-/// Timeout for status checks.
-const CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Run the status command.
 ///
 /// # Errors
 ///
 /// Returns an error if JSON serialization fails.
-pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
-    let output = gather_status().await;
+#[allow(clippy::unused_async)] // async contract with cli.rs
+pub async fn run(ctx: &OutputContext, json: bool, mp: &impl Multipass) -> Result<()> {
+    let output = gather_status(mp);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -36,12 +32,12 @@ pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
 }
 
 /// Gather all status information.
-async fn gather_status() -> StatusOutput {
-    let workspace = get_workspace_status().await;
+fn gather_status(mp: &impl Multipass) -> StatusOutput {
+    let workspace = get_workspace_status(mp);
     let is_running = workspace.status == WorkspaceState::Running;
 
     let (security, agent) = if is_running {
-        tokio::join!(get_security_status(), get_agent_status())
+        (get_security_status(mp), get_agent_status(mp))
     } else {
         (
             SecurityStatus {
@@ -65,9 +61,8 @@ async fn gather_status() -> StatusOutput {
 }
 
 /// Check workspace status via multipass.
-async fn get_workspace_status() -> WorkspaceStatus {
-    // First check if VM is running
-    let Ok(Some(vm_state)) = timeout(CHECK_TIMEOUT, check_multipass_status()).await else {
+fn get_workspace_status(mp: &impl Multipass) -> WorkspaceStatus {
+    let Some(vm_state) = check_multipass_status(mp) else {
         return workspace_unknown();
     };
 
@@ -80,7 +75,7 @@ async fn get_workspace_status() -> WorkspaceStatus {
     }
 
     // VM is running - check if polis-workspace container is running
-    let container_running = check_workspace_container().await;
+    let container_running = check_workspace_container(mp);
 
     WorkspaceStatus {
         status: if container_running {
@@ -93,12 +88,8 @@ async fn get_workspace_status() -> WorkspaceStatus {
 }
 
 /// Check multipass VM state.
-async fn check_multipass_status() -> Option<WorkspaceState> {
-    let output = tokio::process::Command::new("multipass")
-        .args(["info", "polis", "--format", "json"])
-        .output()
-        .await
-        .ok()?;
+fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
+    let output = mp.vm_info().ok()?;
 
     if !output.status.success() {
         return None;
@@ -117,21 +108,10 @@ async fn check_multipass_status() -> Option<WorkspaceState> {
 }
 
 /// Check if polis-workspace container is running inside VM.
-async fn check_workspace_container() -> bool {
-    let output = tokio::process::Command::new("multipass")
-        .args([
-            "exec",
-            "polis",
-            "--",
-            "docker",
-            "compose",
-            "ps",
-            "--format",
-            "json",
-            "workspace",
-        ])
-        .output()
-        .await;
+fn check_workspace_container(mp: &impl Multipass) -> bool {
+    let output = mp.exec(&[
+        "docker", "compose", "ps", "--format", "json", "workspace",
+    ]);
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -150,13 +130,8 @@ async fn check_workspace_container() -> bool {
 }
 
 /// Check security services inside multipass VM.
-async fn get_security_status() -> SecurityStatus {
-    let output = tokio::process::Command::new("multipass")
-        .args([
-            "exec", "polis", "--", "docker", "compose", "ps", "--format", "json",
-        ])
-        .output()
-        .await;
+fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
+    let output = mp.exec(&["docker", "compose", "ps", "--format", "json"]);
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -198,21 +173,11 @@ async fn get_security_status() -> SecurityStatus {
 }
 
 /// Check agent status inside multipass VM.
-async fn get_agent_status() -> Option<AgentStatus> {
-    let output = tokio::process::Command::new("multipass")
-        .args([
-            "exec",
-            "polis",
-            "--",
-            "docker",
-            "compose",
-            "ps",
-            "--format",
-            "json",
-            "workspace",
+fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
+    let output = mp
+        .exec(&[
+            "docker", "compose", "ps", "--format", "json", "workspace",
         ])
-        .output()
-        .await
         .ok()?;
 
     if !output.status.success() {
