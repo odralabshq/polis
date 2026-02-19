@@ -226,16 +226,31 @@ up:
     sudo systemctl restart sysbox 2>/dev/null || true
     timeout 15 bash -c 'until sudo systemctl is-active sysbox &>/dev/null; do sleep 1; done' || true
     touch .env
-    docker compose -f docker-compose.yml --env-file .env up -d
-    docker compose -f docker-compose.yml --env-file .env ps
+    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
+    OVERRIDE_FLAG=""
+    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
+    # shellcheck disable=SC2086
+    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env up -d
+    # shellcheck disable=SC2086
+    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env ps
 down:
     docker compose down --volumes --remove-orphans
 
 status:
-    docker compose -f docker-compose.yml --env-file .env ps
+    #!/usr/bin/env bash
+    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
+    OVERRIDE_FLAG=""
+    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
+    # shellcheck disable=SC2086
+    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env ps
 
 logs service="":
-    docker compose -f docker-compose.yml --env-file .env logs --tail=50 -f {{service}}
+    #!/usr/bin/env bash
+    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
+    OVERRIDE_FLAG=""
+    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
+    # shellcheck disable=SC2086
+    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env logs --tail=50 -f {{service}}
 
 # ── Release ─────────────────────────────────────────────────────────
 package-vm arch="amd64":
