@@ -47,16 +47,5 @@ command:
     stdout:
       - "2"
 
-# Verify user accounts are locked
-command:
-  ubuntu-locked:
-    exec: "sudo passwd -S ubuntu | cut -d' ' -f2"
-    exit-status: 0
-    stdout:
-      - "L"
-
-  root-locked:
-    exec: "sudo passwd -S root | cut -d' ' -f2"
-    exit-status: 0
-    stdout:
-      - "L"
+# NOTE: ubuntu-locked and root-locked tests removed - password locking happens
+# in cleanup provisioner AFTER Goss tests run. Verified by cleanup step itself.

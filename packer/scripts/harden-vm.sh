@@ -60,24 +60,17 @@ sudo systemctl restart auditd || true
 
 echo "==> Hardening Docker daemon..."
 
-DAEMON_JSON="/etc/docker/daemon.json"
-HARDENING_CONFIG='{
+# Write complete daemon.json (no jq dependency on minimal image)
+sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+{
   "runtimes": {
     "sysbox-runc": { "path": "/usr/bin/sysbox-runc" }
   },
   "no-new-privileges": true,
   "live-restore": true,
   "userland-proxy": false
-}'
-
-# Merge with existing config or create new
-if [[ -f "${DAEMON_JSON}" ]]; then
-    echo "${HARDENING_CONFIG}" | sudo jq -s '.[0] * .[1]' "${DAEMON_JSON}" - \
-        | sudo tee "${DAEMON_JSON}.new" > /dev/null
-    sudo mv "${DAEMON_JSON}.new" "${DAEMON_JSON}"
-else
-    echo "${HARDENING_CONFIG}" | sudo tee "${DAEMON_JSON}" > /dev/null
-fi
+}
+EOF
 
 # Restart Docker and wait for readiness
 sudo systemctl restart docker

@@ -34,7 +34,7 @@ command:
       - "Docker version"
 
   docker-info:
-    exec: "docker info 2>/dev/null | grep -i runtime"
+    exec: "sudo docker info 2>/dev/null | grep -i runtime"
     exit-status: 0
     stdout:
       - sysbox-runc
