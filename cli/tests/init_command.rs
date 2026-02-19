@@ -190,7 +190,13 @@ fn test_init_no_flags_no_cache_hits_github_resolver_stub() {
         .env("HOME", dir.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("issue 04"));
+        .stderr(
+            predicate::str::contains("No VM image found in recent GitHub releases.")
+                .or(predicate::str::contains("GitHub API rate limit exceeded"))
+                .or(predicate::str::contains("GitHub API error"))
+                .or(predicate::str::contains("GitHub repository not found"))
+                .or(predicate::str::contains("failed to parse GitHub API response")),
+        );
 }
 
 #[test]

@@ -151,7 +151,7 @@ fn acquire_image(source: &ImageSource, images_dir: &Path) -> Result<ImageMetadat
             Ok(ImageMetadata {
                 version: "local".to_string(),
                 sha256,
-                arch: current_arch(),
+                arch: current_arch()?.to_string(),
                 downloaded_at: Utc::now(),
                 source: source_str,
             })
@@ -162,21 +162,26 @@ fn acquire_image(source: &ImageSource, images_dir: &Path) -> Result<ImageMetadat
             Ok(ImageMetadata {
                 version: "unknown".to_string(),
                 sha256,
-                arch: current_arch(),
+                arch: current_arch()?.to_string(),
                 downloaded_at: Utc::now(),
                 source: url.clone(),
             })
         }
         ImageSource::GitHubLatest => {
-            let (url, version) = resolve_latest_image_url()?;
-            download_with_resume(&url, &dest, &DownloadContext { quiet: false })?;
+            let resolved = resolve_latest_image_url()?;
+            download_with_resume(&resolved.image_url, &dest, &DownloadContext { quiet: false })?;
+            download_with_resume(
+                &resolved.checksum_url,
+                &sidecar,
+                &DownloadContext { quiet: false },
+            )?;
             let sha256 = verify_image_integrity(&dest, &sidecar)?;
             Ok(ImageMetadata {
-                version,
+                version: resolved.tag,
                 sha256,
-                arch: current_arch(),
+                arch: current_arch()?.to_string(),
                 downloaded_at: Utc::now(),
-                source: url,
+                source: resolved.image_url,
             })
         }
     }
@@ -222,12 +227,16 @@ fn write_metadata(images_dir: &Path, meta: &ImageMetadata) -> Result<()> {
     std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Returns the current CPU architecture string.
-fn current_arch() -> String {
-    if cfg!(target_arch = "aarch64") {
-        "arm64".to_string()
-    } else {
-        "amd64".to_string()
+/// Return the architecture suffix used in release asset names.
+///
+/// # Errors
+///
+/// Returns an error if the current architecture is not `x86_64` or `aarch64`.
+fn current_arch() -> Result<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Ok("amd64"),
+        "aarch64" => Ok("arm64"),
+        other => anyhow::bail!("unsupported architecture: {other}"),
     }
 }
 
@@ -445,17 +454,98 @@ fn extract_checksum_from_signed_file(checksum_path: &Path) -> Result<String> {
     Ok(hex.to_string())
 }
 
+/// Resolved release information from GitHub.
+pub struct ResolvedRelease {
+    /// Version tag (e.g., `"v0.3.0"`).
+    pub tag: String,
+    /// Direct download URL for the `.qcow2` image asset.
+    pub image_url: String,
+    /// Direct download URL for the `.sha256` sidecar asset.
+    pub checksum_url: String,
+}
+
+/// GitHub Releases API endpoint — up to 10 most recent releases.
+const GITHUB_RELEASES_URL: &str =
+    "https://api.github.com/repos/OdraLabsHQ/polis/releases?per_page=10";
+
 /// Resolve the latest image URL and version tag from the GitHub API.
 ///
-/// Returns `(url, version)`.
-///
-/// Stub — implemented in issue 04.
+/// Queries the 10 most recent releases and returns the first one that
+/// contains both a `.qcow2` and a `.sha256` asset for the current arch.
 ///
 /// # Errors
 ///
-/// Returns an error if the GitHub API call fails.
-pub(crate) fn resolve_latest_image_url() -> Result<(String, String)> {
-    anyhow::bail!("resolve_latest_image_url not yet implemented (issue 04)")
+/// Returns an error if the API is rate-limited, unreachable, returns
+/// invalid JSON, or no matching release is found.
+pub(crate) fn resolve_latest_image_url() -> Result<ResolvedRelease> {
+    let arch = current_arch()?;
+    let qcow2_suffix = format!("-{arch}.qcow2");
+    let sha256_suffix = format!("-{arch}.qcow2.sha256");
+
+    let token = std::env::var("GITHUB_TOKEN").unwrap_or_default();
+    let req = ureq::get(GITHUB_RELEASES_URL)
+        .set("Accept", "application/vnd.github+json")
+        .set("User-Agent", "polis-cli");
+    let req = if token.is_empty() {
+        req
+    } else {
+        req.set("Authorization", &format!("Bearer {token}"))
+    };
+
+    let releases: serde_json::Value = match req.call() {
+        Ok(resp) => {
+            let body = resp.into_string().context("failed to read GitHub API response")?;
+            serde_json::from_str(&body).context("failed to parse GitHub API response")?
+        }
+        Err(ureq::Error::Status(403, _)) => anyhow::bail!(
+            "GitHub API rate limit exceeded (60 requests/hour unauthenticated).\nSet GITHUB_TOKEN env var or use: polis init --image <direct-url>"
+        ),
+        Err(ureq::Error::Status(404, _)) => {
+            anyhow::bail!("GitHub repository not found: OdraLabsHQ/polis")
+        }
+        Err(ureq::Error::Status(code, _)) => anyhow::bail!("GitHub API error: HTTP {code}"),
+        Err(e) => return Err(anyhow::anyhow!(e)),
+    };
+
+    let releases = releases
+        .as_array()
+        .context("failed to parse GitHub API response")?;
+
+    for release in releases {
+        let tag = release["tag_name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let Some(assets) = release["assets"].as_array() else {
+            continue;
+        };
+
+        let find_url = |suffix: &str| {
+            assets
+                .iter()
+                .find(|a: &&serde_json::Value| {
+                    a["name"]
+                        .as_str()
+                        .is_some_and(|n| n.ends_with(suffix))
+                })
+                .and_then(|a| a["browser_download_url"].as_str())
+                .map(str::to_string)
+        };
+
+        if let (Some(image_url), Some(checksum_url)) =
+            (find_url(&qcow2_suffix), find_url(&sha256_suffix))
+        {
+            return Ok(ResolvedRelease {
+                tag,
+                image_url,
+                checksum_url,
+            });
+        }
+    }
+
+    anyhow::bail!(
+        "No VM image found in recent GitHub releases.\nUse: polis init --image <url>"
+    )
 }
 
 // ============================================================================
@@ -559,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_current_arch_returns_known_value() {
-        let arch = current_arch();
+        let arch = current_arch().unwrap();
         assert!(arch == "amd64" || arch == "arm64", "unexpected arch: {arch}");
     }
 
