@@ -1,0 +1,3 @@
+skip-check:
+  - CKV_DOCKER_2  # HEALTHCHECK - defined in docker-compose.yml for all services
+  - CKV_DOCKER_3  # USER - init containers need root, others use base image users

@@ -45,10 +45,10 @@ _image() { jq -r '.[0].Config.Image' <<< "${!1}"; }
     assert_output --partial "polis-scanner-oss"
 }
 
-@test "state: uses DHI valkey image" {
+@test "state: uses polis-state-oss image" {
     require_container "$CTR_STATE"
     run _image "polis_state_INSPECT"
-    assert_output --partial "dhi.io/valkey"
+    assert_output --partial "polis-state-oss"
 }
 
 @test "toolbox: uses polis-toolbox-oss image" {

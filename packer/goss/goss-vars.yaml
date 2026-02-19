@@ -1,0 +1,20 @@
+# goss-vars.yaml - Variables for Goss tests
+# Values injected from Packer build
+
+# Versions (from packer variables)
+sysbox_version: "{{ .Env.SYSBOX_VERSION }}"
+
+# Paths
+polis_dir: /opt/polis
+docker_daemon_json: /etc/docker/daemon.json
+hardening_sysctl: /etc/sysctl.d/99-polis-hardening.conf
+
+# Expected Docker images (at least these should be loaded)
+expected_images:
+  - polis-resolver
+  - polis-gate
+  - polis-certgen
+  - polis-sentinel
+  - polis-scanner
+  - polis-workspace
+  - polis-toolbox

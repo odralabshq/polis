@@ -6,25 +6,48 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
+# ── Install ─────────────────────────────────────────────────────────
+install-tools:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # HashiCorp repo for packer
+    if ! command -v packer &>/dev/null; then
+        sudo apt-get install -y gnupg curl
+        curl -fsSL https://apt.releases.hashicorp.com/gpg \
+            | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
+        echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/hashicorp.list
+        sudo apt-get update -qq
+        sudo apt-get install -y packer
+    fi
+    sudo apt-get install -y qemu-system-x86 qemu-utils ovmf xorriso
+
 # ── Lint ────────────────────────────────────────────────────────────
 lint: lint-rust lint-c lint-shell
 
 lint-rust:
-    cargo fmt --all --check
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo fmt --all --check --manifest-path cli/Cargo.toml
+    cargo fmt --all --check --manifest-path services/toolbox/Cargo.toml
+    cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings
+    cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
 lint-c:
     find services/sentinel/modules -name '*.c' -print0 | \
       xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
 
 lint-shell:
-    shellcheck tools/dev-vm.sh scripts/install.sh packer/scripts/*.sh
+    shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh packer/scripts/*.sh
 
 # ── Test ────────────────────────────────────────────────────────────
-test: test-rust test-c test-bats
+test: test-rust test-c test-unit
 
 test-rust:
-    cargo test --workspace
+    cargo test --workspace --manifest-path cli/Cargo.toml -- --skip proptests
+    cargo test --workspace --manifest-path services/toolbox/Cargo.toml
+    cargo test --manifest-path lib/crates/polis-common/Cargo.toml
+
+test-rust-proptests:
+    cargo test --workspace --manifest-path cli/Cargo.toml -- proptests
 
 test-c:
     #!/usr/bin/env bash
@@ -35,7 +58,7 @@ test-c:
         "$bin"
     done
 
-test-bats:
+test-unit:
     ./tests/run-tests.sh unit
 
 # Alias for test-c
@@ -57,7 +80,8 @@ test-clean: clean-all build setup up test-all
 
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
-    cargo fmt --all
+    cargo fmt --all --manifest-path cli/Cargo.toml
+    cargo fmt --all --manifest-path services/toolbox/Cargo.toml
 
 # ── Build ───────────────────────────────────────────────────────────
 build:
@@ -68,33 +92,64 @@ build-service service:
     docker build -f services/{{service}}/Dockerfile .
 
 # Build VM image (requires packer)
-build-vm: build _export-images
+# Usage: just build-vm [arch=amd64|arm64] [headless=true|false]
+build-vm arch="amd64" headless="true": build _export-images _bundle-config
     #!/usr/bin/env bash
     set -euo pipefail
     cd packer
     packer init .
-    packer build -var "images_tar=${PWD}/../.build/polis-images.tar" polis-vm.pkr.hcl
+    packer build \
+        -var "images_tar=${PWD}/../.build/polis-images.tar" \
+        -var "config_tar=${PWD}/../.build/polis-config.tar.gz" \
+        -var "arch={{arch}}" \
+        -var "headless={{headless}}" \
+        polis-vm.pkr.hcl
 
 # Internal: export Docker images for VM build
 _export-images:
     #!/usr/bin/env bash
     set -euo pipefail
-    IMAGES=$(grep -oP 'image:\s+\Kpolis-[a-z]+-oss:\S+' docker-compose.yml | sort -u)
+    # Get all images from docker-compose.yml (both polis-* and external)
+    IMAGES=$(grep -oP 'image:\s+\K\S+' docker-compose.yml | sort -u | grep -v 'go-httpbin')
     if [[ -z "${IMAGES}" ]]; then
-        echo "ERROR: No polis-*-oss images found in docker-compose.yml" >&2
+        echo "ERROR: No images found in docker-compose.yml" >&2
         exit 1
     fi
     mkdir -p .build
     chmod 700 .build
-    echo "Exporting: ${IMAGES}"
+    echo "Pulling external images..."
+    EXPORT_IMAGES=""
+    for img in ${IMAGES}; do
+        if [[ ! "$img" =~ ^polis- ]]; then
+            docker pull "$img" || true
+            # Strip @sha256:... suffix for export (docker load doesn't preserve digests)
+            simple_tag="${img%%@sha256:*}"
+            if [[ "$simple_tag" != "$img" ]]; then
+                echo "Tagging $img as $simple_tag"
+                docker tag "$img" "$simple_tag"
+                EXPORT_IMAGES="$EXPORT_IMAGES $simple_tag"
+            else
+                EXPORT_IMAGES="$EXPORT_IMAGES $img"
+            fi
+        else
+            EXPORT_IMAGES="$EXPORT_IMAGES $img"
+        fi
+    done
+    echo "Exporting:${EXPORT_IMAGES}"
     # shellcheck disable=SC2086
-    docker save -o .build/polis-images.tar ${IMAGES}
+    docker save -o .build/polis-images.tar ${EXPORT_IMAGES}
+
+# Internal: bundle config files for VM build
+_bundle-config:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bash packer/scripts/bundle-polis-config.sh
 
 build-all: build-vm
 
 # ── Setup ───────────────────────────────────────────────────────────
 setup: setup-ca setup-valkey setup-toolbox
-    @echo "✓ All certificates and secrets generated"
+    @echo "✓ Setup complete"
 
 setup-ca:
     #!/usr/bin/env bash
@@ -102,22 +157,34 @@ setup-ca:
     CA_DIR=certs/ca
     CA_KEY="${CA_DIR}/ca.key"
     CA_PEM="${CA_DIR}/ca.pem"
-    if [[ -f "$CA_KEY" && -f "$CA_PEM" ]]; then echo "CA already exists."; exit 0; fi
+    if [[ -f "$CA_KEY" && -f "$CA_PEM" ]]; then echo "✓ CA exists"; exit 0; fi
+    echo "→ Generating CA..."
     rm -f "$CA_KEY" "$CA_PEM"
     mkdir -p "$CA_DIR"
-    openssl genrsa -out "$CA_KEY" 4096
+    openssl genrsa -out "$CA_KEY" 4096 2>/dev/null
     openssl req -new -x509 -days 3650 -key "$CA_KEY" -out "$CA_PEM" \
-        -subj "/C=US/ST=Local/L=Local/O=Polis/OU=Gateway/CN=Polis CA"
+        -subj "/C=US/ST=Local/L=Local/O=Polis/OU=Gateway/CN=Polis CA" 2>/dev/null
     chmod 644 "$CA_KEY" "$CA_PEM"
+    echo "✓ CA generated"
 
 setup-valkey:
-    ./services/state/scripts/generate-certs.sh ./certs/valkey
-    ./services/state/scripts/generate-secrets.sh ./secrets .
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "→ Generating Valkey certs and secrets..."
+    sudo rm -f ./certs/valkey/*.key ./certs/valkey/*.crt 2>/dev/null || true
+    ./services/state/scripts/generate-certs.sh ./certs/valkey &>/dev/null
+    ./services/state/scripts/generate-secrets.sh ./secrets . &>/dev/null
     sudo chown 65532:65532 ./certs/valkey/server.key ./certs/valkey/client.key
+    echo "✓ Valkey certs and secrets ready"
 
 setup-toolbox:
-    ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "→ Generating Toolbox certs..."
+    sudo rm -f ./certs/toolbox/*.key ./certs/toolbox/*.pem 2>/dev/null || true
+    ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca >/dev/null
     sudo chown 65532:65532 ./certs/toolbox/toolbox.key
+    echo "✓ Toolbox certs ready"
 
 # ── Dev VM ──────────────────────────────────────────────────────────
 dev-create:
@@ -156,8 +223,8 @@ package-vm arch="amd64":
     #!/usr/bin/env bash
     set -euo pipefail
     VERSION=$(git describe --tags --always)
-    cp output/polis-vm-*.qcow2 "polis-vm-${VERSION}-{{arch}}.qcow2"
-    sha256sum "polis-vm-${VERSION}-{{arch}}.qcow2" > "polis-vm-${VERSION}-{{arch}}.qcow2.sha256"
+    cp packer/output/polis-workspace-*.qcow2 "polis-workspace-${VERSION}-{{arch}}.qcow2"
+    sha256sum "polis-workspace-${VERSION}-{{arch}}.qcow2" > "polis-workspace-${VERSION}-{{arch}}.qcow2.sha256"
 
 # ── Clean ───────────────────────────────────────────────────────────
 clean:

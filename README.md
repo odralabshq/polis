@@ -11,148 +11,53 @@ AI agents make HTTP requests, download packages, and execute code autonomously. 
 
 Polis solves this by routing all agent traffic through a TLS-intercepting proxy with real-time malware scanning. The agent runs normally; Polis handles security transparently.
 
-## ⚡️ Quick Start for Users (for Developers scroll down)
+## ⚡️ Quick Start (Users)
 
-Run Polis in a fully automated VM. Everything is pre-configured via cloud-init:
-
-### 1. Install Multipass
-
-**Windows:**
-
-```powershell
-winget install Canonical.Multipass
-```
-
-**macOS:**
+Install the Polis CLI and run an agent:
 
 ```bash
-brew install multipass
+# Install CLI
+curl -sSL https://polis.dev/install.sh | bash
+
+# Run an agent
+polis run claude-dev
 ```
 
-**Linux:**
+The CLI downloads a pre-built VM image and starts the agent. No source code or build tools required.
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `polis run [agent]` | Create workspace and start agent |
+| `polis start` | Start existing workspace |
+| `polis stop` | Stop workspace (preserves state) |
+| `polis delete` | Remove workspace |
+| `polis status` | Show workspace and agent status |
+| `polis connect` | Show connection options (SSH, UI) |
+| `polis doctor` | Diagnose issues |
+| `polis update` | Update Polis CLI |
+
+### Configuration
 
 ```bash
-sudo snap install multipass
-```
+# Set default agent
+polis config set defaults.agent claude-dev
 
-### 2. Create and Start Polis VM
-
-```bash
-# Download cloud-init config
-wget https://raw.githubusercontent.com/OdraLabsHQ/polis/main/polis-vm.yaml
-
-# Launch VM (takes 5-10 minutes to provision)
-multipass launch \
-  --name polis-vm \
-  --cpus 4 \
-  --memory 8G \
-  --disk 50G \
-  --cloud-init polis-vm.yaml \
-  24.04
-
-# Wait for cloud-init to complete
-multipass exec polis-vm -- cloud-init status --wait
-```
-
-### 3. Configure and Start
-
-```bash
-# Access the VM
-multipass shell polis-vm
-
-# Configure your API key (at least one required)
-cd ~/polis
-nano .env  # Add ANTHROPIC_API_KEY or OPENAI_API_KEY
-
-# Initialize and start Polis
-just clean-all && just build && just setup && just up
-```
-
-Access the agent UI at `http://<VM_IP>:18789` (get IP with `multipass info polis-vm`).
-
----
-
-## 🛠️ Quick Start for Developers
-
-For the best experience (and to avoid filesystem permission issues on Windows), we recommend cloning the repository **directly inside the VM**.
-
-### 1. Install Multipass
-
-See instructions in the **User Quick Start** above.
-
-### 2. Create and Setup Development VM
-
-The automated setup script will create the VM, authorize your SSH key, and provide the configuration for VS Code.
-
-**Windows (PowerShell):**
-
-```powershell
-.\tools\setup-vm.ps1
-```
-
-**Linux/macOS (Bash):**
-
-```bash
-chmod +x tools/setup-vm.sh
-./tools/setup-vm.sh
-```
-
-This script handles:
-
-- Checking for (or generating) your local SSH key.
-- Initializing the `polis-dev` VM with the correct specs.
-- Injecting your public key into the VM's `authorized_keys`.
-- Providing the exact config block for VS Code.
-
-### 3. Connect and Start Polis
-
-To edit code with your local IDE:
-
-1. Install the **Remote - SSH** extension in VS Code.
-2. **Paste Config**: Use the SSH config block provided by the setup script output (press `F1` -> `Remote-SSH: Open SSH Configuration File...`).
-3. **Connect**: Press `F1`, select **"Remote-SSH: Connect to Host..."**, choose `polis-dev`, and open the `~/polis` folder.
-4. **Init**: Open a terminal in VS Code and run: `just clean-all && just build && just setup && just up`
-
----
-
-## 🖥️ VM Management Commands
-
-Since you are running Polis inside a Multipass VM, here are the most useful commands to manage your environment:
-
-| Description | Command |
-| :--- | :--- |
-| **Enter VM Shell** | `multipass shell polis-dev` |
-| **Stop VM** | `multipass stop polis-dev` |
-| **Start VM** | `multipass start polis-dev` |
-| **Delete VM** | `multipass delete --purge polis-dev` |
-| **Show VM Info** | `multipass info polis-dev` |
-
-### Internal Maintenance (Inside VM)
-
-Once inside the VM (`multipass shell polis-dev`), you manage the Polis stack using the CLI:
-
-```bash
-cd ~/polis
-
-# Update code
-git pull && git submodule update --init --recursive
-
-# Rebuild and restart from source
-just clean-all && just build && just setup && just up
-
-# View all containers status
-just status
+# View configuration
+polis config show
 ```
 
 ---
 
-## 🐧 Native Linux Installation
+## 🛠️ Quick Start (Developers)
 
-For bare-metal Ubuntu/Debian systems:
+For contributing to Polis, clone the repo and use `just`:
+
+### Native Linux (Recommended)
 
 ```bash
-# Install Docker and Docker Compose
-sudo apt-get update
+# Install prerequisites
 sudo apt-get install -y docker.io docker-compose-v2
 
 # Install Sysbox
@@ -161,15 +66,36 @@ wget https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce
 sudo apt-get install -y ./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
 sudo systemctl restart docker
 
-# Clone Polis
+# Clone and build
+git clone --recursive https://github.com/OdraLabsHQ/polis.git
+cd polis
+just setup && just build && just up
+```
+
+### Development VM (macOS/Windows)
+
+```bash
+# Clone repo locally
 git clone --recursive https://github.com/OdraLabsHQ/polis.git
 cd polis
 
-# Configure and start
-cp agents/openclaw/config/env.example .env
-nano .env  # Add your API keys
-just clean-all && just build && just setup && just up
+# Create dev VM (requires Multipass)
+./tools/dev-vm.sh create
+
+# Enter VM and build
+./tools/dev-vm.sh shell
+just setup && just build && just up
 ```
+
+### VS Code Remote Development
+
+1. Get SSH config: `./tools/dev-vm.sh ssh-config >> ~/.ssh/config`
+2. In VS Code: `Cmd+Shift+P` → "Remote-SSH: Connect to Host" → `polis-dev`
+3. Open folder: `/home/ubuntu/polis`
+
+See [docs/DEVELOPER.md](docs/DEVELOPER.md) for full development guide.
+
+---
 
 ## 🏗️ Architecture
 
@@ -181,11 +107,11 @@ Polis routes all workspace traffic through a TLS-intercepting proxy with ICAP-ba
   ┌───────────────────┼────────────────────────────┐
   │  Workspace (Sysbox-isolated)                   │
   │                   │                            │
-  │    AI Agent (OpenClaw, or any agent)            │
+  │    AI Agent (OpenClaw, or any agent)           │
   │         • Full dev environment                 │
   │         • Docker-in-Docker support             │
   │         • No host access                       │
-  │                   │ all traffic                 │
+  │                   │ all traffic                │
   └───────────────────┼────────────────────────────┘
                       ▼
   ┌────────────────────────────────────────────────┐
@@ -246,60 +172,8 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 | Platform | Status | Notes |
 |----------|--------|-------|
 | **Native Linux** (Ubuntu/Debian) | ✅ **Recommended** | Best performance, full Sysbox support |
-| **Multipass VM** (Windows/macOS/Linux) | ✅ **Recommended** | Cross-platform, consistent environment |
+| **Multipass VM** (Windows/macOS/Linux) | ✅ **Supported** | Cross-platform via `polis` CLI |
 | Other Linux distros | 🔜 Coming soon | RHEL, Fedora, Arch |
-
-## 📋 Command Reference
-
-### Lifecycle
-
-| Command | Description |
-|---------|-------------|
-| `polis init` | Full setup: Docker check, Sysbox install, CA generation, image build, start |
-| `polis up` | Start containers |
-| `polis down` | Stop and remove containers |
-| `polis stop` | Stop containers (preserves state) |
-| `polis start` | Start existing stopped containers |
-| `polis status` | Show container health |
-| `polis logs [service]` | Stream container logs |
-| `polis shell` | Enter workspace shell |
-
-### Agent Commands
-
-| Command | Description |
-|---------|-------------|
-| `polis <agent> init` | Initialize agent, wait for ready, show access token |
-| `polis <agent> status` | Show agent service status |
-| `polis <agent> logs [n]` | Show last n lines of agent logs (default: 50) |
-| `polis <agent> restart` | Restart agent service |
-| `polis <agent> shell` | Enter workspace shell |
-| `polis <agent> help` | Show all commands for this agent |
-
-### Agent Management
-
-| Command | Description |
-|---------|-------------|
-| `polis agents list` | List available agents |
-| `polis agents info <name>` | Show agent metadata |
-| `polis agent scaffold <name>` | Create new agent from template |
-
-### Setup
-
-| Command | Description |
-|---------|-------------|
-| `polis setup-ca [--force]` | Generate or regenerate CA certificate |
-| `polis setup-sysbox [--force]` | Install or reinstall Sysbox runtime |
-| `polis setup-env` | Validate agent environment variables |
-| `polis build [service]` | Build container images |
-| `polis test [unit\|integration\|e2e]` | Run tests |
-
-### Init Options
-
-| Flag | Description |
-|------|-------------|
-| `--agent=<name>` | Agent to use (default: `openclaw`) |
-| `--local` | Build images from source instead of pulling from registry |
-| `--no-cache` | Build without Docker cache |
 
 ## 🔌 Agent Plugin System
 
@@ -317,48 +191,53 @@ agents/openclaw/
     └── health.sh           # Health check
 ```
 
-Create a new agent:
+List and manage agents:
 
 ```bash
-polis agent scaffold myagent
+polis agents list           # List available agents
+polis agents info claude    # Show agent details
 ```
 
 ## ⚙️ Configuration
 
-Add at least one API key to `.env`:
+Add at least one API key to your config:
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...    # → Claude (auto-detected)
-OPENAI_API_KEY=sk-proj-...      # → GPT-4o
-OPENROUTER_API_KEY=sk-or-...    # → Multiple models
+polis config set anthropic_api_key sk-ant-...
+polis config set openai_api_key sk-proj-...
 ```
 
-After changing API keys, rebuild:
+Or set environment variables before running:
 
 ```bash
-polis down && polis init --agent=openclaw
+export ANTHROPIC_API_KEY=sk-ant-...
+polis run
 ```
-
-Proxy configuration lives in `services/gate/config/g3proxy.yaml`. Sentinel logic is in `services/sentinel/config/c-icap.conf`. Global settings are in `config/polis.yaml`. Network isolation is defined in `docker-compose.yml`.
 
 ## 🔧 Troubleshooting
 
-**Sysbox not detected** — Start services manually, then restart Docker:
+**Multipass not found:**
 
 ```bash
-sudo systemctl stop docker docker.socket
-sudo systemctl restart sysbox-mgr sysbox-fs
-sudo systemctl start docker
-docker info | grep sysbox
+# macOS
+brew install multipass
+
+# Linux
+sudo snap install multipass
+
+# Windows
+winget install Canonical.Multipass
 ```
 
-**Gateway unhealthy / "not found" errors** — CRLF line endings (Windows/WSL2):
+**Workspace won't start:**
 
 ```bash
-dos2unix Justfile cli/blocked.sh scripts/*.sh agents/openclaw/**/*.sh
+polis doctor    # Diagnose issues
+polis delete    # Clean slate
+polis run       # Try again
 ```
 
-**Full reset:**
+**Full reset (developers):**
 
 ```bash
 just clean-all && just build && just setup && just up
@@ -379,32 +258,6 @@ Apache 2.0 - See [LICENSE](LICENSE) for details.
 ## ⚠️ Disclaimer
 
 Polis provides defense-in-depth security but is not a silver bullet. Always review agent outputs before deployment, keep secrets out of workspaces, and monitor audit logs.
-
-## ❓ Known Problems & Workarounds
-
-### 1. Permission Denied for Scripts (Mounts only)
-
-On Windows hosts, files mounted into the Multipass VM often lose their Linux "execute" bit.
-
-- **Recommended Fix:** Clone the repository directly inside the VM to use the native Linux filesystem.
-- **Workaround:** If you must use a mount, run scripts via: `bash ./Justfile` is not applicable — use `just <recipe>` directly inside the VM.
-
-### 2. OCI Runtime Error: Permission Denied (`init.sh`)
-
-When starting containers, you might see an error like `exec: "/init.sh": permission denied`. This is the same execute-bit issue affecting the scripts mounted inside the container.
-
-- **Fix:** We have patched the `docker-compose.yml` to use `bash` explicitly. If you add new services, follow the `entrypoint: ["/bin/bash", "/script.sh"]` pattern.
-
-### 3. Folder `~/polis` is Empty in VM
-
-If you are seeing an empty `~/polis` folder, it means the `git clone` command failed during VM creation.
-
-- **Fix:** Enter the VM shell and run the clone manually:
-
-    ```bash
-    multipass shell polis-dev
-    git clone --recursive https://github.com/OdraLabsHQ/polis.git ~/polis
-    ```
 
 ---
 

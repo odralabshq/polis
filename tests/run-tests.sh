@@ -12,7 +12,9 @@ Tiers:
   unit           Run unit tests (~30s, no Docker)
   integration    Run integration tests (~3min, needs containers)
   e2e            Run E2E tests (~10min, needs containers + network)
-  all            Run all tiers
+  packer         Run Packer unit tests (~10s, no Docker)
+  docker         Run Docker/Compose linting (~10s, no containers)
+  all            Run all tiers (excludes packer, docker)
 
 Options:
   --ci           CI mode (auto-start httpbin, reset test state)
@@ -55,6 +57,8 @@ fi
 case "$TIER" in
     unit)        run_tier "unit" ;;
     integration) run_tier "integration" ;;
+    packer)      run_tier "unit/packer" ;;
+    docker)      run_tier "unit/docker" ;;
     e2e)
         docker compose --profile test pull httpbin 2>/dev/null || true
         docker compose --profile test up -d httpbin

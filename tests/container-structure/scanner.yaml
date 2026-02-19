@@ -1,0 +1,36 @@
+# container-structure-test for polis-scanner
+# Validates ClamAV daemon
+
+schemaVersion: '2.0.0'
+
+metadataTest:
+  user: "65532"
+
+fileExistenceTests:
+  - name: 'clamd binary'
+    path: '/usr/sbin/clamd'
+    shouldExist: true
+
+  - name: 'freshclam binary'
+    path: '/usr/bin/freshclam'
+    shouldExist: true
+
+  - name: 'clamd config'
+    path: '/etc/clamav/clamd.conf'
+    shouldExist: true
+
+  - name: 'freshclam config'
+    path: '/etc/clamav/freshclam.conf'
+    shouldExist: true
+
+commandTests:
+  - name: 'clamd version'
+    command: '/usr/sbin/clamd'
+    args: ['--version']
+    exitCode: 0
+    expectedOutput: ['ClamAV']
+
+  - name: 'freshclam version'
+    command: '/usr/bin/freshclam'
+    args: ['--version']
+    exitCode: 0

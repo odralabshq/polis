@@ -1,0 +1,39 @@
+# container-structure-test for polis-sentinel
+# Validates c-icap server with DLP/ClamAV modules
+
+schemaVersion: '2.0.0'
+
+metadataTest:
+  user: "65532"
+
+fileExistenceTests:
+  - name: 'c-icap binary'
+    path: '/usr/local/bin/c-icap'
+    shouldExist: true
+
+  - name: 'c-icap config'
+    path: '/etc/c-icap/c-icap.conf'
+    shouldExist: true
+
+  - name: 'DLP module'
+    path: '/usr/local/lib/c_icap/srv_polis_dlp.so'
+    shouldExist: true
+
+  - name: 'approval module'
+    path: '/usr/local/lib/c_icap/srv_polis_approval.so'
+    shouldExist: true
+
+  - name: 'sentinel respmod module'
+    path: '/usr/local/lib/c_icap/srv_polis_sentinel_resp.so'
+    shouldExist: true
+
+  - name: 'squidclamav module'
+    path: '/usr/local/lib/c_icap/squidclamav.so'
+    shouldExist: true
+
+commandTests:
+  - name: 'c-icap help'
+    command: '/usr/local/bin/c-icap'
+    args: ['-h']
+    # c-icap returns 0 with -h
+    exitCode: 0

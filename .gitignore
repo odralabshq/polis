@@ -1,16 +1,10 @@
-# CA certificates - NEVER commit private keys
-certs/ca/ca.key
-certs/ca/ca.pem
-certs/ca/*.key
-certs/ca/*.pem
+# Generated certificates
+certs/
 
 # Environment files with secrets
 .env
 *.env
 !config/openclaw.env.example
-
-# Generated certificates
-certs/generated/
 
 # Docker volumes
 volumes/
@@ -28,15 +22,6 @@ build/workspace/Dockerfile.generated
 # Valkey secrets directory - passwords, ACL files, credentials
 secrets/
 
-# Valkey TLS certificates and keys - generated per-install by polis init
-certs/valkey/
-
-# Toolbox TLS certificates - generated per-install
-certs/toolbox/
-
-# CA serial file (generated when signing certs)
-certs/ca/ca.srl
-
 # Rust build artifacts
 target/
 .grepai/
@@ -53,3 +38,9 @@ docs/reviews
 
 # Kiro
 .kiro/
+
+# Build artifacts
+.build/
+
+# Packer output (VM images)
+packer/output/

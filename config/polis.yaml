@@ -16,7 +16,7 @@
 # Controls how the DLP module handles requests to new/unknown domains.
 #
 # Possible values:
-#   relaxed  — auto-allow requests to new domains
+#   relaxed  — auto-allow all domains (no prompts for new domains)
 #   balanced — prompt user (HITL) for new domains (default)
 #   strict   — block all requests to new domains
 #

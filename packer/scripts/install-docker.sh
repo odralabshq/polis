@@ -17,8 +17,9 @@ sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
 sudo chmod a+r /etc/apt/keyrings/docker.asc
 
-# Verify GPG fingerprint
-ACTUAL_FINGERPRINT=$(gpg --show-keys --with-fingerprint /etc/apt/keyrings/docker.asc 2>/dev/null | grep -oP '[A-F0-9]{40}' | head -1)
+# Verify GPG fingerprint (use --with-colons for stable machine-readable output)
+ACTUAL_FINGERPRINT=$(gpg --show-keys --with-colons --with-fingerprint /etc/apt/keyrings/docker.asc 2>/dev/null \
+    | awk -F: '/^fpr/{print $10; exit}')
 if [[ "${ACTUAL_FINGERPRINT}" != "${DOCKER_GPG_FINGERPRINT}" ]]; then
     echo "ERROR: Docker GPG fingerprint mismatch!" >&2
     echo "  Expected: ${DOCKER_GPG_FINGERPRINT}" >&2

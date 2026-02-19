@@ -8,6 +8,11 @@ metadata:
   description: "AI coding agent with Control UI"
   author: "openclaw"
   license: "MIT"
+  provider: "Anthropic"
+  capabilities:
+    - code-generation
+    - code-review
+    - refactoring
 
 spec:
   packaging: script

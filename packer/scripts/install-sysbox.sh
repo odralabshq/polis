@@ -9,7 +9,7 @@ set -euo pipefail
 : "${ARCH:?ARCH required}"
 
 DEB_NAME="sysbox-ce_${SYSBOX_VERSION}.linux_${ARCH}.deb"
-DEB_URL="https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/${DEB_NAME}"
+DEB_URL="https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/${DEB_NAME}"
 
 echo "==> Installing Sysbox ${SYSBOX_VERSION} (${ARCH})..."
 

@@ -346,6 +346,10 @@ mod tests {
             parse_security_level("Balanced").unwrap(),
             SecurityLevel::Balanced
         );
+        assert_eq!(
+            parse_security_level("RELAXED").unwrap(),
+            SecurityLevel::Relaxed
+        );
     }
 
     #[test]

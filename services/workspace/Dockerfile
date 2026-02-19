@@ -13,7 +13,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     kmod \
     procps \
     passwd \
-    && rm -rf /var/lib/apt/lists/*
+    openssh-server \
+    netcat-openbsd \
+    libnss-systemd \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd /var/empty \
+    && chmod 755 /var/empty
+
+# Configure NSS for user/group resolution (required for sshd privilege separation)
+RUN printf '%s\n' \
+    'passwd:     files systemd' \
+    'group:      files systemd' \
+    'shadow:     files' \
+    'hosts:      files dns' \
+    'networks:   files' \
+    'protocols:  files' \
+    'services:   files' \
+    'ethers:     files' \
+    'rpc:        files' \
+    > /etc/nsswitch.conf
+
+# Configure sshd: disable PAM (minimal image lacks common-auth), key-only auth
+RUN printf '%s\n' \
+    'UsePAM no' \
+    'PasswordAuthentication no' \
+    'PermitEmptyPasswords no' \
+    'ChallengeResponseAuthentication no' \
+    'PubkeyAuthentication yes' \
+    'AuthorizedKeysFile .ssh/authorized_keys' \
+    > /etc/ssh/sshd_config.d/polis.conf
 
 # Create polis user (uid 1000) and disable root login
 RUN useradd -m -u 1000 -s /bin/bash polis \

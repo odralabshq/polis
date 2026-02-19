@@ -1,0 +1,69 @@
+# goss-polis.yaml - Polis installation validation
+
+file:
+  # Core files
+  /opt/polis/docker-compose.yml:
+    exists: true
+
+  /opt/polis/config/polis.yaml:
+    exists: true
+
+  /opt/polis/scripts/setup-certs.sh:
+    exists: true
+    mode: "0755"
+
+  # Service configs
+  /opt/polis/services/gate/config/g3proxy.yaml:
+    exists: true
+
+  /opt/polis/services/sentinel/config/c-icap.conf:
+    exists: true
+
+  /opt/polis/services/resolver/config/Corefile:
+    exists: true
+
+  /opt/polis/services/state/config/valkey.conf:
+    exists: true
+
+  # Systemd service
+  /etc/systemd/system/polis.service:
+    exists: true
+    contains:
+      - "After=docker.service"
+      - "ExecStart=/usr/bin/docker compose up -d"
+
+# Polis systemd service enabled (not running - starts on boot)
+service:
+  polis:
+    enabled: true
+
+# Docker images loaded
+command:
+  images-resolver:
+    exec: "docker images --format '{{.Repository}}' | grep -q polis-resolver"
+    exit-status: 0
+
+  images-gate:
+    exec: "docker images --format '{{.Repository}}' | grep -q polis-gate"
+    exit-status: 0
+
+  images-sentinel:
+    exec: "docker images --format '{{.Repository}}' | grep -q polis-sentinel"
+    exit-status: 0
+
+  images-scanner:
+    exec: "docker images --format '{{.Repository}}' | grep -q polis-scanner"
+    exit-status: 0
+
+  images-workspace:
+    exec: "docker images --format '{{.Repository}}' | grep -q polis-workspace"
+    exit-status: 0
+
+  images-toolbox:
+    exec: "docker images --format '{{.Repository}}' | grep -q polis-toolbox"
+    exit-status: 0
+
+# netcat installed for SSH proxy
+package:
+  netcat-openbsd:
+    installed: true

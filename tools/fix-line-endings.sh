@@ -51,8 +51,9 @@ echo "=== Polis: Fixing CRLF → LF line endings ==="
 echo "Project root: ${PROJECT_ROOT}"
 echo ""
 
-# 1. Main CLI script
-fix_file "${PROJECT_ROOT}/cli/blocked.sh"
+# 1. Tools scripts
+fix_file "${PROJECT_ROOT}/tools/blocked.sh"
+fix_file "${PROJECT_ROOT}/tools/dev-vm.sh"
 
 # 2. All scripts in polis/scripts/
 for f in "${PROJECT_ROOT}"/scripts/*.sh; do

@@ -7,7 +7,7 @@ setup_file() {
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
     require_container "$CTR_STATE"
-    export POLIS_CLI="${PROJECT_ROOT}/cli/blocked.sh"
+    export POLIS_CLI="${PROJECT_ROOT}/tools/blocked.sh"
 }
 
 setup() {

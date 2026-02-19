@@ -1,0 +1,64 @@
+# goss-hardening.yaml - VM hardening validation (CIS-aligned)
+
+file:
+  /etc/sysctl.d/99-polis-hardening.conf:
+    exists: true
+    contains:
+      - "kernel.randomize_va_space = 2"
+      - "kernel.dmesg_restrict = 1"
+      - "kernel.kptr_restrict = 2"
+      - "fs.suid_dumpable = 0"
+      - "kernel.yama.ptrace_scope = 2"
+
+  /etc/audit/rules.d/docker.rules:
+    exists: true
+    contains:
+      - "/usr/bin/docker"
+      - "/var/lib/docker"
+
+package:
+  auditd:
+    installed: true
+
+service:
+  apparmor:
+    enabled: true
+    running: true
+
+  auditd:
+    enabled: true
+    running: true
+
+# Verify sysctl values are applied
+command:
+  sysctl-aslr:
+    exec: "sysctl -n kernel.randomize_va_space"
+    exit-status: 0
+    stdout:
+      - "2"
+
+  sysctl-dmesg:
+    exec: "sysctl -n kernel.dmesg_restrict"
+    exit-status: 0
+    stdout:
+      - "1"
+
+  sysctl-kptr:
+    exec: "sysctl -n kernel.kptr_restrict"
+    exit-status: 0
+    stdout:
+      - "2"
+
+# Verify user accounts are locked
+command:
+  ubuntu-locked:
+    exec: "passwd -S ubuntu | awk '{print $2}'"
+    exit-status: 0
+    stdout:
+      - "L"
+
+  root-locked:
+    exec: "passwd -S root | awk '{print $2}'"
+    exit-status: 0
+    stdout:
+      - "L"

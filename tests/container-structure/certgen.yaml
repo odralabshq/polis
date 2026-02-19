@@ -1,0 +1,20 @@
+# container-structure-test for polis-certgen
+# Validates g3fcgen certificate generator
+
+schemaVersion: '2.0.0'
+
+metadataTest:
+  user: "65532"
+
+fileExistenceTests:
+  - name: 'g3fcgen binary'
+    path: '/usr/bin/g3fcgen'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
+
+commandTests:
+  - name: 'g3fcgen version'
+    command: '/usr/bin/g3fcgen'
+    args: ['--version']
+    exitCode: 0
+    expectedOutput: ['g3fcgen']

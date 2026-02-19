@@ -8,4 +8,5 @@
 /lib/                 @OdraLabsHQ/core
 /agents/              @OdraLabsHQ/agents
 /docker-compose.yml   @OdraLabsHQ/core
-/cli/blocked.sh     @OdraLabsHQ/core
+/cli/                 @OdraLabsHQ/core
+/tools/               @OdraLabsHQ/core
