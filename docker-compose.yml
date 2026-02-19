@@ -147,6 +147,8 @@ services:
       - net.ipv4.conf.all.route_localnet=1
       - net.ipv4.conf.default.route_localnet=1
     depends_on:
+      host-init:
+        condition: service_completed_successfully
       certgen:
         condition: service_healthy
       sentinel:
@@ -378,6 +380,36 @@ services:
         labels: "service"
     labels:
       service: "polis-workspace"
+
+  # =========================================================
+  # HOST INIT (Host network setup for TPROXY)
+  # Configures iptables DOCKER-USER chain to allow TPROXY
+  # traffic on internal-bridge (required for internal:true)
+  # =========================================================
+  host-init:
+    build:
+      context: .
+      dockerfile: services/host-init/Dockerfile
+    image: polis-host-init-oss:latest
+    container_name: polis-host-init
+    network_mode: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - sh
+      - -c
+      - |
+        INT_BR="br-$$(docker network inspect polis_internal-bridge --format '{{.Id}}' | cut -c1-12)"
+        iptables -C DOCKER-USER -i "$$INT_BR" -o "$$INT_BR" -j ACCEPT 2>/dev/null ||
+        iptables -I DOCKER-USER -i "$$INT_BR" -o "$$INT_BR" -j ACCEPT
+    restart: "no"
 
   # =========================================================
   # SCANNER INIT (ClamAV Volume permission setup)
