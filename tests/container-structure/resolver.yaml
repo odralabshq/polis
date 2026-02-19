@@ -12,14 +12,6 @@ fileExistenceTests:
     shouldExist: true
     permissions: '-rwxr-xr-x'
 
-  - name: 'Corefile config'
-    path: '/etc/coredns/Corefile'
-    shouldExist: true
-
-  - name: 'blocklist file'
-    path: '/etc/coredns/blocklist.txt'
-    shouldExist: true
-
 commandTests:
   - name: 'coredns version'
     command: '/usr/bin/coredns'

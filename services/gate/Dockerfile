@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Polis Gateway with g3proxy + g3fcgen
 
+# hadolint ignore=DL3007
 FROM ghcr.io/odralabshq/g3-builder:latest AS builder
 
 FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b
@@ -22,9 +23,9 @@ RUN mkdir -p /etc/g3proxy /var/lib/g3proxy/ssl /tmp/g3 /var/log/g3proxy && \
 
 RUN g3proxy --version && g3fcgen --version
 
-COPY services/gate/scripts/init.sh /init.sh
-COPY services/gate/scripts/setup-network.sh /setup-network.sh
-RUN chmod +x /init.sh /setup-network.sh
+COPY services/gate/scripts/init.sh /usr/local/bin/init.sh
+COPY services/gate/scripts/setup-network.sh /usr/local/bin/setup-network.sh
+RUN chmod 755 /usr/local/bin/init.sh /usr/local/bin/setup-network.sh
 
-USER nonroot
-ENTRYPOINT ["/init.sh"]
+USER 65532
+ENTRYPOINT ["/usr/local/bin/init.sh"]
