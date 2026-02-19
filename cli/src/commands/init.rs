@@ -455,6 +455,7 @@ fn extract_checksum_from_signed_file(checksum_path: &Path) -> Result<String> {
 }
 
 /// Resolved release information from GitHub.
+#[derive(Debug)]
 pub struct ResolvedRelease {
     /// Version tag (e.g., `"v0.3.0"`).
     pub tag: String,
@@ -479,11 +480,12 @@ const GITHUB_RELEASES_URL: &str =
 /// invalid JSON, or no matching release is found.
 pub(crate) fn resolve_latest_image_url() -> Result<ResolvedRelease> {
     let arch = current_arch()?;
-    let qcow2_suffix = format!("-{arch}.qcow2");
-    let sha256_suffix = format!("-{arch}.qcow2.sha256");
+
+    let url = std::env::var("POLIS_GITHUB_API_URL")
+        .unwrap_or_else(|_| GITHUB_RELEASES_URL.to_string());
 
     let token = std::env::var("GITHUB_TOKEN").unwrap_or_default();
-    let req = ureq::get(GITHUB_RELEASES_URL)
+    let req = ureq::get(&url)
         .set("Accept", "application/vnd.github+json")
         .set("User-Agent", "polis-cli");
     let req = if token.is_empty() {
@@ -492,10 +494,10 @@ pub(crate) fn resolve_latest_image_url() -> Result<ResolvedRelease> {
         req.set("Authorization", &format!("Bearer {token}"))
     };
 
-    let releases: serde_json::Value = match req.call() {
+    let body: serde_json::Value = match req.call() {
         Ok(resp) => {
-            let body = resp.into_string().context("failed to read GitHub API response")?;
-            serde_json::from_str(&body).context("failed to parse GitHub API response")?
+            let s = resp.into_string().context("failed to read GitHub API response")?;
+            serde_json::from_str(&s).context("failed to parse GitHub API response")?
         }
         Err(ureq::Error::Status(403, _)) => anyhow::bail!(
             "GitHub API rate limit exceeded (60 requests/hour unauthenticated).\nSet GITHUB_TOKEN env var or use: polis init --image <direct-url>"
@@ -506,6 +508,20 @@ pub(crate) fn resolve_latest_image_url() -> Result<ResolvedRelease> {
         Err(ureq::Error::Status(code, _)) => anyhow::bail!("GitHub API error: HTTP {code}"),
         Err(e) => return Err(anyhow::anyhow!(e)),
     };
+
+    parse_releases(&body, arch)
+}
+
+/// Scan a GitHub releases JSON array for the first release containing both
+/// a `*-{arch}.qcow2` and a `*-{arch}.qcow2.sha256` asset.
+///
+/// # Errors
+///
+/// Returns an error if `releases` is not a JSON array or no matching release
+/// is found.
+fn parse_releases(releases: &serde_json::Value, arch: &str) -> Result<ResolvedRelease> {
+    let qcow2_suffix = format!("-{arch}.qcow2");
+    let sha256_suffix = format!("-{arch}.qcow2.sha256");
 
     let releases = releases
         .as_array()
@@ -797,6 +813,80 @@ mod tests {
         );
     }
 
+    // ── parse_releases ────────────────────────────────────────────────────────
+
+    fn release_json(tag: &str, assets: &[(&str, &str)]) -> serde_json::Value {
+        serde_json::json!({
+            "tag_name": tag,
+            "assets": assets.iter().map(|(name, url)| serde_json::json!({
+                "name": name,
+                "browser_download_url": url
+            })).collect::<Vec<_>>()
+        })
+    }
+
+    #[test]
+    fn test_parse_releases_matching_pair_returns_resolved_release() {
+        let json = serde_json::json!([release_json("v0.3.0", &[
+            ("polis-workspace-v0.3.0-amd64.qcow2",        "https://example.com/img.qcow2"),
+            ("polis-workspace-v0.3.0-amd64.qcow2.sha256", "https://example.com/img.sha256"),
+        ])]);
+        let r = parse_releases(&json, "amd64").unwrap();
+        assert_eq!(r.tag, "v0.3.0");
+        assert_eq!(r.image_url, "https://example.com/img.qcow2");
+        assert_eq!(r.checksum_url, "https://example.com/img.sha256");
+    }
+
+    #[test]
+    fn test_parse_releases_qcow2_without_sha256_skips_release() {
+        let json = serde_json::json!([release_json("v0.3.0", &[
+            ("polis-workspace-v0.3.0-amd64.qcow2", "https://example.com/img.qcow2"),
+        ])]);
+        let err = parse_releases(&json, "amd64").unwrap_err();
+        assert!(err.to_string().contains("No VM image found"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_releases_empty_array_returns_error() {
+        let err = parse_releases(&serde_json::json!([]), "amd64").unwrap_err();
+        assert!(err.to_string().contains("No VM image found"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_releases_not_an_array_returns_error() {
+        let err = parse_releases(&serde_json::json!({}), "amd64").unwrap_err();
+        assert!(
+            err.to_string().contains("failed to parse GitHub API response"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_releases_first_matching_release_wins() {
+        let json = serde_json::json!([
+            release_json("v0.3.0", &[
+                ("polis-workspace-v0.3.0-amd64.qcow2",        "https://example.com/v0.3.0.qcow2"),
+                ("polis-workspace-v0.3.0-amd64.qcow2.sha256", "https://example.com/v0.3.0.sha256"),
+            ]),
+            release_json("v0.2.0", &[
+                ("polis-workspace-v0.2.0-amd64.qcow2",        "https://example.com/v0.2.0.qcow2"),
+                ("polis-workspace-v0.2.0-amd64.qcow2.sha256", "https://example.com/v0.2.0.sha256"),
+            ]),
+        ]);
+        let r = parse_releases(&json, "amd64").unwrap();
+        assert_eq!(r.tag, "v0.3.0");
+    }
+
+    #[test]
+    fn test_parse_releases_skips_wrong_arch_assets() {
+        let json = serde_json::json!([release_json("v0.3.0", &[
+            ("polis-workspace-v0.3.0-arm64.qcow2",        "https://example.com/arm64.qcow2"),
+            ("polis-workspace-v0.3.0-arm64.qcow2.sha256", "https://example.com/arm64.sha256"),
+        ])]);
+        let err = parse_releases(&json, "amd64").unwrap_err();
+        assert!(err.to_string().contains("No VM image found"), "got: {err}");
+    }
+
     // ── partial_path ──────────────────────────────────────────────────────────
 
     #[test]
@@ -1048,6 +1138,27 @@ mod tests {
                 std::fs::write(&path, format!("{hex}  img.qcow2\n")).expect("write");
                 let extracted = extract_checksum_from_signed_file(&path).expect("extract");
                 prop_assert_eq!(extracted, hex);
+            }
+
+            /// parse_releases returns the exact URLs present in the JSON for any
+            /// valid tag / URL combination.
+            #[test]
+            fn prop_parse_releases_valid_release_returns_correct_urls(
+                tag     in "[a-z0-9._-]{1,20}",
+                img_url in "https://[a-z]{3,10}\\.com/[a-z0-9]{1,20}\\.qcow2",
+                sha_url in "https://[a-z]{3,10}\\.com/[a-z0-9]{1,20}\\.sha256",
+            ) {
+                let json = serde_json::json!([{
+                    "tag_name": tag,
+                    "assets": [
+                        {"name": format!("polis-workspace-{tag}-amd64.qcow2"),        "browser_download_url": img_url},
+                        {"name": format!("polis-workspace-{tag}-amd64.qcow2.sha256"), "browser_download_url": sha_url},
+                    ]
+                }]);
+                let r = parse_releases(&json, "amd64").expect("should find release");
+                prop_assert_eq!(&r.tag, &tag);
+                prop_assert_eq!(&r.image_url, &img_url);
+                prop_assert_eq!(&r.checksum_url, &sha_url);
             }
         }
     }

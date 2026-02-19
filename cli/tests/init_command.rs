@@ -199,6 +199,81 @@ fn test_init_no_flags_no_cache_hits_github_resolver_stub() {
         );
 }
 
+// ── GitHub API HTTP error paths ───────────────────────────────────────────────
+
+#[test]
+fn test_init_github_api_403_returns_rate_limit_error() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_status(403, "Forbidden"));
+    polis()
+        .arg("init")
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "GitHub API rate limit exceeded (60 requests/hour unauthenticated).",
+        ));
+}
+
+#[test]
+fn test_init_github_api_404_returns_repo_not_found_error() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_status(404, "Not Found"));
+    polis()
+        .arg("init")
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "GitHub repository not found: OdraLabsHQ/polis",
+        ));
+}
+
+#[test]
+fn test_init_github_api_500_returns_generic_http_error() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_status(500, "Internal Server Error"));
+    polis()
+        .arg("init")
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("GitHub API error: HTTP 500"));
+}
+
+#[test]
+fn test_init_github_api_invalid_json_returns_parse_error() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_200(b"not valid json {{"));
+    polis()
+        .arg("init")
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "failed to parse GitHub API response",
+        ));
+}
+
+#[test]
+fn test_init_github_api_empty_releases_returns_no_image_error() {
+    let dir = TempDir::new().expect("tempdir");
+    let port = serve_once(http_200(b"[]"));
+    polis()
+        .arg("init")
+        .env("HOME", dir.path())
+        .env("POLIS_GITHUB_API_URL", format!("http://127.0.0.1:{port}"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No VM image found in recent GitHub releases.",
+        ));
+}
+
 #[test]
 fn test_init_http_url_no_cache_hits_download_stub() {
     let dir = TempDir::new().expect("tempdir");
