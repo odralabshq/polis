@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Polis Gateway with g3proxy + g3fcgen
 
-FROM ghcr.io/odralabshq/g3-builder:latest AS builder
+FROM ghcr.io/odralabshq/g3-builder:1.12.2 AS builder
 
 FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d89bccf7bcb0a94afceb1b1541b
 

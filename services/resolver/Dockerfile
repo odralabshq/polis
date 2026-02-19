@@ -6,6 +6,7 @@ ARG COREDNS_VERSION=1.14.1
 RUN apt-get update && apt-get install -y --no-install-recommends curl gzip \
     && rm -rf /var/lib/apt/lists/*
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl -fsSL "https://github.com/coredns/coredns/archive/refs/tags/v${COREDNS_VERSION}.tar.gz" \
     | tar -xz -C /tmp && mv "/tmp/coredns-${COREDNS_VERSION}" /src
 
