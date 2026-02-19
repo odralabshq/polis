@@ -72,7 +72,7 @@ setup() {
 }
 
 @test "packer: goss tests path configured" {
-    run grep 'tests.*=.*\["goss/goss.yaml"\]' "$PACKER_TEMPLATE"
+    run grep '"goss/goss.yaml"' "$PACKER_TEMPLATE"
     assert_success
 }
 

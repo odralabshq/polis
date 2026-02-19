@@ -45,7 +45,6 @@ RUN printf '%s\n' \
     && ln -sf /etc/systemd/system/polis-init.service /etc/systemd/system/multi-user.target.wants/polis-init.service \
     && mkdir -p /usr/local/share/ca-certificates
 
-COPY services/workspace/scripts/init.sh /usr/local/bin/init.sh
-RUN chmod 755 /usr/local/bin/init.sh
+COPY --chmod=755 services/workspace/scripts/init.sh /usr/local/bin/init.sh
 
 ENTRYPOINT ["/sbin/init"]

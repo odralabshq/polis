@@ -114,15 +114,9 @@ COPY --from=builder /runtime-libs/usr/lib/ /usr/lib/
 COPY --from=builder /install/usr /usr
 COPY --from=builder /install/etc /etc
 
-# Copy DLP module
-COPY --from=builder /build/srv_polis_dlp.so /usr/local/lib/c_icap/
-
-# Copy approval modules
-COPY --from=builder /build/srv_polis_approval_rewrite.so /usr/local/lib/c_icap/
-COPY --from=builder /build/srv_polis_approval.so /usr/local/lib/c_icap/
-
-# Copy merged Sentinel RESPMOD module
-COPY --from=builder /build/srv_polis_sentinel_resp.so /usr/local/lib/c_icap/
+# Copy DLP and approval modules
+COPY --from=builder /build/srv_polis_dlp.so /build/srv_polis_approval_rewrite.so \
+    /build/srv_polis_approval.so /build/srv_polis_sentinel_resp.so /usr/local/lib/c_icap/
 
 # Create directories with proper ownership for DHI nonroot user (65532)
 USER 0
@@ -131,8 +125,7 @@ RUN mkdir -p /var/run/c-icap /run/c-icap /var/log/c-icap && \
     chmod 755 /var/run/c-icap /run/c-icap /var/log/c-icap
 
 # Entrypoint (non-root)
-COPY services/sentinel/scripts/entrypoint.sh /entrypoint.sh
-RUN chmod 755 /entrypoint.sh
+COPY --chmod=755 services/sentinel/scripts/entrypoint.sh /entrypoint.sh
 
 # Ensure linker finds c-icap libs at /usr/local/lib
 ENV LD_LIBRARY_PATH=/usr/local/lib
