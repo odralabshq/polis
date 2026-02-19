@@ -4,12 +4,13 @@
 
 set -euo pipefail
 
-# Colors
+# Colors (used in log functions and heredocs)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+# shellcheck disable=SC2034
 BOLD='\033[1m'
 NC='\033[0m'
 
@@ -209,6 +210,8 @@ cmd_pull() {
     log_success "VM image ready: ${dest}"
     echo "${dest}"
 }
+
+cmd_rebuild() {
     vm_exists || { log_error "VM '${VM_NAME}' does not exist."; exit 1; }
     log_info "Rebuilding Polis..."
     multipass exec "${VM_NAME}" -- bash -c "

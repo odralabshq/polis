@@ -4,7 +4,7 @@
 set -euo pipefail
 
 BUNDLE_DIR=$(mktemp -d)
-trap "rm -rf $BUNDLE_DIR" EXIT
+trap 'rm -rf "$BUNDLE_DIR"' EXIT
 
 echo "==> Bundling Polis configuration..."
 
