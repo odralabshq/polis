@@ -409,3 +409,4 @@ jobs:
           args: >
             -Dsonar.projectKey=odralabshq_polis
             -Dsonar.organization=odralabshq
+            -Dsonar.qualitygate.wait=true
