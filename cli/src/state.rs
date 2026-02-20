@@ -97,6 +97,8 @@ pub mod test_helpers {
     use tempfile::TempDir;
 
     /// Creates a `StateManager` pre-loaded with a minimal `agent_ready` state fixture.
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn state_mgr_with_state(dir: &TempDir) -> StateManager {
         let polis_dir = dir.path().join(".polis");
         std::fs::create_dir_all(&polis_dir).expect("create .polis dir");
