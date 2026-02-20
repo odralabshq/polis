@@ -53,7 +53,9 @@ pub fn run(args: &RunArgs, mp: &impl Multipass) -> Result<()> {
         Some(state) if state.agent == target_agent => {
             start_existing(mp);
             print_guarantees();
-            println!("{} is ready", state.agent);
+            if !state.agent.is_empty() {
+                println!("{} is ready", state.agent);
+            }
             Ok(())
         }
         Some(state) => switch_agent(&state_mgr, state, &target_agent, mp),
@@ -61,7 +63,6 @@ pub fn run(args: &RunArgs, mp: &impl Multipass) -> Result<()> {
             // VM exists but no state — start VM and create minimal state
             start_existing(mp);
             print_guarantees();
-            println!("Workspace ready");
             Ok(())
         }
     }
