@@ -60,13 +60,22 @@ if [[ -z "$RESULT" ]]; then
     exit 1
 fi
 
-# Unwrap MCP envelope: extract text content from result.content[0].text
-if command -v jq &>/dev/null; then
-    TEXT=$(echo "$RESULT" | jq -r '.result.content[0].text // .error.message // empty' 2>/dev/null)
-    if [[ -n "$TEXT" ]]; then
-        echo "$TEXT"
-        exit 0
+# Unwrap MCP envelope: extract .result.content[0].text from JSON-RPC response.
+# Use jq if available, otherwise fall back to sed/grep (workspace image may lack jq).
+_unwrap() {
+    if command -v jq &>/dev/null; then
+        jq -r '.result.content[0].text // .error.message // empty' 2>/dev/null
+    else
+        # Extract the "text" field value from the MCP envelope using sed.
+        # The value is JSON-escaped, so unescape \" → " and \\ → \ afterwards.
+        sed -n 's/.*"text":"\(.*\)"}],"isError":.*/\1/p' \
+            | sed 's/\\"/"/g; s/\\\\/\\/g'
     fi
-fi
+}
 
-echo "$RESULT"
+TEXT=$(echo "$RESULT" | _unwrap)
+if [[ -n "$TEXT" ]]; then
+    echo "$TEXT"
+else
+    echo "$RESULT"
+fi
