@@ -47,6 +47,18 @@ fn http_status(code: u16, reason: &str) -> Vec<u8> {
         .into_bytes()
 }
 
+/// Returns the images subdirectory path relative to `$HOME`.
+///
+/// On Linux, polis uses `~/polis/images/` (non-hidden) so that the strictly
+/// confined multipass snap can read the image file. On other platforms,
+/// `~/.polis/images/` is used.
+fn images_subdir() -> std::path::PathBuf {
+    #[cfg(target_os = "linux")]
+    return std::path::PathBuf::from("polis").join("images");
+    #[cfg(not(target_os = "linux"))]
+    std::path::PathBuf::from(".polis").join("images")
+}
+
 // ── help / registration ──────────────────────────────────────────────────────
 
 #[test]
@@ -126,7 +138,7 @@ fn test_init_check_no_cache_exits_zero_with_message() {
 #[test]
 fn test_init_check_with_cached_image_and_metadata_reports_up_to_date() {
     let dir = TempDir::new().expect("tempdir");
-    let images = dir.path().join(".polis").join("images");
+    let images = dir.path().join(images_subdir());
     std::fs::create_dir_all(&images).expect("mkdir");
 
     // Write a fake cached image
@@ -195,7 +207,7 @@ fn github_releases_json(tag: &str, arch: &str) -> Vec<u8> {
 #[test]
 fn test_init_check_up_to_date_prints_up_to_date() {
     let dir = TempDir::new().expect("tempdir");
-    let images = dir.path().join(".polis").join("images");
+    let images = dir.path().join(images_subdir());
     std::fs::create_dir_all(&images).expect("mkdir");
 
     let meta = serde_json::json!({
@@ -220,7 +232,7 @@ fn test_init_check_up_to_date_prints_up_to_date() {
 #[test]
 fn test_init_check_update_available_prints_update_hint() {
     let dir = TempDir::new().expect("tempdir");
-    let images = dir.path().join(".polis").join("images");
+    let images = dir.path().join(images_subdir());
     std::fs::create_dir_all(&images).expect("mkdir");
 
     let meta = serde_json::json!({
@@ -259,7 +271,7 @@ fn test_init_check_not_cached_prints_download_hint() {
 #[test]
 fn test_init_check_malformed_image_json_treated_as_not_cached() {
     let dir = TempDir::new().expect("tempdir");
-    let images = dir.path().join(".polis").join("images");
+    let images = dir.path().join(images_subdir());
     std::fs::create_dir_all(&images).expect("mkdir");
     std::fs::write(images.join("image.json"), b"not valid json").expect("write");
 
@@ -326,7 +338,7 @@ fn test_init_check_does_not_create_image_file() {
 #[test]
 fn test_init_force_with_local_image_skips_cache_and_attempts_acquire() {
     let dir = TempDir::new().expect("tempdir");
-    let images = dir.path().join(".polis").join("images");
+    let images = dir.path().join(images_subdir());
     std::fs::create_dir_all(&images).expect("mkdir");
 
     // Pre-populate cache with metadata so without --force it would short-circuit
@@ -484,7 +496,7 @@ fn test_init_local_file_no_cache_hits_verify_stub() {
 fn test_init_creates_images_directory_when_missing() {
     let dir = TempDir::new().expect("tempdir");
     // Confirm it doesn't exist yet
-    assert!(!dir.path().join(".polis").join("images").exists());
+    assert!(!dir.path().join(images_subdir()).exists());
 
     // Run init (will fail at stub, but dir creation happens first)
     polis()
@@ -493,7 +505,7 @@ fn test_init_creates_images_directory_when_missing() {
         .assert()
         .failure();
 
-    assert!(dir.path().join(".polis").join("images").is_dir());
+    assert!(dir.path().join(images_subdir()).is_dir());
 }
 
 // ── download_with_resume — integration ───────────────────────────────────────
@@ -533,11 +545,7 @@ fn test_init_http_url_200_download_succeeds_then_hits_verify_stub() {
         .stderr(predicate::str::contains("failed to read checksum file"));
 
     // Dest file was written before verify was called.
-    let dest = dir
-        .path()
-        .join(".polis")
-        .join("images")
-        .join("polis-workspace.qcow2");
+    let dest = dir.path().join(images_subdir()).join("polis-workspace.qcow2");
     assert!(
         dest.exists(),
         "dest file should exist after successful download"

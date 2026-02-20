@@ -86,15 +86,12 @@ install_multipass_macos() {
     rm -f "${pkg_file}"
 }
 
-# Post-install Linux config: removable-media + socket group
+# Post-install Linux config: socket group check only
+# (removable-media is no longer needed — polis images live in ~/polis/images/,
+#  a non-hidden path that snap multipassd can read without any extra interface)
 configure_multipass_linux() {
     if ! command -v snap &>/dev/null; then
         return 0
-    fi
-    if ! snap connections multipass 2>/dev/null | grep -q "removable-media.*:removable-media"; then
-        log_info "Connecting multipass removable-media interface..."
-        sudo snap connect multipass:removable-media || \
-            log_warn "Could not connect removable-media — 'polis run' may fail. Run: sudo snap connect multipass:removable-media"
     fi
     local socket="/var/snap/multipass/common/multipass_socket"
     if [[ -S "${socket}" ]]; then
@@ -146,6 +143,20 @@ check_multipass() {
     # Linux post-install config
     if [[ "${os}" == "Linux" ]]; then
         configure_multipass_linux
+    fi
+}
+
+# Post-install Linux config: socket group check
+configure_multipass_linux() {
+    local socket="/var/snap/multipass/common/multipass_socket"
+    if [[ -S "${socket}" ]]; then
+        local socket_group
+        socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
+        if [[ -n "${socket_group}" ]] && ! groups | grep -qw "${socket_group}"; then
+            log_warn "Your user is not in the '${socket_group}' group."
+            echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
+            echo "  Then log out and back in, or run: newgrp ${socket_group}"
+        fi
     fi
 }
 

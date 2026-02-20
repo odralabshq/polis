@@ -244,9 +244,26 @@ fn acquire_image(source: &ImageSource, images_dir: &Path) -> Result<ImageMetadat
 /// # Errors
 ///
 /// Returns an error if the home directory cannot be determined.
-fn images_dir() -> Result<PathBuf> {
+/// Returns the directory where polis caches the workspace VM image.
+///
+/// On Linux the image must live in a **non-hidden** subdirectory of `$HOME`
+/// so that the strictly-confined multipass snap can read it (snap `AppArmor`
+/// profiles block access to dotfiles/dotdirs in `$HOME`).
+///
+/// | Platform | Path |
+/// |---|---|
+/// | Linux | `~/polis/images/` |
+/// | macOS / Windows | `~/.polis/images/` |
+///
+/// # Errors
+///
+/// Returns an error if the home directory cannot be determined.
+pub(crate) fn images_dir() -> Result<PathBuf> {
     let home =
         dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    #[cfg(target_os = "linux")]
+    return Ok(home.join("polis").join("images"));
+    #[cfg(not(target_os = "linux"))]
     Ok(home.join(".polis").join("images"))
 }
 

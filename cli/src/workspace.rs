@@ -124,16 +124,11 @@ impl WorkspaceDriver for MultipassDriver {
     }
 
     fn remove_cached_images(&self) -> Result<()> {
-        let home =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
-
-        // Remove cached VM images from ~/.polis/images/
-        let images_dir = home.join(".polis").join("images");
+        let images_dir = crate::commands::init::images_dir()?;
         if images_dir.exists() {
             std::fs::remove_dir_all(&images_dir)
                 .with_context(|| format!("failed to remove {}", images_dir.display()))?;
         }
-
         Ok(())
     }
 }

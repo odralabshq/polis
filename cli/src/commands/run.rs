@@ -293,8 +293,7 @@ fn execute_stage(_run_state: &mut RunState, stage: RunStage, mp: &impl Multipass
 /// Minimum Multipass version required for `file://` image launch.
 const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
 
-/// Verify Multipass is present, meets the minimum version, and (on Linux) has
-/// the `removable-media` snap interface connected.
+/// Verify Multipass is present and meets the minimum version.
 ///
 /// # Errors
 ///
@@ -305,8 +304,7 @@ fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
         #[cfg(target_os = "linux")]
         return anyhow::anyhow!(
             "multipass not found.\n\
-             Install: sudo snap install multipass\n\
-             Then:    sudo snap connect multipass:removable-media"
+             Install: sudo snap install multipass"
         );
         #[cfg(target_os = "macos")]
         return anyhow::anyhow!(
@@ -338,20 +336,6 @@ fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
         );
     }
 
-    // 3. Linux: removable-media interface must be connected
-    #[cfg(target_os = "linux")]
-    if let Ok(o) = mp.snap_connections() {
-        let text = String::from_utf8_lossy(&o.stdout);
-        // The slot column reads " :removable-media" when connected; the plug
-        // column reads "multipass:removable-media" (no leading space before ":").
-        if !text.contains(" :removable-media") {
-            anyhow::bail!(
-                "multipass cannot read VM images from your home directory.\n\
-                 Fix: sudo snap connect multipass:removable-media"
-            );
-        }
-    }
-
     Ok(())
 }
 
@@ -359,7 +343,7 @@ fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
 ///
 /// Priority:
 /// 1. `POLIS_IMAGE` env var (dev/CI override)
-/// 2. `~/.polis/images/polis-workspace.qcow2` (standard cache from `polis init`)
+/// 2. Platform-specific image cache from `polis init` (see [`crate::commands::init::images_dir`])
 ///
 /// # Errors
 ///
@@ -374,9 +358,7 @@ fn get_image_path() -> Result<PathBuf> {
         return Ok(p);
     }
 
-    let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
-    let path = home.join(".polis/images/polis-workspace.qcow2");
+    let path = crate::commands::init::images_dir()?.join("polis-workspace.qcow2");
 
     if !path.exists() {
         anyhow::bail!(
@@ -790,18 +772,14 @@ mod tests {
         /// `None` → `version()` returns `Err` (simulates "not found").
         /// `Some(s)` → `version()` returns `Ok` with `s` as stdout.
         version_stdout: Option<&'static str>,
-        /// Stdout returned by `snap_connections()`.
-        snap_stdout: &'static str,
     }
 
     impl MockMultipass {
-        /// Healthy defaults: VM absent, multipass 1.16.1, removable-media connected.
+        /// Healthy defaults: VM absent, multipass 1.16.1.
         fn new() -> Self {
             Self {
                 vm_exists: false,
                 version_stdout: Some("multipass   1.16.1\nmultipassd  1.16.1\n"),
-                // Real format: slot column " :removable-media" indicates connected.
-                snap_stdout: "removable-media    multipass:removable-media    :removable-media    manual\n",
             }
         }
     }
@@ -841,9 +819,6 @@ mod tests {
                 Some(s) => Ok(ok_output(s.as_bytes())),
                 None => anyhow::bail!("multipass not found"),
             }
-        }
-        fn snap_connections(&self) -> anyhow::Result<std::process::Output> {
-            Ok(ok_output(self.snap_stdout.as_bytes()))
         }
     }
 
@@ -968,26 +943,6 @@ mod tests {
             version_stdout: Some("multipass   1.16.0\nmultipassd  1.16.0\n"),
             ..MockMultipass::new()
         };
-        assert!(check_prerequisites(&mp).is_ok());
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn test_check_prerequisites_removable_media_not_connected_returns_error() {
-        let mp = MockMultipass {
-            // Slot column is "-" → not connected; no " :removable-media" in output.
-            snap_stdout: "removable-media    multipass:removable-media    -    -\n",
-            ..MockMultipass::new()
-        };
-        let err = check_prerequisites(&mp).unwrap_err().to_string();
-        assert!(err.contains("removable-media"), "got: {err}");
-        assert!(err.to_lowercase().contains("snap connect"), "got: {err}");
-    }
-
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn test_check_prerequisites_removable_media_connected_returns_ok() {
-        let mp = MockMultipass::new(); // snap_stdout has removable-media connected
         assert!(check_prerequisites(&mp).is_ok());
     }
 }

@@ -435,16 +435,6 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
             .unwrap_or("unknown");
         issues.push(format!("Multipass {ver} is too old (need ≥ 1.16.0)"));
     }
-    if checks
-        .prerequisites
-        .removable_media_connected
-        .is_some_and(|c| !c)
-    {
-        issues.push(
-            "removable-media snap interface not connected — run: sudo snap connect multipass:removable-media"
-                .to_string(),
-        );
-    }
     if !checks.workspace.disk_space_ok {
         issues.push(format!(
             "Low disk space ({} GB available, need 10 GB)",
@@ -518,10 +508,9 @@ fn probe_prerequisites() -> PrerequisiteChecks {
 
 /// Check image cache status, metadata, `POLIS_IMAGE` override, and version drift.
 async fn check_image() -> ImageCheckResult {
-    let Some(home) = dirs::home_dir() else {
+    let Ok(images_dir) = crate::commands::init::images_dir() else {
         return ImageCheckResult::default();
     };
-    let images_dir = home.join(".polis/images");
     let cached = images_dir.join("polis-workspace.qcow2").exists();
 
     let (version, sha256_preview) = if cached {
@@ -1001,17 +990,6 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_issues_removable_media_disconnected_returns_issue() {
-        let mut checks = all_healthy();
-        checks.prerequisites.removable_media_connected = Some(false);
-        let issues = collect_issues(&checks);
-        assert!(
-            issues.iter().any(|i| i.contains("removable-media")),
-            "got: {issues:?}"
-        );
-    }
-
-    #[test]
     fn test_collect_issues_removable_media_connected_no_issue() {
         let mut checks = all_healthy();
         checks.prerequisites.removable_media_connected = Some(true);
@@ -1277,39 +1255,6 @@ mod tests {
                 prop_assert!(
                     issues.iter().any(|i| i.contains(&ver) || i.to_lowercase().contains("old") || i.to_lowercase().contains("version")),
                     "expected version issue for {ver}, got: {issues:?}"
-                );
-            }
-
-            /// removable-media disconnected always produces a removable-media issue.
-            #[test]
-            fn prop_removable_media_disconnected_produces_issue(_seed in 0u32..1) {
-                let checks = DoctorChecks {
-                    prerequisites: PrerequisiteChecks {
-                        multipass_found: true,
-                        multipass_version: Some("1.16.1".to_string()),
-                        multipass_version_ok: true,
-                        removable_media_connected: Some(false),
-                    },
-                    workspace: WorkspaceChecks {
-                        ready: true,
-                        disk_space_gb: 50,
-                        disk_space_ok: true,
-                        image: ImageCheckResult::default(),
-                    },
-                    network: NetworkChecks { internet: true, dns: true },
-                    security: SecurityChecks {
-                        process_isolation: true,
-                        traffic_inspection: true,
-                        malware_db_current: true,
-                        malware_db_age_hours: 0,
-                        certificates_valid: true,
-                        certificates_expire_days: 365,
-                    },
-                };
-                let issues = collect_issues(&checks);
-                prop_assert!(
-                    issues.iter().any(|i| i.contains("removable-media")),
-                    "expected removable-media issue, got: {issues:?}"
                 );
             }
 

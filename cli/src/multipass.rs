@@ -53,15 +53,6 @@ pub trait Multipass {
     ///
     /// Returns an error if the command cannot be spawned (i.e. multipass not on PATH).
     fn version(&self) -> Result<Output>;
-
-    /// Run `snap connections multipass`.
-    ///
-    /// Used on Linux to verify the `removable-media` interface is connected.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the command cannot be spawned.
-    fn snap_connections(&self) -> Result<Output>;
 }
 
 /// Production implementation — shells out to the `multipass` binary.
@@ -113,12 +104,5 @@ impl Multipass for MultipassCli {
             .arg("version")
             .output()
             .context("failed to run multipass version")
-    }
-
-    fn snap_connections(&self) -> Result<Output> {
-        Command::new("snap")
-            .args(["connections", "multipass"])
-            .output()
-            .context("failed to run snap connections")
     }
 }

@@ -49,11 +49,6 @@ check_multipass() {
     fi
 
     if [[ "${os}" == "Linux" ]] && command -v snap &>/dev/null; then
-        if ! snap connections multipass 2>/dev/null | grep -q " :removable-media"; then
-            log_info "Connecting multipass removable-media interface..."
-            sudo snap connect multipass:removable-media || \
-                log_warn "Could not connect removable-media — 'polis run' may fail. Run: sudo snap connect multipass:removable-media"
-        fi
         local socket="/var/snap/multipass/common/multipass_socket"
         if [[ -S "${socket}" ]]; then
             local socket_group
