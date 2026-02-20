@@ -15,13 +15,13 @@ env:
   SYSBOX_VERSION: "0.6.7"
   SYSBOX_SHA256: "b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
   POLIS_IMAGES: >-
-    ghcr.io/odralabshq/polis-resolver-oss:v0.3.0
-    ghcr.io/odralabshq/polis-gate-oss:v0.3.0
-    ghcr.io/odralabshq/polis-certgen-oss:v0.3.0
-    ghcr.io/odralabshq/polis-sentinel-oss:v0.3.0
-    ghcr.io/odralabshq/polis-scanner-oss:v0.3.0
-    ghcr.io/odralabshq/polis-workspace-oss:v0.3.0
-    ghcr.io/odralabshq/polis-toolbox-oss:v0.3.0
+    ghcr.io/odralabshq/polis-resolver-oss:latest
+    ghcr.io/odralabshq/polis-gate-oss:latest
+    ghcr.io/odralabshq/polis-certgen-oss:latest
+    ghcr.io/odralabshq/polis-sentinel-oss:latest
+    ghcr.io/odralabshq/polis-scanner-oss:latest
+    ghcr.io/odralabshq/polis-workspace-oss:latest
+    ghcr.io/odralabshq/polis-toolbox-oss:latest
 
 jobs:
   # ── Stage 1a: Lint Rust ───────────────────────────────────────────
@@ -237,11 +237,12 @@ jobs:
       - name: Scan ${{ matrix.image }} with Trivy
         uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
         with:
-          image-ref: 'ghcr.io/odralabshq/${{ matrix.image }}:v0.3.0'
+          image-ref: 'ghcr.io/odralabshq/${{ matrix.image }}:latest'
           format: 'sarif'
           output: 'trivy-${{ matrix.image }}.sarif'
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
+          skip-setup-trivy: false
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
@@ -249,6 +250,7 @@ jobs:
           sarif_file: 'trivy-${{ matrix.image }}.sarif'
           category: 'trivy-${{ matrix.image }}'
         if: always()
+        continue-on-error: true
 
   # ── Stage 4: Integration tests ────────────────────────────────────
   integration-tests:
