@@ -301,6 +301,55 @@ Key rules:
 
 ---
 
+## Branching & Git Flow
+
+Polis uses a **GitLab Flow** variant optimised for mixed human + AI agent development. See [GitLab Flow](https://about.gitlab.com/topics/version-control/what-is-gitlab-flow/) and [GitFlow vs trunk-based](https://pullpanda.io/blog/git-flow-vs-trunk-based-development) for background.
+
+### Branch Model
+
+```
+feature/my-change ──┐
+agent/task-xyz    ──┤  merge commit (no review required)
+fix/some-bug      ──┘
+                     ↓
+                  develop  ← integration branch, CI gates only
+                     │
+              squash merge (1 human approval required)
+                     ↓
+                   main  ← stable, release-ready
+                     │
+                  git tag vX.X.X
+                     ↓
+                  release
+```
+
+### Rules
+
+| Branch | Who targets it | Review required | Merge type | Direct push |
+|--------|---------------|-----------------|------------|-------------|
+| `develop` | humans + AI agents | No — CI must pass | Merge commit | ✗ |
+| `main` | `develop` only | 1 human approval | Squash merge | ✗ |
+
+- **AI agents target `develop`** — no human review gate, but lint + unit tests must pass
+- **`develop → main`** is a deliberate human-promoted release, squash-merged to keep `main` history clean (one commit per release)
+- PRs to `main` from any branch other than `develop` are blocked by CI
+
+### Required CI checks on `develop`
+
+`lint-rust` · `lint-c` · `lint-shell` · `test-rust` · `test-c` · `unit-tests`
+
+### Creating a release
+
+```bash
+# 1. Open a PR from develop → main, get 1 approval, squash merge
+# 2. Tag main
+git checkout main && git pull
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+---
+
 ## CI/CD Pipelines
 
 ### Workflows
