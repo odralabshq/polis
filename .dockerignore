@@ -5,6 +5,7 @@ tests
 docs
 *.md
 !README.md
+!agents/openclaw/config/SOUL.md
 # Cargo.lock included for reproducible builds
 .env
 certs/ca/*.key

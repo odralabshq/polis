@@ -109,15 +109,17 @@ else
     exit 1
 fi
 
-# Bootstrap mounted agents AFTER routing is configured so they have internet.
-# Traffic goes through the gate's transparent proxy (TPROXY), which handles
-# HTTP/HTTPS fine for package downloads.
+# Bootstrap agents AFTER routing is configured so they have internet.
+# Supports two modes:
+#   1. Pre-installed (image-based): scripts already at /usr/local/bin, install.sh is a no-op
+#   2. Mounted (legacy/fallback): agents bind-mounted at /tmp/agents/*/
 for agent_dir in /tmp/agents/*/; do
     [ -d "$agent_dir" ] || continue
     name=$(basename "$agent_dir")
     echo "[workspace] Bootstrapping agent: ${name}"
 
-    # Run install.sh in a subshell so failures don't kill workspace init
+    # Run install.sh in a subshell so failures don't kill workspace init.
+    # Pre-installed images have /var/lib/openclaw-installed marker — install.sh exits immediately.
     if [ -x "${agent_dir}/install.sh" ]; then
         if ! ("${agent_dir}/install.sh"); then
             echo "[workspace] WARNING: ${name}/install.sh failed — agent may not work"
@@ -133,6 +135,18 @@ for agent_dir in /tmp/agents/*/; do
     for script in "${agent_dir}"/scripts/polis-*.sh; do
         [ -f "$script" ] || continue
         base=$(basename "$script" .sh)
+        ln -sf "$script" "/usr/local/bin/${base}"
+    done
+done
+
+# For pre-installed agents (image-based), scripts are already at /usr/local/share/<agent>/scripts/.
+# Symlink them into PATH if not already present (handles the case where /tmp/agents is not mounted).
+for scripts_dir in /usr/local/share/*/scripts/; do
+    [ -d "$scripts_dir" ] || continue
+    for script in "${scripts_dir}"/polis-*.sh; do
+        [ -f "$script" ] || continue
+        base=$(basename "$script" .sh)
+        [ -L "/usr/local/bin/${base}" ] && continue  # already symlinked from mount
         ln -sf "$script" "/usr/local/bin/${base}"
     done
 done

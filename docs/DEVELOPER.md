@@ -622,7 +622,59 @@ The VM runs headless. Once QEMU starts, just wait — Packer will print `Connect
 
 ---
 
-## Polis CLI
+## OpenClaw Agent
+
+OpenClaw runs as a systemd service inside the workspace container, exposing a Control UI on port 18789. It's pre-installed in a layered image (`polis-workspace-openclaw`) that extends the base workspace — no runtime build on container start.
+
+### First-time setup
+
+```bash
+echo "OPENAI_API_KEY=sk-proj-..." >> .env   # or ANTHROPIC_API_KEY / OPENROUTER_API_KEY
+just setup-agents
+docker compose -f docker-compose.yml \
+  -f agents/openclaw/.generated/compose.override.yaml \
+  build workspace
+just up
+```
+
+### Checking startup progress
+
+```bash
+just logs workspace                                                        # workspace init
+docker exec polis-workspace systemctl status openclaw                     # service status
+docker exec polis-workspace journalctl -u openclaw -f                     # gateway log
+docker exec polis-workspace cat /home/polis/.openclaw/gateway-token.txt   # get token
+```
+
+Open `http://<host>:18789/#token=<token>`. On Multipass use the VM IP; on native Linux use `localhost`.
+
+### Rebuild after changes to `agents/openclaw/`
+
+```bash
+docker compose -f docker-compose.yml \
+  -f agents/openclaw/.generated/compose.override.yaml \
+  build workspace && just up
+```
+
+### Reset config (new token, re-detect API keys)
+
+```bash
+docker exec polis-workspace rm /home/polis/.openclaw/.initialized
+docker exec polis-workspace systemctl restart openclaw
+```
+
+### Key paths inside the workspace container
+
+| Path | Purpose |
+|------|---------|
+| `/home/polis/.openclaw/openclaw.json` | Gateway config |
+| `/home/polis/.openclaw/gateway-token.txt` | Control UI token |
+| `/home/polis/.openclaw/agents/default/agent/auth-profiles.json` | API keys per provider |
+| `/home/polis/.openclaw/workspace/SOUL.md` | Agent system prompt |
+| `/run/openclaw-env` | Host `.env` bind-mounted for init script |
+| `/var/lib/openclaw-installed` | Idempotency marker |
+
+---
 
 The user-facing CLI is built in Rust under `cli/src/`. To build and install locally:
 
