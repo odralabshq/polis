@@ -135,7 +135,7 @@ build-vm arch="amd64" headless="true": _export-images _bundle-config
         -var "arch={{arch}}" \
         -var "headless={{headless}}" \
         polis-vm.pkr.hcl
-    just --justfile "${ROOT}/Justfile" --working-directory "${ROOT}" _sign-vm arch={{arch}}
+    just --justfile "${ROOT}/Justfile" --working-directory "${ROOT}" _sign-vm {{arch}}
 
 # Internal: sign the VM image with a dev keypair, producing a .sha256 sidecar
 _sign-vm arch="amd64":
