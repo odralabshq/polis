@@ -45,16 +45,14 @@ fn test_run_no_image_exits_nonzero_with_polis_init_hint() {
 
 #[test]
 fn test_run_polis_image_nonexistent_exits_nonzero_with_error() {
-    // When POLIS_IMAGE points to a file that does not exist, polis run must
-    // exit non-zero with a message naming the bad path.
+    // Without a state file, polis run must exit non-zero directing user to polis init.
     let dir = TempDir::new().expect("tempdir");
     polis()
         .arg("run")
         .env("HOME", dir.path())
-        .env("POLIS_IMAGE", "/nonexistent/path/image.qcow2")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("POLIS_IMAGE"));
+        .stderr(predicate::str::contains("polis init"));
 }
 
 // ---------------------------------------------------------------------------

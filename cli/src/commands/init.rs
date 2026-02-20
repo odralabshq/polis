@@ -75,7 +75,7 @@ pub struct ImageMetadata {
 ///
 /// Returns an error if argument validation, directory creation, image
 /// acquisition, verification, or metadata writing fails.
-pub fn run(args: &InitArgs) -> Result<()> {
+pub fn run(args: &InitArgs, mp: &impl crate::multipass::Multipass) -> Result<()> {
     anyhow::ensure!(
         !(args.check && args.force),
         "--check and --force are mutually exclusive"
@@ -111,7 +111,10 @@ pub fn run(args: &InitArgs) -> Result<()> {
 
     let meta = acquire_image(&source, &images_dir)?;
     write_metadata(&images_dir, &meta)?;
-    println!("Run 'polis run' to create a workspace.");
+
+    // Provision the workspace VM
+    crate::commands::run::provision_workspace_full("", mp)?;
+
     Ok(())
 }
 
@@ -660,6 +663,16 @@ pub mod tests {
 
     pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    struct StubMp;
+    impl crate::multipass::Multipass for StubMp {
+        fn vm_info(&self) -> anyhow::Result<std::process::Output> { unimplemented!() }
+        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> anyhow::Result<std::process::Output> { unimplemented!() }
+        fn start(&self) -> anyhow::Result<std::process::Output> { unimplemented!() }
+        fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> { unimplemented!() }
+        fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> { unimplemented!() }
+        fn version(&self) -> anyhow::Result<std::process::Output> { unimplemented!() }
+    }
+
     // ── test helpers ─────────────────────────────────────────────────────────
 
     const TEST_KEY_SEED: [u8; 32] = [0x42u8; 32];
@@ -829,7 +842,7 @@ pub mod tests {
             force: true,
             check: true,
         };
-        let err = run(&args).unwrap_err();
+        let err = run(&args, &StubMp).unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"));
     }
 
@@ -840,7 +853,7 @@ pub mod tests {
             force: false,
             check: true,
         };
-        let err = run(&args).unwrap_err();
+        let err = run(&args, &StubMp).unwrap_err();
         assert!(
             err.to_string()
                 .contains("--check cannot be used with --image")

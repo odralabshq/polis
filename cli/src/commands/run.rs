@@ -44,9 +44,16 @@ pub fn run(args: &RunArgs, mp: &impl Multipass) -> Result<()> {
     let target_agent = resolve_agent(args.agent.as_deref())?;
 
     match existing {
-        Some(state) if state.agent == target_agent => resume_run(&state_mgr, state, mp),
+        Some(state) if state.agent == target_agent => {
+            start_existing(mp);
+            print_guarantees();
+            println!("{} is ready", state.agent);
+            Ok(())
+        }
         Some(state) => switch_agent(&state_mgr, state, &target_agent, mp),
-        None => fresh_run(&state_mgr, &target_agent, mp),
+        None => anyhow::bail!(
+            "No workspace found.\n\nRun 'polis init' to set up your workspace."
+        ),
     }
 }
 
@@ -138,24 +145,50 @@ fn prompt_agent_selection(agents: &[String]) -> Result<String> {
     Ok(agents[idx].clone())
 }
 
-/// Resume from the last completed stage.
+/// Start the workspace VM if it is not already running.
+fn start_existing(mp: &impl Multipass) {
+    if let Ok(output) = mp.vm_info()
+        && output.status.success()
+    {
+        let _ = mp.start();
+    }
+}
+
+/// Run the full workspace provisioning pipeline.
+///
+/// Called by `polis init` after the image is acquired.
 ///
 /// # Errors
 ///
-/// Returns an error if any remaining stage fails.
-fn resume_run(
-    state_mgr: &StateManager,
-    mut run_state: RunState,
-    mp: &impl Multipass,
-) -> Result<()> {
-    let mut next = run_state.stage.next();
-    while let Some(next_stage) = next {
+/// Returns an error if any stage fails.
+pub(crate) fn provision_workspace_full(agent: &str, mp: &impl Multipass) -> Result<()> {
+    check_prerequisites(mp)?;
+    let state_mgr = StateManager::new()?;
+
+    let image_path = get_image_path()?;
+    let image_sha = verify_image_at_launch(&image_path)?;
+
+    let mut run_state = RunState {
+        stage: RunStage::WorkspaceCreated,
+        agent: agent.to_string(),
+        workspace_id: generate_workspace_id(),
+        started_at: Utc::now(),
+        image_sha256: Some(image_sha),
+    };
+
+    for next_stage in [
+        RunStage::WorkspaceCreated,
+        RunStage::CredentialsSet,
+        RunStage::Provisioned,
+        RunStage::AgentReady,
+    ] {
         execute_stage(&mut run_state, next_stage, mp)?;
         state_mgr.advance(&mut run_state, next_stage)?;
-        next = next_stage.next();
+        if next_stage == RunStage::Provisioned {
+            pin_host_key();
+        }
     }
-    print_guarantees();
-    println!("{} is ready", run_state.agent);
+
     Ok(())
 }
 
@@ -231,44 +264,6 @@ fn print_guarantees() {
     }
 
     println!("Workspace ready. All guarantees enforced.");
-}
-
-/// Fresh run — execute all stages from the beginning.
-///
-/// # Errors
-///
-/// Returns an error if any stage fails.
-fn fresh_run(state_mgr: &StateManager, agent: &str, mp: &impl Multipass) -> Result<()> {
-    check_prerequisites(mp)?;
-
-    // Pre-flight: verify image exists and is intact before touching any state.
-    let image_path = get_image_path()?;
-    let image_sha = verify_image_at_launch(&image_path)?;
-
-    let mut run_state = RunState {
-        stage: RunStage::WorkspaceCreated,
-        agent: agent.to_string(),
-        workspace_id: generate_workspace_id(),
-        started_at: Utc::now(),
-        image_sha256: Some(image_sha),
-    };
-
-    for next_stage in [
-        RunStage::WorkspaceCreated,
-        RunStage::CredentialsSet,
-        RunStage::Provisioned,
-        RunStage::AgentReady,
-    ] {
-        execute_stage(&mut run_state, next_stage, mp)?;
-        state_mgr.advance(&mut run_state, next_stage)?;
-        if next_stage == RunStage::Provisioned {
-            pin_host_key();
-        }
-    }
-
-    print_guarantees();
-    println!("{agent} is ready");
-    Ok(())
 }
 
 /// Pins the workspace SSH host key into `~/.polis/known_hosts`.
@@ -859,7 +854,7 @@ mod tests {
         }
     }
 
-    // ── fresh run ────────────────────────────────────────────────────────────
+    // ── provision_workspace_full ─────────────────────────────────────────────
 
     #[test]
     fn test_fresh_run_with_mock_multipass_succeeds() {
@@ -872,12 +867,11 @@ mod tests {
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
 
-        let state_mgr = StateManager::with_path(dir.path().join("state.json"));
         let mp = MockMultipass::new();
-        let result = fresh_run(&state_mgr, "test-agent", &mp);
+        let result = provision_workspace_full("test-agent", &mp);
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
-        assert!(result.is_ok(), "fresh run should succeed: {result:?}");
+        assert!(result.is_ok(), "provision should succeed: {result:?}");
     }
 
     #[test]
@@ -891,12 +885,11 @@ mod tests {
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
 
-        let state_path = dir.path().join("state.json");
-        let state_mgr = StateManager::with_path(state_path.clone());
         let mp = MockMultipass::new();
-        let _ = fresh_run(&state_mgr, "test-agent", &mp);
+        let _ = provision_workspace_full("test-agent", &mp);
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
+        let state_path = dirs::home_dir().unwrap().join(".polis").join("state.json");
         assert!(state_path.exists(), "state.json must be created after run");
     }
 
@@ -911,40 +904,18 @@ mod tests {
         // SAFETY: protected by ENV_LOCK
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
 
-        let state_path = dir.path().join("state.json");
-        let state_mgr = StateManager::with_path(state_path.clone());
         let mp = MockMultipass::new();
-        let _ = fresh_run(&state_mgr, "test-agent", &mp);
+        let _ = provision_workspace_full("test-agent", &mp);
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
 
+        let state_path = dirs::home_dir().unwrap().join(".polis").join("state.json");
         let content = std::fs::read_to_string(&state_path).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
         assert!(v.get("stage").is_some(), "must have 'stage'");
         assert!(v.get("agent").is_some(), "must have 'agent'");
         assert!(v.get("workspace_id").is_some(), "must have 'workspace_id'");
         assert!(v.get("started_at").is_some(), "must have 'started_at'");
-    }
-
-    // ── resume run ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_resume_run_from_provisioned_stage_succeeds() {
-        let dir = TempDir::new().unwrap();
-        let state_path = dir.path().join("state.json");
-        let state_mgr = StateManager::with_path(state_path);
-
-        let run_state = polis_common::types::RunState {
-            stage: polis_common::types::RunStage::Provisioned,
-            agent: "test-agent".to_string(),
-            workspace_id: "ws-test01".to_string(),
-            started_at: chrono::Utc::now(),
-            image_sha256: None,
-        };
-
-        let mp = MockMultipass { vm_exists: true, ..MockMultipass::new() };
-        let result = resume_run(&state_mgr, run_state, &mp);
-        assert!(result.is_ok(), "resume run should succeed: {result:?}");
     }
 
     // ── check_prerequisites ──────────────────────────────────────────────────

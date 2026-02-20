@@ -141,7 +141,10 @@ impl Cli {
                 let mp = crate::multipass::MultipassCli;
                 commands::update::run(&ctx, &commands::update::GithubUpdateChecker, &mp).await
             }
-            Command::Init(args) => commands::init::run(&args),
+            Command::Init(args) => {
+                let mp = crate::multipass::MultipassCli;
+                commands::init::run(&args, &mp)
+            }
             Command::Doctor => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::doctor::run(&ctx, json).await
