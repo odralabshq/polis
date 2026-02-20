@@ -13,18 +13,15 @@ fileExistenceTests:
     shouldExist: true
     permissions: '-rwxr-xr-x'
 
-  - name: 'g3proxy config'
-    path: '/etc/g3proxy/g3proxy.yaml'
-    shouldExist: true
-
   - name: 'init script'
     path: '/usr/local/bin/init.sh'
     shouldExist: true
     permissions: '-rwxr-xr-x'
 
-  - name: 'iptables binary'
-    path: '/usr/sbin/iptables'
+  - name: 'setup-network script'
+    path: '/usr/local/bin/setup-network.sh'
     shouldExist: true
+    permissions: '-rwxr-xr-x'
 
 commandTests:
   - name: 'g3proxy version'
@@ -33,7 +30,7 @@ commandTests:
     exitCode: 0
     expectedOutput: ['g3proxy']
 
-  - name: 'iptables available'
+  - name: 'nft available'
     command: 'which'
-    args: ['iptables']
+    args: ['nft']
     exitCode: 0

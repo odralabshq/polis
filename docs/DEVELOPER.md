@@ -22,12 +22,12 @@ just test-bats
 
 | Tool | Required | Install |
 |------|----------|---------|
-| Docker | Yes | `sudo apt install docker.io` |
 | just | Yes | `curl -sSf https://just.systems/install.sh \| bash` |
-| shellcheck | For linting | `sudo apt install shellcheck` |
-| hadolint | For Dockerfile linting | `brew install hadolint` or use Docker |
-| container-structure-test | For image validation | [GitHub releases](https://github.com/GoogleContainerTools/container-structure-test/releases) |
-| Multipass | For dev VM | `sudo snap install multipass` |
+| Docker | Yes | `just install-tools` |
+| shellcheck | For linting | `just install-tools` |
+| hadolint | For Dockerfile linting | `just install-tools` |
+| container-structure-test | For image validation | `just install-tools` |
+| Multipass | For dev VM | `just install-tools` |
 | Packer | For VM builds | `just install-tools` (adds HashiCorp apt repo) |
 | QEMU + xorriso | For VM builds | `just install-tools` |
 
@@ -465,7 +465,7 @@ Packer is not in the default Ubuntu apt repos — it requires the HashiCorp apt 
 just install-tools
 ```
 
-This installs: packer (via HashiCorp repo), qemu-system-x86, qemu-utils, ovmf, xorriso.
+This installs: docker.io, shellcheck, hadolint (v2.12.0), container-structure-test (v1.19.3), multipass, packer (via HashiCorp repo), qemu-system-x86, qemu-utils, ovmf, xorriso.
 
 ### Local Build
 
@@ -598,16 +598,12 @@ sudo usermod -aG docker $USER
 
 **Multipass not found (dev-vm.sh):**
 ```bash
-# macOS
-brew install multipass
-
-# Linux
-sudo snap install multipass
+just install-tools
 ```
 
 **Shellcheck not found (just lint-shell):**
 ```bash
-sudo apt install shellcheck
+just install-tools
 ```
 
 **Packer plugin missing:**

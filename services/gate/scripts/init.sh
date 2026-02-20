@@ -4,9 +4,9 @@ set -euo pipefail
 echo "[gateway] Starting initialization..."
 
 # Network setup (runs as root before privilege drop)
-if [[ -x /setup-network.sh ]]; then
+if [[ -x /usr/local/bin/setup-network.sh ]]; then
     echo "[gateway] Running network setup..."
-    /setup-network.sh
+    /usr/local/bin/setup-network.sh
 fi
 
 # Certificate validation (fail-fast) - only ca.pem, ca.key is in certgen sidecar

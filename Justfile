@@ -10,6 +10,25 @@ default:
 install-tools:
     #!/usr/bin/env bash
     set -euo pipefail
+    sudo apt-get update -qq
+    # Docker
+    command -v docker &>/dev/null || sudo apt-get install -y docker.io
+    # shellcheck
+    command -v shellcheck &>/dev/null || sudo apt-get install -y shellcheck
+    # hadolint
+    if ! command -v hadolint &>/dev/null; then
+        curl -fsSL -o /tmp/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+        sudo install -m 755 /tmp/hadolint /usr/local/bin/hadolint
+        rm /tmp/hadolint
+    fi
+    # container-structure-test
+    if ! command -v container-structure-test &>/dev/null; then
+        curl -fsSL -o /tmp/container-structure-test https://github.com/GoogleContainerTools/container-structure-test/releases/download/v1.19.3/container-structure-test-linux-amd64
+        sudo install -m 755 /tmp/container-structure-test /usr/local/bin/container-structure-test
+        rm /tmp/container-structure-test
+    fi
+    # Multipass
+    command -v multipass &>/dev/null || sudo snap install multipass
     # HashiCorp repo for packer
     if ! command -v packer &>/dev/null; then
         sudo apt-get install -y gnupg curl
@@ -20,6 +39,7 @@ install-tools:
         sudo apt-get update -qq
         sudo apt-get install -y packer
     fi
+    # QEMU + xorriso for VM builds
     sudo apt-get install -y qemu-system-x86 qemu-utils ovmf xorriso
 
 # ── Lint ────────────────────────────────────────────────────────────

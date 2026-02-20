@@ -71,22 +71,22 @@ setup() {
 # ── Modules (source: c-icap.conf Service directives) ─────────────────────
 
 @test "sentinel: echo service module exists" {
-    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_echo.so
+    run docker exec "$CTR_SENTINEL" test -f /usr/local/lib/c_icap/srv_echo.so
     assert_success
 }
 
 @test "sentinel: squidclamav module exists" {
-    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/squidclamav.so
+    run docker exec "$CTR_SENTINEL" test -f /usr/local/lib/c_icap/squidclamav.so
     assert_success
 }
 
 @test "sentinel: DLP module exists" {
-    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_dlp.so
+    run docker exec "$CTR_SENTINEL" test -f /usr/local/lib/c_icap/srv_polis_dlp.so
     assert_success
 }
 
 @test "sentinel: approval modules exist" {
-    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_approval.so
+    run docker exec "$CTR_SENTINEL" test -f /usr/local/lib/c_icap/srv_polis_approval.so
     assert_success
 }
 

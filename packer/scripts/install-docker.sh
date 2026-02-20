@@ -4,13 +4,15 @@
 
 set -euo pipefail
 
+export DEBIAN_FRONTEND=noninteractive
+
 DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 
 echo "==> Installing Docker via apt repository..."
 
-# Install prerequisites
+# Install prerequisites (apt-utils suppresses debconf warnings)
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg
+sudo apt-get install -y apt-utils ca-certificates curl gnupg
 
 # Download and verify Docker GPG key
 sudo install -m 0755 -d /etc/apt/keyrings

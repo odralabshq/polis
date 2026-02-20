@@ -35,7 +35,7 @@ services:
       - ./services/resolver/config/Corefile:/etc/coredns/Corefile:ro
       - ./services/resolver/config/blocklist.txt:/etc/coredns/blocklist.txt:ro
     healthcheck:
-      test: ["CMD", "/usr/local/bin/coredns", "-plugins"]
+      test: ["CMD", "/usr/bin/coredns", "-plugins"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -209,7 +209,7 @@ services:
       - ./certs/valkey:/etc/valkey/tls:ro
       - scanner-db:/var/lib/clamav:ro
     environment:
-      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
+      - LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib
       - polis_VALKEY_HOST=state
     secrets:
       - valkey_dlp_password

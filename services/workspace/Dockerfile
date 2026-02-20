@@ -40,13 +40,12 @@ RUN printf '%s\n' \
     'ChallengeResponseAuthentication no' \
     'PubkeyAuthentication yes' \
     'AuthorizedKeysFile .ssh/authorized_keys' \
-    > /etc/ssh/sshd_config.d/polis.conf
+    > /etc/ssh/sshd_config.d/polis.conf \
+    && useradd -m -u 1000 -s /bin/bash polis \
+    && usermod -s /usr/sbin/nologin root \
+    && ln -sf /etc/systemd/system/polis-init.service /etc/systemd/system/multi-user.target.wants/polis-init.service \
+    && mkdir -p /usr/local/share/ca-certificates
 
-# Create polis user (uid 1000) and disable root login
-RUN useradd -m -u 1000 -s /bin/bash polis \
-    && usermod -s /usr/sbin/nologin root
-
-# Enable polis-init service (service file mounted at runtime)
-RUN ln -sf /etc/systemd/system/polis-init.service /etc/systemd/system/multi-user.target.wants/polis-init.service
+COPY --chmod=755 services/workspace/scripts/init.sh /usr/local/bin/init.sh
 
 ENTRYPOINT ["/sbin/init"]
