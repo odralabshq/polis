@@ -23,12 +23,18 @@ _curl() {
         "$@" 2>/dev/null
 }
 
-# Step 1: Initialize — capture session ID
-_curl -X POST "$MCP_URL" \
-    -D "$HDR_FILE" -o /dev/null \
-    -d '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"polis-cli","version":"1.0"}}}'
+# Step 1: Initialize — capture session ID (retry up to 3 times for cold starts)
+SID=""
+for _attempt in 1 2 3; do
+    _curl -X POST "$MCP_URL" \
+        -D "$HDR_FILE" -o /dev/null \
+        -d '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"polis-cli","version":"1.0"}}}' \
+        || true
+    SID=$(grep -i '^mcp-session-id:' "$HDR_FILE" | tr -d '\r' | awk '{print $2}')
+    [[ -n "$SID" ]] && break
+    sleep 2
+done
 
-SID=$(grep -i '^mcp-session-id:' "$HDR_FILE" | tr -d '\r' | awk '{print $2}')
 if [[ -z "$SID" ]]; then
     echo '{"error":"toolbox unreachable or not ready"}' >&2
     exit 1

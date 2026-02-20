@@ -33,10 +33,15 @@ PROXY="--proxy http://10.10.1.10:8080"
 }
 
 @test "e2e: HTTP response body is valid JSON" {
-    run docker exec "$CTR_WORKSPACE" \
-        curl -sf --connect-timeout 15 $PROXY "http://${HTTPBIN_HOST}/get"
-    assert_success
-    run jq -e '.url' <<< "$output"
+    # Retry up to 3 times — proxy/ICAP chain may need warmup in CI
+    local attempt body
+    for attempt in 1 2 3; do
+        body=$(docker exec "$CTR_WORKSPACE" \
+            curl -sf --connect-timeout 15 $PROXY "http://${HTTPBIN_HOST}/get" 2>/dev/null) && break
+        sleep 2
+    done
+    [[ -n "$body" ]]
+    run jq -e '.url' <<< "$body"
     assert_success
 }
 

@@ -8,6 +8,15 @@ setup_file() {
     load "../../lib/guards.bash"
     require_container "$CTR_STATE"
     export POLIS_CLI="${PROJECT_ROOT}/tools/blocked.sh"
+
+    # Warm up toolbox connectivity from workspace (CI containers may need a moment)
+    if docker exec "$CTR_WORKSPACE" test -f /tmp/agents/openclaw/scripts/polis-toolbox-call.sh 2>/dev/null; then
+        for _i in 1 2 3; do
+            docker exec "$CTR_WORKSPACE" \
+                bash /tmp/agents/openclaw/scripts/polis-security-status.sh >/dev/null 2>&1 && break
+            sleep 3
+        done
+    fi
 }
 
 setup() {
