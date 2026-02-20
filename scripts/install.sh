@@ -41,22 +41,112 @@ check_arch() {
     return 0
 }
 
-# Check for Multipass (V9 - no auto-install)
-check_multipass() {
-    if command -v multipass &>/dev/null; then
+# Minimum required Multipass version
+MULTIPASS_MIN_VERSION="1.16.0"
+# Latest known release (used when auto-installing)
+MULTIPASS_VERSION="${MULTIPASS_VERSION:-1.16.1}"
+
+# Compare semver strings: returns 0 if $1 >= $2
+semver_gte() {
+    printf '%s\n%s\n' "$2" "$1" | sort -V -C
+}
+
+# Install Multipass on Linux via snap
+install_multipass_linux() {
+    local arch
+    arch=$(check_arch)
+    if [[ "${arch}" == "arm64" ]]; then
+        log_error "ARM64 polis workspace images are not yet available."
+        echo "  Supported: x86_64 (amd64) only."
+        exit 1
+    fi
+    if ! command -v snap &>/dev/null; then
+        log_error "snapd is required to install Multipass on Linux."
+        echo "  Install snapd: https://snapcraft.io/docs/installing-snapd"
+        echo "  Then re-run this installer."
+        exit 1
+    fi
+    local snap_file="/tmp/multipass_${MULTIPASS_VERSION}_amd64.snap"
+    local url="https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass_${MULTIPASS_VERSION}_amd64.snap"
+    log_info "Downloading Multipass ${MULTIPASS_VERSION} for Linux..."
+    curl -fsSL --proto '=https' "${url}" -o "${snap_file}"
+    log_info "Installing Multipass snap..."
+    sudo snap install "${snap_file}" --dangerous
+    rm -f "${snap_file}"
+}
+
+# Install Multipass on macOS via .pkg
+install_multipass_macos() {
+    local pkg_file="/tmp/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg"
+    local url="https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg"
+    log_info "Downloading Multipass ${MULTIPASS_VERSION} for macOS..."
+    curl -fsSL --proto '=https' "${url}" -o "${pkg_file}"
+    log_info "Installing Multipass (requires sudo)..."
+    sudo installer -pkg "${pkg_file}" -target /
+    rm -f "${pkg_file}"
+}
+
+# Post-install Linux config: removable-media + socket group
+configure_multipass_linux() {
+    if ! command -v snap &>/dev/null; then
         return 0
     fi
-    log_error "Multipass is required but not installed"
-    echo ""
-    echo "Install Multipass before running this installer:"
-    case "$(uname -s)" in
-        Darwin) echo "  brew install multipass" ;;
-        Linux)  echo "  sudo snap install multipass" ;;
-        *)      echo "  https://multipass.run/install" ;;
-    esac
-    echo ""
-    echo "Then re-run this installer."
-    exit 1
+    if ! snap connections multipass 2>/dev/null | grep -q "removable-media.*:removable-media"; then
+        log_info "Connecting multipass removable-media interface..."
+        sudo snap connect multipass:removable-media || \
+            log_warn "Could not connect removable-media — 'polis run' may fail. Run: sudo snap connect multipass:removable-media"
+    fi
+    local socket="/var/snap/multipass/common/multipass_socket"
+    if [[ -S "${socket}" ]]; then
+        local socket_group
+        socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
+        if [[ -n "${socket_group}" ]] && ! groups | grep -qw "${socket_group}"; then
+            log_warn "Your user is not in the '${socket_group}' group."
+            echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
+            echo "  Then log out and back in, or run: newgrp ${socket_group}"
+        fi
+    fi
+}
+
+# Check for Multipass: auto-install if missing, verify version >= minimum
+check_multipass() {
+    local os
+    os=$(uname -s)
+
+    if ! command -v multipass &>/dev/null; then
+        log_info "Multipass not found — installing..."
+        case "${os}" in
+            Linux)  install_multipass_linux ;;
+            Darwin) install_multipass_macos ;;
+            *)
+                log_error "Automatic Multipass install is not supported on ${os}."
+                echo "  Install manually: https://multipass.run/install"
+                exit 1
+                ;;
+        esac
+    fi
+
+    # Version check
+    local version_line installed_version
+    version_line=$(multipass version 2>/dev/null | head -1 || true)
+    installed_version=$(echo "${version_line}" | awk '{print $2}')
+    if [[ -z "${installed_version}" ]]; then
+        log_warn "Could not determine Multipass version — proceeding anyway."
+    elif ! semver_gte "${installed_version}" "${MULTIPASS_MIN_VERSION}"; then
+        log_error "Multipass ${installed_version} is too old (need ≥ ${MULTIPASS_MIN_VERSION})."
+        case "${os}" in
+            Linux)  echo "  Update: sudo snap refresh multipass" ;;
+            Darwin) echo "  Update: brew upgrade multipass" ;;
+        esac
+        exit 1
+    else
+        log_ok "Multipass ${installed_version} OK"
+    fi
+
+    # Linux post-install config
+    if [[ "${os}" == "Linux" ]]; then
+        configure_multipass_linux
+    fi
 }
 
 # Resolve version tag
@@ -137,7 +227,7 @@ verify_attestation() {
 
 # Non-fatal image download step
 init_image() {
-    log_info "Downloading workspace image (~3.2 GB)..."
+    log_info "Acquiring workspace image (~3.2 GB)..."
     if [[ -n "${IMAGE_URL}" ]]; then
         "${INSTALL_DIR}/bin/polis" init --image "${IMAGE_URL}" || {
             log_warn "Image download failed. Run 'polis init' to retry."

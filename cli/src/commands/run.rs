@@ -203,6 +203,8 @@ fn switch_agent(
 ///
 /// Returns an error if any stage fails.
 fn fresh_run(state_mgr: &StateManager, agent: &str, mp: &impl Multipass) -> Result<()> {
+    check_prerequisites(mp)?;
+
     // Pre-flight: verify image exists and is intact before touching any state.
     let image_path = get_image_path()?;
     let image_sha = verify_image_at_launch(&image_path)?;
@@ -288,6 +290,71 @@ fn execute_stage(_run_state: &mut RunState, stage: RunStage, mp: &impl Multipass
     Ok(())
 }
 
+/// Minimum Multipass version required for `file://` image launch.
+const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
+
+/// Verify Multipass is present, meets the minimum version, and (on Linux) has
+/// the `removable-media` snap interface connected.
+///
+/// # Errors
+///
+/// Returns an actionable error if any prerequisite is not met.
+fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
+    // 1. Multipass on PATH
+    let output = mp.version().map_err(|_| {
+        #[cfg(target_os = "linux")]
+        return anyhow::anyhow!(
+            "multipass not found.\n\
+             Install: sudo snap install multipass\n\
+             Then:    sudo snap connect multipass:removable-media"
+        );
+        #[cfg(target_os = "macos")]
+        return anyhow::anyhow!(
+            "multipass not found.\n\
+             Install: https://multipass.run/install  (requires macOS 13 Ventura or later)"
+        );
+        #[cfg(target_os = "windows")]
+        return anyhow::anyhow!("multipass not found.\n\
+             Install: https://multipass.run/install");
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        return anyhow::anyhow!("multipass not found. Install: https://multipass.run/install");
+    })?;
+
+    // 2. Version >= 1.16.0
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if let Some(ver_str) = stdout.lines().next().and_then(|l| l.split_whitespace().nth(1))
+        && let Ok(v) = semver::Version::parse(ver_str)
+        && v < MULTIPASS_MIN_VERSION
+    {
+        #[cfg(target_os = "linux")]
+        anyhow::bail!(
+            "Multipass {v} is too old (need ≥ {MULTIPASS_MIN_VERSION}).\n\
+             Update: sudo snap refresh multipass"
+        );
+        #[cfg(not(target_os = "linux"))]
+        anyhow::bail!(
+            "Multipass {v} is too old (need ≥ {MULTIPASS_MIN_VERSION}).\n\
+             Update: https://multipass.run/install"
+        );
+    }
+
+    // 3. Linux: removable-media interface must be connected
+    #[cfg(target_os = "linux")]
+    if let Ok(o) = mp.snap_connections() {
+        let text = String::from_utf8_lossy(&o.stdout);
+        // The slot column reads " :removable-media" when connected; the plug
+        // column reads "multipass:removable-media" (no leading space before ":").
+        if !text.contains(" :removable-media") {
+            anyhow::bail!(
+                "multipass cannot read VM images from your home directory.\n\
+                 Fix: sudo snap connect multipass:removable-media"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Resolve the VM image path.
 ///
 /// Priority:
@@ -346,13 +413,8 @@ fn verify_image_at_launch(image_path: &std::path::Path) -> Result<String> {
         anyhow::bail!("Image checksum missing. Re-run: polis init");
     }
 
-    let expected = std::fs::read_to_string(&checksum_path)
+    let expected = crate::commands::init::extract_checksum_from_signed_file(&checksum_path)
         .with_context(|| format!("reading checksum {}", checksum_path.display()))?;
-    let expected = expected
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_string();
 
     println!("  Verifying image integrity...");
     let actual = crate::commands::init::sha256_file(image_path)?;
@@ -389,6 +451,14 @@ fn create_workspace(mp: &impl Multipass) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        #[cfg(target_os = "linux")]
+        if stderr.contains("Failed to copy") {
+            anyhow::bail!(
+                "multipass launch failed: {stderr}\n\
+                 Hint: multipass cannot read the image file.\n\
+                 Fix:  sudo snap connect multipass:removable-media"
+            );
+        }
         anyhow::bail!("multipass launch failed: {stderr}");
     }
 
@@ -578,12 +648,14 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
-        let expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
         let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
-        std::fs::write(&sidecar, format!("{expected}  polis-workspace.qcow2\n")).unwrap();
+        let expected = crate::commands::init::tests::make_signed_sidecar_pub(&img, &sidecar);
         // SAFETY: protected by ENV_LOCK
+        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
         unsafe { std::env::remove_var("POLIS_IMAGE") };
-        assert_eq!(verify_image_at_launch(&img).unwrap(), expected);
+        let result = verify_image_at_launch(&img);
+        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
+        assert_eq!(result.unwrap(), expected);
     }
 
     #[test]
@@ -595,14 +667,16 @@ mod tests {
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
         let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
-        std::fs::write(
+        // Sign a sidecar with wrong hash content
+        crate::commands::init::tests::make_signed_sidecar_with_content_pub(
             &sidecar,
-            format!("{}  polis-workspace.qcow2\n", "a".repeat(64)),
-        )
-        .unwrap();
+            &format!("{}  polis-workspace.qcow2\n", "a".repeat(64)),
+        );
         // SAFETY: protected by ENV_LOCK
+        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         let err = verify_image_at_launch(&img).unwrap_err().to_string();
+        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
         assert!(err.contains("Image integrity check failed"), "got: {err}");
     }
 
@@ -615,14 +689,15 @@ mod tests {
         let img = dir.path().join("polis-workspace.qcow2");
         std::fs::write(&img, b"hello").unwrap();
         let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
-        std::fs::write(
+        crate::commands::init::tests::make_signed_sidecar_with_content_pub(
             &sidecar,
-            format!("{}  polis-workspace.qcow2\n", "a".repeat(64)),
-        )
-        .unwrap();
+            &format!("{}  polis-workspace.qcow2\n", "a".repeat(64)),
+        );
         // SAFETY: protected by ENV_LOCK
+        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         let err = verify_image_at_launch(&img).unwrap_err().to_string();
+        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
         assert!(err.contains("polis init --force"), "got: {err}");
     }
 
@@ -712,6 +787,23 @@ mod tests {
 
     struct MockMultipass {
         vm_exists: bool,
+        /// `None` → `version()` returns `Err` (simulates "not found").
+        /// `Some(s)` → `version()` returns `Ok` with `s` as stdout.
+        version_stdout: Option<&'static str>,
+        /// Stdout returned by `snap_connections()`.
+        snap_stdout: &'static str,
+    }
+
+    impl MockMultipass {
+        /// Healthy defaults: VM absent, multipass 1.16.1, removable-media connected.
+        fn new() -> Self {
+            Self {
+                vm_exists: false,
+                version_stdout: Some("multipass   1.16.1\nmultipassd  1.16.1\n"),
+                // Real format: slot column " :removable-media" indicates connected.
+                snap_stdout: "removable-media    multipass:removable-media    :removable-media    manual\n",
+            }
+        }
     }
 
     impl crate::multipass::Multipass for MockMultipass {
@@ -744,6 +836,15 @@ mod tests {
                 Ok(ok_output(b""))
             }
         }
+        fn version(&self) -> anyhow::Result<std::process::Output> {
+            match self.version_stdout {
+                Some(s) => Ok(ok_output(s.as_bytes())),
+                None => anyhow::bail!("multipass not found"),
+            }
+        }
+        fn snap_connections(&self) -> anyhow::Result<std::process::Output> {
+            Ok(ok_output(self.snap_stdout.as_bytes()))
+        }
     }
 
     // ── fresh run ────────────────────────────────────────────────────────────
@@ -760,7 +861,7 @@ mod tests {
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
 
         let state_mgr = StateManager::with_path(dir.path().join("state.json"));
-        let mp = MockMultipass { vm_exists: false };
+        let mp = MockMultipass::new();
         let result = fresh_run(&state_mgr, "test-agent", &mp);
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
@@ -780,7 +881,7 @@ mod tests {
 
         let state_path = dir.path().join("state.json");
         let state_mgr = StateManager::with_path(state_path.clone());
-        let mp = MockMultipass { vm_exists: false };
+        let mp = MockMultipass::new();
         let _ = fresh_run(&state_mgr, "test-agent", &mp);
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
@@ -800,7 +901,7 @@ mod tests {
 
         let state_path = dir.path().join("state.json");
         let state_mgr = StateManager::with_path(state_path.clone());
-        let mp = MockMultipass { vm_exists: false };
+        let mp = MockMultipass::new();
         let _ = fresh_run(&state_mgr, "test-agent", &mp);
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
@@ -829,9 +930,65 @@ mod tests {
             image_sha256: None,
         };
 
-        let mp = MockMultipass { vm_exists: true };
+        let mp = MockMultipass { vm_exists: true, ..MockMultipass::new() };
         let result = resume_run(&state_mgr, run_state, &mp);
         assert!(result.is_ok(), "resume run should succeed: {result:?}");
+    }
+
+    // ── check_prerequisites ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_check_prerequisites_valid_version_returns_ok() {
+        let mp = MockMultipass::new();
+        assert!(check_prerequisites(&mp).is_ok());
+    }
+
+    #[test]
+    fn test_check_prerequisites_version_not_found_returns_error_with_install_hint() {
+        let mp = MockMultipass { version_stdout: None, ..MockMultipass::new() };
+        let err = check_prerequisites(&mp).unwrap_err().to_string();
+        assert!(err.contains("multipass not found"), "got: {err}");
+        assert!(err.to_lowercase().contains("install"), "got: {err}");
+    }
+
+    #[test]
+    fn test_check_prerequisites_old_version_returns_error_with_update_hint() {
+        let mp = MockMultipass {
+            version_stdout: Some("multipass   1.15.0\nmultipassd  1.15.0\n"),
+            ..MockMultipass::new()
+        };
+        let err = check_prerequisites(&mp).unwrap_err().to_string();
+        assert!(err.contains("1.15.0"), "got: {err}");
+        assert!(err.to_lowercase().contains("update") || err.to_lowercase().contains("too old"), "got: {err}");
+    }
+
+    #[test]
+    fn test_check_prerequisites_minimum_version_exactly_returns_ok() {
+        let mp = MockMultipass {
+            version_stdout: Some("multipass   1.16.0\nmultipassd  1.16.0\n"),
+            ..MockMultipass::new()
+        };
+        assert!(check_prerequisites(&mp).is_ok());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_check_prerequisites_removable_media_not_connected_returns_error() {
+        let mp = MockMultipass {
+            // Slot column is "-" → not connected; no " :removable-media" in output.
+            snap_stdout: "removable-media    multipass:removable-media    -    -\n",
+            ..MockMultipass::new()
+        };
+        let err = check_prerequisites(&mp).unwrap_err().to_string();
+        assert!(err.contains("removable-media"), "got: {err}");
+        assert!(err.to_lowercase().contains("snap connect"), "got: {err}");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_check_prerequisites_removable_media_connected_returns_ok() {
+        let mp = MockMultipass::new(); // snap_stdout has removable-media connected
+        assert!(check_prerequisites(&mp).is_ok());
     }
 }
 
@@ -873,12 +1030,13 @@ mod proptests {
             let dir = TempDir::new().expect("tempdir");
             let img = dir.path().join("polis-workspace.qcow2");
             std::fs::write(&img, &content).expect("write image");
-            let hash = crate::commands::init::sha256_file(&img).expect("sha256");
             let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
-            std::fs::write(&sidecar, format!("{hash}  polis-workspace.qcow2\n")).expect("write sidecar");
+            let hash = crate::commands::init::tests::make_signed_sidecar_pub(&img, &sidecar);
             // SAFETY: protected by ENV_LOCK
+            unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
             unsafe { std::env::remove_var("POLIS_IMAGE") };
             let result = verify_image_at_launch(&img);
+            unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
             prop_assert!(result.is_ok(), "expected Ok, got: {:?}", result);
             prop_assert_eq!(result.unwrap(), hash);
         }
@@ -892,12 +1050,16 @@ mod proptests {
             let dir = TempDir::new().expect("tempdir");
             let img = dir.path().join("polis-workspace.qcow2");
             std::fs::write(&img, &content).expect("write image");
-            // Write a checksum that is guaranteed wrong: all 'a's
             let sidecar = dir.path().join("polis-workspace.qcow2.sha256");
-            std::fs::write(&sidecar, format!("{}  polis-workspace.qcow2\n", "a".repeat(64))).expect("write sidecar");
+            crate::commands::init::tests::make_signed_sidecar_with_content_pub(
+                &sidecar,
+                &format!("{}  polis-workspace.qcow2\n", "a".repeat(64)),
+            );
             // SAFETY: protected by ENV_LOCK
+            unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
             unsafe { std::env::remove_var("POLIS_IMAGE") };
             let result = verify_image_at_launch(&img);
+            unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
             prop_assert!(result.is_err(), "expected Err for wrong checksum");
         }
     }

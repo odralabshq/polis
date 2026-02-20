@@ -993,6 +993,12 @@ mod tests {
         fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: exec not expected")
         }
+        fn version(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: version not expected")
+        }
+        fn snap_connections(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: snap_connections not expected")
+        }
     }
 
     // -----------------------------------------------------------------------

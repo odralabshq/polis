@@ -596,6 +596,24 @@ Set-VMProcessor -VMName "polis-dev" -ExposeVirtualizationExtensions $true
 multipass start polis-dev
 ```
 
+**Disk space requirements**
+
+`polis run` causes multipassd to copy the workspace image (~3.4 GB) into its vault, then expand a 50 GB virtual disk inside the nested VM. The dev VM needs enough free space to hold both. Recommended minimum: **200 GB**.
+
+To check and resize from the host:
+
+```bash
+# Find the VM name
+multipass list
+
+# Stop, resize, restart
+multipass stop <name>
+multipass set local.<name>.disk=200G
+multipass start <name>
+```
+
+The filesystem inside the VM expands automatically on next boot via `growpart`.
+
 VMware Workstation: VM Settings → Processors → enable "Virtualize Intel VT-x/EPT or AMD-V/RVI"
 
 VirtualBox — PowerShell on Windows host:
@@ -632,6 +650,46 @@ cp target/release/polis ~/.local/bin/
 ```
 
 Or use the pre-built binary from GitHub releases.
+
+---
+
+## Local Install (Dev Build)
+
+`scripts/install-dev.sh` installs Polis from local build artifacts instead of GitHub releases. Use this to test the full install flow without publishing a release.
+
+### Prerequisites
+
+```bash
+# 1. Build the CLI
+cd cli && cargo build --release && cd ..
+
+# 2. Build the VM image
+just build-vm
+```
+
+### Install
+
+```bash
+./scripts/install-dev.sh
+```
+
+This installs:
+- CLI from `cli/target/release/polis` → `~/.polis/bin/polis`
+- Symlink at `~/.local/bin/polis`
+- VM image from `packer/output/*.qcow2` via `polis init --image file://...`
+
+### Options
+
+```bash
+# Override repo path (e.g. when running from outside the repo)
+./scripts/install-dev.sh --repo /path/to/polis
+
+# Or via env var
+POLIS_REPO=/path/to/polis ./scripts/install-dev.sh
+
+# Override install dir (default: ~/.polis)
+POLIS_HOME=/opt/polis ./scripts/install-dev.sh
+```
 
 ---
 

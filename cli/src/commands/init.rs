@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zipsign_api::{PUBLIC_KEY_LENGTH, VerifyingKey, verify::verify_tar};
+use zipsign_api::{PUBLIC_KEY_LENGTH, VerifyingKey, unsign::copy_and_unsign_tar, verify::verify_tar};
 
 use crate::commands::update::{POLIS_PUBLIC_KEY_B64, base64_decode, hex_encode};
 
@@ -183,6 +183,17 @@ fn acquire_image(source: &ImageSource, images_dir: &Path) -> Result<ImageMetadat
         ImageSource::LocalFile(path) => {
             std::fs::copy(path, &dest)
                 .with_context(|| format!("copying {} to {}", path.display(), dest.display()))?;
+            // Copy the sidecar from alongside the source image if present.
+            let source_sidecar = path.with_extension("qcow2.sha256");
+            if source_sidecar.exists() {
+                std::fs::copy(&source_sidecar, &sidecar).with_context(|| {
+                    format!(
+                        "copying sidecar {} to {}",
+                        source_sidecar.display(),
+                        sidecar.display()
+                    )
+                })?;
+            }
             let source_str = path.to_string_lossy().into_owned();
             let sha256 = verify_image_integrity(&dest, &sidecar)?;
             Ok(ImageMetadata {
@@ -425,7 +436,9 @@ pub(crate) fn verify_image_integrity(image_path: &Path, sidecar_path: &Path) -> 
     let sidecar_bytes = std::fs::read(sidecar_path)
         .with_context(|| format!("failed to read checksum file: {}", sidecar_path.display()))?;
 
-    let key_bytes = base64_decode(POLIS_PUBLIC_KEY_B64).context("invalid embedded public key")?;
+    let key_b64 = std::env::var("POLIS_VERIFYING_KEY_B64")
+        .unwrap_or_else(|_| POLIS_PUBLIC_KEY_B64.to_string());
+    let key_bytes = base64_decode(&key_b64).context("invalid embedded public key")?;
     anyhow::ensure!(
         key_bytes.len() == PUBLIC_KEY_LENGTH,
         "public key length mismatch"
@@ -477,16 +490,30 @@ pub(crate) fn sha256_file(path: &Path) -> Result<String> {
     Ok(hex_encode(&hasher.finalize()))
 }
 
-/// Extract the 64-character hex SHA-256 from a `sha256sum`-format sidecar file.
+/// Extract the 64-character hex SHA-256 from a signed tar sidecar file.
 ///
-/// Expected format: `<64-hex>  <filename>\n`
+/// The sidecar is a zipsign-signed `.tar.gz` whose single entry contains a
+/// `sha256sum`-format line: `<64-hex>  <filename>\n`
 ///
 /// # Errors
 ///
-/// Returns an error if the file cannot be read or the checksum is malformed.
-fn extract_checksum_from_signed_file(checksum_path: &Path) -> Result<String> {
-    let content = std::fs::read_to_string(checksum_path)
+/// Returns an error if the file cannot be read, unsigning fails, or the
+/// checksum is malformed.
+pub(crate) fn extract_checksum_from_signed_file(checksum_path: &Path) -> Result<String> {
+    let signed_bytes = std::fs::read(checksum_path)
         .with_context(|| format!("failed to read checksum file: {}", checksum_path.display()))?;
+    let mut unsigned = Cursor::new(Vec::new());
+    copy_and_unsign_tar(&mut Cursor::new(&signed_bytes), &mut unsigned)
+        .context("failed to unsign checksum sidecar")?;
+    unsigned.set_position(0);
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(unsigned));
+    let mut content = String::new();
+    if let Some(entry) = tar.entries().context("reading sidecar tar entries")?.next() {
+        entry
+            .context("reading sidecar tar entry")?
+            .read_to_string(&mut content)
+            .context("reading sidecar content")?;
+    }
     let hex = content.split_whitespace().next().ok_or_else(|| {
         anyhow::anyhow!("malformed checksum file: expected 64-character hex SHA-256")
     })?;
@@ -607,10 +634,67 @@ fn parse_releases(releases: &serde_json::Value, arch: &str) -> Result<ResolvedRe
 // ============================================================================
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests {
+#[allow(clippy::unwrap_used, clippy::expect_used, unsafe_code)]
+pub mod tests {
     use super::*;
     use tempfile::TempDir;
+    use zipsign_api::{SigningKey, sign::copy_and_sign_tar};
+
+    pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // ── test helpers ─────────────────────────────────────────────────────────
+
+    const TEST_KEY_SEED: [u8; 32] = [0x42u8; 32];
+
+    fn test_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&TEST_KEY_SEED)
+    }
+
+    pub fn test_verifying_key_b64_pub() -> String {
+        use base64::{Engine, prelude::BASE64_STANDARD};
+        BASE64_STANDARD.encode(test_signing_key().verifying_key().as_bytes())
+    }
+
+    fn test_verifying_key_b64() -> String {
+        test_verifying_key_b64_pub()
+    }
+
+    fn make_signed_sidecar_with_content(sidecar_path: &Path, content: &str) {
+        let mut tar_gz = Vec::new();
+        {
+            let enc = flate2::write::GzEncoder::new(&mut tar_gz, flate2::Compression::default());
+            let mut builder = tar::Builder::new(enc);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, "checksum.txt", content.as_bytes()).unwrap();
+            builder.finish().unwrap();
+        }
+        let mut signed = Vec::new();
+        copy_and_sign_tar(
+            &mut std::io::Cursor::new(&tar_gz),
+            &mut std::io::Cursor::new(&mut signed),
+            &[test_signing_key()],
+            None,
+        ).unwrap();
+        std::fs::write(sidecar_path, &signed).unwrap();
+    }
+
+    pub fn make_signed_sidecar_with_content_pub(sidecar_path: &Path, content: &str) {
+        make_signed_sidecar_with_content(sidecar_path, content);
+    }
+
+    fn make_signed_sidecar(image_path: &Path, sidecar_path: &Path) -> String {
+        let hash = sha256_file(image_path).expect("sha256");
+        let content = format!("{hash}  {}\n", image_path.file_name().unwrap().to_string_lossy());
+        make_signed_sidecar_with_content(sidecar_path, &content);
+        hash
+    }
+
+    pub fn make_signed_sidecar_pub(image_path: &Path, sidecar_path: &Path) -> String {
+        make_signed_sidecar(image_path, sidecar_path)
+    }
 
     // ── resolve_source ───────────────────────────────────────────────────────
 
@@ -808,10 +892,15 @@ mod tests {
     #[test]
     fn test_extract_checksum_valid_sha256sum_format_returns_hex() {
         let dir = TempDir::new().unwrap();
-        let hex = "a".repeat(64);
-        let path = dir.path().join("img.sha256");
-        std::fs::write(&path, format!("{hex}  img.qcow2\n")).unwrap();
-        assert_eq!(extract_checksum_from_signed_file(&path).unwrap(), hex);
+        let img = dir.path().join("img.qcow2");
+        std::fs::write(&img, b"test content").unwrap();
+        let sidecar = dir.path().join("img.sha256");
+        let hash = make_signed_sidecar(&img, &sidecar);
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", test_verifying_key_b64()) };
+        let result = extract_checksum_from_signed_file(&sidecar).unwrap();
+        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
+        assert_eq!(result, hash);
     }
 
     #[test]
@@ -821,7 +910,7 @@ mod tests {
         std::fs::write(&path, b"").unwrap();
         let err = extract_checksum_from_signed_file(&path).unwrap_err();
         assert!(
-            err.to_string().contains("malformed checksum file"),
+            err.to_string().contains("failed to unsign") || err.to_string().contains("failed to read"),
             "got: {err}"
         );
     }
@@ -830,10 +919,11 @@ mod tests {
     fn test_extract_checksum_short_hex_returns_error() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("img.sha256");
-        std::fs::write(&path, "abc123  img.qcow2\n").unwrap();
+        // Not a valid signed tar
+        std::fs::write(&path, b"not a signed tar").unwrap();
         let err = extract_checksum_from_signed_file(&path).unwrap_err();
         assert!(
-            err.to_string().contains("malformed checksum file"),
+            err.to_string().contains("failed to unsign") || err.to_string().contains("failed to read"),
             "got: {err}"
         );
     }
@@ -841,14 +931,36 @@ mod tests {
     #[test]
     fn test_extract_checksum_non_hex_chars_returns_error() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("img.sha256");
-        // 64 chars but contains non-hex 'g'
-        std::fs::write(&path, format!("{}  img.qcow2\n", "g".repeat(64))).unwrap();
-        let err = extract_checksum_from_signed_file(&path).unwrap_err();
-        assert!(
-            err.to_string().contains("malformed checksum file"),
-            "got: {err}"
-        );
+        // Build a signed tar whose content has non-hex chars
+        let img = dir.path().join("img.qcow2");
+        std::fs::write(&img, b"x").unwrap();
+        let sidecar = dir.path().join("img.sha256");
+        // Manually build a signed sidecar with bad content
+        let content = format!("{}  img.qcow2\n", "g".repeat(64));
+        let mut tar_gz = Vec::new();
+        {
+            let enc = flate2::write::GzEncoder::new(&mut tar_gz, flate2::Compression::default());
+            let mut builder = tar::Builder::new(enc);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, "checksum.txt", content.as_bytes()).unwrap();
+            builder.finish().unwrap();
+        }
+        let mut signed = Vec::new();
+        copy_and_sign_tar(
+            &mut std::io::Cursor::new(&tar_gz),
+            &mut std::io::Cursor::new(&mut signed),
+            &[test_signing_key()],
+            None,
+        ).unwrap();
+        std::fs::write(&sidecar, &signed).unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", test_verifying_key_b64()) };
+        let err = extract_checksum_from_signed_file(&sidecar).unwrap_err();
+        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
+        assert!(err.to_string().contains("malformed checksum file"), "got: {err}");
     }
 
     #[test]
@@ -876,6 +988,55 @@ mod tests {
                 .contains("image checksum signature verification failed"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn test_verify_image_integrity_valid_signature_returns_hash() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("img.qcow2");
+        std::fs::write(&img, b"test image content").unwrap();
+        let sidecar = dir.path().join("img.qcow2.sha256");
+        let expected = make_signed_sidecar(&img, &sidecar);
+        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", test_verifying_key_b64()) };
+        let result = verify_image_integrity(&img, &sidecar);
+        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
+        assert_eq!(result.unwrap(), expected);
+    }
+
+    #[test]
+    fn test_verify_image_integrity_wrong_key_returns_error() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = TempDir::new().unwrap();
+        let img = dir.path().join("img.qcow2");
+        std::fs::write(&img, b"test image content").unwrap();
+        let sidecar = dir.path().join("img.qcow2.sha256");
+        make_signed_sidecar(&img, &sidecar);
+        // Use a different key for verification
+        let wrong_key = SigningKey::from_bytes(&[0x99u8; 32]);
+        use base64::Engine;
+        let wrong_b64 = base64::prelude::BASE64_STANDARD.encode(wrong_key.verifying_key().as_bytes());
+        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", wrong_b64) };
+        let err = verify_image_integrity(&img, &sidecar).unwrap_err();
+        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
+        assert!(err.to_string().contains("image checksum signature verification failed"), "got: {err}");
+    }
+
+    #[test]
+    fn test_acquire_image_local_file_copies_sidecar() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let src_dir = TempDir::new().unwrap();
+        let dst_dir = TempDir::new().unwrap();
+        let img = src_dir.path().join("polis-workspace-dev-amd64.qcow2");
+        std::fs::write(&img, b"fake qcow2").unwrap();
+        let sidecar = src_dir.path().join("polis-workspace-dev-amd64.qcow2.sha256");
+        make_signed_sidecar(&img, &sidecar);
+        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", test_verifying_key_b64()) };
+        let result = acquire_image(&ImageSource::LocalFile(img), dst_dir.path());
+        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        assert!(dst_dir.path().join(SIDECAR_FILENAME).exists(), "sidecar not copied");
+        assert!(dst_dir.path().join(IMAGE_FILENAME).exists(), "image not copied");
     }
 
     // ── parse_releases ────────────────────────────────────────────────────────
@@ -1242,11 +1403,18 @@ mod tests {
             fn prop_extract_checksum_valid_hex_roundtrip(
                 hex in "[a-f0-9]{64}"
             ) {
+                let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 let dir = TempDir::new().expect("tempdir");
-                let path = dir.path().join("img.sha256");
-                std::fs::write(&path, format!("{hex}  img.qcow2\n")).expect("write");
-                let extracted = extract_checksum_from_signed_file(&path).expect("extract");
-                prop_assert_eq!(extracted, hex);
+                let img = dir.path().join("img.qcow2");
+                // Write image with content that hashes to our hex
+                // (we use make_signed_sidecar which computes the real hash)
+                std::fs::write(&img, hex.as_bytes()).expect("write");
+                let sidecar = dir.path().join("img.sha256");
+                let actual_hex = make_signed_sidecar(&img, &sidecar);
+                unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", test_verifying_key_b64()) };
+                let extracted = extract_checksum_from_signed_file(&sidecar).expect("extract");
+                unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
+                prop_assert_eq!(extracted, actual_hex);
             }
 
             /// parse_releases returns the exact URLs present in the JSON for any

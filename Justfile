@@ -2,6 +2,8 @@
 # Install just: https://github.com/casey/just
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
+set dotenv-load
+set export
 
 default:
     @just --list
@@ -117,6 +119,7 @@ build-vm arch="amd64" headless="true": build _export-images _bundle-config
     #!/usr/bin/env bash
     set -euo pipefail
     cd packer
+    rm -rf output
     packer init .
     packer build \
         -var "images_tar=${PWD}/../.build/polis-images.tar" \
@@ -124,14 +127,42 @@ build-vm arch="amd64" headless="true": build _export-images _bundle-config
         -var "arch={{arch}}" \
         -var "headless={{headless}}" \
         polis-vm.pkr.hcl
+    cd ..
+    just _sign-vm arch={{arch}}
+
+# Internal: sign the VM image with a dev keypair, producing a .sha256 sidecar
+_sign-vm arch="amd64":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SIGNING_KEY=".secrets/polis-release.key"
+    PUB_KEY=".secrets/polis-release.pub"
+    if [[ ! -f "${SIGNING_KEY}" ]]; then
+        echo "No signing key found — generating dev keypair at ${SIGNING_KEY}..."
+        mkdir -p .secrets
+        zipsign gen-key "${SIGNING_KEY}" "${PUB_KEY}"
+        echo "✓ Dev keypair generated (gitignored)"
+    fi
+    IMAGE=$(find packer/output -name "*-{{arch}}.qcow2" | sort | tail -1)
+    if [[ -z "${IMAGE}" ]]; then
+        echo "ERROR: No .qcow2 found in packer/output" >&2
+        exit 1
+    fi
+    SIDECAR="${IMAGE%.qcow2}.qcow2.sha256"
+    CHECKSUM=$(sha256sum "${IMAGE}" | cut -d' ' -f1)
+    PLAIN_FILE=$(mktemp)
+    echo "${CHECKSUM}  $(basename "${IMAGE}")" > "${PLAIN_FILE}"
+    tar -czf "${PLAIN_FILE}.tar.gz" -C "$(dirname "${PLAIN_FILE}")" "$(basename "${PLAIN_FILE}")"
+    zipsign sign tar --context "" "${PLAIN_FILE}.tar.gz" "${SIGNING_KEY}" -o "${SIDECAR}" -f
+    rm -f "${PLAIN_FILE}" "${PLAIN_FILE}.tar.gz"
+    echo "✓ Signed sidecar: ${SIDECAR}"
+    echo "  Public key: $(base64 -w0 "${PUB_KEY}")"
 
 # Internal: export Docker images for VM build
 _export-images:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
-        echo "ERROR: POLIS_IMAGE_VERSION is not set" >&2
-        exit 1
+        POLIS_IMAGE_VERSION="latest"
     fi
     # Set per-service vars so docker compose config resolves the image refs
     for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX; do
@@ -172,16 +203,7 @@ _bundle-config:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
-        echo "Resolving latest image version from GitHub..."
-        POLIS_IMAGE_VERSION=$(curl -fsSL --proto '=https' \
-            -H 'Accept: application/vnd.github+json' \
-            'https://api.github.com/repos/OdraLabsHQ/polis/releases/latest' \
-            | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-        if [[ -z "${POLIS_IMAGE_VERSION}" ]]; then
-            echo "ERROR: Failed to resolve latest image version" >&2
-            exit 1
-        fi
-        echo "Using image version: ${POLIS_IMAGE_VERSION}"
+        POLIS_IMAGE_VERSION="latest"
     fi
     export POLIS_IMAGE_VERSION
     bash packer/scripts/bundle-polis-config.sh
