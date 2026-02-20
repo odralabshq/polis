@@ -2,6 +2,7 @@
 certs/
 
 # Environment files with secrets
+.secrets/
 .env
 *.env
 !config/openclaw.env.example

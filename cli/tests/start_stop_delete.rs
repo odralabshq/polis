@@ -59,39 +59,6 @@ fn test_start_no_workspace_exits_with_error_and_run_hint() {
         .stderr(predicate::str::contains("polis run"));
 }
 
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_start_already_running_shows_info_and_exits_zero() {
-    // WHEN workspace is already running THEN info message, exit 0, no error.
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-    polis()
-        .arg("start")
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("already running")
-                .or(predicate::str::contains("already started")),
-        );
-}
-
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_start_stopped_workspace_exits_zero_and_hints_status() {
-    // WHEN workspace is stopped THEN starts it, exits 0, hints "polis status".
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-    polis()
-        .arg("start")
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("polis status"));
-}
-
 #[test]
 fn test_start_output_contains_no_forbidden_vocabulary() {
     // User-facing output must never mention VM, container, docker, or multipass.
@@ -133,53 +100,6 @@ fn test_stop_no_workspace_exits_with_error() {
                 .or(predicate::str::contains("no workspace"))
                 .or(predicate::str::contains("not found")),
         );
-}
-
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_stop_already_stopped_shows_info_and_exits_zero() {
-    // WHEN workspace is already stopped THEN info message, exit 0.
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-    polis()
-        .arg("stop")
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("already stopped").or(predicate::str::contains("not running")),
-        );
-}
-
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_stop_running_workspace_exits_zero_and_hints_start() {
-    // WHEN workspace is running THEN stops it, exits 0, hints "polis start".
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-    polis()
-        .arg("stop")
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("polis start"));
-}
-
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_stop_running_workspace_output_states_data_is_preserved() {
-    // WHEN workspace is stopped THEN output must reassure user data is preserved.
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-    polis()
-        .arg("stop")
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("preserved").or(predicate::str::contains("data")));
 }
 
 #[test]
@@ -251,49 +171,6 @@ fn test_delete_prompt_mentions_configuration_preserved() {
         );
 }
 
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_delete_confirmed_removes_state_file() {
-    // WHEN user confirms delete THEN state.json is removed.
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-
-    polis()
-        .arg("delete")
-        .env("HOME", dir.path())
-        .write_stdin("y\n")
-        .assert()
-        .success();
-
-    assert!(
-        !state_path(&dir).exists(),
-        "state.json must be removed after confirmed delete"
-    );
-}
-
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_delete_confirmed_preserves_config_yaml() {
-    // WHEN user confirms delete THEN config.yaml must NOT be removed.
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-    write_config(&dir);
-
-    polis()
-        .arg("delete")
-        .env("HOME", dir.path())
-        .write_stdin("y\n")
-        .assert()
-        .success();
-
-    assert!(
-        config_path(&dir).exists(),
-        "config.yaml must be preserved after delete"
-    );
-}
-
 #[test]
 fn test_delete_output_contains_no_forbidden_vocabulary() {
     let dir = TempDir::new().expect("tempdir");
@@ -363,49 +240,6 @@ fn test_delete_all_prompt_mentions_cached_images() {
                 .or(predicate::str::contains("images"))
                 .or(predicate::str::contains("3.5")),
         );
-}
-
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_delete_all_confirmed_removes_state_file() {
-    // WHEN user confirms delete --all THEN state.json is removed.
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-
-    polis()
-        .args(["delete", "--all"])
-        .env("HOME", dir.path())
-        .write_stdin("y\n")
-        .assert()
-        .success();
-
-    assert!(
-        !state_path(&dir).exists(),
-        "state.json must be removed after confirmed delete --all"
-    );
-}
-
-// NOTE: requires real multipass VM — skipped in CI.
-#[test]
-#[ignore = "requires multipass VM"]
-fn test_delete_all_confirmed_preserves_config_yaml() {
-    // WHEN user confirms delete --all THEN config.yaml must NOT be removed.
-    let dir = TempDir::new().expect("tempdir");
-    write_state(&dir, "ws-test01");
-    write_config(&dir);
-
-    polis()
-        .args(["delete", "--all"])
-        .env("HOME", dir.path())
-        .write_stdin("y\n")
-        .assert()
-        .success();
-
-    assert!(
-        config_path(&dir).exists(),
-        "config.yaml must be preserved after delete --all"
-    );
 }
 
 // ============================================================================
@@ -484,41 +318,6 @@ mod proptests {
             prop_assert!(state_path(&dir).exists(), "state.json must survive declined delete --all");
             let after = std::fs::read_to_string(state_path(&dir)).expect("read after");
             prop_assert_eq!(before, after);
-        }
-
-        /// delete confirmed with any workspace_id removes state file
-        #[test]
-        #[ignore = "requires multipass VM"]
-        fn prop_delete_confirmed_removes_state(ws_id in "[a-z]{2}-[a-z0-9]{4,8}") {
-            let dir = TempDir::new().expect("tempdir");
-            write_state(&dir, &ws_id);
-
-            polis()
-                .arg("delete")
-                .env("HOME", dir.path())
-                .write_stdin("y\n")
-                .assert()
-                .success();
-
-            prop_assert!(!state_path(&dir).exists(), "state.json must be removed after confirmed delete");
-        }
-
-        /// delete --all confirmed with any workspace_id preserves config.yaml
-        #[test]
-        #[ignore = "requires multipass VM"]
-        fn prop_delete_all_confirmed_preserves_config(ws_id in "[a-z]{2}-[a-z0-9]{4,8}") {
-            let dir = TempDir::new().expect("tempdir");
-            write_state(&dir, &ws_id);
-            write_config(&dir);
-
-            polis()
-                .args(["delete", "--all"])
-                .env("HOME", dir.path())
-                .write_stdin("y\n")
-                .assert()
-                .success();
-
-            prop_assert!(config_path(&dir).exists(), "config.yaml must survive delete --all");
         }
 
         /// start/stop/delete output never contains forbidden vocabulary

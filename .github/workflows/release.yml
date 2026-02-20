@@ -105,31 +105,82 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Tag images with release version
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'polis-.*-oss:latest'); do
+            base=$(echo "$img" | sed 's/:latest$//')
+            ghcr_img="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${base#polis-}"
+            docker tag "$img" "${ghcr_img}:${VERSION}"
+            docker tag "$img" "${ghcr_img}:latest"
+          done
+
       - name: Build all images
-        run: docker compose build
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX; do
+            export "POLIS_${svc}_VERSION=${VERSION}"
+          done
+          docker compose build
+
+      - name: Install zipsign
+        run: cargo install zipsign --version 0.2.1 --locked
+
+      - name: Generate and sign versions.json
+        env:
+          POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          cat > versions.json << EOF
+          {
+            "manifest_version": 1,
+            "vm_image": {
+              "version": "${VERSION}",
+              "asset": "polis-workspace-${VERSION}-amd64.qcow2"
+            },
+            "containers": {
+              "polis-resolver-oss": "${VERSION}",
+              "polis-certgen-oss": "${VERSION}",
+              "polis-gate-oss": "${VERSION}",
+              "polis-sentinel-oss": "${VERSION}",
+              "polis-scanner-oss": "${VERSION}",
+              "polis-workspace-oss": "${VERSION}",
+              "polis-host-init-oss": "${VERSION}",
+              "polis-state-oss": "${VERSION}",
+              "polis-toolbox-oss": "${VERSION}"
+            }
+          }
+          EOF
+          echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
+          tar -czf versions.json.tar.gz versions.json
+          zipsign sign tar versions.json.tar.gz /tmp/polis-release.key -o versions.json -f
+          rm /tmp/polis-release.key versions.json.tar.gz
 
       - name: Push images to GHCR (optional)
         if: needs.validate.outputs.push_docker == 'true'
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'polis-.*-oss:latest')
-          for img in $IMAGES; do
-            base=$(echo "$img" | sed 's/:latest$//')
-            ghcr_img="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${base#polis-}"
-            
-            docker tag "$img" "${ghcr_img}:${VERSION}"
-            docker tag "$img" "${ghcr_img}:latest"
-            docker push "${ghcr_img}:${VERSION}"
-            docker push "${ghcr_img}:latest"
-            echo "✓ Pushed ${ghcr_img}:${VERSION}"
+          for ghcr_img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "polis-.*-oss:${VERSION}"); do
+            base="${ghcr_img%:${VERSION}}"
+            docker push "${ghcr_img}"
+            docker push "${base}:latest"
+            echo "✓ Pushed ${ghcr_img}"
           done
 
       - name: Export images tarball
         run: |
-          IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'polis-.*-oss:latest' | tr '\n' ' ')
+          VERSION="${{ needs.validate.outputs.version }}"
+          IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "polis-.*-oss:${VERSION}" | tr '\n' ' ')
           mkdir -p .build
           docker save -o .build/polis-images.tar $IMAGES
           echo "✓ Exported: $IMAGES"
+
+      - name: Upload versions.json artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: versions-json
+          path: versions.json
+          retention-days: 1
 
       - name: Upload images tarball
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -161,11 +212,18 @@ jobs:
       - name: Init Packer
         run: packer init packer/
 
+      - name: Generate Polis config bundle
+        run: |
+          export POLIS_IMAGE_VERSION="${{ needs.validate.outputs.version }}"
+          mkdir -p .build
+          bash packer/scripts/bundle-polis-config.sh
+
       - name: Build VM image
         run: |
           packer build \
             -var "polis_version=${{ needs.validate.outputs.version }}" \
             -var "images_tar=${PWD}/.build/polis-images.tar" \
+            -var "config_tar=${PWD}/.build/polis-config.tar.gz" \
             -var "sysbox_version=${SYSBOX_VERSION}" \
             -var "sysbox_sha256_amd64=${SYSBOX_SHA256_AMD64}" \
             -var "arch=amd64" \
@@ -260,6 +318,12 @@ jobs:
           name: cli-binary
           path: ./cli-bin
 
+      - name: Download versions.json artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: versions-json
+          path: ./
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
@@ -274,5 +338,6 @@ jobs:
             cli-bin/polis-linux-amd64
             cli-bin/polis-linux-amd64.sha256
             scripts/install.sh
+            versions.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

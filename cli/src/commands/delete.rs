@@ -158,6 +158,7 @@ pub fn remove_file_if_exists(path: &std::path::Path) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -217,6 +218,59 @@ mod tests {
 
         let result = remove_file_if_exists(&target);
         assert!(result.is_ok());
+    }
+
+    // ── delete flow (post-confirmation logic) ────────────────────────────────
+
+    use crate::workspace::MockDriver;
+
+    fn setup_state_and_config(dir: &TempDir) -> (StateManager, std::path::PathBuf) {
+        let polis_dir = dir.path().join(".polis");
+        std::fs::create_dir_all(&polis_dir).expect("create .polis dir");
+        let state_path = polis_dir.join("state.json");
+        std::fs::write(
+            &state_path,
+            r#"{"stage":"agent_ready","agent":"claude-dev","workspace_id":"ws-test01","started_at":"2026-02-17T14:30:00Z"}"#,
+        ).expect("write state");
+        let config_path = polis_dir.join("config.yaml");
+        std::fs::write(&config_path, b"security_level: balanced\n").expect("write config");
+        (StateManager::with_path(state_path), config_path)
+    }
+
+    #[test]
+    fn test_delete_flow_removes_state_file() {
+        let dir = TempDir::new().expect("tempdir");
+        let (state_mgr, _config) = setup_state_and_config(&dir);
+        let driver = MockDriver { running: false };
+
+        // Simulate post-confirmation delete logic
+        if let Some(state) = state_mgr.load().unwrap() {
+            driver.remove(&state.workspace_id).unwrap();
+        }
+        state_mgr.clear().unwrap();
+
+        let state_path = dir.path().join(".polis").join("state.json");
+        assert!(
+            !state_path.exists(),
+            "state.json must be removed after delete"
+        );
+    }
+
+    #[test]
+    fn test_delete_flow_preserves_config() {
+        let dir = TempDir::new().expect("tempdir");
+        let (state_mgr, config_path) = setup_state_and_config(&dir);
+        let driver = MockDriver { running: false };
+
+        if let Some(state) = state_mgr.load().unwrap() {
+            driver.remove(&state.workspace_id).unwrap();
+        }
+        state_mgr.clear().unwrap();
+
+        assert!(
+            config_path.exists(),
+            "config.yaml must be preserved after delete"
+        );
     }
 }
 

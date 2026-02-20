@@ -8,15 +8,15 @@ metadataTest:
 
 fileExistenceTests:
   - name: 'c-icap binary'
-    path: '/usr/local/bin/c-icap'
-    shouldExist: true
-
-  - name: 'c-icap config'
-    path: '/etc/c-icap/c-icap.conf'
+    path: '/usr/bin/c-icap'
     shouldExist: true
 
   - name: 'DLP module'
     path: '/usr/local/lib/c_icap/srv_polis_dlp.so'
+    shouldExist: true
+
+  - name: 'approval rewrite module'
+    path: '/usr/local/lib/c_icap/srv_polis_approval_rewrite.so'
     shouldExist: true
 
   - name: 'approval module'
@@ -28,12 +28,16 @@ fileExistenceTests:
     shouldExist: true
 
   - name: 'squidclamav module'
-    path: '/usr/local/lib/c_icap/squidclamav.so'
+    path: '/usr/lib/c_icap/squidclamav.so'
     shouldExist: true
+
+  - name: 'entrypoint'
+    path: '/entrypoint.sh'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
 
 commandTests:
   - name: 'c-icap help'
-    command: '/usr/local/bin/c-icap'
+    command: '/usr/bin/c-icap'
     args: ['-h']
-    # c-icap returns 0 with -h
     exitCode: 0

@@ -1,7 +1,10 @@
 //! `polis doctor` — system health diagnostics.
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
+use serde::Serialize;
 
 use crate::output::OutputContext;
 
@@ -27,6 +30,32 @@ pub struct WorkspaceChecks {
     pub disk_space_gb: u64,
     /// Whether disk space meets the 10 GB minimum.
     pub disk_space_ok: bool,
+    /// Image cache status.
+    pub image: ImageCheckResult,
+}
+
+/// Result of image health checks.
+#[derive(Debug, Default, Serialize)]
+pub struct ImageCheckResult {
+    /// Whether a cached image exists at `~/.polis/images/polis-workspace.qcow2`.
+    pub cached: bool,
+    /// Version from `image.json` (if available).
+    pub version: Option<String>,
+    /// SHA-256 preview (first 12 hex chars) from `image.json`.
+    pub sha256_preview: Option<String>,
+    /// Value of `POLIS_IMAGE` env var if set (override active).
+    pub polis_image_override: Option<String>,
+    /// Whether cached version differs from latest available.
+    pub version_drift: Option<VersionDrift>,
+}
+
+/// Version drift between cached and latest available image.
+#[derive(Debug, Serialize)]
+pub struct VersionDrift {
+    /// Currently cached version.
+    pub current: String,
+    /// Latest available version.
+    pub latest: String,
 }
 
 /// Network health checks.
@@ -88,11 +117,13 @@ pub struct SystemProbe;
 
 impl HealthProbe for SystemProbe {
     async fn check_workspace(&self) -> Result<WorkspaceChecks> {
-        let disk_space_gb = disk_space_gb().await?;
+        let (disk_space_gb, image) = tokio::join!(disk_space_gb(), check_image());
+        let disk_space_gb = disk_space_gb?;
         Ok(WorkspaceChecks {
             ready: true,
             disk_space_gb,
             disk_space_ok: disk_space_gb >= 10,
+            image,
         })
     }
 
@@ -135,7 +166,6 @@ pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
     run_with(ctx, json, &SystemProbe).await
 }
 
-#[allow(clippy::too_many_lines)]
 async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> Result<()> {
     let (workspace, network, security) = tokio::try_join!(
         probe.check_workspace(),
@@ -162,6 +192,7 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
                     "ready": checks.workspace.ready,
                     "disk_space_gb": checks.workspace.disk_space_gb,
                     "disk_space_ok": checks.workspace.disk_space_ok,
+                    "image": checks.workspace.image,
                 },
                 "network": {
                     "internet": checks.network.internet,
@@ -189,65 +220,14 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     println!("  {}", "Polis Health Check".style(ctx.styles.header));
     println!();
 
-    println!("  Workspace:");
-    print_check(ctx, checks.workspace.ready, "Ready to start");
-    if checks.workspace.disk_space_ok {
-        print_check(
-            ctx,
-            true,
-            &format!("{} GB disk space available", checks.workspace.disk_space_gb),
-        );
-    } else {
-        print_check(
-            ctx,
-            false,
-            &format!(
-                "Low disk space ({} GB available, need 10 GB)",
-                checks.workspace.disk_space_gb
-            ),
-        );
-    }
-    println!();
+    print_workspace_section(ctx, &checks.workspace);
 
     println!("  Network:");
     print_check(ctx, checks.network.internet, "Internet connectivity");
     print_check(ctx, checks.network.dns, "DNS resolution working");
     println!();
 
-    println!("  Security:");
-    print_check(
-        ctx,
-        checks.security.process_isolation,
-        "Process isolation active",
-    );
-    print_check(
-        ctx,
-        checks.security.traffic_inspection,
-        "Traffic inspection responding",
-    );
-    print_check(
-        ctx,
-        checks.security.malware_db_current,
-        &format!(
-            "Malware scanner database current (updated: {}h ago)",
-            checks.security.malware_db_age_hours,
-        ),
-    );
-    let expire_days = checks.security.certificates_expire_days;
-    if expire_days > 30 {
-        print_check(
-            ctx,
-            true,
-            "Certificates valid (no immediate action required)",
-        );
-    } else if expire_days > 0 {
-        println!(
-            "    {} Certificates expire soon",
-            "⚠".style(ctx.styles.warning)
-        );
-    } else {
-        print_check(ctx, false, "Certificates expired");
-    }
+    print_security_section(ctx, &checks.security);
 
     println!();
     if issues.is_empty() {
@@ -262,6 +242,101 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     println!();
 
     Ok(())
+}
+
+/// Print the workspace section of the human-readable health report.
+fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
+    println!("  Workspace:");
+    print_check(ctx, ws.ready, "Ready to start");
+
+    let img = &ws.image;
+    if img.cached {
+        let version_str = img.version.as_deref().unwrap_or("unknown");
+        let sha_str = img
+            .sha256_preview
+            .as_deref()
+            .map(|s| format!(" (SHA256: {s}...)"))
+            .unwrap_or_default();
+        print_check(ctx, true, &format!("Image cached: {version_str}{sha_str}"));
+        if let Some(drift) = &img.version_drift {
+            println!(
+                "    {} Newer image available: {}",
+                "⚠".style(ctx.styles.warning),
+                drift.latest
+            );
+            println!("      Update with: polis init --force");
+        }
+    } else {
+        print_check(ctx, false, "No workspace image cached");
+        println!("      Run 'polis init' to download the image (~3.2 GB)");
+    }
+
+    if ws.disk_space_ok {
+        print_check(
+            ctx,
+            true,
+            &format!("{} GB disk space available", ws.disk_space_gb),
+        );
+    } else {
+        print_check(
+            ctx,
+            false,
+            &format!(
+                "Low disk space ({} GB available, need 10 GB)",
+                ws.disk_space_gb
+            ),
+        );
+    }
+    println!();
+
+    // POLIS_IMAGE override warning (V-011, F-006)
+    if let Some(override_path) = &img.polis_image_override {
+        println!(
+            "  {} POLIS_IMAGE override active: {override_path}",
+            "⚠".style(ctx.styles.warning)
+        );
+        if std::path::Path::new(override_path).exists() {
+            println!("    This overrides the default image in ~/.polis/images/");
+        } else {
+            println!(
+                "    {} POLIS_IMAGE set but file not found: {override_path}",
+                "⚠".style(ctx.styles.warning)
+            );
+        }
+        println!("    Unset with: unset POLIS_IMAGE");
+        println!();
+    }
+}
+
+/// Print the security section of the human-readable health report.
+fn print_security_section(ctx: &OutputContext, sec: &SecurityChecks) {
+    println!("  Security:");
+    print_check(ctx, sec.process_isolation, "Process isolation active");
+    print_check(ctx, sec.traffic_inspection, "Traffic inspection responding");
+    print_check(
+        ctx,
+        sec.malware_db_current,
+        &format!(
+            "Malware scanner database current (updated: {}h ago)",
+            sec.malware_db_age_hours,
+        ),
+    );
+
+    let expire_days = sec.certificates_expire_days;
+    if expire_days > 30 {
+        print_check(
+            ctx,
+            true,
+            "Certificates valid (no immediate action required)",
+        );
+    } else if expire_days > 0 {
+        println!(
+            "    {} Certificates expire soon",
+            "⚠".style(ctx.styles.warning)
+        );
+    } else {
+        print_check(ctx, false, "Certificates expired");
+    }
 }
 
 fn print_check(ctx: &OutputContext, ok: bool, msg: &str) {
@@ -299,6 +374,75 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
 }
 
 // ── System check helpers ──────────────────────────────────────────────────────
+
+/// Check image cache status, metadata, `POLIS_IMAGE` override, and version drift.
+async fn check_image() -> ImageCheckResult {
+    let Some(home) = dirs::home_dir() else {
+        return ImageCheckResult::default();
+    };
+    let images_dir = home.join(".polis/images");
+    let cached = images_dir.join("polis-workspace.qcow2").exists();
+
+    let (version, sha256_preview) = if cached {
+        read_image_json(&images_dir)
+    } else {
+        (None, None)
+    };
+
+    let polis_image_override = std::env::var("POLIS_IMAGE").ok();
+
+    let version_drift = match version.clone() {
+        Some(current) => check_version_drift(current).await,
+        None => None,
+    };
+
+    ImageCheckResult {
+        cached,
+        version,
+        sha256_preview,
+        polis_image_override,
+        version_drift,
+    }
+}
+
+/// Read version and SHA-256 preview from `image.json`. Fails silently.
+fn read_image_json(images_dir: &Path) -> (Option<String>, Option<String>) {
+    let Ok(content) = std::fs::read_to_string(images_dir.join("image.json")) else {
+        return (None, None);
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return (None, None);
+    };
+    let version = val
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned);
+    let sha256_preview = val
+        .get("sha256")
+        .and_then(|v| v.as_str())
+        .map(|s| s.chars().take(12).collect());
+    (version, sha256_preview)
+}
+
+/// Compare cached version against latest GitHub release. Returns `None` on any failure.
+async fn check_version_drift(current: String) -> Option<VersionDrift> {
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::task::spawn_blocking(crate::commands::init::resolve_latest_image_url),
+    )
+    .await;
+    let Ok(Ok(Ok(resolved))) = result else {
+        return None;
+    };
+    if resolved.tag == current {
+        None
+    } else {
+        Some(VersionDrift {
+            current,
+            latest: resolved.tag,
+        })
+    }
+}
 
 async fn disk_space_gb() -> Result<u64> {
     let out = tokio::process::Command::new("df")
@@ -454,7 +598,10 @@ async fn check_certificates() -> (bool, i64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DoctorChecks, NetworkChecks, SecurityChecks, WorkspaceChecks, collect_issues};
+    use super::{
+        DoctorChecks, ImageCheckResult, NetworkChecks, SecurityChecks, VersionDrift,
+        WorkspaceChecks, collect_issues,
+    };
 
     fn all_healthy() -> DoctorChecks {
         DoctorChecks {
@@ -462,6 +609,13 @@ mod tests {
                 ready: true,
                 disk_space_gb: 45,
                 disk_space_ok: true,
+                image: ImageCheckResult {
+                    cached: true,
+                    version: Some("v0.3.0".to_string()),
+                    sha256_preview: Some("a1b2c3d4e5f6".to_string()),
+                    polis_image_override: None,
+                    version_drift: None,
+                },
             },
             network: NetworkChecks {
                 internet: true,
@@ -565,6 +719,7 @@ mod tests {
                 ready: true,
                 disk_space_gb: 2,
                 disk_space_ok: false,
+                image: ImageCheckResult::default(),
             },
             network: NetworkChecks {
                 internet: true,
@@ -585,6 +740,85 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // read_image_json — unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_read_image_json_valid_json_extracts_version_and_sha256() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("image.json"),
+            r#"{"version":"v0.3.0","sha256":"abcdef123456789012345678","arch":"amd64","downloaded_at":"2024-01-01T00:00:00Z","source":"https://example.com"}"#,
+        )
+        .expect("write");
+        let (version, sha256_preview) = super::read_image_json(dir.path());
+        assert_eq!(version.as_deref(), Some("v0.3.0"));
+        assert_eq!(sha256_preview.as_deref(), Some("abcdef123456"));
+    }
+
+    #[test]
+    fn test_read_image_json_missing_file_returns_none_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (version, sha256_preview) = super::read_image_json(dir.path());
+        assert!(version.is_none());
+        assert!(sha256_preview.is_none());
+    }
+
+    #[test]
+    fn test_read_image_json_malformed_json_returns_none_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("image.json"), b"not json").expect("write");
+        let (version, sha256_preview) = super::read_image_json(dir.path());
+        assert!(version.is_none());
+        assert!(sha256_preview.is_none());
+    }
+
+    #[test]
+    fn test_read_image_json_missing_version_field_returns_none_version() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("image.json"),
+            r#"{"sha256":"abcdef123456789012345678"}"#,
+        )
+        .expect("write");
+        let (version, sha256_preview) = super::read_image_json(dir.path());
+        assert!(version.is_none());
+        assert_eq!(sha256_preview.as_deref(), Some("abcdef123456"));
+    }
+
+    #[test]
+    fn test_read_image_json_sha256_preview_truncated_to_12_chars() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("image.json"),
+            r#"{"version":"v0.3.0","sha256":"aabbccddeeff00112233445566778899"}"#,
+        )
+        .expect("write");
+        let (_, sha256_preview) = super::read_image_json(dir.path());
+        assert_eq!(sha256_preview.as_deref(), Some("aabbccddeeff"));
+    }
+
+    #[test]
+    fn test_image_check_result_default_is_not_cached() {
+        let r = ImageCheckResult::default();
+        assert!(!r.cached);
+        assert!(r.version.is_none());
+        assert!(r.sha256_preview.is_none());
+        assert!(r.polis_image_override.is_none());
+        assert!(r.version_drift.is_none());
+    }
+
+    #[test]
+    fn test_version_drift_fields_accessible() {
+        let d = VersionDrift {
+            current: "v0.3.0".to_string(),
+            latest: "v0.3.1".to_string(),
+        };
+        assert_eq!(d.current, "v0.3.0");
+        assert_eq!(d.latest, "v0.3.1");
+    }
+
+    // -----------------------------------------------------------------------
     // Property tests
     // -----------------------------------------------------------------------
 
@@ -601,6 +835,7 @@ mod tests {
                     ready,
                     disk_space_gb,
                     disk_space_ok: disk_space_gb >= 10,
+                    image: ImageCheckResult::default(),
                 }
             }
         }
@@ -663,6 +898,7 @@ mod tests {
                         ready: true,
                         disk_space_gb,
                         disk_space_ok: true,
+                        image: ImageCheckResult::default(),
                     },
                     network: NetworkChecks {
                         internet: true,
@@ -689,6 +925,7 @@ mod tests {
                         ready: true,
                         disk_space_gb,
                         disk_space_ok: false,
+                        image: ImageCheckResult::default(),
                     },
                     network: NetworkChecks { internet: true, dns: true },
                     security: SecurityChecks {
@@ -715,6 +952,7 @@ mod tests {
                         ready: true,
                         disk_space_gb: 50,
                         disk_space_ok: true,
+                        image: ImageCheckResult::default(),
                     },
                     network: NetworkChecks { internet: true, dns: true },
                     security: SecurityChecks {
@@ -731,6 +969,34 @@ mod tests {
                     issues.iter().any(|i| i.to_lowercase().contains("cert")),
                     "expected cert issue for {days} days"
                 );
+            }
+
+            /// `read_image_json` never panics on arbitrary file content.
+            #[test]
+            fn prop_read_image_json_never_panics(content in ".*") {
+                let dir = tempfile::tempdir().expect("tempdir");
+                std::fs::write(dir.path().join("image.json"), content.as_bytes())
+                    .expect("write");
+                let _ = super::super::read_image_json(dir.path());
+            }
+
+            /// `sha256_preview` is always at most 12 characters.
+            #[test]
+            fn prop_read_image_json_sha256_preview_at_most_12_chars(
+                sha256 in "[a-f0-9]{0,64}",
+            ) {
+                let dir = tempfile::tempdir().expect("tempdir");
+                let json = format!(r#"{{"version":"v0.3.0","sha256":"{sha256}"}}"#);
+                std::fs::write(dir.path().join("image.json"), json.as_bytes())
+                    .expect("write");
+                let (_, preview) = super::super::read_image_json(dir.path());
+                if let Some(p) = preview {
+                    prop_assert!(
+                        p.len() <= 12,
+                        "sha256_preview must be ≤ 12 chars, got {len}: {p}",
+                        len = p.len()
+                    );
+                }
             }
         }
     }

@@ -17,7 +17,7 @@ file:
   /etc/docker/daemon.json:
     exists: true
     mode: "0644"
-    contains:
+    contents:
       - '"no-new-privileges": true'
       - '"live-restore": true'
       - '"userland-proxy": false'
@@ -34,7 +34,7 @@ command:
       - "Docker version"
 
   docker-info:
-    exec: "docker info --format '{{.Runtimes}}'"
+    exec: "sudo docker info 2>/dev/null | grep -i runtime"
     exit-status: 0
     stdout:
       - sysbox-runc

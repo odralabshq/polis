@@ -29,14 +29,19 @@ The CLI downloads a pre-built VM image and starts the agent. No source code or b
 
 | Command | Description |
 |---------|-------------|
+| `polis init` | Download and cache the workspace VM image (latest release) |
+| `polis init --image <path\|url>` | Use a local file or custom URL instead of the latest release |
+| `polis init --force` | Re-download even if the cached image passes verification |
+| `polis init --check` | Check for a newer image without downloading (dry-run) |
 | `polis run [agent]` | Create workspace and start agent |
 | `polis start` | Start existing workspace |
 | `polis stop` | Stop workspace (preserves state) |
 | `polis delete` | Remove workspace |
+| `polis delete --all` | Remove workspace and cached images (~3.5 GB) |
 | `polis status` | Show workspace and agent status |
 | `polis connect` | Show connection options (SSH, UI) |
-| `polis doctor` | Diagnose issues |
-| `polis update` | Update Polis CLI |
+| `polis doctor` | Diagnose issues (workspace, network, image integrity) |
+| `polis update` | Update Polis to the latest signed release |
 
 ### Configuration
 

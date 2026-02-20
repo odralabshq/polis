@@ -3,6 +3,7 @@
 # Addresses: V3 (SHA256 check), Arch Review #3 (no errant jq in apt-get)
 
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 : "${SYSBOX_VERSION:?SYSBOX_VERSION required}"
 : "${SYSBOX_SHA256:?SYSBOX_SHA256 required}"

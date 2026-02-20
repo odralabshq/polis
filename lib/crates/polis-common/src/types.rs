@@ -164,9 +164,9 @@ pub struct OttMapping {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStage {
-    /// VM/workspace image downloaded and verified
-    ImageReady,
-    /// Workspace created (VM launched or container started)
+    /// Workspace created (VM launched).
+    /// `image_ready` is accepted as a legacy alias for backward compatibility.
+    #[serde(alias = "image_ready")]
     WorkspaceCreated,
     /// TLS certificates and Valkey credentials configured
     CredentialsSet,
@@ -181,7 +181,6 @@ impl RunStage {
     #[must_use]
     pub const fn next(self) -> Option<Self> {
         match self {
-            Self::ImageReady => Some(Self::WorkspaceCreated),
             Self::WorkspaceCreated => Some(Self::CredentialsSet),
             Self::CredentialsSet => Some(Self::Provisioned),
             Self::Provisioned => Some(Self::AgentReady),
@@ -193,7 +192,6 @@ impl RunStage {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::ImageReady => "Image ready",
             Self::WorkspaceCreated => "Workspace created",
             Self::CredentialsSet => "Credentials configured",
             Self::Provisioned => "Workspace provisioned",
@@ -587,14 +585,12 @@ mod tests {
     // --- RunStage ordering tests ---
     #[test]
     fn test_run_stage_ordering() {
-        assert!(RunStage::ImageReady < RunStage::WorkspaceCreated);
         assert!(RunStage::WorkspaceCreated < RunStage::CredentialsSet);
         assert!(RunStage::CredentialsSet < RunStage::Provisioned);
         assert!(RunStage::Provisioned < RunStage::AgentReady);
 
         // Verify full ordering chain
         let stages = [
-            RunStage::ImageReady,
             RunStage::WorkspaceCreated,
             RunStage::CredentialsSet,
             RunStage::Provisioned,
@@ -608,16 +604,18 @@ mod tests {
     #[test]
     fn test_run_stage_next() {
         assert_eq!(
-            RunStage::ImageReady.next(),
-            Some(RunStage::WorkspaceCreated)
-        );
-        assert_eq!(
             RunStage::WorkspaceCreated.next(),
             Some(RunStage::CredentialsSet)
         );
         assert_eq!(RunStage::CredentialsSet.next(), Some(RunStage::Provisioned));
         assert_eq!(RunStage::Provisioned.next(), Some(RunStage::AgentReady));
         assert_eq!(RunStage::AgentReady.next(), None);
+    }
+
+    #[test]
+    fn test_run_stage_image_ready_alias_deserializes_as_workspace_created() {
+        let stage: RunStage = serde_json::from_str("\"image_ready\"").unwrap();
+        assert_eq!(stage, RunStage::WorkspaceCreated);
     }
 
     // --- ActivityEvent serde round-trip ---
@@ -699,7 +697,7 @@ mod tests {
 
         // Test with None image_sha256
         let state_no_hash = RunState {
-            stage: RunStage::ImageReady,
+            stage: RunStage::WorkspaceCreated,
             agent: "test-agent".to_string(),
             workspace_id: "ws-xyz".to_string(),
             started_at: Utc::now(),
@@ -721,7 +719,6 @@ mod proptests {
 
     fn arb_run_stage() -> impl Strategy<Value = RunStage> {
         prop_oneof![
-            Just(RunStage::ImageReady),
             Just(RunStage::WorkspaceCreated),
             Just(RunStage::CredentialsSet),
             Just(RunStage::Provisioned),
@@ -765,7 +762,7 @@ mod proptests {
             while let Some(s) = current {
                 current = s.next();
                 steps += 1;
-                prop_assert!(steps <= 5, "next() should terminate within 5 steps");
+                prop_assert!(steps <= 4, "next() should terminate within 4 steps");
             }
         }
 

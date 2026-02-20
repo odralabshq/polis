@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod 755 /var/empty
 
 # Configure NSS for user/group resolution (required for sshd privilege separation)
+# Configure sshd: disable PAM (minimal image lacks common-auth), key-only auth
 RUN printf '%s\n' \
     'passwd:     files systemd' \
     'group:      files systemd' \
@@ -31,23 +32,20 @@ RUN printf '%s\n' \
     'services:   files' \
     'ethers:     files' \
     'rpc:        files' \
-    > /etc/nsswitch.conf
-
-# Configure sshd: disable PAM (minimal image lacks common-auth), key-only auth
-RUN printf '%s\n' \
+    > /etc/nsswitch.conf && \
+    printf '%s\n' \
     'UsePAM no' \
     'PasswordAuthentication no' \
     'PermitEmptyPasswords no' \
     'ChallengeResponseAuthentication no' \
     'PubkeyAuthentication yes' \
     'AuthorizedKeysFile .ssh/authorized_keys' \
-    > /etc/ssh/sshd_config.d/polis.conf
+    > /etc/ssh/sshd_config.d/polis.conf \
+    && useradd -m -u 1000 -s /bin/bash polis \
+    && usermod -s /usr/sbin/nologin root \
+    && ln -sf /etc/systemd/system/polis-init.service /etc/systemd/system/multi-user.target.wants/polis-init.service \
+    && mkdir -p /usr/local/share/ca-certificates
 
-# Create polis user (uid 1000) and disable root login
-RUN useradd -m -u 1000 -s /bin/bash polis \
-    && usermod -s /usr/sbin/nologin root
-
-# Enable polis-init service (service file mounted at runtime)
-RUN ln -sf /etc/systemd/system/polis-init.service /etc/systemd/system/multi-user.target.wants/polis-init.service
+COPY --chmod=755 services/workspace/scripts/init.sh /usr/local/bin/init.sh
 
 ENTRYPOINT ["/sbin/init"]

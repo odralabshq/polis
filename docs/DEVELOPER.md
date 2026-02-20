@@ -22,12 +22,12 @@ just test-bats
 
 | Tool | Required | Install |
 |------|----------|---------|
-| Docker | Yes | `sudo apt install docker.io` |
 | just | Yes | `curl -sSf https://just.systems/install.sh \| bash` |
-| shellcheck | For linting | `sudo apt install shellcheck` |
-| hadolint | For Dockerfile linting | `brew install hadolint` or use Docker |
-| container-structure-test | For image validation | [GitHub releases](https://github.com/GoogleContainerTools/container-structure-test/releases) |
-| Multipass | For dev VM | `sudo snap install multipass` |
+| Docker | Yes | `just install-tools` |
+| shellcheck | For linting | `just install-tools` |
+| hadolint | For Dockerfile linting | `just install-tools` |
+| container-structure-test | For image validation | `just install-tools` |
+| Multipass | For dev VM | `just install-tools` |
 | Packer | For VM builds | `just install-tools` (adds HashiCorp apt repo) |
 | QEMU + xorriso | For VM builds | `just install-tools` |
 
@@ -301,6 +301,55 @@ Key rules:
 
 ---
 
+## Branching & Git Flow
+
+Polis uses a **GitLab Flow** variant optimised for mixed human + AI agent development. See [GitLab Flow](https://about.gitlab.com/topics/version-control/what-is-gitlab-flow/) and [GitFlow vs trunk-based](https://pullpanda.io/blog/git-flow-vs-trunk-based-development) for background.
+
+### Branch Model
+
+```
+feature/my-change ──┐
+agent/task-xyz    ──┤  merge commit (no review required)
+fix/some-bug      ──┘
+                     ↓
+                  develop  ← integration branch, CI gates only
+                     │
+              squash merge (1 human approval required)
+                     ↓
+                   main  ← stable, release-ready
+                     │
+                  git tag vX.X.X
+                     ↓
+                  release
+```
+
+### Rules
+
+| Branch | Who targets it | Review required | Merge type | Direct push |
+|--------|---------------|-----------------|------------|-------------|
+| `develop` | humans + AI agents | No — CI must pass | Merge commit | ✗ |
+| `main` | `develop` only | 1 human approval | Squash merge | ✗ |
+
+- **AI agents target `develop`** — no human review gate, but lint + unit tests must pass
+- **`develop → main`** is a deliberate human-promoted release, squash-merged to keep `main` history clean (one commit per release)
+- PRs to `main` from any branch other than `develop` are blocked by CI
+
+### Required CI checks on `develop`
+
+`lint-rust` · `lint-c` · `lint-shell` · `test-rust` · `test-c` · `unit-tests`
+
+### Creating a release
+
+```bash
+# 1. Open a PR from develop → main, get 1 approval, squash merge
+# 2. Tag main
+git checkout main && git pull
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+---
+
 ## CI/CD Pipelines
 
 ### Workflows
@@ -308,8 +357,7 @@ Key rules:
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | Push/PR to main/develop | Lint, build, test, security scan |
-| `release.yml` | Tag `v*` or manual | Build images, VM, CLI → GitHub Release |
-| `release-vm.yml` | Manual | Build VM image only (standalone) |
+| `release.yml` | Tag `v*` or manual | Build images + VM + CLI → GitHub Release |
 | `g3-builder.yml` | Push to main (g3 Dockerfile changes) | Rebuild g3-builder base image |
 
 ### CI Pipeline Stages (`ci.yml`)
@@ -346,9 +394,9 @@ Security (parallel):
 Triggered by `v*` tag push or manual workflow dispatch.
 
 ```
-validate → docker (build + push to GHCR)
+validate → docker (build + tag + push to GHCR + generate versions.json)
                 ↓
-              vm (Packer build with Goss tests)
+              vm (bundle config with .env, Packer build with Goss tests)
                 ↓
               cli (Rust binary build)
                 ↓
@@ -364,6 +412,7 @@ validate → docker (build + push to GHCR)
 | `polis-linux-amd64` | CLI binary |
 | `polis-linux-amd64.sha256` | CLI checksum |
 | `install.sh` | Installation script |
+| `versions.json` | Signed container version manifest (ed25519) |
 
 Docker images pushed to GHCR:
 - `ghcr.io/odralabshq/polis-gate-oss:vX.X.X`
@@ -383,10 +432,50 @@ Docker images pushed to GHCR:
 
 3. Pipeline automatically:
    - Validates version format (`vX.X.X` or `vX.X.X-suffix`)
-   - Builds and pushes Docker images to GHCR
-   - Builds VM image with Goss validation
+   - Builds and pushes Docker images to GHCR tagged `:vX.X.X`
+   - Generates `versions.json` and signs it with the release ed25519 key
+   - Builds VM image: bakes images + `.env` (with `POLIS_*_VERSION=vX.X.X`) via Packer
    - Builds CLI binary
    - Creates GitHub Release with attestations
+
+### Container Version Manifest (`versions.json`)
+
+Each release publishes a signed `versions.json` that maps container names to their versions:
+
+```json
+{
+  "manifest_version": 1,
+  "vm_image": { "version": "v0.3.0", "asset": "polis-workspace-v0.3.0-amd64.qcow2" },
+  "containers": {
+    "polis-gate-oss": "v0.3.0",
+    "polis-sentinel-oss": "v0.3.0",
+    ...
+  }
+}
+```
+
+`polis update` downloads this manifest, verifies the ed25519 signature against the public key compiled into the CLI binary, then updates containers in the VM accordingly.
+
+### Release Signing Key Setup (one-time)
+
+The release signing key is an ed25519 keypair. The private key lives only in GitHub secrets; the public key is compiled into the CLI binary.
+
+**If you need to rotate or set up the key from scratch:**
+
+```bash
+cargo install zipsign --version 0.2.1 --locked
+zipsign gen-key .secrets/polis-release.key .secrets/polis-release.pub
+
+# Get the base64 public key for update.rs:
+base64 -w0 .secrets/polis-release.pub
+
+# Get the base64 private key for the GitHub secret:
+base64 -w0 .secrets/polis-release.key
+```
+
+1. Update `POLIS_PUBLIC_KEY_B64` in `cli/src/commands/update.rs` with the public key output
+2. Add the private key as GitHub secret `POLIS_SIGNING_KEY` (repo → Settings → Secrets → Actions)
+3. Keep `.secrets/polis-release.key` backed up securely (password manager). It is gitignored.
 
 ### Verifying Artifacts
 
@@ -400,6 +489,21 @@ gh attestation verify polis-linux-amd64 --owner OdraLabsHQ
 
 ---
 
+## Testing `polis update` Locally
+
+Any developer can test the full `polis update` manifest flow without the release signing key:
+
+```bash
+# Generates a throwaway keypair, signs a local versions.json, serves it over HTTP
+./tools/test-update-local.sh v0.3.1
+```
+
+This exercises the full path: manifest download → ed25519 signature verification → version comparison. It stops at "Workspace not running" when it tries to update containers, which is expected without a running VM.
+
+The script uses `POLIS_VERIFYING_KEY_B64` env var to override the compiled-in public key at runtime, so no access to the real signing key is needed.
+
+---
+
 ## Building VM Images
 
 ### Install Build Tools
@@ -410,7 +514,7 @@ Packer is not in the default Ubuntu apt repos — it requires the HashiCorp apt 
 just install-tools
 ```
 
-This installs: packer (via HashiCorp repo), qemu-system-x86, qemu-utils, ovmf, xorriso.
+This installs: docker.io, shellcheck, hadolint (v2.12.0), container-structure-test (v1.19.3), multipass, packer (via HashiCorp repo), qemu-system-x86, qemu-utils, ovmf, xorriso.
 
 ### Local Build
 
@@ -543,16 +647,12 @@ sudo usermod -aG docker $USER
 
 **Multipass not found (dev-vm.sh):**
 ```bash
-# macOS
-brew install multipass
-
-# Linux
-sudo snap install multipass
+just install-tools
 ```
 
 **Shellcheck not found (just lint-shell):**
 ```bash
-sudo apt install shellcheck
+just install-tools
 ```
 
 **Packer plugin missing:**

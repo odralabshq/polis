@@ -40,9 +40,10 @@ setup() {
 
 @test "resolver: runs as UID 65532 (DHI nonroot)" {
     require_container "$CTR_RESOLVER"
-    run docker exec "$CTR_RESOLVER" id -u
+    # Static distroless image has no shell; verify user via inspect
+    run docker inspect --format '{{.Config.User}}' "$CTR_RESOLVER"
     assert_success
-    assert_output "65532"
+    assert_output --partial "65532"
 }
 
 @test "state: runs as UID 65532 (DHI nonroot)" {

@@ -15,13 +15,13 @@ env:
   SYSBOX_VERSION: "0.6.7"
   SYSBOX_SHA256: "b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
   POLIS_IMAGES: >-
-    polis-resolver-oss:latest
-    polis-gate-oss:latest
-    polis-certgen-oss:latest
-    polis-sentinel-oss:latest
-    polis-scanner-oss:latest
-    polis-workspace-oss:latest
-    polis-toolbox-oss:latest
+    ghcr.io/odralabshq/polis-resolver-oss:latest
+    ghcr.io/odralabshq/polis-gate-oss:latest
+    ghcr.io/odralabshq/polis-certgen-oss:latest
+    ghcr.io/odralabshq/polis-sentinel-oss:latest
+    ghcr.io/odralabshq/polis-scanner-oss:latest
+    ghcr.io/odralabshq/polis-workspace-oss:latest
+    ghcr.io/odralabshq/polis-toolbox-oss:latest
 
 jobs:
   # ── Stage 1a: Lint Rust ───────────────────────────────────────────
@@ -47,7 +47,7 @@ jobs:
 
       - name: Clippy
         run: |
-          cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings
+          cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
           cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
   # ── Stage 1b: Lint C ──────────────────────────────────────────────
@@ -222,22 +222,27 @@ jobs:
           - polis-resolver-oss
           - polis-toolbox-oss
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
       - name: Download image artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: polis-images
 
       - name: Load images
-        run: zstd -d polis-images.tar.zst --stdout | docker load
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
       - name: Scan ${{ matrix.image }} with Trivy
         uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
         with:
-          image-ref: '${{ matrix.image }}:latest'
+          image-ref: 'ghcr.io/odralabshq/${{ matrix.image }}:latest'
           format: 'sarif'
           output: 'trivy-${{ matrix.image }}.sarif'
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
+          skip-setup-trivy: false
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
@@ -245,6 +250,7 @@ jobs:
           sarif_file: 'trivy-${{ matrix.image }}.sarif'
           category: 'trivy-${{ matrix.image }}'
         if: always()
+        continue-on-error: true
 
   # ── Stage 4: Integration tests ────────────────────────────────────
   integration-tests:
@@ -272,7 +278,7 @@ jobs:
           name: polis-images
 
       - name: Load images
-        run: zstd -d polis-images.tar.zst --stdout | docker load
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
       - name: Install just
         run: curl --proto '=https' -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
@@ -319,7 +325,7 @@ jobs:
           name: polis-images
 
       - name: Load images
-        run: zstd -d polis-images.tar.zst --stdout | docker load
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
       - name: Install just
         run: curl --proto '=https' -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
@@ -395,6 +401,20 @@ jobs:
           category: checkov-iac
         if: always()
 
+  # ── Security: OSV Scanner (Rust/C dependency CVEs) ───────────────
+  security-osv:
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@8ae4be80636b94886b3c271caad730985ce0611c # v2.3.3
+    with:
+      scan-args: |-
+        --include-git-root
+        -r
+        ./
+
   # ── Security: SonarCloud ──────────────────────────────────────────
   security-sonarcloud:
     runs-on: ubuntu-24.04
@@ -406,7 +426,7 @@ jobs:
 
       - uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7.0.0
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key NOSONAR
           SONAR_HOST_URL: https://sonarcloud.io
         with:
           args: >

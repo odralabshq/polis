@@ -14,12 +14,12 @@ setup() {
 # =============================================================================
 
 @test "e2e: REQMOD approval rewriter module exists" {
-    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_approval_rewrite.so
+    run docker exec "$CTR_SENTINEL" test -f /usr/local/lib/c_icap/srv_polis_approval_rewrite.so
     assert_success
 }
 
 @test "e2e: RESPMOD approval scanner module exists" {
-    run docker exec "$CTR_SENTINEL" test -f /usr/lib/c_icap/srv_polis_approval.so
+    run docker exec "$CTR_SENTINEL" test -f /usr/local/lib/c_icap/srv_polis_approval.so
     assert_success
 }
 

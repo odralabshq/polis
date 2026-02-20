@@ -6,6 +6,7 @@ setup() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
     STRUCTURE_TESTS_DIR="$PROJECT_ROOT/tests/container-structure"
+    IMAGE_PREFIX="ghcr.io/odralabshq"
 }
 
 # ── Helper ────────────────────────────────────────────────────────────────
@@ -29,8 +30,8 @@ run_structure_test() {
 
 @test "structure-test: gate image" {
     skip_if_no_cst
-    skip_if_image_missing "polis-gate-oss:latest"
-    run run_structure_test "polis-gate-oss:latest" "$STRUCTURE_TESTS_DIR/gate.yaml"
+    skip_if_image_missing "${IMAGE_PREFIX}/polis-gate-oss:latest"
+    run run_structure_test "${IMAGE_PREFIX}/polis-gate-oss:latest" "$STRUCTURE_TESTS_DIR/gate.yaml"
     assert_success
 }
 
@@ -38,8 +39,8 @@ run_structure_test() {
 
 @test "structure-test: sentinel image" {
     skip_if_no_cst
-    skip_if_image_missing "polis-sentinel-oss:latest"
-    run run_structure_test "polis-sentinel-oss:latest" "$STRUCTURE_TESTS_DIR/sentinel.yaml"
+    skip_if_image_missing "${IMAGE_PREFIX}/polis-sentinel-oss:latest"
+    run run_structure_test "${IMAGE_PREFIX}/polis-sentinel-oss:latest" "$STRUCTURE_TESTS_DIR/sentinel.yaml"
     assert_success
 }
 
@@ -47,8 +48,8 @@ run_structure_test() {
 
 @test "structure-test: resolver image" {
     skip_if_no_cst
-    skip_if_image_missing "polis-resolver-oss:latest"
-    run run_structure_test "polis-resolver-oss:latest" "$STRUCTURE_TESTS_DIR/resolver.yaml"
+    skip_if_image_missing "${IMAGE_PREFIX}/polis-resolver-oss:latest"
+    run run_structure_test "${IMAGE_PREFIX}/polis-resolver-oss:latest" "$STRUCTURE_TESTS_DIR/resolver.yaml"
     assert_success
 }
 
@@ -56,8 +57,8 @@ run_structure_test() {
 
 @test "structure-test: toolbox image" {
     skip_if_no_cst
-    skip_if_image_missing "polis-toolbox-oss:latest"
-    run run_structure_test "polis-toolbox-oss:latest" "$STRUCTURE_TESTS_DIR/toolbox.yaml"
+    skip_if_image_missing "${IMAGE_PREFIX}/polis-toolbox-oss:latest"
+    run run_structure_test "${IMAGE_PREFIX}/polis-toolbox-oss:latest" "$STRUCTURE_TESTS_DIR/toolbox.yaml"
     assert_success
 }
 
@@ -65,8 +66,8 @@ run_structure_test() {
 
 @test "structure-test: workspace image" {
     skip_if_no_cst
-    skip_if_image_missing "polis-workspace-oss:latest"
-    run run_structure_test "polis-workspace-oss:latest" "$STRUCTURE_TESTS_DIR/workspace.yaml"
+    skip_if_image_missing "${IMAGE_PREFIX}/polis-workspace-oss:latest"
+    run run_structure_test "${IMAGE_PREFIX}/polis-workspace-oss:latest" "$STRUCTURE_TESTS_DIR/workspace.yaml"
     assert_success
 }
 
@@ -74,8 +75,8 @@ run_structure_test() {
 
 @test "structure-test: scanner image" {
     skip_if_no_cst
-    skip_if_image_missing "polis-scanner-oss:latest"
-    run run_structure_test "polis-scanner-oss:latest" "$STRUCTURE_TESTS_DIR/scanner.yaml"
+    skip_if_image_missing "${IMAGE_PREFIX}/polis-scanner-oss:latest"
+    run run_structure_test "${IMAGE_PREFIX}/polis-scanner-oss:latest" "$STRUCTURE_TESTS_DIR/scanner.yaml"
     assert_success
 }
 
@@ -83,7 +84,7 @@ run_structure_test() {
 
 @test "structure-test: certgen image" {
     skip_if_no_cst
-    skip_if_image_missing "polis-certgen-oss:latest"
-    run run_structure_test "polis-certgen-oss:latest" "$STRUCTURE_TESTS_DIR/certgen.yaml"
+    skip_if_image_missing "${IMAGE_PREFIX}/polis-certgen-oss:latest"
+    run run_structure_test "${IMAGE_PREFIX}/polis-certgen-oss:latest" "$STRUCTURE_TESTS_DIR/certgen.yaml"
     assert_success
 }
