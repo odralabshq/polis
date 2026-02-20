@@ -179,7 +179,7 @@ cmd_unmount() {
 cmd_pull() {
     local version="${1:-latest}"
     local arch="${2:-amd64}"
-    local dest="${PROJECT_ROOT}/.build/polis-workspace-${version}-${arch}.qcow2"
+    local dest="${PROJECT_ROOT}/.build/polis-${version}-${arch}.qcow2"
     local repo="${POLIS_GITHUB_REPO:-odralabshq/polis}"
 
     mkdir -p "${PROJECT_ROOT}/.build"
@@ -187,11 +187,11 @@ cmd_pull() {
     if [[ "${version}" == "latest" ]]; then
         local tag
         tag=$(curl -fsSL --proto '=https' "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
-        dest="${PROJECT_ROOT}/.build/polis-workspace-${tag}-${arch}.qcow2"
+        dest="${PROJECT_ROOT}/.build/polis-${tag}-${arch}.qcow2"
         log_info "Latest release: ${tag}"
     fi
 
-    local url="https://github.com/${repo}/releases/download/${version}/polis-workspace-${version}-${arch}.qcow2"
+    local url="https://github.com/${repo}/releases/download/${version}/polis-${version}-${arch}.qcow2"
     log_step "Downloading VM image to ${dest}..."
     curl -fL --proto '=https' --progress-bar -o "${dest}" "${url}"
 

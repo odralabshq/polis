@@ -286,8 +286,8 @@ package-vm arch="amd64":
     #!/usr/bin/env bash
     set -euo pipefail
     VERSION=$(git describe --tags --always)
-    cp packer/output/polis-workspace-*.qcow2 "polis-workspace-${VERSION}-{{arch}}.qcow2"
-    sha256sum "polis-workspace-${VERSION}-{{arch}}.qcow2" > "polis-workspace-${VERSION}-{{arch}}.qcow2.sha256"
+    cp packer/output/polis-*.qcow2 "polis-${VERSION}-{{arch}}.qcow2"
+    sha256sum "polis-${VERSION}-{{arch}}.qcow2" > "polis-${VERSION}-{{arch}}.qcow2.sha256"
 
 # ── Clean ───────────────────────────────────────────────────────────
 clean:
