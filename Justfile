@@ -215,7 +215,6 @@ _bundle-config:
     export POLIS_IMAGE_VERSION
     bash packer/scripts/bundle-polis-config.sh
 
-build-all: build-vm
 
 # ── Setup ───────────────────────────────────────────────────────────
 setup: setup-ca setup-valkey setup-toolbox
