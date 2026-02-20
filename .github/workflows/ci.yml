@@ -398,34 +398,17 @@ jobs:
 
   # ── Security: OSV Scanner (Rust/C dependency CVEs) ───────────────
   security-osv:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - uses: google/osv-scanner-action@c5996e0193a3df57d695c1b8a1dec2a4c62e8730 # v2.3.3
-        with:
-          scan-args: |-
-            --recursive
-            --output=results.json
-            ./
-        continue-on-error: true
-
-      - uses: google/osv-scanner-action/osv-reporter-action@c5996e0193a3df57d695c1b8a1dec2a4c62e8730 # v2.3.3
-        with:
-          scan-args: |-
-            --recursive
-            --output=results.json
-            ./
-          fail-on-vuln: true
-          output: osv-results.sarif
-
-      - uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
-        with:
-          sarif_file: osv-results.sarif
-          category: osv-scanner
-        if: always()
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@8ae4be80636b94886b3c271caad730985ce0611c # v2.3.3
+    with:
+      scan-args: |-
+        --include-git-root
+        -r
+        ./
 
   # ── Security: SonarCloud ──────────────────────────────────────────
   security-sonarcloud:
