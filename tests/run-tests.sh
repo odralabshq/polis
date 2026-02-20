@@ -60,15 +60,19 @@ case "$TIER" in
     packer)      run_tier "unit/packer" ;;
     docker)      run_tier "unit/docker" ;;
     e2e)
-        docker compose --profile test pull httpbin 2>/dev/null || true
-        docker compose --profile test up -d httpbin
-        trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
+        if [[ "$CI_MODE" != "true" ]]; then
+            docker compose --profile test pull httpbin 2>/dev/null || true
+            docker compose --profile test up -d httpbin
+            trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
+        fi
         run_tier "e2e"
         ;;
     all)
-        docker compose --profile test pull httpbin 2>/dev/null || true
-        docker compose --profile test up -d httpbin
-        trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
+        if [[ "$CI_MODE" != "true" ]]; then
+            docker compose --profile test pull httpbin 2>/dev/null || true
+            docker compose --profile test up -d httpbin
+            trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
+        fi
         run_tier "unit"
         run_tier "integration"
         run_tier "e2e"
