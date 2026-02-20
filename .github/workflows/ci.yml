@@ -232,7 +232,7 @@ jobs:
           name: polis-images
 
       - name: Load images
-        run: zstd -d polis-images.tar.zst --stdout | docker load
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
       - name: Scan ${{ matrix.image }} with Trivy
         uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
@@ -276,7 +276,7 @@ jobs:
           name: polis-images
 
       - name: Load images
-        run: zstd -d polis-images.tar.zst --stdout | docker load
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
       - name: Install just
         run: curl --proto '=https' -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
@@ -323,7 +323,7 @@ jobs:
           name: polis-images
 
       - name: Load images
-        run: zstd -d polis-images.tar.zst --stdout | docker load
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
       - name: Install just
         run: curl --proto '=https' -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
