@@ -106,7 +106,14 @@ fmt:
     cargo fmt --all --manifest-path services/toolbox/Cargo.toml
 
 # ── Build ───────────────────────────────────────────────────────────
-build:
+build: build-cli build-docker build-vm
+
+# Build the CLI binary
+build-cli:
+    cargo build --release --manifest-path cli/Cargo.toml
+
+# Build Docker images
+build-docker:
     docker compose build
 
 # Build a specific service
@@ -115,7 +122,7 @@ build-service service:
 
 # Build VM image (requires packer)
 # Usage: just build-vm [arch=amd64|arm64] [headless=true|false]
-build-vm arch="amd64" headless="true": build _export-images _bundle-config
+build-vm arch="amd64" headless="true": _export-images _bundle-config
     #!/usr/bin/env bash
     set -euo pipefail
     cd packer
