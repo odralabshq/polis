@@ -140,7 +140,7 @@ if multipass info polis &>/dev/null 2>&1; then
     log_info "Removing existing polis VM..."
     multipass delete polis && multipass purge
 fi
-rm -f "${INSTALL_DIR}/run-state.json"
+rm -f "${INSTALL_DIR}/state.json"
 
 install_image
 
