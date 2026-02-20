@@ -17,7 +17,8 @@ services:
     env_file:
       - .env
     volumes:
-      - ./agents/openclaw/:/tmp/agents/openclaw/:ro
+      - ./agents/openclaw/scripts/:/tmp/agents/openclaw/scripts/:ro
+      - ./agents/openclaw/config/:/tmp/agents/openclaw/config/:ro
       - ./agents/openclaw/.generated/openclaw.service:/etc/systemd/system/openclaw.service:ro
       - ./agents/openclaw/.generated/openclaw.service.sha256:/etc/systemd/system/openclaw.service.sha256:ro
       - ./agents/openclaw/.generated/openclaw.env:/run/openclaw-env:ro
