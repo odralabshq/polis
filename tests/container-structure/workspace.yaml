@@ -3,7 +3,7 @@
 
 schemaVersion: '2.0.0'
 
-# workspace runs as sysbox user, not 65532
+# workspace runs as root (sysbox-runc, systemd requires root)
 metadataTest:
   workdir: "/"
 

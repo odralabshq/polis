@@ -53,7 +53,7 @@ setup() {
 @test "e2e: HTTPS to different domains works" {
     run_with_network_skip "api.github.com" \
         docker exec "$CTR_WORKSPACE" \
-        curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 15 \
+        curl -s -o /dev/null -w "%{http_code}" --connect-timeout 15 \
         https://api.github.com/
     assert_success
     assert_output --regexp "^(200|403)$"

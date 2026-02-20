@@ -9,4 +9,4 @@ mkdir -p /var/log/c-icap /var/run/c-icap
 rm -f /var/run/c-icap/c-icap.pid /var/run/c-icap/c-icap.ctl
 
 echo "[icap] Starting c-icap with SquidClamav on 0.0.0.0:1344..."
-exec /usr/bin/c-icap -N -D -f /etc/c-icap/c-icap.conf
+exec /usr/local/bin/c-icap -N -D -f /etc/c-icap/c-icap.conf

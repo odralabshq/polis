@@ -198,7 +198,13 @@ build {
 
   # Validate VM image with Goss tests before finalizing
   provisioner "goss" {
-    tests     = ["goss/goss.yaml"]
+    tests = [
+      "goss/goss.yaml",
+      "goss/goss-docker.yaml",
+      "goss/goss-sysbox.yaml",
+      "goss/goss-hardening.yaml",
+      "goss/goss-polis.yaml"
+    ]
     vars_file = "goss/goss-vars.yaml"
     vars_env = {
       SYSBOX_VERSION = var.sysbox_version

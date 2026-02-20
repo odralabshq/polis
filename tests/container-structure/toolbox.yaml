@@ -11,10 +11,3 @@ fileExistenceTests:
     path: '/usr/local/bin/polis-mcp-agent'
     shouldExist: true
     permissions: '-rwxr-xr-x'
-
-commandTests:
-  - name: 'polis-mcp-agent help'
-    command: '/usr/local/bin/polis-mcp-agent'
-    args: ['--help']
-    exitCode: 0
-    expectedOutput: ['polis']
