@@ -8,7 +8,7 @@ metadataTest:
 
 fileExistenceTests:
   - name: 'c-icap binary'
-    path: '/usr/local/bin/c-icap'
+    path: '/usr/bin/c-icap'
     shouldExist: true
 
   - name: 'DLP module'
@@ -28,7 +28,7 @@ fileExistenceTests:
     shouldExist: true
 
   - name: 'squidclamav module'
-    path: '/usr/local/lib/c_icap/squidclamav.so'
+    path: '/usr/lib/c_icap/squidclamav.so'
     shouldExist: true
 
   - name: 'entrypoint'
@@ -38,6 +38,6 @@ fileExistenceTests:
 
 commandTests:
   - name: 'c-icap help'
-    command: '/usr/local/bin/c-icap'
+    command: '/usr/bin/c-icap'
     args: ['-h']
     exitCode: 0

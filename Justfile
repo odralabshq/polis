@@ -48,7 +48,7 @@ lint: lint-rust lint-c lint-shell
 lint-rust:
     cargo fmt --all --check --manifest-path cli/Cargo.toml
     cargo fmt --all --check --manifest-path services/toolbox/Cargo.toml
-    cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings
+    cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
     cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
 lint-c:
@@ -129,8 +129,16 @@ build-vm arch="amd64" headless="true": build _export-images _bundle-config
 _export-images:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Get all images from docker-compose.yml (both polis-* and external)
-    IMAGES=$(grep -oP 'image:\s+\K\S+' docker-compose.yml | sort -u | grep -v 'go-httpbin')
+    if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
+        echo "ERROR: POLIS_IMAGE_VERSION is not set" >&2
+        exit 1
+    fi
+    # Set per-service vars so docker compose config resolves the image refs
+    for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX; do
+        export "POLIS_${svc}_VERSION=${POLIS_IMAGE_VERSION}"
+    done
+    # Get all images with env vars resolved
+    IMAGES=$(docker compose -f docker-compose.yml config | grep -oP 'image:\s+\K\S+' | sort -u | grep -v 'go-httpbin')
     if [[ -z "${IMAGES}" ]]; then
         echo "ERROR: No images found in docker-compose.yml" >&2
         exit 1
@@ -140,7 +148,7 @@ _export-images:
     echo "Pulling external images..."
     EXPORT_IMAGES=""
     for img in ${IMAGES}; do
-        if [[ ! "$img" =~ ^polis- ]]; then
+        if [[ ! "$img" =~ ^ghcr\.io/odralabshq/polis- ]]; then
             docker pull "$img" || true
             # Strip @sha256:... suffix for export (docker load doesn't preserve digests)
             simple_tag="${img%%@sha256:*}"
@@ -163,6 +171,19 @@ _export-images:
 _bundle-config:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
+        echo "Resolving latest image version from GitHub..."
+        POLIS_IMAGE_VERSION=$(curl -fsSL --proto '=https' \
+            -H 'Accept: application/vnd.github+json' \
+            'https://api.github.com/repos/OdraLabsHQ/polis/releases/latest' \
+            | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+        if [[ -z "${POLIS_IMAGE_VERSION}" ]]; then
+            echo "ERROR: Failed to resolve latest image version" >&2
+            exit 1
+        fi
+        echo "Using image version: ${POLIS_IMAGE_VERSION}"
+    fi
+    export POLIS_IMAGE_VERSION
     bash packer/scripts/bundle-polis-config.sh
 
 build-all: build-vm

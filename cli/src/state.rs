@@ -90,6 +90,28 @@ impl StateManager {
     }
 }
 
+/// Shared test helpers — available to all modules via `crate::state::test_helpers`.
+#[cfg(test)]
+pub mod test_helpers {
+    use super::StateManager;
+    use tempfile::TempDir;
+
+    /// Creates a `StateManager` pre-loaded with a minimal `agent_ready` state fixture.
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
+    pub fn state_mgr_with_state(dir: &TempDir) -> StateManager {
+        let polis_dir = dir.path().join(".polis");
+        std::fs::create_dir_all(&polis_dir).expect("create .polis dir");
+        let state_path = polis_dir.join("state.json");
+        std::fs::write(
+            &state_path,
+            r#"{"stage":"agent_ready","agent":"claude-dev","workspace_id":"ws-test01","started_at":"2026-02-17T14:30:00Z"}"#,
+        )
+        .expect("write state");
+        StateManager::with_path(state_path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +160,29 @@ mod tests {
         std::fs::write(&path, b"not valid json").expect("write corrupt file");
         let result = StateManager::with_path(path).load();
         assert!(result.is_err(), "corrupted JSON must return Err");
+    }
+
+    #[test]
+    fn test_state_manager_load_image_ready_stage_deserializes_as_workspace_created() {
+        // Backward-compat migration: state.json files written before issue 06
+        // used "image_ready" as the stage value. The #[serde(alias)] on
+        // WorkspaceCreated must make these load without error.
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("state.json");
+        std::fs::write(
+            &path,
+            br#"{"stage":"image_ready","agent":"claude-dev","workspace_id":"ws-abc123","started_at":"2026-02-17T14:30:00Z"}"#,
+        )
+        .expect("write legacy state");
+        let loaded = StateManager::with_path(path)
+            .load()
+            .expect("load must not error")
+            .expect("state must be present");
+        assert_eq!(
+            loaded.stage,
+            RunStage::WorkspaceCreated,
+            "image_ready must deserialize as WorkspaceCreated"
+        );
     }
 
     #[test]
@@ -229,7 +274,6 @@ mod proptests {
 
     fn arb_run_stage() -> impl Strategy<Value = RunStage> {
         prop_oneof![
-            Just(RunStage::ImageReady),
             Just(RunStage::WorkspaceCreated),
             Just(RunStage::CredentialsSet),
             Just(RunStage::Provisioned),

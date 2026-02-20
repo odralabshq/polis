@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     liblua5.4-dev libc-ares-dev libcap-dev python3-dev libunwind-dev \
     libnuma-dev curl gzip && rm -rf /var/lib/apt/lists/*
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN rustup default nightly-2026-02-01 && rustup component add rust-src

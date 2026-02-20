@@ -1,0 +1,20 @@
+name: check-base-branch
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-base-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce PRs to main must come from develop
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [[ "$HEAD_REF" != "develop" ]]; then
+            echo "❌ PRs to main must come from 'develop', not '$HEAD_REF'."
+            exit 1
+          fi

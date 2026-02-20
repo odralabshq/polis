@@ -12,6 +12,7 @@ VERSION="${POLIS_VERSION:-latest}"
 INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
+IMAGE_URL=""
 
 # Colors
 RED='\033[0;31m'
@@ -20,10 +21,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_ok() { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
+log_ok() { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
 # Check architecture
 check_arch() {
@@ -37,6 +38,7 @@ check_arch() {
             exit 1
             ;;
     esac
+    return 0
 }
 
 # Check for Multipass (V9 - no auto-install)
@@ -60,13 +62,32 @@ check_multipass() {
 # Resolve version tag
 resolve_version() {
     if [[ "${VERSION}" == "latest" ]]; then
-        VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
-        if [[ -z "${VERSION}" ]]; then
+        local response http_code body
+        response=$(curl -fsSL --proto '=https' -w "\n%{http_code}" \
+            "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
+            2>&1) || true
+        http_code=$(echo "${response}" | tail -1)
+        body=$(echo "${response}" | sed '$d')
+
+        if [[ "${http_code}" == "403" ]]; then
+            log_error "GitHub API rate limit exceeded (60 requests/hour unauthenticated)"
+            echo "  Set GITHUB_TOKEN or use: install.sh --version v0.3.0"
+            exit 1
+        fi
+
+        if command -v jq &>/dev/null; then
+            VERSION=$(echo "${body}" | jq -r '.tag_name')
+        else
+            VERSION=$(echo "${body}" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+        fi
+
+        if [[ -z "${VERSION}" || "${VERSION}" == "null" ]]; then
             log_error "Failed to resolve latest version"
             exit 1
         fi
     fi
     log_info "Installing Polis ${VERSION}"
+    return 0
 }
 
 # Download and verify with SHA256
@@ -114,6 +135,22 @@ verify_attestation() {
     fi
 }
 
+# Non-fatal image download step
+init_image() {
+    log_info "Downloading workspace image (~3.2 GB)..."
+    if [[ -n "${IMAGE_URL}" ]]; then
+        "${INSTALL_DIR}/bin/polis" init --image "${IMAGE_URL}" || {
+            log_warn "Image download failed. Run 'polis init' to retry."
+            return 0
+        }
+    else
+        "${INSTALL_DIR}/bin/polis" init || {
+            log_warn "Image download failed. Run 'polis init' to retry."
+            return 0
+        }
+    fi
+}
+
 # Create symlink
 create_symlink() {
     mkdir -p "$HOME/.local/bin"
@@ -145,12 +182,33 @@ main() {
     download_and_verify
     verify_attestation
     create_symlink
+    init_image
 
     echo ""
     log_ok "Polis installed successfully!"
     echo ""
-    echo "Run 'polis --help' to get started."
+    echo "Get started:"
+    echo "  polis run          # Create workspace"
+    echo "  polis run claude   # Create workspace with Claude agent"
     echo ""
 }
+
+# Parse flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --image)
+            [[ $# -ge 2 ]] || { log_error "--image requires a value"; exit 1; }
+            IMAGE_URL="$2"; shift 2 ;;
+        --image=*)
+            IMAGE_URL="${1#*=}"; shift ;;
+        --version)
+            [[ $# -ge 2 ]] || { log_error "--version requires a value"; exit 1; }
+            VERSION="$2"; shift 2 ;;
+        --version=*)
+            VERSION="${1#*=}"; shift ;;
+        *)
+            log_error "Unknown flag: $1"; exit 1 ;;
+    esac
+done
 
 main

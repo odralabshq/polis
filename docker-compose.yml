@@ -9,7 +9,7 @@ services:
     build:
       context: .
       dockerfile: services/resolver/Dockerfile
-    image: polis-resolver-oss:latest
+    image: ghcr.io/odralabshq/polis-resolver-oss:${POLIS_RESOLVER_VERSION:-latest}
     container_name: polis-resolver
     user: "65532:65532"
     cap_drop:
@@ -58,7 +58,7 @@ services:
     build:
       context: .
       dockerfile: services/certgen/Dockerfile
-    image: polis-certgen-oss:latest
+    image: ghcr.io/odralabshq/polis-certgen-oss:${POLIS_CERTGEN_VERSION:-latest}
     container_name: polis-certgen
     user: "65532:65532"
     cap_drop:
@@ -105,7 +105,7 @@ services:
     build:
       context: .
       dockerfile: services/gate/Dockerfile
-    image: polis-gate-oss:latest
+    image: ghcr.io/odralabshq/polis-gate-oss:${POLIS_GATE_VERSION:-latest}
     container_name: polis-gate
     ulimits:
       nofile:
@@ -180,7 +180,7 @@ services:
     build:
       context: .
       dockerfile: services/sentinel/Dockerfile
-    image: polis-sentinel-oss:latest
+    image: ghcr.io/odralabshq/polis-sentinel-oss:${POLIS_SENTINEL_VERSION:-latest}
     container_name: polis-sentinel
     user: "65532:65532"
     read_only: true
@@ -243,7 +243,7 @@ services:
     build:
       context: .
       dockerfile: services/scanner/Dockerfile
-    image: polis-scanner-oss:latest
+    image: ghcr.io/odralabshq/polis-scanner-oss:${POLIS_SCANNER_VERSION:-latest}
     container_name: polis-scanner
     user: "65532:65532"
     security_opt:
@@ -299,7 +299,7 @@ services:
     build:
       context: .
       dockerfile: services/workspace/Dockerfile
-    image: polis-workspace-oss:latest
+    image: ghcr.io/odralabshq/polis-workspace-oss:${POLIS_WORKSPACE_VERSION:-latest}
     container_name: polis-workspace
     runtime: sysbox-runc
     sysctls:
@@ -390,7 +390,7 @@ services:
     build:
       context: .
       dockerfile: services/host-init/Dockerfile
-    image: polis-host-init-oss:latest
+    image: ghcr.io/odralabshq/polis-host-init-oss:${POLIS_HOST_INIT_VERSION:-latest}
     container_name: polis-host-init
     network_mode: host
     cap_drop:
@@ -465,7 +465,7 @@ services:
     build:
       context: .
       dockerfile: services/state/Dockerfile
-    image: polis-state-oss:latest
+    image: ghcr.io/odralabshq/polis-state-oss:${POLIS_STATE_VERSION:-latest}
     container_name: polis-state
     user: "65532:65532"
     entrypoint: []
@@ -530,7 +530,7 @@ services:
     build:
       context: .
       dockerfile: services/toolbox/Dockerfile
-    image: polis-toolbox-oss:latest
+    image: ghcr.io/odralabshq/polis-toolbox-oss:${POLIS_TOOLBOX_VERSION:-latest}
     container_name: polis-toolbox
     user: "65532:65532"
     read_only: true

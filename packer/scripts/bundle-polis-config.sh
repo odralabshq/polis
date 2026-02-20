@@ -8,10 +8,28 @@ trap 'rm -rf "$BUNDLE_DIR"' EXIT
 
 echo "==> Bundling Polis configuration..."
 
-# Copy docker-compose.yml and .env
+# POLIS_IMAGE_VERSION must be set by the caller (Justfile or CI)
+if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
+    echo "ERROR: POLIS_IMAGE_VERSION is not set" >&2
+    exit 1
+fi
+
+# Copy docker-compose.yml
 # Strip @sha256:... digest suffixes from image references (docker load doesn't preserve digests)
 sed 's/@sha256:[a-f0-9]\{64\}//g' docker-compose.yml > "$BUNDLE_DIR/docker-compose.yml"
-touch "$BUNDLE_DIR/.env"
+
+# Write .env with pinned versions for all polis-*-oss services
+cat > "$BUNDLE_DIR/.env" << EOF
+POLIS_RESOLVER_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_CERTGEN_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_GATE_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_SENTINEL_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_SCANNER_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_WORKSPACE_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_HOST_INIT_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_STATE_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_TOOLBOX_VERSION=${POLIS_IMAGE_VERSION}
+EOF
 
 # Copy service configs
 mkdir -p "$BUNDLE_DIR/services"

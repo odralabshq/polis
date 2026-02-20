@@ -20,7 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /run/sshd /var/empty \
     && chmod 755 /var/empty
 
-# Configure NSS, sshd, create polis user, enable polis-init service
+# Configure NSS for user/group resolution (required for sshd privilege separation)
+# Configure sshd: disable PAM (minimal image lacks common-auth), key-only auth
 RUN printf '%s\n' \
     'passwd:     files systemd' \
     'group:      files systemd' \
@@ -31,8 +32,8 @@ RUN printf '%s\n' \
     'services:   files' \
     'ethers:     files' \
     'rpc:        files' \
-    > /etc/nsswitch.conf \
-    && printf '%s\n' \
+    > /etc/nsswitch.conf && \
+    printf '%s\n' \
     'UsePAM no' \
     'PasswordAuthentication no' \
     'PermitEmptyPasswords no' \

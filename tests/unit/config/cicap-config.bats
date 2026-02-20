@@ -32,7 +32,7 @@ setup() {
 }
 
 @test "cicap config: DLP module loaded" {
-    run grep "Service polis_dlp srv_polis_dlp.so" "$CONFIG"
+    run grep "Service polis_dlp /usr/local/lib/c_icap/srv_polis_dlp.so" "$CONFIG"
     assert_success
 }
 

@@ -21,14 +21,14 @@ ENV LDFLAGS_HARDEN="-Wl,-z,relro,-z,now"
 
 # Download and build c-icap from GitHub release (with SHA256 verification)
 WORKDIR /build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV CICAP_SHA256=ecc7789787fe4eceae807f0717f6da18c5b1fbf7d2d26028711222eb154c82fe
 RUN wget -q https://github.com/c-icap/c-icap-server/archive/refs/tags/C_ICAP_0.6.4.tar.gz -O c-icap.tar.gz && \
     echo "${CICAP_SHA256}  c-icap.tar.gz" | sha256sum -c - && \
     tar xzf c-icap.tar.gz
-
 WORKDIR /build/c-icap-server-C_ICAP_0.6.4
 RUN autoreconf -i && \
-    ./configure --prefix=/usr/local --sysconfdir=/etc --enable-large-files && \
+    ./configure --prefix=/usr --sysconfdir=/etc --enable-large-files && \
     make -j"$(nproc)" && \
     make install DESTDIR=/install && \
     make install
@@ -39,10 +39,9 @@ WORKDIR /build
 RUN wget -q https://github.com/c-icap/c-icap-modules/archive/refs/tags/C_ICAP_MODULES_0.5.7.tar.gz -O c-icap-modules.tar.gz && \
     echo "${CICAP_MODULES_SHA256}  c-icap-modules.tar.gz" | sha256sum -c - && \
     tar xzf c-icap-modules.tar.gz
-
 WORKDIR /build/c-icap-modules-C_ICAP_MODULES_0.5.7
 RUN autoreconf -i && \
-    ./configure --with-c-icap=/usr/local --prefix=/usr/local && \
+    ./configure --with-c-icap=/usr --prefix=/usr && \
     make -j"$(nproc)" && \
     make install DESTDIR=/install
 
@@ -52,9 +51,8 @@ WORKDIR /build
 RUN wget -q https://github.com/darold/squidclamav/archive/refs/tags/v7.3.tar.gz -O squidclamav.tar.gz && \
     echo "${SQUIDCLAMAV_SHA256}  squidclamav.tar.gz" | sha256sum -c - && \
     tar xzf squidclamav.tar.gz
-
 WORKDIR /build/squidclamav-7.3
-RUN ./configure --with-c-icap=/usr/local && \
+RUN ./configure --with-c-icap=/usr && \
     make -j"$(nproc)" && \
     make install DESTDIR=/install
 

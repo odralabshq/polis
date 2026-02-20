@@ -1,7 +1,7 @@
 //! Integration tests for `polis run` state machine (issue 07).
 //!
-//! These tests require multipass and a VM image to be available.
-//! Run with: `cargo test --test run_state_machine -- --ignored`
+//! Tests that require multipass are covered by unit tests in `cli/src/commands/run.rs`
+//! using `MockMultipass`. Only tests exercisable without a VM are kept here.
 
 #![allow(clippy::expect_used)]
 
@@ -26,49 +26,35 @@ fn state_dir_with(stage: &str, agent: &str) -> TempDir {
 }
 
 // ---------------------------------------------------------------------------
-// Fresh run — no existing state (requires multipass + VM image)
+// Image resolution — no multipass required (fails before VM launch)
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "requires multipass and VM image"]
-fn test_run_no_agents_installed_succeeds_without_agent() {
-    // When no agents are installed and no agent arg is given,
-    // the command must succeed — workspace starts without an agent.
+fn test_run_no_image_exits_nonzero_with_polis_init_hint() {
+    // When no image exists at POLIS_IMAGE or ~/.polis/images/, polis run must
+    // exit non-zero and tell the user to run 'polis init'.
     let dir = TempDir::new().expect("tempdir");
     polis()
         .arg("run")
         .env("HOME", dir.path())
+        .env_remove("POLIS_IMAGE")
         .assert()
-        .success();
+        .failure()
+        .stderr(predicate::str::contains("polis init"));
 }
 
 #[test]
-#[ignore = "requires multipass and VM image"]
-fn test_run_with_explicit_agent_name_succeeds_without_preinstall() {
-    // Providing an agent name that is not pre-installed must still succeed —
-    // the workspace starts and the agent name is recorded as-is.
+fn test_run_polis_image_nonexistent_exits_nonzero_with_error() {
+    // When POLIS_IMAGE points to a file that does not exist, polis run must
+    // exit non-zero with a message naming the bad path.
     let dir = TempDir::new().expect("tempdir");
     polis()
-        .args(["run", "nonexistent-agent-xyz"])
+        .arg("run")
         .env("HOME", dir.path())
+        .env("POLIS_IMAGE", "/nonexistent/path/image.qcow2")
         .assert()
-        .success();
-}
-
-// ---------------------------------------------------------------------------
-// Resume — existing state, same agent (requires multipass)
-// ---------------------------------------------------------------------------
-
-#[test]
-#[ignore = "requires multipass and VM image"]
-fn test_run_with_existing_state_same_agent_resumes_from_checkpoint() {
-    // When state.json exists with the same agent, run must print a resume message.
-    let dir = state_dir_with("provisioned", "claude-dev");
-    polis()
-        .args(["run", "claude-dev"])
-        .env("HOME", dir.path())
-        .assert()
-        .stdout(predicate::str::contains("Resuming").or(predicate::str::contains("resuming")));
+        .failure()
+        .stderr(predicate::str::contains("POLIS_IMAGE"));
 }
 
 // ---------------------------------------------------------------------------
@@ -116,85 +102,7 @@ fn test_run_agent_switch_declined_makes_no_changes() {
 }
 
 // ---------------------------------------------------------------------------
-// State file format (requires multipass)
+// Property-based tests
 // ---------------------------------------------------------------------------
 
-#[test]
-#[ignore = "requires multipass and VM image"]
-fn test_run_creates_state_file_after_first_stage() {
-    // After a fresh run, state.json must exist at ~/.polis/state.json.
-    let dir = TempDir::new().expect("tempdir");
-    polis()
-        .args(["run", "claude-dev"])
-        .env("HOME", dir.path())
-        .assert()
-        .success();
-    assert!(
-        dir.path().join(".polis").join("state.json").exists(),
-        "state.json must be created after run"
-    );
-}
-
-#[test]
-#[ignore = "requires multipass and VM image"]
-fn test_run_state_file_contains_valid_json_after_stage() {
-    // The state file written by run must be valid JSON with required fields.
-    let dir = TempDir::new().expect("tempdir");
-    polis()
-        .args(["run", "claude-dev"])
-        .env("HOME", dir.path())
-        .assert()
-        .success();
-    let state_path = dir.path().join(".polis").join("state.json");
-    let content = std::fs::read_to_string(&state_path).expect("read state");
-    let v: serde_json::Value =
-        serde_json::from_str(&content).expect("state.json must be valid JSON");
-    assert!(v.get("stage").is_some(), "state must have 'stage' field");
-    assert!(v.get("agent").is_some(), "state must have 'agent' field");
-    assert!(
-        v.get("workspace_id").is_some(),
-        "state must have 'workspace_id' field"
-    );
-    assert!(
-        v.get("started_at").is_some(),
-        "state must have 'started_at' field"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Vocabulary constraint (NFR) — requires multipass
-// ---------------------------------------------------------------------------
-
-#[test]
-#[ignore = "requires multipass and VM image"]
-fn test_run_output_contains_no_forbidden_vocabulary() {
-    // User-facing output must never mention VM, container, docker, or multipass.
-    let dir = TempDir::new().expect("tempdir");
-    let output = polis()
-        .args(["run", "claude-dev"])
-        .env("HOME", dir.path())
-        .output()
-        .expect("command should run");
-
-    let combined = format!(
-        "{} {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    )
-    .to_lowercase();
-
-    for forbidden in &["multipass", " docker", "container"] {
-        assert!(
-            !combined.contains(forbidden),
-            "output must not contain '{forbidden}'"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Property-based tests (require multipass — disabled)
-// ---------------------------------------------------------------------------
-
-// These tests are disabled because they require multipass and a VM image.
-// To run them: cargo test --test run_state_machine -- --ignored
-// After setting up multipass and building the VM image.
+// These tests are covered by unit tests in cli/src/commands/run.rs using MockMultipass.

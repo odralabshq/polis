@@ -31,3 +31,32 @@ pub fn run(state_mgr: &StateManager, driver: &dyn WorkspaceDriver) -> Result<()>
 
     Ok(())
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::state::test_helpers::state_mgr_with_state;
+    use crate::workspace::MockDriver;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_start_already_running_shows_already_running_and_exits_ok() {
+        let dir = TempDir::new().expect("tempdir");
+        let mgr = state_mgr_with_state(&dir);
+        let driver = MockDriver { running: true };
+
+        let result = run(&mgr, &driver);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_start_stopped_workspace_exits_ok() {
+        let dir = TempDir::new().expect("tempdir");
+        let mgr = state_mgr_with_state(&dir);
+        let driver = MockDriver { running: false };
+
+        let result = run(&mgr, &driver);
+        assert!(result.is_ok());
+    }
+}
