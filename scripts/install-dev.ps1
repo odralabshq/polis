@@ -82,13 +82,13 @@ function Invoke-PolisInit {
     }
     $keyB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pubKey))
     $polis  = Join-Path $InstallDir "bin\polis.exe"
-    Write-Info "Running: polis init --image $($image.FullName)"
+    Write-Info "Running: polis start --image $($image.FullName)"
     $env:POLIS_VERIFYING_KEY_B64 = $keyB64
     try {
-        & $polis init --image $image.FullName
+        & $polis start --image $image.FullName
     } catch {
-        Write-Warn "polis init failed. Run manually:"
-        Write-Host "  `$env:POLIS_VERIFYING_KEY_B64='$keyB64'; polis init --image $($image.FullName)"
+        Write-Warn "polis start failed. Run manually:"
+        Write-Host "  `$env:POLIS_VERIFYING_KEY_B64='$keyB64'; polis start --image $($image.FullName)"
     } finally {
         Remove-Item Env:\POLIS_VERIFYING_KEY_B64 -ErrorAction SilentlyContinue
     }

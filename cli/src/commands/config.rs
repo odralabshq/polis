@@ -29,13 +29,11 @@ pub enum ConfigCommand {
 
 /// Top-level configuration stored in `~/.polis/config.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct PolisConfig {
     /// Security settings.
     #[serde(default)]
     pub security: SecurityConfig,
-    /// Default values for commands.
-    #[serde(default)]
-    pub defaults: DefaultsConfig,
 }
 
 /// Security configuration.
@@ -56,13 +54,6 @@ impl Default for SecurityConfig {
 
 fn default_security_level() -> String {
     "balanced".to_string()
-}
-
-/// Default values for commands.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DefaultsConfig {
-    /// Default agent for `polis run` without args.
-    pub agent: Option<String>,
 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
@@ -93,11 +84,6 @@ fn show_config(ctx: &OutputContext) -> Result<()> {
     );
     println!();
     println!("  {:<20} {}", "security.level:", config.security.level);
-    println!(
-        "  {:<20} {}",
-        "defaults.agent:",
-        config.defaults.agent.as_deref().unwrap_or("(not set)")
-    );
     println!();
     println!("  {}", "Environment:".style(ctx.styles.bold));
     println!(
@@ -123,14 +109,7 @@ fn set_config(ctx: &OutputContext, key: &str, value: &str) -> Result<()> {
 
     match key {
         "security.level" => config.security.level = value.to_string(),
-        "defaults.agent" => {
-            config.defaults.agent = if value == "null" {
-                None
-            } else {
-                Some(value.to_string())
-            };
-        }
-        _ => anyhow::bail!("unknown config key: {key}"),
+        _ => anyhow::bail!("Unknown setting: {key}"),
     }
 
     save_config(&path, &config)?;
@@ -193,10 +172,10 @@ fn save_config(path: &Path, config: &PolisConfig) -> Result<()> {
 }
 
 fn validate_config_key(key: &str) -> Result<()> {
-    const VALID: &[&str] = &["security.level", "defaults.agent"];
+    const VALID: &[&str] = &["security.level"];
     if !VALID.contains(&key) {
         anyhow::bail!(
-            "unknown config key: {key}\nValid keys: {}",
+            "Unknown setting: {key}\n\nValid settings: {}",
             VALID.join(", ")
         );
     }
@@ -208,7 +187,7 @@ fn validate_config_value(key: &str, value: &str) -> Result<()> {
         const VALID: &[&str] = &["balanced", "strict"];
         if !VALID.contains(&value) {
             anyhow::bail!(
-                "invalid value for security.level: {value}\nValid values: {}",
+                "Invalid value for security.level: {value}\n\nValid values: {}",
                 VALID.join(", ")
             );
         }
@@ -233,37 +212,35 @@ mod tests {
     }
 
     #[test]
-    fn test_polis_config_default_agent_is_none() {
-        let cfg = PolisConfig::default();
-        assert!(cfg.defaults.agent.is_none());
-    }
-
-    #[test]
     fn test_polis_config_deserialize_full_yaml() {
-        let yaml = "security:\n  level: strict\ndefaults:\n  agent: claude-dev\n";
+        let yaml = "security:\n  level: strict\n";
         let cfg: PolisConfig = serde_yaml::from_str(yaml).expect("valid yaml");
         assert_eq!(cfg.security.level, "strict");
-        assert_eq!(cfg.defaults.agent.as_deref(), Some("claude-dev"));
     }
 
     #[test]
     fn test_polis_config_deserialize_empty_yaml_uses_defaults() {
         let cfg: PolisConfig = serde_yaml::from_str("{}").expect("empty yaml");
         assert_eq!(cfg.security.level, "balanced");
-        assert!(cfg.defaults.agent.is_none());
+    }
+
+    #[test]
+    fn test_polis_config_deserialize_ignores_defaults_agent() {
+        // Old config files may have defaults.agent - should be silently ignored
+        let yaml = "security:\n  level: strict\ndefaults:\n  agent: claude-dev\n";
+        let cfg: PolisConfig = serde_yaml::from_str(yaml).expect("valid yaml");
+        assert_eq!(cfg.security.level, "strict");
     }
 
     #[test]
     fn test_polis_config_serialize_deserialize_roundtrip() {
         let mut cfg = PolisConfig::default();
         cfg.security.level = "strict".to_string();
-        cfg.defaults.agent = Some("my-agent".to_string());
 
         let yaml = serde_yaml::to_string(&cfg).expect("serialize");
         let back: PolisConfig = serde_yaml::from_str(&yaml).expect("deserialize");
 
         assert_eq!(back.security.level, "strict");
-        assert_eq!(back.defaults.agent.as_deref(), Some("my-agent"));
     }
 
     // ── validate_config_key ──────────────────────────────────────────────────
@@ -274,22 +251,23 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_config_key_defaults_agent_ok() {
-        assert!(validate_config_key("defaults.agent").is_ok());
+    fn test_validate_config_key_defaults_agent_rejected() {
+        let err = validate_config_key("defaults.agent").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Unknown setting"), "got: {msg}");
     }
 
     #[test]
     fn test_validate_config_key_unknown_returns_error() {
         let err = validate_config_key("unknown.key").unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("unknown config key"), "got: {msg}");
+        assert!(msg.contains("Unknown setting"), "got: {msg}");
     }
 
     #[test]
     fn test_validate_config_key_error_lists_valid_keys() {
         let err = validate_config_key("bad").unwrap_err().to_string();
         assert!(err.contains("security.level"), "got: {err}");
-        assert!(err.contains("defaults.agent"), "got: {err}");
     }
 
     #[test]
@@ -321,16 +299,6 @@ mod tests {
             .to_string();
         assert!(err.contains("balanced"), "got: {err}");
         assert!(err.contains("strict"), "got: {err}");
-    }
-
-    #[test]
-    fn test_validate_config_value_defaults_agent_accepts_any_string() {
-        assert!(validate_config_value("defaults.agent", "anything-goes_123").is_ok());
-    }
-
-    #[test]
-    fn test_validate_config_value_defaults_agent_accepts_null() {
-        assert!(validate_config_value("defaults.agent", "null").is_ok());
     }
 
     // ── load_config / save_config ────────────────────────────────────────────
@@ -377,12 +345,10 @@ mod tests {
         let path = dir.path().join("config.yaml");
         let mut cfg = PolisConfig::default();
         cfg.security.level = "strict".to_string();
-        cfg.defaults.agent = Some("test-agent".to_string());
 
         save_config(&path, &cfg).expect("save");
         let loaded = load_config(&path).expect("load");
 
         assert_eq!(loaded.security.level, "strict");
-        assert_eq!(loaded.defaults.agent.as_deref(), Some("test-agent"));
     }
 }

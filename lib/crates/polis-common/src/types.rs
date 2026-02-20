@@ -159,47 +159,6 @@ pub struct OttMapping {
 // Foundation Types (Issue 01)
 // ============================================================================
 
-/// Stage in the workspace provisioning pipeline.
-/// Stages are ordered — each stage implies all previous stages completed.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStage {
-    /// Workspace created (VM launched).
-    /// `image_ready` is accepted as a legacy alias for backward compatibility.
-    #[serde(alias = "image_ready")]
-    WorkspaceCreated,
-    /// TLS certificates and Valkey credentials configured
-    CredentialsSet,
-    /// Workspace provisioned (CA trust, proxy env, services started)
-    Provisioned,
-    /// Agent installed and running
-    AgentReady,
-}
-
-impl RunStage {
-    /// Returns the next stage in the pipeline, or None if at final stage.
-    #[must_use]
-    pub const fn next(self) -> Option<Self> {
-        match self {
-            Self::WorkspaceCreated => Some(Self::CredentialsSet),
-            Self::CredentialsSet => Some(Self::Provisioned),
-            Self::Provisioned => Some(Self::AgentReady),
-            Self::AgentReady => None,
-        }
-    }
-
-    /// Returns human-readable description for progress display.
-    #[must_use]
-    pub const fn description(self) -> &'static str {
-        match self {
-            Self::WorkspaceCreated => "Workspace created",
-            Self::CredentialsSet => "Credentials configured",
-            Self::Provisioned => "Workspace provisioned",
-            Self::AgentReady => "Agent ready",
-        }
-    }
-}
-
 /// Type of activity event in the Valkey stream.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -332,22 +291,6 @@ pub struct SecurityEvents {
     pub count: u32,
     /// Highest severity level
     pub severity: EventSeverity,
-}
-
-/// Persisted run state for checkpoint/resume.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunState {
-    /// Current stage in the pipeline
-    pub stage: RunStage,
-    /// Agent being run
-    pub agent: String,
-    /// Workspace identifier
-    pub workspace_id: String,
-    /// When the run started (ISO 8601)
-    pub started_at: DateTime<Utc>,
-    /// SHA-256 hash of the workspace image
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image_sha256: Option<String>,
 }
 
 #[cfg(test)]
@@ -582,68 +525,6 @@ mod tests {
         assert_eq!(deserialized.event_type, "system_startup");
     }
 
-    // --- RunStage ordering tests ---
-    #[test]
-    fn test_run_stage_ordering() {
-        assert!(RunStage::WorkspaceCreated < RunStage::CredentialsSet);
-        assert!(RunStage::CredentialsSet < RunStage::Provisioned);
-        assert!(RunStage::Provisioned < RunStage::AgentReady);
-
-        // Verify full ordering chain
-        let stages = [
-            RunStage::WorkspaceCreated,
-            RunStage::CredentialsSet,
-            RunStage::Provisioned,
-            RunStage::AgentReady,
-        ];
-        for i in 0..stages.len() - 1 {
-            assert!(stages[i] < stages[i + 1]);
-        }
-    }
-
-    #[test]
-    fn test_run_stage_next() {
-        assert_eq!(
-            RunStage::WorkspaceCreated.next(),
-            Some(RunStage::CredentialsSet)
-        );
-        assert_eq!(RunStage::CredentialsSet.next(), Some(RunStage::Provisioned));
-        assert_eq!(RunStage::Provisioned.next(), Some(RunStage::AgentReady));
-        assert_eq!(RunStage::AgentReady.next(), None);
-    }
-
-    #[test]
-    fn test_run_stage_image_ready_alias_deserializes_as_workspace_created() {
-        let stage: RunStage = serde_json::from_str("\"image_ready\"").unwrap();
-        assert_eq!(stage, RunStage::WorkspaceCreated);
-    }
-
-    // --- ActivityEvent serde round-trip ---
-    #[test]
-    fn test_activity_event_serde_round_trip() {
-        let event = ActivityEvent {
-            ts: Utc::now(),
-            event_type: ActivityEventType::Request,
-            dest: Some("api.anthropic.com".to_string()),
-            method: Some("POST".to_string()),
-            path: Some("/v1/messages".to_string()),
-            status: InspectionStatus::Inspected,
-            reason: None,
-            detail: None,
-        };
-        let json = serde_json::to_string(&event).expect("serialize ActivityEvent");
-        let deserialized: ActivityEvent =
-            serde_json::from_str(&json).expect("deserialize ActivityEvent");
-        assert_eq!(deserialized.ts, event.ts);
-        assert_eq!(deserialized.event_type, event.event_type);
-        assert_eq!(deserialized.dest, event.dest);
-        assert_eq!(deserialized.status, event.status);
-
-        // Verify None fields are omitted
-        assert!(!json.contains("\"reason\""));
-        assert!(!json.contains("\"detail\""));
-    }
-
     // --- StatusOutput serde round-trip ---
     #[test]
     fn test_status_output_serde_round_trip() {
@@ -677,35 +558,6 @@ mod tests {
         );
         assert!(deserialized.security.traffic_inspection);
     }
-
-    // --- RunState serde round-trip ---
-    #[test]
-    fn test_run_state_serde_round_trip() {
-        let state = RunState {
-            stage: RunStage::Provisioned,
-            agent: "claude-dev".to_string(),
-            workspace_id: "ws-abc123".to_string(),
-            started_at: Utc::now(),
-            image_sha256: Some("sha256:abc123def456".to_string()),
-        };
-        let json = serde_json::to_string(&state).expect("serialize RunState");
-        let deserialized: RunState = serde_json::from_str(&json).expect("deserialize RunState");
-        assert_eq!(deserialized.stage, RunStage::Provisioned);
-        assert_eq!(deserialized.agent, "claude-dev");
-        assert_eq!(deserialized.workspace_id, "ws-abc123");
-        assert_eq!(deserialized.image_sha256, state.image_sha256);
-
-        // Test with None image_sha256
-        let state_no_hash = RunState {
-            stage: RunStage::WorkspaceCreated,
-            agent: "test-agent".to_string(),
-            workspace_id: "ws-xyz".to_string(),
-            started_at: Utc::now(),
-            image_sha256: None,
-        };
-        let json2 = serde_json::to_string(&state_no_hash).expect("serialize RunState without hash");
-        assert!(!json2.contains("\"image_sha256\""));
-    }
 }
 
 // ============================================================================
@@ -716,15 +568,6 @@ mod tests {
 mod proptests {
     use super::*;
     use proptest::prelude::*;
-
-    fn arb_run_stage() -> impl Strategy<Value = RunStage> {
-        prop_oneof![
-            Just(RunStage::WorkspaceCreated),
-            Just(RunStage::CredentialsSet),
-            Just(RunStage::Provisioned),
-            Just(RunStage::AgentReady),
-        ]
-    }
 
     fn arb_event_severity() -> impl Strategy<Value = EventSeverity> {
         prop_oneof![
@@ -754,34 +597,6 @@ mod proptests {
     }
 
     proptest! {
-        /// RunStage::next() eventually terminates at None
-        #[test]
-        fn prop_run_stage_next_terminates(stage in arb_run_stage()) {
-            let mut current = Some(stage);
-            let mut steps = 0;
-            while let Some(s) = current {
-                current = s.next();
-                steps += 1;
-                prop_assert!(steps <= 4, "next() should terminate within 4 steps");
-            }
-        }
-
-        /// RunStage ordering is consistent with next()
-        #[test]
-        fn prop_run_stage_next_increases_order(stage in arb_run_stage()) {
-            if let Some(next) = stage.next() {
-                prop_assert!(stage < next, "next stage should be greater");
-            }
-        }
-
-        /// RunStage serde round-trip is identity
-        #[test]
-        fn prop_run_stage_serde_roundtrip(stage in arb_run_stage()) {
-            let json = serde_json::to_string(&stage).expect("serialize");
-            let back: RunStage = serde_json::from_str(&json).expect("deserialize");
-            prop_assert_eq!(stage, back);
-        }
-
         /// EventSeverity serde round-trip is identity
         #[test]
         fn prop_event_severity_serde_roundtrip(sev in arb_event_severity()) {
@@ -796,29 +611,6 @@ mod proptests {
             let json = serde_json::to_string(&state).expect("serialize");
             let back: WorkspaceState = serde_json::from_str(&json).expect("deserialize");
             prop_assert_eq!(state, back);
-        }
-
-        /// RunState serde round-trip preserves all fields
-        #[test]
-        fn prop_run_state_serde_roundtrip(
-            stage in arb_run_stage(),
-            agent in "[a-z][a-z0-9-]{0,20}",
-            ws_id in "[a-z]{2}-[a-z0-9]{6}",
-            hash in proptest::option::of("[a-f0-9]{64}"),
-        ) {
-            let state = RunState {
-                stage,
-                agent: agent.clone(),
-                workspace_id: ws_id.clone(),
-                started_at: Utc::now(),
-                image_sha256: hash.clone(),
-            };
-            let json = serde_json::to_string(&state).expect("serialize");
-            let back: RunState = serde_json::from_str(&json).expect("deserialize");
-            prop_assert_eq!(state.stage, back.stage);
-            prop_assert_eq!(state.agent, back.agent);
-            prop_assert_eq!(state.workspace_id, back.workspace_id);
-            prop_assert_eq!(state.image_sha256, back.image_sha256);
         }
 
         /// SecurityLevel serde round-trip is identity
@@ -842,8 +634,8 @@ mod proptests {
         #[test]
         fn prop_migrate_security_level_returns_valid(input in "\\PC{0,50}") {
             let (level, _) = migrate_security_level(&input);
-            // Must be one of the two valid variants
-            prop_assert!(level == SecurityLevel::Balanced || level == SecurityLevel::Strict);
+            // Must be one of the valid variants
+            prop_assert!(matches!(level, SecurityLevel::Relaxed | SecurityLevel::Balanced | SecurityLevel::Strict));
         }
 
         /// migrate_security_level is case-insensitive for valid inputs

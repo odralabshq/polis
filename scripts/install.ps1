@@ -158,12 +158,12 @@ function Add-ToUserPath {
 
 function Invoke-PolisInit {
     $polis = Join-Path $InstallDir "bin\polis.exe"
-    Write-Info "Running: polis init"
-    $initArgs = if ($Image) { @("init", "--image", $Image) } else { @("init") }
+    Write-Info "Running: polis start"
+    $initArgs = if ($Image) { @("start", "--image", $Image) } else { @("start") }
     try {
         & $polis @initArgs
     } catch {
-        Write-Warn "polis init failed. Run 'polis init' to retry."
+        Write-Warn "polis start failed. Run 'polis start' to retry."
     }
 }
 

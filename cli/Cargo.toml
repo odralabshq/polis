@@ -53,7 +53,6 @@ ureq = "2.12"
 [dev-dependencies]
 assert_cmd = "2.1"
 predicates = "3.1"
-proptest = "1.10"
 serde_json = "1.0"
 tempfile = "3.25"  # isolated temp dirs for StateManager tests
 ed25519-dalek = "2.2"

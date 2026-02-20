@@ -255,17 +255,17 @@ verify_attestation() {
     fi
 }
 
-# Non-fatal init step
+# Non-fatal start step
 run_init() {
-    log_info "Running: polis init"
+    log_info "Running: polis start"
     if [[ -n "${IMAGE_URL}" ]]; then
-        "${INSTALL_DIR}/bin/polis" init --image "${IMAGE_URL}" || {
-            log_warn "polis init failed. Run 'polis init' to retry."
+        "${INSTALL_DIR}/bin/polis" start --image "${IMAGE_URL}" || {
+            log_warn "polis start failed. Run 'polis start' to retry."
             return 0
         }
     else
-        "${INSTALL_DIR}/bin/polis" init || {
-            log_warn "polis init failed. Run 'polis init' to retry."
+        "${INSTALL_DIR}/bin/polis" start || {
+            log_warn "polis start failed. Run 'polis start' to retry."
             return 0
         }
     fi

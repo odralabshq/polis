@@ -1,62 +1,110 @@
-//! `polis start` — start an existing stopped workspace.
+//! `polis start` — start workspace (download and create if needed).
 
-use anyhow::{Context, Result};
+use std::path::PathBuf;
 
-use crate::state::StateManager;
-use crate::workspace::WorkspaceDriver;
+use anyhow::Result;
+use chrono::Utc;
+use clap::Args;
+
+use crate::multipass::Multipass;
+use crate::state::{StateManager, WorkspaceState};
+use crate::workspace::{health, image, vm};
+
+/// Arguments for the start command.
+#[derive(Args)]
+pub struct StartArgs {
+    /// Use custom image instead of cached/downloaded
+    #[arg(long)]
+    pub image: Option<String>,
+}
 
 /// Run `polis start`.
 ///
 /// # Errors
 ///
-/// Returns an error if no workspace exists or the workspace cannot be started.
-pub fn run(state_mgr: &StateManager, driver: &dyn WorkspaceDriver) -> Result<()> {
-    let state = state_mgr
-        .load()
-        .context("reading workspace state")?
-        .ok_or_else(|| anyhow::anyhow!("No workspace found. Run: polis run <agent>"))?;
+/// Returns an error if image acquisition, VM creation, or health check fails.
+pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+    let state_mgr = StateManager::new()?;
 
-    if driver.is_running(&state.workspace_id)? {
-        println!("Workspace is already running");
-        println!();
-        println!("Run: polis status");
+    // Determine image source
+    let source = match &args.image {
+        Some(s) if s.starts_with("http://") || s.starts_with("https://") => {
+            image::ImageSource::HttpUrl(s.clone())
+        }
+        Some(s) => {
+            let path = PathBuf::from(s);
+            anyhow::ensure!(path.exists(), "Image file not found: {}", path.display());
+            image::ImageSource::LocalFile(path)
+        }
+        None => image::ImageSource::Default,
+    };
+
+    // Ensure image is available
+    let image_path = image::ensure_available(source, quiet)?;
+
+    // Check current VM state
+    let vm_state = vm::state(mp)?;
+
+    if vm_state == vm::VmState::Running {
+        if !quiet {
+            println!();
+            println!("Workspace is running.");
+            println!();
+            print_guarantees();
+            println!();
+            println!("Connect: polis connect");
+            println!("Status:  polis status");
+        }
         return Ok(());
     }
 
-    println!("Starting workspace...");
-    driver.start(&state.workspace_id)?;
-    println!("Workspace started");
-    println!();
-    println!("Run: polis status");
+    // Ensure VM is running
+    vm::ensure_running(mp, &image_path, quiet)?;
+
+    // Save state if this is a new workspace
+    if vm_state == vm::VmState::NotFound {
+        let sha256 = image::load_metadata(&image::images_dir()?).ok().flatten().map(|m| m.sha256);
+        let state = WorkspaceState {
+            workspace_id: generate_workspace_id(),
+            created_at: Utc::now(),
+            image_sha256: sha256,
+        };
+        state_mgr.save(&state)?;
+    }
+
+    // Wait for healthy
+    health::wait_ready(mp, quiet)?;
+
+    // Print success
+    if !quiet {
+        println!();
+        print_guarantees();
+        println!();
+        println!("Workspace ready.");
+        println!();
+        println!("Connect: polis connect");
+        println!("Status:  polis status");
+    }
 
     Ok(())
 }
 
-#[cfg(test)]
-#[allow(clippy::expect_used)]
-mod tests {
-    use super::*;
-    use crate::state::test_helpers::state_mgr_with_state;
-    use crate::workspace::MockDriver;
-    use tempfile::TempDir;
+fn print_guarantees() {
+    println!("✓ Governance    Policy engine active · Audit trail recording");
+    println!("✓ Security      Workspace isolated · Traffic inspection enabled");
+    println!("✓ Observability Action tracing live · Trust scoring active");
+}
 
-    #[test]
-    fn test_start_already_running_shows_already_running_and_exits_ok() {
-        let dir = TempDir::new().expect("tempdir");
-        let mgr = state_mgr_with_state(&dir);
-        let driver = MockDriver { running: true };
+fn generate_workspace_id() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
 
-        let result = run(&mgr, &driver);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_start_stopped_workspace_exits_ok() {
-        let dir = TempDir::new().expect("tempdir");
-        let mgr = state_mgr_with_state(&dir);
-        let driver = MockDriver { running: false };
-
-        let result = run(&mgr, &driver);
-        assert!(result.is_ok());
-    }
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
+    format!("polis-{:016x}", hasher.finish())
 }
