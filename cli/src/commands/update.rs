@@ -328,9 +328,7 @@ fn container_to_service_key(container_name: &str) -> &str {
 ///
 /// Returns an error if the `multipass exec` call fails unexpectedly.
 fn get_deployed_version(image_name: &str, mp: &impl Multipass) -> Result<Option<String>> {
-    let output = mp
-        .exec(&["cat", ENV_PATH])
-        .context("failed to read .env")?;
+    let output = mp.exec(&["cat", ENV_PATH]).context("failed to read .env")?;
 
     if !output.status.success() {
         return Ok(None);
@@ -372,7 +370,9 @@ fn pull_container_image(image_ref: &str, mp: &impl Multipass) -> Result<bool> {
 ///
 /// Returns an error if the `multipass exec` call fails unexpectedly.
 fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Result<RollbackInfo> {
-    let output = mp.exec(&["cat", ENV_PATH]).context("failed to read .env for rollback")?;
+    let output = mp
+        .exec(&["cat", ENV_PATH])
+        .context("failed to read .env for rollback")?;
     let content = if output.status.success() {
         String::from_utf8_lossy(&output.stdout).into_owned()
     } else {
@@ -385,7 +385,10 @@ fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Re
             let env_var = image_name_to_env_var(&u.image_name);
             let old_val = content
                 .lines()
-                .find_map(|l| l.strip_prefix(&format!("{env_var}=")).map(|v| v.trim().to_string()))
+                .find_map(|l| {
+                    l.strip_prefix(&format!("{env_var}="))
+                        .map(|v| v.trim().to_string())
+                })
                 .unwrap_or_default();
             (env_var, old_val)
         })
@@ -405,7 +408,9 @@ fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Re
 /// Returns an error if the shell command fails.
 fn set_env_var(key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
     let cmd = if value.is_empty() {
-        format!("grep -v '^{key}=' {ENV_PATH} 2>/dev/null > {ENV_PATH}.tmp && mv {ENV_PATH}.tmp {ENV_PATH} || true")
+        format!(
+            "grep -v '^{key}=' {ENV_PATH} 2>/dev/null > {ENV_PATH}.tmp && mv {ENV_PATH}.tmp {ENV_PATH} || true"
+        )
     } else {
         format!(
             "{{ grep -v '^{key}=' {ENV_PATH} 2>/dev/null; echo '{key}={value}'; }} > {ENV_PATH}.tmp && mv {ENV_PATH}.tmp {ENV_PATH}"
