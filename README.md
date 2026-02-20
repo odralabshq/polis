@@ -182,20 +182,17 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 
 ## 🔌 Agent Plugin System
 
-Polis is agent-agnostic. Agents live under `agents/<name>/` and are packaged as layered Docker images that extend the base workspace. OpenClaw is the default.
+Polis is agent-agnostic. Agents live under `agents/<name>/` with install scripts, config, and a compose override. OpenClaw is the default.
 
 ### Running OpenClaw
-
-First time only — build the image (~5-10 min, cached after that):
 
 ```bash
 echo "OPENAI_API_KEY=sk-proj-..." >> .env   # or ANTHROPIC_API_KEY / OPENROUTER_API_KEY
 just setup-agents
-docker compose -f docker-compose.yml -f agents/openclaw/.generated/compose.override.yaml build workspace
 just up
 ```
 
-Check progress and get the token:
+OpenClaw installs at first boot (~3-5 min). Check progress and get the token:
 
 ```bash
 just logs workspace                                                        # init progress
@@ -205,7 +202,7 @@ docker exec polis-workspace cat /home/polis/.openclaw/gateway-token.txt   # toke
 
 Open the Control UI at `http://<host>:18789/#token=<token>`. On Multipass use the VM IP (`multipass info polis-dev`); on native Linux use `localhost`.
 
-Subsequent `just up` calls are fast — only config init runs (~5 s). See [docs/DEVELOPER.md](docs/DEVELOPER.md) for reset and rebuild instructions.
+To skip the runtime install, you can pre-build a layered image with `agents/openclaw/Dockerfile`. See [docs/DEVELOPER.md](docs/DEVELOPER.md) for details.
 
 ## ⚙️ Configuration
 

@@ -336,11 +336,6 @@ jobs:
       - name: Generate agent compose override
         run: just setup-agents
 
-      - name: Build OpenClaw workspace image
-        run: |
-          OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
-          docker compose -f docker-compose.yml -f "$OVERRIDE" --env-file .env build workspace
-
       - name: Start containers
         run: |
           docker compose --profile test up -d httpbin 2>/dev/null || true
