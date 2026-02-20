@@ -97,6 +97,7 @@ pub fn run(args: &InitArgs) -> Result<()> {
     let cached_image = images_dir.join(IMAGE_FILENAME);
 
     if !args.force
+        && !matches!(source, ImageSource::LocalFile(_))
         && cached_image.exists()
         && let Some(meta) = load_metadata(&images_dir)?
     {
