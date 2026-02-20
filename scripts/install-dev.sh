@@ -73,7 +73,7 @@ install_cli() {
     log_ok "Installed CLI from ${cli_bin}"
 }
 
-install_image() {
+run_init() {
     local image
     image=$(find "${REPO_DIR}/packer/output" -name "*.qcow2" | sort | tail -1)
     if [[ -z "${image}" ]]; then
@@ -95,10 +95,10 @@ install_image() {
     fi
     local verifying_key_b64
     verifying_key_b64=$(base64 -w0 "${pub_key}")
-    log_info "Acquiring workspace image from ${image}..."
+    log_info "Running: polis init --image ${image}"
     POLIS_VERIFYING_KEY_B64="${verifying_key_b64}" \
         "${INSTALL_DIR}/bin/polis" init --image "${image}" || {
-        log_warn "Image init failed. Run:"
+        log_warn "polis init failed. Run manually:"
         echo "  POLIS_VERIFYING_KEY_B64=$(base64 -w0 "${pub_key}") polis init --image ${image}"
     }
 }
@@ -137,12 +137,18 @@ create_symlink
 
 # Clean up any existing workspace for a fresh test environment
 if multipass info polis &>/dev/null 2>&1; then
-    log_info "Removing existing polis VM..."
-    multipass delete polis && multipass purge
+    log_warn "An existing polis VM was found."
+    read -r -p "Remove it and start fresh? [y/N] " confirm
+    if [[ "${confirm,,}" != "y" ]]; then
+        log_info "Keeping existing VM. Skipping removal."
+    else
+        log_info "Removing existing polis VM..."
+        multipass delete polis && multipass purge
+    fi
 fi
 rm -f "${INSTALL_DIR}/state.json"
 
-install_image
+run_init
 
 echo ""
 log_ok "Polis (dev build) installed successfully!"

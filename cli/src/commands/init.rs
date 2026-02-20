@@ -112,8 +112,8 @@ pub fn run(args: &InitArgs, mp: &impl crate::multipass::Multipass) -> Result<()>
     let meta = acquire_image(&source, &images_dir)?;
     write_metadata(&images_dir, &meta)?;
 
-    // Provision the workspace VM
-    crate::commands::run::provision_workspace_full("", mp)?;
+    // Provision the workspace VM (pass verified SHA to skip re-verification)
+    crate::commands::run::provision_workspace_full("", mp, &meta.sha256)?;
 
     Ok(())
 }

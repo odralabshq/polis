@@ -59,7 +59,7 @@ function Install-Cli {
 
 # ── Image init ────────────────────────────────────────────────────────────────
 
-function Invoke-ImageInit {
+function Invoke-PolisInit {
     $outputDir = Join-Path $RepoDir "packer\output"
     $image = Get-ChildItem $outputDir -Filter "*.qcow2" -ErrorAction SilentlyContinue |
              Sort-Object Name | Select-Object -Last 1
@@ -82,12 +82,12 @@ function Invoke-ImageInit {
     }
     $keyB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pubKey))
     $polis  = Join-Path $InstallDir "bin\polis.exe"
-    Write-Info "Acquiring workspace image from $($image.FullName)..."
+    Write-Info "Running: polis init --image $($image.FullName)"
     $env:POLIS_VERIFYING_KEY_B64 = $keyB64
     try {
         & $polis init --image $image.FullName
     } catch {
-        Write-Warn "Image init failed. Run manually:"
+        Write-Warn "polis init failed. Run manually:"
         Write-Host "  `$env:POLIS_VERIFYING_KEY_B64='$keyB64'; polis init --image $($image.FullName)"
     } finally {
         Remove-Item Env:\POLIS_VERIFYING_KEY_B64 -ErrorAction SilentlyContinue
@@ -120,7 +120,7 @@ Write-Host ""
 Assert-Multipass
 Install-Cli
 Add-ToUserPath
-Invoke-ImageInit
+Invoke-PolisInit
 
 Write-Host ""
 Write-Ok "Polis (dev build) installed successfully!"

@@ -158,12 +158,12 @@ function Add-ToUserPath {
 
 function Invoke-PolisInit {
     $polis = Join-Path $InstallDir "bin\polis.exe"
-    Write-Info "Acquiring workspace image (~3.2 GB)..."
+    Write-Info "Running: polis init"
     $initArgs = if ($Image) { @("init", "--image", $Image) } else { @("init") }
     try {
         & $polis @initArgs
     } catch {
-        Write-Warn "Image download failed. Run 'polis init' to retry."
+        Write-Warn "polis init failed. Run 'polis init' to retry."
     }
 }
 

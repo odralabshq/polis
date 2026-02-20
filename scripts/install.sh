@@ -232,17 +232,17 @@ verify_attestation() {
     fi
 }
 
-# Non-fatal image download step
-init_image() {
-    log_info "Acquiring workspace image (~3.2 GB)..."
+# Non-fatal init step
+run_init() {
+    log_info "Running: polis init"
     if [[ -n "${IMAGE_URL}" ]]; then
         "${INSTALL_DIR}/bin/polis" init --image "${IMAGE_URL}" || {
-            log_warn "Image download failed. Run 'polis init' to retry."
+            log_warn "polis init failed. Run 'polis init' to retry."
             return 0
         }
     else
         "${INSTALL_DIR}/bin/polis" init || {
-            log_warn "Image download failed. Run 'polis init' to retry."
+            log_warn "polis init failed. Run 'polis init' to retry."
             return 0
         }
     fi
@@ -279,7 +279,7 @@ main() {
     download_and_verify
     verify_attestation
     create_symlink
-    init_image
+    run_init
 
     echo ""
     log_ok "Polis installed successfully!"

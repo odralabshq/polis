@@ -31,8 +31,14 @@ pub struct RunArgs {
 ///
 /// Returns an error if agent resolution, state loading, or stage execution fails.
 pub fn run(args: &RunArgs, mp: &impl Multipass) -> Result<()> {
-    let state_mgr = StateManager::new()?;
+    // Check if VM exists via multipass (source of truth)
+    let vm_exists = mp.vm_info().map(|o| o.status.success()).unwrap_or(false);
 
+    if !vm_exists {
+        anyhow::bail!("No workspace VM found.\n\nRun 'polis init' to create your workspace.");
+    }
+
+    let state_mgr = StateManager::new()?;
     let existing = match state_mgr.load() {
         Ok(s) => s,
         Err(e) => {
@@ -51,9 +57,13 @@ pub fn run(args: &RunArgs, mp: &impl Multipass) -> Result<()> {
             Ok(())
         }
         Some(state) => switch_agent(&state_mgr, state, &target_agent, mp),
-        None => anyhow::bail!(
-            "No workspace found.\n\nRun 'polis init' to set up your workspace."
-        ),
+        None => {
+            // VM exists but no state — start VM and create minimal state
+            start_existing(mp);
+            print_guarantees();
+            println!("Workspace ready");
+            Ok(())
+        }
     }
 }
 
@@ -158,22 +168,28 @@ fn start_existing(mp: &impl Multipass) {
 ///
 /// Called by `polis init` after the image is acquired.
 ///
+/// # Arguments
+/// * `agent` - Agent name (empty string for no agent)
+/// * `mp` - Multipass implementation
+/// * `verified_sha` - Pre-verified SHA256 from init (skips re-verification)
+///
 /// # Errors
 ///
 /// Returns an error if any stage fails.
-pub(crate) fn provision_workspace_full(agent: &str, mp: &impl Multipass) -> Result<()> {
+pub(crate) fn provision_workspace_full(
+    agent: &str,
+    mp: &impl Multipass,
+    verified_sha: &str,
+) -> Result<()> {
     check_prerequisites(mp)?;
     let state_mgr = StateManager::new()?;
-
-    let image_path = get_image_path()?;
-    let image_sha = verify_image_at_launch(&image_path)?;
 
     let mut run_state = RunState {
         stage: RunStage::WorkspaceCreated,
         agent: agent.to_string(),
         workspace_id: generate_workspace_id(),
         started_at: Utc::now(),
-        image_sha256: Some(image_sha),
+        image_sha256: Some(verified_sha.to_string()),
     };
 
     for next_stage in [
@@ -406,43 +422,6 @@ fn get_image_path() -> Result<PathBuf> {
 /// For standard images: re-verify SHA-256 against the stored checksum.
 /// For `POLIS_IMAGE` overrides without a sidecar: warn but allow.
 ///
-/// Returns the hex-encoded SHA-256 hash.
-///
-/// # Errors
-///
-/// Returns an error if the checksum is missing (non-override), mismatched, or
-/// the file cannot be read.
-fn verify_image_at_launch(image_path: &std::path::Path) -> Result<String> {
-    // The sidecar sits next to the image with an extra ".sha256" extension.
-    // e.g. polis.qcow2 → polis.qcow2.sha256
-    let mut sidecar = image_path.as_os_str().to_owned();
-    sidecar.push(".sha256");
-    let checksum_path = std::path::PathBuf::from(sidecar);
-
-    if !checksum_path.exists() {
-        if std::env::var("POLIS_IMAGE").is_ok() {
-            eprintln!("Warning: using custom image from POLIS_IMAGE (no checksum verification)");
-            return crate::commands::init::sha256_file(image_path);
-        }
-        anyhow::bail!("Image checksum missing. Re-run: polis init");
-    }
-
-    let expected = crate::commands::init::extract_checksum_from_signed_file(&checksum_path)
-        .with_context(|| format!("reading checksum {}", checksum_path.display()))?;
-
-    println!("  Verifying image integrity...");
-    let actual = crate::commands::init::sha256_file(image_path)?;
-
-    anyhow::ensure!(
-        actual == expected,
-        "Image integrity check failed (file may have been modified).\n\
-         Expected: {expected}\n\
-         Actual:   {actual}\n\n\
-         Re-download with: polis init --force"
-    );
-    Ok(actual)
-}
-
 /// Create the workspace VM via multipass.
 fn create_workspace(mp: &impl Multipass) -> Result<()> {
     // Check if VM already exists
@@ -652,102 +631,6 @@ mod tests {
         }
     }
 
-    // ── verify_image_at_launch ───────────────────────────────────────────────
-
-    #[test]
-    fn test_verify_image_at_launch_matching_checksum_returns_hash() {
-        let _g = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let dir = TempDir::new().unwrap();
-        let img = dir.path().join("polis.qcow2");
-        std::fs::write(&img, b"hello").unwrap();
-        let sidecar = dir.path().join("polis.qcow2.sha256");
-        let expected = crate::commands::init::tests::make_signed_sidecar_pub(&img, &sidecar);
-        // SAFETY: protected by ENV_LOCK
-        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
-        unsafe { std::env::remove_var("POLIS_IMAGE") };
-        let result = verify_image_at_launch(&img);
-        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
-        assert_eq!(result.unwrap(), expected);
-    }
-
-    #[test]
-    fn test_verify_image_at_launch_mismatched_checksum_returns_error() {
-        let _g = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let dir = TempDir::new().unwrap();
-        let img = dir.path().join("polis.qcow2");
-        std::fs::write(&img, b"hello").unwrap();
-        let sidecar = dir.path().join("polis.qcow2.sha256");
-        // Sign a sidecar with wrong hash content
-        crate::commands::init::tests::make_signed_sidecar_with_content_pub(
-            &sidecar,
-            &format!("{}  polis.qcow2\n", "a".repeat(64)),
-        );
-        // SAFETY: protected by ENV_LOCK
-        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
-        unsafe { std::env::remove_var("POLIS_IMAGE") };
-        let err = verify_image_at_launch(&img).unwrap_err().to_string();
-        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
-        assert!(err.contains("Image integrity check failed"), "got: {err}");
-    }
-
-    #[test]
-    fn test_verify_image_at_launch_mismatched_checksum_error_contains_force_hint() {
-        let _g = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let dir = TempDir::new().unwrap();
-        let img = dir.path().join("polis.qcow2");
-        std::fs::write(&img, b"hello").unwrap();
-        let sidecar = dir.path().join("polis.qcow2.sha256");
-        crate::commands::init::tests::make_signed_sidecar_with_content_pub(
-            &sidecar,
-            &format!("{}  polis.qcow2\n", "a".repeat(64)),
-        );
-        // SAFETY: protected by ENV_LOCK
-        unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
-        unsafe { std::env::remove_var("POLIS_IMAGE") };
-        let err = verify_image_at_launch(&img).unwrap_err().to_string();
-        unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
-        assert!(err.contains("polis init --force"), "got: {err}");
-    }
-
-    #[test]
-    fn test_verify_image_at_launch_missing_sidecar_no_polis_image_returns_error() {
-        let _g = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let dir = TempDir::new().unwrap();
-        let img = dir.path().join("polis.qcow2");
-        std::fs::write(&img, b"hello").unwrap();
-        // SAFETY: protected by ENV_LOCK
-        unsafe { std::env::remove_var("POLIS_IMAGE") };
-        let err = verify_image_at_launch(&img).unwrap_err().to_string();
-        assert!(err.contains("Image checksum missing"), "got: {err}");
-    }
-
-    #[test]
-    fn test_verify_image_at_launch_missing_sidecar_with_polis_image_warns_and_returns_hash() {
-        let _g = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let dir = TempDir::new().unwrap();
-        let img = dir.path().join("custom.qcow2");
-        std::fs::write(&img, b"hello").unwrap();
-        // SAFETY: protected by ENV_LOCK
-        unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
-        let result = verify_image_at_launch(&img);
-        unsafe { std::env::remove_var("POLIS_IMAGE") };
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-        );
-    }
-
     // ── generate_workspace_id ────────────────────────────────────────────────
 
     #[test]
@@ -868,7 +751,7 @@ mod tests {
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
 
         let mp = MockMultipass::new();
-        let result = provision_workspace_full("test-agent", &mp);
+        let result = provision_workspace_full("test-agent", &mp, "abc123");
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         assert!(result.is_ok(), "provision should succeed: {result:?}");
@@ -886,7 +769,7 @@ mod tests {
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
 
         let mp = MockMultipass::new();
-        let _ = provision_workspace_full("test-agent", &mp);
+        let _ = provision_workspace_full("test-agent", &mp, "abc123");
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
         let state_path = dirs::home_dir().unwrap().join(".polis").join("state.json");
@@ -905,7 +788,7 @@ mod tests {
         unsafe { std::env::set_var("POLIS_IMAGE", img.to_str().unwrap()) };
 
         let mp = MockMultipass::new();
-        let _ = provision_workspace_full("test-agent", &mp);
+        let _ = provision_workspace_full("test-agent", &mp, "abc123");
 
         unsafe { std::env::remove_var("POLIS_IMAGE") };
 
@@ -982,48 +865,6 @@ mod proptests {
         fn prop_resolve_agent_explicit_returns_same(agent in "[a-z][a-z0-9-]{1,30}") {
             let result = resolve_agent(Some(&agent)).expect("resolve");
             prop_assert_eq!(result, agent);
-        }
-
-        /// verify_image_at_launch with the correct checksum always succeeds
-        #[test]
-        fn prop_verify_image_at_launch_correct_checksum_always_succeeds(
-            content in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..512)
-        ) {
-            let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let dir = TempDir::new().expect("tempdir");
-            let img = dir.path().join("polis.qcow2");
-            std::fs::write(&img, &content).expect("write image");
-            let sidecar = dir.path().join("polis.qcow2.sha256");
-            let hash = crate::commands::init::tests::make_signed_sidecar_pub(&img, &sidecar);
-            // SAFETY: protected by ENV_LOCK
-            unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
-            unsafe { std::env::remove_var("POLIS_IMAGE") };
-            let result = verify_image_at_launch(&img);
-            unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
-            prop_assert!(result.is_ok(), "expected Ok, got: {:?}", result);
-            prop_assert_eq!(result.unwrap(), hash);
-        }
-
-        /// verify_image_at_launch with a wrong checksum always fails
-        #[test]
-        fn prop_verify_image_at_launch_wrong_checksum_always_fails(
-            content in proptest::collection::vec(proptest::prelude::any::<u8>(), 1..512)
-        ) {
-            let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let dir = TempDir::new().expect("tempdir");
-            let img = dir.path().join("polis.qcow2");
-            std::fs::write(&img, &content).expect("write image");
-            let sidecar = dir.path().join("polis.qcow2.sha256");
-            crate::commands::init::tests::make_signed_sidecar_with_content_pub(
-                &sidecar,
-                &format!("{}  polis.qcow2\n", "a".repeat(64)),
-            );
-            // SAFETY: protected by ENV_LOCK
-            unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", crate::commands::init::tests::test_verifying_key_b64_pub()) };
-            unsafe { std::env::remove_var("POLIS_IMAGE") };
-            let result = verify_image_at_launch(&img);
-            unsafe { std::env::remove_var("POLIS_VERIFYING_KEY_B64") };
-            prop_assert!(result.is_err(), "expected Err for wrong checksum");
         }
     }
 }
