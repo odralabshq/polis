@@ -162,7 +162,7 @@ fn test_load_versions_manifest_github_api_500_returns_generic_http_error() {
 fn test_versions_manifest_public_api_deserializes_valid_json() {
     let json = serde_json::json!({
         "manifest_version": 1,
-        "vm_image": { "version": "v0.3.0", "asset": "polis-workspace-v0.3.0-amd64.qcow2" },
+        "vm_image": { "version": "v0.3.0", "asset": "polis-v0.3.0-amd64.qcow2" },
         "containers": { "polis-gate-oss": "v0.3.1" }
     });
     let m: polis_cli::commands::update::VersionsManifest =

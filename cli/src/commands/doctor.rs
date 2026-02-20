@@ -52,7 +52,7 @@ pub struct WorkspaceChecks {
 /// Result of image health checks.
 #[derive(Debug, Default, Serialize)]
 pub struct ImageCheckResult {
-    /// Whether a cached image exists at `~/.polis/images/polis-workspace.qcow2`.
+    /// Whether a cached image exists at `~/.polis/images/polis.qcow2`.
     pub cached: bool,
     /// Version from `image.json` (if available).
     pub version: Option<String>,
@@ -511,7 +511,7 @@ async fn check_image() -> ImageCheckResult {
     let Ok(images_dir) = crate::commands::init::images_dir() else {
         return ImageCheckResult::default();
     };
-    let cached = images_dir.join("polis-workspace.qcow2").exists();
+    let cached = images_dir.join("polis.qcow2").exists();
 
     let (version, sha256_preview) = if cached {
         read_image_json(&images_dir)

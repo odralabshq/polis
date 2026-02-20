@@ -142,7 +142,7 @@ fn test_init_check_with_cached_image_and_metadata_reports_up_to_date() {
     std::fs::create_dir_all(&images).expect("mkdir");
 
     // Write a fake cached image
-    std::fs::write(images.join("polis-workspace.qcow2"), b"fake").expect("write image");
+    std::fs::write(images.join("polis.qcow2"), b"fake").expect("write image");
 
     // Write valid image.json
     let meta = serde_json::json!({
@@ -192,12 +192,12 @@ fn github_releases_json(tag: &str, arch: &str) -> Vec<u8> {
         "tag_name": tag,
         "assets": [
             {
-                "name": format!("polis-workspace-{arch}.qcow2"),
-                "browser_download_url": format!("https://example.com/{tag}/polis-workspace-{arch}.qcow2")
+                "name": format!("polis-{arch}.qcow2"),
+                "browser_download_url": format!("https://example.com/{tag}/polis-{arch}.qcow2")
             },
             {
-                "name": format!("polis-workspace-{arch}.qcow2.sha256"),
-                "browser_download_url": format!("https://example.com/{tag}/polis-workspace-{arch}.qcow2.sha256")
+                "name": format!("polis-{arch}.qcow2.sha256"),
+                "browser_download_url": format!("https://example.com/{tag}/polis-{arch}.qcow2.sha256")
             }
         ]
     }]);
@@ -327,7 +327,7 @@ fn test_init_check_does_not_create_image_file() {
         !dir.path()
             .join(".polis")
             .join("images")
-            .join("polis-workspace.qcow2")
+            .join("polis.qcow2")
             .exists(),
         "--check must not write any image file"
     );
@@ -349,7 +349,7 @@ fn test_init_force_with_local_image_skips_cache_and_attempts_acquire() {
         "downloaded_at": "2026-01-01T00:00:00Z",
         "source": "https://example.com/image.qcow2"
     });
-    std::fs::write(images.join("polis-workspace.qcow2"), b"old").expect("write old image");
+    std::fs::write(images.join("polis.qcow2"), b"old").expect("write old image");
     std::fs::write(images.join("image.json"), meta.to_string()).expect("write metadata");
 
     // Provide a real local file as --image source
@@ -545,7 +545,7 @@ fn test_init_http_url_200_download_succeeds_then_hits_verify_stub() {
         .stderr(predicate::str::contains("failed to read checksum file"));
 
     // Dest file was written before verify was called.
-    let dest = dir.path().join(images_subdir()).join("polis-workspace.qcow2");
+    let dest = dir.path().join(images_subdir()).join("polis.qcow2");
     assert!(
         dest.exists(),
         "dest file should exist after successful download"

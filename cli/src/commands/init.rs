@@ -14,9 +14,9 @@ use zipsign_api::{PUBLIC_KEY_LENGTH, VerifyingKey, unsign::copy_and_unsign_tar, 
 use crate::commands::update::{POLIS_PUBLIC_KEY_B64, base64_decode, hex_encode};
 
 /// Fixed image filename in the cache directory.
-const IMAGE_FILENAME: &str = "polis-workspace.qcow2";
+const IMAGE_FILENAME: &str = "polis.qcow2";
 /// Signed checksum sidecar filename.
-const SIDECAR_FILENAME: &str = "polis-workspace.qcow2.sha256";
+const SIDECAR_FILENAME: &str = "polis.qcow2.sha256";
 /// Metadata filename.
 const METADATA_FILENAME: &str = "image.json";
 
@@ -1044,9 +1044,9 @@ pub mod tests {
         let _g = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let src_dir = TempDir::new().unwrap();
         let dst_dir = TempDir::new().unwrap();
-        let img = src_dir.path().join("polis-workspace-dev-amd64.qcow2");
+        let img = src_dir.path().join("polis-dev-amd64.qcow2");
         std::fs::write(&img, b"fake qcow2").unwrap();
-        let sidecar = src_dir.path().join("polis-workspace-dev-amd64.qcow2.sha256");
+        let sidecar = src_dir.path().join("polis-dev-amd64.qcow2.sha256");
         make_signed_sidecar(&img, &sidecar);
         unsafe { std::env::set_var("POLIS_VERIFYING_KEY_B64", test_verifying_key_b64()) };
         let result = acquire_image(&ImageSource::LocalFile(img), dst_dir.path());
@@ -1074,11 +1074,11 @@ pub mod tests {
             "v0.3.0",
             &[
                 (
-                    "polis-workspace-v0.3.0-amd64.qcow2",
+                    "polis-v0.3.0-amd64.qcow2",
                     "https://example.com/img.qcow2"
                 ),
                 (
-                    "polis-workspace-v0.3.0-amd64.qcow2.sha256",
+                    "polis-v0.3.0-amd64.qcow2.sha256",
                     "https://example.com/img.sha256"
                 ),
             ]
@@ -1094,7 +1094,7 @@ pub mod tests {
         let json = serde_json::json!([release_json(
             "v0.3.0",
             &[(
-                "polis-workspace-v0.3.0-amd64.qcow2",
+                "polis-v0.3.0-amd64.qcow2",
                 "https://example.com/img.qcow2"
             ),]
         )]);
@@ -1125,11 +1125,11 @@ pub mod tests {
                 "v0.3.0",
                 &[
                     (
-                        "polis-workspace-v0.3.0-amd64.qcow2",
+                        "polis-v0.3.0-amd64.qcow2",
                         "https://example.com/v0.3.0.qcow2"
                     ),
                     (
-                        "polis-workspace-v0.3.0-amd64.qcow2.sha256",
+                        "polis-v0.3.0-amd64.qcow2.sha256",
                         "https://example.com/v0.3.0.sha256"
                     ),
                 ]
@@ -1138,11 +1138,11 @@ pub mod tests {
                 "v0.2.0",
                 &[
                     (
-                        "polis-workspace-v0.2.0-amd64.qcow2",
+                        "polis-v0.2.0-amd64.qcow2",
                         "https://example.com/v0.2.0.qcow2"
                     ),
                     (
-                        "polis-workspace-v0.2.0-amd64.qcow2.sha256",
+                        "polis-v0.2.0-amd64.qcow2.sha256",
                         "https://example.com/v0.2.0.sha256"
                     ),
                 ]
@@ -1158,11 +1158,11 @@ pub mod tests {
             "v0.3.0",
             &[
                 (
-                    "polis-workspace-v0.3.0-arm64.qcow2",
+                    "polis-v0.3.0-arm64.qcow2",
                     "https://example.com/arm64.qcow2"
                 ),
                 (
-                    "polis-workspace-v0.3.0-arm64.qcow2.sha256",
+                    "polis-v0.3.0-arm64.qcow2.sha256",
                     "https://example.com/arm64.sha256"
                 ),
             ]
@@ -1175,9 +1175,9 @@ pub mod tests {
 
     #[test]
     fn test_partial_path_appends_dot_partial() {
-        let dest = PathBuf::from("/tmp/polis-workspace.qcow2");
+        let dest = PathBuf::from("/tmp/polis.qcow2");
         let p = partial_path(&dest);
-        assert_eq!(p, PathBuf::from("/tmp/polis-workspace.qcow2.partial"));
+        assert_eq!(p, PathBuf::from("/tmp/polis.qcow2.partial"));
     }
 
     // ── download_with_resume — HTTP behaviour ─────────────────────────────────
@@ -1445,8 +1445,8 @@ pub mod tests {
                 let json = serde_json::json!([{
                     "tag_name": tag,
                     "assets": [
-                        {"name": format!("polis-workspace-{tag}-amd64.qcow2"),        "browser_download_url": img_url},
-                        {"name": format!("polis-workspace-{tag}-amd64.qcow2.sha256"), "browser_download_url": sha_url},
+                        {"name": format!("polis-{tag}-amd64.qcow2"),        "browser_download_url": img_url},
+                        {"name": format!("polis-{tag}-amd64.qcow2.sha256"), "browser_download_url": sha_url},
                     ]
                 }]);
                 let r = parse_releases(&json, "amd64").expect("should find release");

@@ -46,7 +46,7 @@ pub struct VersionsManifest {
 pub struct VmImageVersion {
     /// Semver tag (e.g., `"v0.3.0"`).
     pub version: String,
-    /// Asset filename (e.g., `"polis-workspace-v0.3.0-amd64.qcow2"`).
+    /// Asset filename (e.g., `"polis-v0.3.0-amd64.qcow2"`).
     pub asset: String,
 }
 
@@ -1359,7 +1359,7 @@ mod tests {
     fn test_versions_manifest_deserialize_valid_json_returns_struct() {
         let json = r#"{
             "manifest_version": 1,
-            "vm_image": { "version": "v0.3.0", "asset": "polis-workspace-v0.3.0-amd64.qcow2" },
+            "vm_image": { "version": "v0.3.0", "asset": "polis-v0.3.0-amd64.qcow2" },
             "containers": { "polis-gate-oss": "v0.3.1" }
         }"#;
         let m: VersionsManifest = serde_json::from_str(json).expect("valid JSON");
@@ -1381,7 +1381,7 @@ mod tests {
             manifest_version: 1,
             vm_image: VmImageVersion {
                 version: "v0.3.0".to_string(),
-                asset: "polis-workspace-v0.3.0-amd64.qcow2".to_string(),
+                asset: "polis-v0.3.0-amd64.qcow2".to_string(),
             },
             containers: [("polis-gate-oss".to_string(), "v0.3.1".to_string())]
                 .into_iter()
@@ -1535,7 +1535,7 @@ mod tests {
             manifest_version: 1,
             vm_image: VmImageVersion {
                 version: "v0.3.0".to_string(),
-                asset: "polis-workspace-v0.3.0-amd64.qcow2".to_string(),
+                asset: "polis-v0.3.0-amd64.qcow2".to_string(),
             },
             containers: containers
                 .iter()
