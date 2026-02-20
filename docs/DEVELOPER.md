@@ -8,14 +8,14 @@ This guide covers the development workflow, tools, and CI/CD for Polis.
 # 1. Setup (generate certs and secrets)
 just setup
 
-# 2. Build all Docker images
+# 2. Build CLI + Docker images + VM image
 just build
 
-# 3. Start services
-just up
+# 3. Install dev build
+bash scripts/install-dev.sh
 
-# 4. Run tests
-just test-bats
+# 4. Run workspace
+polis run
 ```
 
 ## Prerequisites
@@ -69,9 +69,11 @@ Run `just --list` to see all available recipes.
 | `just setup-ca` | Generate CA certificate only |
 | `just setup-valkey` | Generate Valkey certs and secrets |
 | `just setup-toolbox` | Generate Toolbox certificates |
-| `just build` | Build all Docker images |
-| `just build-service <name>` | Build a specific service |
-| `just build-vm` | Build VM image via Packer |
+| `just build` | Build CLI + Docker images + VM image |
+| `just build-cli` | Build the Rust CLI binary |
+| `just build-docker` | Build all Docker images |
+| `just build-vm` | Build VM image via Packer (sign included) |
+| `just build-service <name>` | Build a specific Docker service |
 
 ### Lifecycle
 
@@ -407,7 +409,7 @@ validate → docker (build + tag + push to GHCR + generate versions.json)
 
 | Artifact | Description |
 |----------|-------------|
-| `polis-workspace-vX.X.X-amd64.qcow2` | VM image with Docker + Sysbox + Polis |
+| `polis-vX.X.X-amd64.qcow2` | VM image with Docker + Sysbox + Polis |
 | `checksums.sha256` | SHA256 checksums for VM |
 | `polis-linux-amd64` | CLI binary |
 | `polis-linux-amd64.sha256` | CLI checksum |
@@ -445,7 +447,7 @@ Each release publishes a signed `versions.json` that maps container names to the
 ```json
 {
   "manifest_version": 1,
-  "vm_image": { "version": "v0.3.0", "asset": "polis-workspace-v0.3.0-amd64.qcow2" },
+  "vm_image": { "version": "v0.3.0", "asset": "polis-v0.3.0-amd64.qcow2" },
   "containers": {
     "polis-gate-oss": "v0.3.0",
     "polis-sentinel-oss": "v0.3.0",
@@ -481,7 +483,7 @@ base64 -w0 .secrets/polis-release.key
 
 ```bash
 # Verify VM image provenance
-gh attestation verify polis-workspace-v0.3.0-amd64.qcow2 --owner OdraLabsHQ
+gh attestation verify polis-v0.3.0-amd64.qcow2 --owner OdraLabsHQ
 
 # Verify CLI binary provenance
 gh attestation verify polis-linux-amd64 --owner OdraLabsHQ
@@ -519,13 +521,19 @@ This installs: docker.io, shellcheck, hadolint (v2.12.0), container-structure-te
 ### Local Build
 
 ```bash
-# Build Docker images first
-just build
+# Build CLI binary
+just build-cli
+
+# Build Docker images
+just build-docker
 
 # Build VM image (amd64, default)
 just build-vm
 
-# Build for arm64
+# Build everything
+just build
+
+# Build VM for arm64
 just build-vm arch=arm64
 
 # Debug: open QEMU console to watch boot progress
@@ -533,11 +541,12 @@ just build-vm headless=false
 ```
 
 This runs:
-1. `docker compose build` - Build all service images
-2. `docker save` - Export images to `.build/polis-images.tar`
-3. `packer build` - Create VM with Docker, Sysbox, and pre-loaded images
+1. `cargo build --release` - Build the CLI binary
+2. `docker compose build` - Build all service images
+3. `docker save` - Export images to `.build/polis-images.tar`
+4. `packer build` - Create VM with Docker, Sysbox, and pre-loaded images
 
-Output: `output/polis-vm-<version>-amd64.qcow2`
+Output: `packer/output/polis-<version>-amd64.qcow2`
 
 ### VM Image Validation (Goss)
 
@@ -645,8 +654,8 @@ The VM runs headless. Once QEMU starts, just wait — Packer will print `Connect
 The user-facing CLI is built in Rust under `cli/src/`. To build and install locally:
 
 ```bash
-cd cli && cargo build --release
-cp target/release/polis ~/.local/bin/
+just build-cli
+cp cli/target/release/polis ~/.local/bin/
 ```
 
 Or use the pre-built binary from GitHub releases.
@@ -661,7 +670,7 @@ Or use the pre-built binary from GitHub releases.
 
 ```bash
 # 1. Build the CLI
-cd cli && cargo build --release && cd ..
+just build-cli
 
 # 2. Build the VM image
 just build-vm
