@@ -33,20 +33,9 @@ pub fn run(state_mgr: &StateManager, driver: &dyn WorkspaceDriver) -> Result<()>
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::state::test_helpers::state_mgr_with_state;
     use crate::workspace::MockDriver;
     use tempfile::TempDir;
-
-    fn state_mgr_with_state(dir: &TempDir) -> StateManager {
-        let polis_dir = dir.path().join(".polis");
-        std::fs::create_dir_all(&polis_dir).expect("create .polis dir");
-        let state_path = polis_dir.join("state.json");
-        std::fs::write(
-            &state_path,
-            r#"{"stage":"agent_ready","agent":"claude-dev","workspace_id":"ws-test01","started_at":"2026-02-17T14:30:00Z"}"#,
-        )
-        .expect("write state");
-        StateManager::with_path(state_path)
-    }
 
     #[test]
     fn test_stop_already_stopped_exits_ok() {

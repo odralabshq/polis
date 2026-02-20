@@ -90,6 +90,26 @@ impl StateManager {
     }
 }
 
+/// Shared test helpers — available to all modules via `crate::state::test_helpers`.
+#[cfg(test)]
+pub mod test_helpers {
+    use super::StateManager;
+    use tempfile::TempDir;
+
+    /// Creates a `StateManager` pre-loaded with a minimal `agent_ready` state fixture.
+    pub fn state_mgr_with_state(dir: &TempDir) -> StateManager {
+        let polis_dir = dir.path().join(".polis");
+        std::fs::create_dir_all(&polis_dir).expect("create .polis dir");
+        let state_path = polis_dir.join("state.json");
+        std::fs::write(
+            &state_path,
+            r#"{"stage":"agent_ready","agent":"claude-dev","workspace_id":"ws-test01","started_at":"2026-02-17T14:30:00Z"}"#,
+        )
+        .expect("write state");
+        StateManager::with_path(state_path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
