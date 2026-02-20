@@ -46,9 +46,10 @@ setup() {
 # =============================================================================
 
 @test "e2e: docker-compose workspace uses latest tag" {
-    # Source: docker-compose.yml → image: polis-workspace-oss:latest
-    run grep "polis-workspace-oss:latest" "$PROJECT_ROOT/docker-compose.yml"
+    # Source: docker-compose.yml → image: .../polis-workspace-oss:${POLIS_WORKSPACE_VERSION:-latest}
+    run grep "polis-workspace-oss" "$PROJECT_ROOT/docker-compose.yml"
     assert_success
+    assert_output --partial "latest"
 }
 
 @test "e2e: docker-compose healthcheck includes ip route" {

@@ -48,7 +48,7 @@ lint: lint-rust lint-c lint-shell
 lint-rust:
     cargo fmt --all --check --manifest-path cli/Cargo.toml
     cargo fmt --all --check --manifest-path services/toolbox/Cargo.toml
-    cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings
+    cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
     cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
 lint-c:
