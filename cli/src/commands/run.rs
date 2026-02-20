@@ -148,7 +148,6 @@ fn resume_run(
     mut run_state: RunState,
     mp: &impl Multipass,
 ) -> Result<()> {
-    println!("Resuming from: {}", run_state.stage.description());
     let mut next = run_state.stage.next();
     while let Some(next_stage) = next {
         execute_stage(&mut run_state, next_stage, mp)?;
