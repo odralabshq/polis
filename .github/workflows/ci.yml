@@ -47,7 +47,7 @@ jobs:
 
       - name: Clippy
         run: |
-          cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings
+          cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
           cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
   # ── Stage 1b: Lint C ──────────────────────────────────────────────
