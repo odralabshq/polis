@@ -9,7 +9,7 @@ services:
     build:
       context: .
       dockerfile: services/resolver/Dockerfile
-    image: ghcr.io/odralabshq/polis-resolver-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-resolver-oss:${POLIS_RESOLVER_VERSION:-v0.3.0}
     container_name: polis-resolver
     user: "65532:65532"
     cap_drop:
@@ -58,7 +58,7 @@ services:
     build:
       context: .
       dockerfile: services/certgen/Dockerfile
-    image: ghcr.io/odralabshq/polis-certgen-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-certgen-oss:${POLIS_CERTGEN_VERSION:-v0.3.0}
     container_name: polis-certgen
     user: "65532:65532"
     cap_drop:
@@ -105,7 +105,7 @@ services:
     build:
       context: .
       dockerfile: services/gate/Dockerfile
-    image: ghcr.io/odralabshq/polis-gate-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-gate-oss:${POLIS_GATE_VERSION:-v0.3.0}
     container_name: polis-gate
     ulimits:
       nofile:
@@ -180,7 +180,7 @@ services:
     build:
       context: .
       dockerfile: services/sentinel/Dockerfile
-    image: ghcr.io/odralabshq/polis-sentinel-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-sentinel-oss:${POLIS_SENTINEL_VERSION:-v0.3.0}
     container_name: polis-sentinel
     user: "65532:65532"
     read_only: true
@@ -243,7 +243,7 @@ services:
     build:
       context: .
       dockerfile: services/scanner/Dockerfile
-    image: ghcr.io/odralabshq/polis-scanner-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-scanner-oss:${POLIS_SCANNER_VERSION:-v0.3.0}
     container_name: polis-scanner
     user: "65532:65532"
     security_opt:
@@ -299,7 +299,7 @@ services:
     build:
       context: .
       dockerfile: services/workspace/Dockerfile
-    image: ghcr.io/odralabshq/polis-workspace-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-workspace-oss:${POLIS_WORKSPACE_VERSION:-v0.3.0}
     container_name: polis-workspace
     runtime: sysbox-runc
     sysctls:
@@ -390,7 +390,7 @@ services:
     build:
       context: .
       dockerfile: services/host-init/Dockerfile
-    image: ghcr.io/odralabshq/polis-host-init-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-host-init-oss:${POLIS_HOST_INIT_VERSION:-v0.3.0}
     container_name: polis-host-init
     network_mode: host
     cap_drop:
@@ -465,7 +465,7 @@ services:
     build:
       context: .
       dockerfile: services/state/Dockerfile
-    image: ghcr.io/odralabshq/polis-state-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-state-oss:${POLIS_STATE_VERSION:-v0.3.0}
     container_name: polis-state
     user: "65532:65532"
     entrypoint: []
@@ -530,7 +530,7 @@ services:
     build:
       context: .
       dockerfile: services/toolbox/Dockerfile
-    image: ghcr.io/odralabshq/polis-toolbox-oss:v0.3.0
+    image: ghcr.io/odralabshq/polis-toolbox-oss:${POLIS_TOOLBOX_VERSION:-v0.3.0}
     container_name: polis-toolbox
     user: "65532:65532"
     read_only: true

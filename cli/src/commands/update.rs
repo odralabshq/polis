@@ -17,7 +17,7 @@ use crate::output::OutputContext;
 /// Embedded ed25519 public key for release signature verification.
 /// This key is set during the release build process.
 /// Format: 32-byte ed25519 public key, base64-encoded.
-pub(crate) const POLIS_PUBLIC_KEY_B64: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+pub(crate) const POLIS_PUBLIC_KEY_B64: &str = "0p+AGW1jqNEos8o6cxDUl2objZhZFOXy4BQseFNHIqI=";
 
 /// Signer identity displayed to users.
 const SIGNER_NAME: &str = "Odra Labs";
@@ -203,8 +203,9 @@ pub fn load_versions_manifest() -> Result<VersionsManifest> {
 /// Returns an error if the key is malformed.
 #[allow(dead_code)]
 fn build_verifying_key() -> Result<VerifyingKey> {
-    let key_bytes =
-        base64_decode(POLIS_PUBLIC_KEY_B64).context("invalid embedded public key encoding")?;
+    let key_b64 = std::env::var("POLIS_VERIFYING_KEY_B64")
+        .unwrap_or_else(|_| POLIS_PUBLIC_KEY_B64.to_string());
+    let key_bytes = base64_decode(&key_b64).context("invalid embedded public key encoding")?;
     anyhow::ensure!(
         key_bytes.len() == PUBLIC_KEY_LENGTH,
         "embedded public key has wrong length: expected {PUBLIC_KEY_LENGTH}, got {}",
@@ -251,6 +252,21 @@ const GHCR_PREFIX: &str = "ghcr.io/odralabshq";
 
 /// Path to `docker-compose.yml` inside the VM.
 const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
+
+/// Path to the `.env` file that pins container image versions inside the VM.
+const ENV_PATH: &str = "/opt/polis/.env";
+
+/// Map a container image name to its `.env` variable name.
+///
+/// `polis-gate-oss` → `POLIS_GATE_VERSION`
+/// `polis-host-init-oss` → `POLIS_HOST_INIT_VERSION`
+fn image_name_to_env_var(image_name: &str) -> String {
+    let middle = image_name
+        .strip_prefix("polis-")
+        .and_then(|s| s.strip_suffix("-oss"))
+        .unwrap_or(image_name);
+    format!("POLIS_{}_VERSION", middle.replace('-', "_").to_uppercase())
+}
 
 /// A planned container update with current and target versions.
 #[allow(dead_code)]
@@ -303,91 +319,104 @@ fn container_to_service_key(container_name: &str) -> &str {
         .unwrap_or(container_name)
 }
 
-/// Read the currently deployed image tag for a service from the compose file inside the VM.
+/// Read the currently deployed version for a container image from the `.env` file.
 ///
-/// Returns `None` if the VM is not running or the service is not found.
+/// Returns `None` if the `.env` file does not exist or the key is absent
+/// (caller treats this as "unknown", triggering an update).
 ///
 /// # Errors
 ///
 /// Returns an error if the `multipass exec` call fails unexpectedly.
-fn get_deployed_version(service_key: &str, mp: &impl Multipass) -> Result<Option<String>> {
+fn get_deployed_version(image_name: &str, mp: &impl Multipass) -> Result<Option<String>> {
     let output = mp
-        .exec(&[
-            "yq",
-            &format!(".services.{service_key}.image"),
-            COMPOSE_PATH,
-        ])
-        .context("failed to run multipass exec yq")?;
+        .exec(&["cat", ENV_PATH])
+        .context("failed to read .env")?;
 
     if !output.status.success() {
         return Ok(None);
     }
 
-    let image_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if image_ref.is_empty() || image_ref == "null" {
-        return Ok(None);
+    let env_var = image_name_to_env_var(image_name);
+    let content = String::from_utf8_lossy(&output.stdout);
+    for line in content.lines() {
+        if let Some(val) = line.strip_prefix(&format!("{env_var}=")) {
+            let v = val.trim().to_string();
+            return Ok(if v.is_empty() { None } else { Some(v) });
+        }
     }
-
-    // Extract version tag from "ghcr.io/odralabshq/polis-gate-oss:v0.3.0"
-    let version = image_ref
-        .rsplit_once(':')
-        .map(|(_, tag)| tag.to_string())
-        .unwrap_or(image_ref);
-
-    Ok(Some(version))
+    Ok(None)
 }
 
-/// Pull a container image inside the VM via `docker compose pull`.
+/// Pull a specific container image inside the VM via `docker pull`.
 ///
+/// Uses the full image reference so the pull is independent of the `.env` state.
 /// Returns `false` if the pull fails (caller decides whether to abort).
 ///
 /// # Errors
 ///
 /// Returns an error only if `multipass exec` itself cannot be spawned.
-fn pull_container_image(service_key: &str, mp: &impl Multipass) -> Result<bool> {
+fn pull_container_image(image_ref: &str, mp: &impl Multipass) -> Result<bool> {
     let output = mp
-        .exec(&["docker", "compose", "-f", COMPOSE_PATH, "pull", service_key])
-        .context("failed to run multipass exec docker compose pull")?;
+        .exec(&["docker", "pull", image_ref])
+        .context("failed to run multipass exec docker pull")?;
 
     Ok(output.status.success())
 }
 
-/// Capture the current image refs for all services being updated (for rollback).
+/// Capture the current env var values for all services being updated (for rollback).
+///
+/// Stores the old `POLIS_*_VERSION` value for each update, or an empty string
+/// if the key was not yet set (meaning rollback should remove it).
 ///
 /// # Errors
 ///
-/// Returns an error if any `multipass exec` call fails.
+/// Returns an error if the `multipass exec` call fails unexpectedly.
 fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Result<RollbackInfo> {
-    let mut previous_refs = Vec::with_capacity(updates.len());
-    for u in updates {
-        let output = mp
-            .exec(&[
-                "yq",
-                &format!(".services.{}.image", u.service_key),
-                COMPOSE_PATH,
-            ])
-            .context("failed to read current image ref for rollback")?;
+    let output = mp.exec(&["cat", ENV_PATH]).context("failed to read .env for rollback")?;
+    let content = if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    } else {
+        String::new()
+    };
 
-        let image_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        previous_refs.push((u.service_key.clone(), image_ref));
-    }
+    let previous_refs = updates
+        .iter()
+        .map(|u| {
+            let env_var = image_name_to_env_var(&u.image_name);
+            let old_val = content
+                .lines()
+                .find_map(|l| l.strip_prefix(&format!("{env_var}=")).map(|v| v.trim().to_string()))
+                .unwrap_or_default();
+            (env_var, old_val)
+        })
+        .collect();
+
     Ok(RollbackInfo { previous_refs })
 }
 
-/// Update a single service's image tag in `docker-compose.yml` inside the VM via `yq`.
+/// Set or update a single `KEY=value` entry in the `.env` file inside the VM.
+///
+/// Atomically replaces any existing line for `key` and appends the new value.
+/// If `value` is empty, the key is removed without adding a new line (rollback
+/// of a key that did not previously exist).
 ///
 /// # Errors
 ///
-/// Returns an error if the `yq` command fails.
-fn update_compose_tag(service_key: &str, image_ref: &str, mp: &impl Multipass) -> Result<()> {
-    let expr = format!(".services.{service_key}.image = \"{image_ref}\"");
+/// Returns an error if the shell command fails.
+fn set_env_var(key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
+    let cmd = if value.is_empty() {
+        format!("grep -v '^{key}=' {ENV_PATH} 2>/dev/null > {ENV_PATH}.tmp && mv {ENV_PATH}.tmp {ENV_PATH} || true")
+    } else {
+        format!(
+            "{{ grep -v '^{key}=' {ENV_PATH} 2>/dev/null; echo '{key}={value}'; }} > {ENV_PATH}.tmp && mv {ENV_PATH}.tmp {ENV_PATH}"
+        )
+    };
     let output = mp
-        .exec(&["yq", "-i", &expr, COMPOSE_PATH])
-        .context("failed to run multipass exec yq -i")?;
-
+        .exec(&["bash", "-c", &cmd])
+        .context("failed to update .env")?;
     anyhow::ensure!(
         output.status.success(),
-        "failed to update docker-compose.yml: {}",
+        "failed to set {key} in .env: {}",
         String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(())
@@ -434,7 +463,7 @@ fn compute_container_updates(
             .with_context(|| format!("invalid version tag in manifest: {target_version}"))?;
 
         let service_key = container_to_service_key(image_name).to_string();
-        let current_version = get_deployed_version(&service_key, mp)
+        let current_version = get_deployed_version(image_name, mp)
             .unwrap_or(None)
             .unwrap_or_else(|| "unknown".to_string());
 
@@ -517,7 +546,8 @@ fn pull_all_images(
         if !ctx.quiet {
             println!("  Pulling {} {}...", u.image_name, u.target_version);
         }
-        if !pull_container_image(&u.service_key, mp)? {
+        let image_ref = ghcr_ref(&u.image_name, &u.target_version);
+        if !pull_container_image(&image_ref, mp)? {
             println!(
                 "  Pull failed for {}:{}. No changes made.",
                 u.image_name, u.target_version
@@ -539,8 +569,7 @@ fn apply_updates_with_rollback(
 
     let apply_result = (|| -> Result<()> {
         for u in updates {
-            let new_ref = ghcr_ref(&u.image_name, &u.target_version);
-            update_compose_tag(&u.service_key, &new_ref, mp)?;
+            set_env_var(&image_name_to_env_var(&u.image_name), &u.target_version, mp)?;
         }
         restart_services(&service_keys, mp)
     })();
@@ -548,8 +577,8 @@ fn apply_updates_with_rollback(
     if let Err(e) = apply_result {
         eprintln!("  Restart failed. Rolling back...");
         let rollback_result = (|| -> Result<()> {
-            for (svc, prev_ref) in &rollback.previous_refs {
-                update_compose_tag(svc, prev_ref, mp)?;
+            for (env_var, old_val) in &rollback.previous_refs {
+                set_env_var(env_var, old_val, mp)?;
             }
             restart_services(&service_keys, mp)
         })();
@@ -558,7 +587,7 @@ fn apply_updates_with_rollback(
             Ok(()) => anyhow::bail!("Update rolled back: {e}"),
             Err(rb_err) => anyhow::bail!(
                 "CRITICAL: Rollback failed. Manual intervention required.\n\
-                 Restore {COMPOSE_PATH} from backup.\n\
+                 Restore {ENV_PATH} from backup.\n\
                  Rollback error: {rb_err}"
             ),
         }
