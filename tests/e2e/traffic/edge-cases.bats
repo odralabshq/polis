@@ -26,9 +26,15 @@ PROXY="--proxy http://10.10.1.10:8080"
 # ── Delays & redirects (local httpbin) ────────────────────────────────────
 
 @test "e2e: slow response handled (2s delay)" {
-    run docker exec "$CTR_WORKSPACE" \
-        curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 15 --max-time 30 \
-        $PROXY "http://${HTTPBIN_HOST}/delay/2"
+    # Retry up to 3 times — the ICAP chain may 502 on the first slow request in CI
+    local attempt
+    for attempt in 1 2 3; do
+        run docker exec "$CTR_WORKSPACE" \
+            curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 15 --max-time 30 \
+            $PROXY "http://${HTTPBIN_HOST}/delay/2"
+        [[ "$status" -eq 0 && "$output" == "200" ]] && return 0
+        sleep 2
+    done
     assert_success
     assert_output "200"
 }

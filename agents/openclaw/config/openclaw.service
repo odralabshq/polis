@@ -1,0 +1,29 @@
+[Unit]
+Description=OpenClaw AI Agent Gateway
+After=polis-init.service network-online.target
+Requires=polis-init.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=polis
+WorkingDirectory=/app
+ExecStartPre=+/usr/local/bin/openclaw-init.sh
+ExecStart=/usr/bin/node dist/index.js gateway --allow-unconfigured --bind lan --port 18789
+Restart=on-failure
+RestartSec=5s
+Environment=NODE_OPTIONS=--dns-result-order=ipv4first
+EnvironmentFile=-/home/polis/.openclaw/.env
+EnvironmentFile=-/run/openclaw-env
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=100%
+
+# Hardening — filesystem isolation is provided by the Sysbox container runtime.
+# ProtectSystem/ProtectHome are intentionally omitted: they conflict with
+# init.sh writing to /etc/ssl/certs, /home/polis/.local, and /home/polis/.openclaw.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

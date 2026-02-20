@@ -227,6 +227,19 @@ setup-toolbox:
     sudo chown 65532:65532 ./certs/toolbox/toolbox.key
     echo "✓ Toolbox certs ready"
 
+# Generates the compose.override.yaml that configures the OpenClaw workspace image
+# and supporting services (socat proxy, env mounts). Required before `just up` for
+# HITL workspace tests to work.
+# Note: this does not start agents — it only sets up the compose override layer.
+setup-agents:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
+    if [[ -f "$OVERRIDE" ]]; then echo "Agent override already exists."; exit 0; fi
+    mkdir -p agents/openclaw/.generated
+    cp agents/openclaw/config/compose.override.template.yaml "$OVERRIDE"
+    echo "✓ Agent override generated from template."
+
 # ── Dev VM ──────────────────────────────────────────────────────────
 dev-create:
     ./tools/dev-vm.sh create
@@ -248,16 +261,31 @@ up:
     sudo systemctl restart sysbox 2>/dev/null || true
     timeout 15 bash -c 'until sudo systemctl is-active sysbox &>/dev/null; do sleep 1; done' || true
     touch .env
-    docker compose -f docker-compose.yml --env-file .env up -d
-    docker compose -f docker-compose.yml --env-file .env ps
+    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
+    OVERRIDE_FLAG=""
+    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
+    # shellcheck disable=SC2086
+    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env up -d
+    # shellcheck disable=SC2086
+    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env ps
 down:
     docker compose down --volumes --remove-orphans
 
 status:
-    docker compose -f docker-compose.yml --env-file .env ps
+    #!/usr/bin/env bash
+    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
+    OVERRIDE_FLAG=""
+    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
+    # shellcheck disable=SC2086
+    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env ps
 
 logs service="":
-    docker compose -f docker-compose.yml --env-file .env logs --tail=50 -f {{service}}
+    #!/usr/bin/env bash
+    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
+    OVERRIDE_FLAG=""
+    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
+    # shellcheck disable=SC2086
+    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env logs --tail=50 -f {{service}}
 
 # ── Release ─────────────────────────────────────────────────────────
 package-vm arch="amd64":

@@ -12,4 +12,4 @@ ARGS="{\"request_id\":\"${REQ_ID}\",\"reason\":\"${REASON}\",\"destination\":\"$
 [ -n "$PATTERN" ] && ARGS="${ARGS},\"pattern\":\"${PATTERN}\""
 ARGS="${ARGS}}"
 
-exec "$SCRIPT_DIR/polis-mcp-call.sh" report_block "$ARGS"
+exec "$SCRIPT_DIR/polis-toolbox-call.sh" report_block "$ARGS"

@@ -622,7 +622,60 @@ The VM runs headless. Once QEMU starts, just wait — Packer will print `Connect
 
 ---
 
-## Polis CLI
+## OpenClaw Agent
+
+OpenClaw runs as a systemd service inside the workspace container, exposing a Control UI on port 18789. By default it installs at first boot (~3-5 min). Optionally, you can pre-build a layered image to skip the runtime install.
+
+### Setup and startup
+
+```bash
+echo "OPENAI_API_KEY=sk-proj-..." >> .env   # or ANTHROPIC_API_KEY / OPENROUTER_API_KEY
+just setup-agents
+just up
+```
+
+### Checking progress
+
+```bash
+just logs workspace                                                        # workspace init
+docker exec polis-workspace systemctl status openclaw                     # service status
+docker exec polis-workspace journalctl -u openclaw -f                     # gateway log
+docker exec polis-workspace cat /home/polis/.openclaw/gateway-token.txt   # get token
+```
+
+Open `http://<host>:18789/#token=<token>`. On Multipass use the VM IP; on native Linux use `localhost`.
+
+### Pre-built image (optional)
+
+To skip the 3-5 min runtime install, build the layered image once:
+
+```bash
+docker compose -f docker-compose.yml \
+  -f agents/openclaw/.generated/compose.override.yaml \
+  build workspace \
+  --build-arg WORKSPACE_IMAGE=ghcr.io/odralabshq/polis-workspace-oss:latest
+```
+
+This uses `agents/openclaw/Dockerfile` which extends the base workspace with Node.js + OpenClaw pre-compiled.
+
+### Reset config (new token, re-detect API keys)
+
+```bash
+docker exec polis-workspace rm /home/polis/.openclaw/.initialized
+docker exec polis-workspace systemctl restart openclaw
+```
+
+### Key paths inside the workspace container
+
+| Path | Purpose |
+|------|---------|
+| `/home/polis/.openclaw/openclaw.json` | Gateway config |
+| `/home/polis/.openclaw/gateway-token.txt` | Control UI token |
+| `/home/polis/.openclaw/agents/default/agent/auth-profiles.json` | API keys per provider |
+| `/run/openclaw-env` | Host `.env` bind-mounted for init script |
+| `/var/lib/openclaw-installed` | Idempotency marker (present in pre-built image) |
+
+---
 
 The user-facing CLI is built in Rust under `cli/src/`. To build and install locally:
 
