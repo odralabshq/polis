@@ -125,16 +125,17 @@ build-service service:
 build-vm arch="amd64" headless="true": _export-images _bundle-config
     #!/usr/bin/env bash
     set -euo pipefail
+    ROOT="${PWD}"
     cd packer
     rm -rf output
     packer init .
     packer build \
-        -var "images_tar=${PWD}/../.build/polis-images.tar" \
-        -var "config_tar=${PWD}/../.build/polis-config.tar.gz" \
+        -var "images_tar=${ROOT}/.build/polis-images.tar" \
+        -var "config_tar=${ROOT}/.build/polis-config.tar.gz" \
         -var "arch={{arch}}" \
         -var "headless={{headless}}" \
         polis-vm.pkr.hcl
-    cd ..
+    cd "${ROOT}"
     just _sign-vm arch={{arch}}
 
 # Internal: sign the VM image with a dev keypair, producing a .sha256 sidecar
