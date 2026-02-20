@@ -50,14 +50,12 @@ check_multipass() {
 
     if [[ "${os}" == "Linux" ]] && command -v snap &>/dev/null; then
         local socket="/var/snap/multipass/common/multipass_socket"
-        if [[ -S "${socket}" ]]; then
+        if [[ -S "${socket}" ]] && ! test -r "${socket}" -a -w "${socket}"; then
             local socket_group
             socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
-            if [[ -n "${socket_group}" ]] && ! groups | grep -qw "${socket_group}"; then
-                log_warn "Your user is not in the '${socket_group}' group."
-                echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
-                echo "  Then log out and back in, or run: newgrp ${socket_group}"
-            fi
+            log_warn "Your user cannot access the multipass socket."
+            echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
+            echo "  Then log out and back in, or run: newgrp ${socket_group}"
         fi
     fi
 }
