@@ -43,6 +43,7 @@ print_logo() {
     echo -e "${cO}██    ██${X} ${cD}██   ██${X} ${cR}██   ██${X} ${cA1}██    ██${X}   ${cL}██      ${X} ${cA2}██    ██${X} ${cB}██   ██${X} ${cS}      ██${X}"
     echo -e "${cO} ▀████▀ ${X} ${cD}█████▀ ${X} ${cR}██   ██${X} ${cA1}██    ██${X}   ${cL}████████${X} ${cA2}██    ██${X} ${cB}█████▀ ${X} ${cS} ▀████▀${X}"
     echo ""
+    return 0
 }
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
@@ -72,7 +73,9 @@ MULTIPASS_VERSION="${MULTIPASS_VERSION:-1.16.1}"
 
 # Compare semver strings: returns 0 if $1 >= $2
 semver_gte() {
-    printf '%s\n%s\n' "$2" "$1" | sort -V -C
+    local v1="$1" v2="$2"
+    printf '%s\n%s\n' "${v2}" "${v1}" | sort -V -C
+    return 0
 }
 
 # Install Multipass on Linux via snap

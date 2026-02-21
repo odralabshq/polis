@@ -10,6 +10,7 @@ require_container() {
         health=$(docker inspect --format '{{.State.Health.Status}}' "$c" 2>/dev/null || echo "none")
         [[ "$health" == "none" || "$health" == "healthy" ]] || skip "Container $c not healthy ($health)"
     done
+    return 0
 }
 
 # Guard for init containers — they exit after running, so check exited with status 0
