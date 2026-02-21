@@ -73,13 +73,11 @@ pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
         // Different agent (or switching between agent/no-agent)
         let current_desc = current_agent
             .as_deref()
-            .map(|n| format!("agent '{n}'"))
-            .unwrap_or_else(|| "no agent".to_string());
+            .map_or_else(|| "no agent".to_string(), |n| format!("agent '{n}'"));
         let requested_desc = args
             .agent
             .as_deref()
-            .map(|n| format!("--agent {n}"))
-            .unwrap_or_else(|| "no agent".to_string());
+            .map_or_else(|| "no agent".to_string(), |n| format!("--agent {n}"));
         anyhow::bail!(
             "Workspace is running with {current_desc}. Stop first:\n  polis stop\n  polis start {requested_desc}"
         );
@@ -176,10 +174,10 @@ fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> Result<()>
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = if !stderr.is_empty() {
-            stderr.to_string()
-        } else {
+        let detail = if stderr.is_empty() {
             stdout.to_string()
+        } else {
+            stderr.to_string()
         };
         // Exit code 2 = missing yq
         if output.status.code() == Some(2) {

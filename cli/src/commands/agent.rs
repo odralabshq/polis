@@ -36,17 +36,23 @@ pub struct RemoveArgs {
     pub name: String,
 }
 
+/// Run the given agent subcommand.
+///
+/// # Errors
+///
+/// Returns an error if the subcommand fails (e.g. VM not running, agent not
+/// found, artifact generation failure).
 pub fn run(cmd: AgentCommand, mp: &impl Multipass, quiet: bool, json: bool) -> Result<()> {
     match cmd {
-        AgentCommand::Add(args) => add(args, mp, quiet),
-        AgentCommand::Remove(args) => remove(args, mp, quiet),
+        AgentCommand::Add(args) => add(&args, mp, quiet),
+        AgentCommand::Remove(args) => remove(&args, mp, quiet),
         AgentCommand::List => list(mp, quiet, json),
         AgentCommand::Restart => restart(mp, quiet),
         AgentCommand::Update => update(mp, quiet),
     }
 }
 
-fn add(args: AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+fn add(args: &AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     // Validate local path
     let folder = std::path::Path::new(&args.path);
     anyhow::ensure!(folder.exists(), "Path not found: {}", args.path);
@@ -54,8 +60,11 @@ fn add(args: AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     anyhow::ensure!(manifest.exists(), "No agent.yaml found in: {}", args.path);
 
     // Read agent name from manifest via local yq
+    let manifest_str = manifest
+        .to_str()
+        .context("agent.yaml path contains invalid UTF-8")?;
     let name_out = std::process::Command::new("yq")
-        .args([".metadata.name", manifest.to_str().unwrap()])
+        .args([".metadata.name", manifest_str])
         .output()
         .context("running yq to read agent name (yq must be installed locally)")?;
     anyhow::ensure!(
@@ -75,8 +84,8 @@ fn add(args: AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     );
 
     // Check agent doesn't already exist
-    let agent_dir = format!("{VM_ROOT}/agents/{name}");
-    let exists = mp.exec(&["test", "-d", &agent_dir])?;
+    let target_dir = format!("{VM_ROOT}/agents/{name}");
+    let exists = mp.exec(&["test", "-d", &target_dir])?;
     anyhow::ensure!(
         !exists.status.success(),
         "Agent '{name}' already installed. Remove it first: polis agent remove {name}"
@@ -102,16 +111,16 @@ fn add(args: AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
         println!("Generating artifacts...");
     }
     let script = format!("{VM_ROOT}/scripts/generate-agent.sh");
-    let agents_dir = format!("{VM_ROOT}/agents");
+    let all_agents = format!("{VM_ROOT}/agents");
     let gen_out = mp
-        .exec(&["bash", &script, &name, &agents_dir])
+        .exec(&["bash", &script, &name, &all_agents])
         .context("generate-agent.sh")?;
     if !gen_out.status.success() {
         // Cleanup on failure
-        let _ = mp.exec(&["rm", "-rf", &agent_dir]);
+        let _ = mp.exec(&["rm", "-rf", &target_dir]);
         let stderr = String::from_utf8_lossy(&gen_out.stderr);
         let stdout = String::from_utf8_lossy(&gen_out.stdout);
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        let detail = if stderr.is_empty() { stdout } else { stderr };
         anyhow::bail!("Artifact generation failed:\n{detail}");
     }
 
@@ -121,7 +130,7 @@ fn add(args: AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     Ok(())
 }
 
-fn remove(args: RemoveArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+fn remove(args: &RemoveArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     let name = &args.name;
     let agent_dir = format!("{VM_ROOT}/agents/{name}");
 
@@ -304,14 +313,14 @@ fn update(mp: &impl Multipass, quiet: bool) -> Result<()> {
         println!("Regenerating artifacts for '{name}'...");
     }
     let script = format!("{VM_ROOT}/scripts/generate-agent.sh");
-    let agents_dir = format!("{VM_ROOT}/agents");
+    let all_agents = format!("{VM_ROOT}/agents");
     let gen_out = mp
-        .exec(&["bash", &script, &name, &agents_dir])
+        .exec(&["bash", &script, &name, &all_agents])
         .context("generate-agent.sh")?;
     if !gen_out.status.success() {
         let stderr = String::from_utf8_lossy(&gen_out.stderr);
         let stdout = String::from_utf8_lossy(&gen_out.stdout);
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        let detail = if stderr.is_empty() { stdout } else { stderr };
         anyhow::bail!("Artifact generation failed (workspace NOT recreated):\n{detail}");
     }
 
