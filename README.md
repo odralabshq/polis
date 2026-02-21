@@ -188,8 +188,7 @@ Polis is agent-agnostic. Agents live under `agents/<name>/` with install scripts
 
 ```bash
 echo "OPENAI_API_KEY=sk-proj-..." >> .env   # or ANTHROPIC_API_KEY / OPENROUTER_API_KEY
-just setup-agents
-just up
+polis start --agent=openclaw
 ```
 
 OpenClaw installs at first boot (~3-5 min). Check progress and get the token:

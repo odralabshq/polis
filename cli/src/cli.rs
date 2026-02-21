@@ -58,6 +58,10 @@ pub enum Command {
     /// Update Polis
     Update(commands::update::UpdateArgs),
 
+    /// Manage agents
+    #[command(subcommand)]
+    Agent(commands::agent::AgentCommand),
+
     /// Show version
     Version,
 
@@ -132,6 +136,11 @@ impl Cli {
             }
 
             Command::Version => commands::version::run(json),
+
+            Command::Agent(cmd) => {
+                let mp = crate::multipass::MultipassCli;
+                commands::agent::run(cmd, &mp, quiet, json)
+            }
 
             // --- Internal commands ---
             Command::SshProxy => commands::internal::ssh_proxy().await,
