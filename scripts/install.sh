@@ -13,6 +13,7 @@ INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 IMAGE_URL=""
+CURL_PROTO="=https"
 
 # Colors
 RED='\033[0;31m'
@@ -92,10 +93,11 @@ install_multipass_linux() {
     local snap_file="/tmp/multipass_${MULTIPASS_VERSION}_amd64.snap"
     local url="https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass_${MULTIPASS_VERSION}_amd64.snap"
     log_info "Downloading Multipass ${MULTIPASS_VERSION} for Linux..."
-    curl -fsSL --proto '=https' "${url}" -o "${snap_file}"
+    curl -fsSL --proto "${CURL_PROTO}" "${url}" -o "${snap_file}"
     log_info "Installing Multipass snap..."
     sudo snap install "${snap_file}" --dangerous
     rm -f "${snap_file}"
+    return 0
 }
 
 # Install Multipass on macOS via .pkg
@@ -103,10 +105,11 @@ install_multipass_macos() {
     local pkg_file="/tmp/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg"
     local url="https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg"
     log_info "Downloading Multipass ${MULTIPASS_VERSION} for macOS..."
-    curl -fsSL --proto '=https' "${url}" -o "${pkg_file}"
+    curl -fsSL --proto "${CURL_PROTO}" "${url}" -o "${pkg_file}"
     log_info "Installing Multipass (requires sudo)..."
     sudo installer -pkg "${pkg_file}" -target /
     rm -f "${pkg_file}"
+    return 0
 }
 
 # Check for Multipass: auto-install if missing, verify version >= minimum
@@ -138,6 +141,7 @@ check_multipass() {
         case "${os}" in
             Linux)  echo "  Update: sudo snap refresh multipass" ;;
             Darwin) echo "  Update: brew upgrade multipass" ;;
+            *)      echo "  Update: https://multipass.run/install" ;;
         esac
         exit 1
     else
@@ -148,25 +152,27 @@ check_multipass() {
     if [[ "${os}" == "Linux" ]]; then
         configure_multipass_linux
     fi
+    return 0
 }
 
 # Post-install Linux config: socket group check
 configure_multipass_linux() {
     local socket="/var/snap/multipass/common/multipass_socket"
-    if [[ -S "${socket}" ]] && ! test -r "${socket}" -a -w "${socket}"; then
+    if [[ -S "${socket}" ]] && ! [[ -r "${socket}" && -w "${socket}" ]]; then
         local socket_group
         socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
         log_warn "Your user cannot access the multipass socket."
         echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
         echo "  Then log out and back in, or run: newgrp ${socket_group}"
     fi
+    return 0
 }
 
 # Resolve version tag
 resolve_version() {
     if [[ "${VERSION}" == "latest" ]]; then
         local response http_code body
-        response=$(curl -fsSL --proto '=https' -w "\n%{http_code}" \
+        response=$(curl -fsSL --proto "${CURL_PROTO}" -w "\n%{http_code}" \
             "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
             2>&1) || true
         http_code=$(echo "${response}" | tail -1)
@@ -195,21 +201,20 @@ resolve_version() {
 
 # Download and verify with SHA256
 download_and_verify() {
-    local arch
+    local arch base_url bin_dir binary_name checksum_file expected actual
     arch=$(check_arch)
-    local base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
-    local bin_dir="${INSTALL_DIR}/bin"
-    local binary_name="polis-linux-${arch}"
-    local checksum_file="/tmp/polis.sha256.$$"
+    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
+    bin_dir="${INSTALL_DIR}/bin"
+    binary_name="polis-linux-${arch}"
+    checksum_file="/tmp/polis.sha256.$$"
 
     mkdir -p "${bin_dir}"
 
     log_info "Downloading polis CLI (${arch})..."
-    curl -fsSL --proto '=https' "${base_url}/${binary_name}" -o "${bin_dir}/polis"
-    curl -fsSL --proto '=https' "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
+    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}" -o "${bin_dir}/polis"
+    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
 
     log_info "Verifying SHA256 checksum..."
-    local expected actual
     expected=$(cut -d' ' -f1 < "${checksum_file}")
     actual=$(sha256sum "${bin_dir}/polis" | cut -d' ' -f1)
     rm -f "${checksum_file}"
@@ -222,8 +227,8 @@ download_and_verify() {
         exit 1
     fi
     log_ok "SHA256 verified: ${expected}"
-
     chmod +x "${bin_dir}/polis"
+    return 0
 }
 
 # Optional attestation verification
@@ -236,6 +241,7 @@ verify_attestation() {
             log_info "Attestation verification skipped (not available or failed)"
         fi
     fi
+    return 0
 }
 
 # Non-fatal image init step
@@ -256,6 +262,7 @@ init_image() {
             return 0
         }
     fi
+    return 0
 }
 
 # Create symlink
@@ -273,6 +280,7 @@ create_symlink() {
         echo ""
         echo "To make it permanent, add to your shell rc file (~/.bashrc or ~/.zshrc)"
     fi
+    return 0
 }
 
 # Main
@@ -290,10 +298,7 @@ main() {
     echo ""
     log_ok "Polis installed successfully!"
     echo ""
-    echo "Get started:"
-    echo "  polis run          # Create workspace"
-    echo "  polis run claude   # Create workspace with Claude agent"
-    echo ""
+    return 0
 }
 
 # Parse flags

@@ -1,6 +1,6 @@
 //! Image download, verification, and caching.
 
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -98,74 +98,86 @@ pub fn ensure_available(source: ImageSource, quiet: bool) -> Result<PathBuf> {
     let sidecar = dir.join(SIDECAR_FILENAME);
 
     match source {
-        ImageSource::Default => {
-            if dest.exists() && load_metadata(&dir)?.is_some() {
-                return Ok(dest);
-            }
-            if !quiet {
-                println!("Downloading workspace...");
-            }
-            let resolved = resolve_latest_image_url()?;
-            download_with_resume(&resolved.image_url, &dest, quiet)?;
-            download_with_resume(&resolved.checksum_url, &sidecar, quiet)?;
-            if !quiet {
-                print!("Verifying integrity...");
-            }
-            let sha256 = verify_image_integrity(&dest, &sidecar)?;
-            if !quiet {
-                println!(" ✓");
-            }
-            let meta = ImageMetadata {
-                version: resolved.tag,
-                sha256,
-                arch: current_arch()?.to_string(),
-                downloaded_at: Utc::now(),
-                source: resolved.image_url,
-            };
-            write_metadata(&dir, &meta)?;
-            Ok(dest)
-        }
-        ImageSource::LocalFile(path) => {
-            if !quiet {
-                println!("Using: {}", path.display());
-            }
-            std::fs::copy(&path, &dest).with_context(|| format!("copying {}", path.display()))?;
-            let source_sidecar = path.with_extension("qcow2.sha256");
-            if source_sidecar.exists() {
-                std::fs::copy(&source_sidecar, &sidecar)?;
-            }
-            let sha256 = if sidecar.exists() {
-                verify_image_integrity(&dest, &sidecar)?
-            } else {
-                sha256_file(&dest)?
-            };
-            let meta = ImageMetadata {
-                version: "local".to_string(),
-                sha256,
-                arch: current_arch()?.to_string(),
-                downloaded_at: Utc::now(),
-                source: path.to_string_lossy().into_owned(),
-            };
-            write_metadata(&dir, &meta)?;
-            Ok(dest)
-        }
-        ImageSource::HttpUrl(url) => {
-            if !quiet {
-                println!("Downloading from {url}...");
-            }
-            download_with_resume(&url, &dest, quiet)?;
-            let sha256 = sha256_file(&dest)?;
-            let meta = ImageMetadata {
-                version: "unknown".to_string(),
-                sha256,
-                arch: current_arch()?.to_string(),
-                downloaded_at: Utc::now(),
-                source: url,
-            };
-            write_metadata(&dir, &meta)?;
-            Ok(dest)
-        }
+        ImageSource::Default => ensure_default(&dir, &dest, &sidecar, quiet),
+        ImageSource::LocalFile(path) => ensure_local(&dir, &dest, &sidecar, &path, quiet),
+        ImageSource::HttpUrl(url) => ensure_http(&dir, &dest, &url, quiet),
     }
+}
+
+fn ensure_default(dir: &Path, dest: &Path, sidecar: &Path, quiet: bool) -> Result<PathBuf> {
+    if dest.exists() && load_metadata(dir)?.is_some() {
+        return Ok(dest.to_path_buf());
+    }
+    if !quiet {
+        println!("Downloading workspace...");
+    }
+    let resolved = resolve_latest_image_url()?;
+    download_with_resume(&resolved.image_url, dest, quiet)?;
+    download_with_resume(&resolved.checksum_url, sidecar, quiet)?;
+    if !quiet {
+        print!("Verifying integrity...");
+    }
+    let sha256 = verify_image_integrity(dest, sidecar)?;
+    if !quiet {
+        println!(" ✓");
+    }
+    let meta = ImageMetadata {
+        version: resolved.tag,
+        sha256,
+        arch: current_arch()?.to_string(),
+        downloaded_at: Utc::now(),
+        source: resolved.image_url,
+    };
+    write_metadata(dir, &meta)?;
+    Ok(dest.to_path_buf())
+}
+
+fn ensure_local(
+    dir: &Path,
+    dest: &Path,
+    sidecar: &Path,
+    path: &Path,
+    quiet: bool,
+) -> Result<PathBuf> {
+    if !quiet {
+        println!("Using: {}", path.display());
+    }
+    std::fs::copy(path, dest).with_context(|| format!("copying {}", path.display()))?;
+    let source_sidecar = path.with_extension("qcow2.sha256");
+    if source_sidecar.exists() {
+        std::fs::copy(&source_sidecar, sidecar)?;
+    }
+    let sha256 = if sidecar.exists() {
+        verify_image_integrity(dest, sidecar)?
+    } else {
+        sha256_file(dest)?
+    };
+    let meta = ImageMetadata {
+        version: "local".to_string(),
+        sha256,
+        arch: current_arch()?.to_string(),
+        downloaded_at: Utc::now(),
+        source: path.to_string_lossy().into_owned(),
+    };
+    write_metadata(dir, &meta)?;
+    Ok(dest.to_path_buf())
+}
+
+fn ensure_http(dir: &Path, dest: &Path, url: &str, quiet: bool) -> Result<PathBuf> {
+    if !quiet {
+        println!("Downloading from {url}...");
+    }
+    download_with_resume(url, dest, quiet)?;
+    let sha256 = sha256_file(dest)?;
+    let meta = ImageMetadata {
+        version: "unknown".to_string(),
+        sha256,
+        arch: current_arch()?.to_string(),
+        downloaded_at: Utc::now(),
+        source: url.to_string(),
+    };
+    write_metadata(dir, &meta)?;
+    Ok(dest.to_path_buf())
 }
 
 fn write_metadata(images_dir: &Path, meta: &ImageMetadata) -> Result<()> {
@@ -220,28 +232,7 @@ fn do_download(
     };
 
     let status = response.status();
-    let (mut file, start_pos) = if status == 206 {
-        (
-            OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(partial)
-                .context("opening partial file")?,
-            existing,
-        )
-    } else if status == 200 {
-        (
-            OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(partial)
-                .context("opening partial file")?,
-            0,
-        )
-    } else {
-        anyhow::bail!("Download failed: HTTP {status}");
-    };
+    let (mut file, start_pos) = open_partial_file(status, partial, existing)?;
 
     let total = response
         .header("Content-Length")
@@ -254,21 +245,7 @@ fn do_download(
         return do_download(url, dest, partial, 0, quiet, false);
     }
 
-    let pb = if quiet {
-        indicatif::ProgressBar::hidden()
-    } else if let Some(t) = total {
-        let pb = indicatif::ProgressBar::new(t);
-        pb.set_style(
-            indicatif::ProgressStyle::default_bar()
-                .template("[{bar:40}] {percent}%")
-                .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar())
-                .progress_chars("█▓░"),
-        );
-        pb.set_position(start_pos);
-        pb
-    } else {
-        indicatif::ProgressBar::new_spinner()
-    };
+    let pb = make_progress_bar(quiet, total, start_pos);
 
     let mut reader = response.into_reader();
     let mut buf = vec![0u8; 64 * 1024];
@@ -284,6 +261,46 @@ fn do_download(
     drop(file);
     std::fs::rename(partial, dest).context("failed to finalize downloaded image")?;
     Ok(())
+}
+
+fn open_partial_file(status: u16, partial: &Path, existing: u64) -> Result<(File, u64)> {
+    if status == 206 {
+        let file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(partial)
+            .context("opening partial file")?;
+        Ok((file, existing))
+    } else if status == 200 {
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(partial)
+            .context("opening partial file")?;
+        Ok((file, 0))
+    } else {
+        anyhow::bail!("Download failed: HTTP {status}");
+    }
+}
+
+fn make_progress_bar(quiet: bool, total: Option<u64>, start_pos: u64) -> indicatif::ProgressBar {
+    if quiet {
+        return indicatif::ProgressBar::hidden();
+    }
+    if let Some(t) = total {
+        let pb = indicatif::ProgressBar::new(t);
+        pb.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template("[{bar:40}] {percent}%")
+                .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar())
+                .progress_chars("█▓░"),
+        );
+        pb.set_position(start_pos);
+        pb
+    } else {
+        indicatif::ProgressBar::new_spinner()
+    }
 }
 
 // ── Verification ─────────────────────────────────────────────────────────────

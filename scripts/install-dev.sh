@@ -40,10 +40,10 @@ print_logo() {
     echo ""
 }
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error(){ echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
+log_ok()   { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
+log_error(){ echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
 check_multipass() {
     if ! command -v multipass &>/dev/null; then
@@ -51,6 +51,7 @@ check_multipass() {
         case "$(uname -s)" in
             Darwin) echo "  Install: https://multipass.run/install  (requires macOS 13 Ventura or later)" ;;
             Linux)  echo "  Install: sudo snap install multipass" ;;
+            *)      echo "  Install: https://multipass.run/install" ;;
         esac
         exit 1
     fi
@@ -65,6 +66,7 @@ check_multipass() {
             case "${os}" in
                 Linux)  echo "  Update: sudo snap refresh multipass" ;;
                 Darwin) echo "  Update: https://multipass.run/install" ;;
+                *)      echo "  Update: https://multipass.run/install" ;;
             esac
             exit 1
         fi
@@ -73,7 +75,7 @@ check_multipass() {
 
     if [[ "${os}" == "Linux" ]] && command -v snap &>/dev/null; then
         local socket="/var/snap/multipass/common/multipass_socket"
-        if [[ -S "${socket}" ]] && ! test -r "${socket}" -a -w "${socket}"; then
+        if [[ -S "${socket}" ]] && ! [[ -r "${socket}" && -w "${socket}" ]]; then
             local socket_group
             socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
             log_warn "Your user cannot access the multipass socket."
@@ -81,6 +83,7 @@ check_multipass() {
             echo "  Then log out and back in, or run: newgrp ${socket_group}"
         fi
     fi
+    return 0
 }
 
 install_cli() {
@@ -94,6 +97,7 @@ install_cli() {
     cp "${cli_bin}" "${INSTALL_DIR}/bin/polis"
     chmod +x "${INSTALL_DIR}/bin/polis"
     log_ok "Installed CLI from ${cli_bin}"
+    return 0
 }
 
 run_init() {
@@ -124,6 +128,7 @@ run_init() {
         log_warn "polis start failed. Run manually:"
         echo "  POLIS_VERIFYING_KEY_B64=$(base64 -w0 "${pub_key}") polis start --image ${image}"
     }
+    return 0
 }
 
 create_symlink() {
@@ -133,6 +138,7 @@ create_symlink() {
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
         log_warn "\$HOME/.local/bin is not in PATH — add it to your shell rc"
     fi
+    return 0
 }
 
 # Parse flags

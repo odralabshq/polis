@@ -706,17 +706,34 @@ pub async fn run(
         println!();
     }
 
-    // Check CLI version
     let cli_update = checker.check(current)?;
-
-    // Check workspace image version
     let image_update = check_image_update();
+    let has_updates = display_update_status(ctx, current, &cli_update, &image_update);
 
-    // Track if any updates are available
+    if args.check {
+        if has_updates {
+            println!();
+            println!("Run 'polis update' to apply updates.");
+        }
+        return Ok(());
+    }
+
+    apply_cli_update(ctx, checker, cli_update)?;
+    apply_container_updates(ctx, mp)?;
+
+    println!();
+    Ok(())
+}
+
+fn display_update_status(
+    ctx: &OutputContext,
+    current: &str,
+    cli_update: &UpdateInfo,
+    image_update: &Option<(String, String)>,
+) -> bool {
     let mut has_updates = false;
 
-    // Display CLI status
-    match &cli_update {
+    match cli_update {
         UpdateInfo::UpToDate => {
             println!(
                 "  {} CLI             v{current} (latest)",
@@ -740,8 +757,7 @@ pub async fn run(
         }
     }
 
-    // Display image status
-    match &image_update {
+    match image_update {
         Some((current_ver, available_ver)) => {
             has_updates = true;
             println!("  Workspace image {current_ver} → {available_ver} available");
@@ -765,66 +781,67 @@ pub async fn run(
         }
     }
 
-    // If --check, stop here
-    if args.check {
-        if has_updates {
-            println!();
-            println!("Run 'polis update' to apply updates.");
-        }
-        return Ok(());
-    }
+    has_updates
+}
 
-    // Apply CLI update if available
-    if let UpdateInfo::Available {
+fn apply_cli_update(
+    ctx: &OutputContext,
+    checker: &impl UpdateChecker,
+    cli_update: UpdateInfo,
+) -> Result<()> {
+    let UpdateInfo::Available {
         version,
         download_url,
         ..
     } = cli_update
-    {
-        println!();
-        if !ctx.quiet {
-            println!("  Verifying signature...");
-        }
-        let sig = checker
-            .verify_signature(&download_url)
-            .context("signature verification failed")?;
+    else {
+        return Ok(());
+    };
 
-        let sha_preview = sig.sha256.get(..12).unwrap_or(&sig.sha256);
-        println!(
-            "    {} Signed by: {} (key: {})",
-            "✓".style(ctx.styles.success),
-            sig.signer,
-            sig.key_id,
-        );
-        println!(
-            "    {} SHA-256: {sha_preview}...",
-            "✓".style(ctx.styles.success),
-        );
-        println!();
-
-        let confirmed = Confirm::new()
-            .with_prompt("Update CLI now?")
-            .default(true)
-            .interact()
-            .context("reading confirmation")?;
-
-        if confirmed {
-            if !ctx.quiet {
-                println!("  Downloading...");
-            }
-            checker.perform_update(&version).context("update failed")?;
-
-            println!();
-            println!(
-                "  {} CLI updated to v{version}",
-                "✓".style(ctx.styles.success)
-            );
-            println!();
-            println!("  Restart your terminal or run: exec polis");
-        }
+    println!();
+    if !ctx.quiet {
+        println!("  Verifying signature...");
     }
+    let sig = checker
+        .verify_signature(&download_url)
+        .context("signature verification failed")?;
 
-    // Container update check
+    let sha_preview = sig.sha256.get(..12).unwrap_or(&sig.sha256);
+    println!(
+        "    {} Signed by: {} (key: {})",
+        "✓".style(ctx.styles.success),
+        sig.signer,
+        sig.key_id,
+    );
+    println!(
+        "    {} SHA-256: {sha_preview}...",
+        "✓".style(ctx.styles.success),
+    );
+    println!();
+
+    let confirmed = Confirm::new()
+        .with_prompt("Update CLI now?")
+        .default(true)
+        .interact()
+        .context("reading confirmation")?;
+
+    if confirmed {
+        if !ctx.quiet {
+            println!("  Downloading...");
+        }
+        checker.perform_update(&version).context("update failed")?;
+        println!();
+        println!(
+            "  {} CLI updated to v{version}",
+            "✓".style(ctx.styles.success)
+        );
+        println!();
+        println!("  Restart your terminal or run: exec polis");
+    }
+    Ok(())
+}
+
+fn apply_container_updates(ctx: &OutputContext, mp: &impl Multipass) -> Result<()> {
     println!();
     if !ctx.quiet {
         println!("  Checking service updates...");
@@ -833,12 +850,9 @@ pub async fn run(
     match load_versions_manifest() {
         Ok(manifest) => update_containers(&manifest, ctx, mp)?,
         Err(e) => {
-            // Non-fatal: container update check failure should not block CLI update
             eprintln!("  Warning: could not load versions manifest: {e}");
         }
     }
-
-    println!();
     Ok(())
 }
 
