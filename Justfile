@@ -96,7 +96,7 @@ test-integration:
 # Run E2E tests (requires running containers)
 test-e2e:
     docker compose --profile test up -d httpbin
-    ./tests/run-tests.sh --ci e2e
+    ./tests/run-tests.sh --ci e2e; rc=$?; docker compose --profile test rm -sf httpbin; exit $rc
 
 # Run all test tiers (unit + integration + e2e)
 test-all: test test-integration test-e2e
