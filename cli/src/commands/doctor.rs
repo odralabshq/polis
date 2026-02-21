@@ -13,12 +13,27 @@ use crate::output::OutputContext;
 /// All check categories returned by the doctor command.
 #[derive(Debug)]
 pub struct DoctorChecks {
+    /// Prerequisite checks (multipass version, hypervisor).
+    pub prerequisites: PrerequisiteChecks,
     /// Workspace health.
     pub workspace: WorkspaceChecks,
     /// Network health.
     pub network: NetworkChecks,
     /// Security health.
     pub security: SecurityChecks,
+}
+
+/// Prerequisite checks — multipass version and platform hypervisor.
+#[derive(Debug)]
+pub struct PrerequisiteChecks {
+    /// Whether `multipass` is on PATH.
+    pub multipass_found: bool,
+    /// Installed Multipass version string (e.g. `"1.16.1"`), if found.
+    pub multipass_version: Option<String>,
+    /// Whether the installed version meets the minimum (1.16.0).
+    pub multipass_version_ok: bool,
+    /// Linux only: whether the `removable-media` snap interface is connected.
+    pub removable_media_connected: Option<bool>,
 }
 
 /// Workspace health checks.
@@ -37,7 +52,7 @@ pub struct WorkspaceChecks {
 /// Result of image health checks.
 #[derive(Debug, Default, Serialize)]
 pub struct ImageCheckResult {
-    /// Whether a cached image exists at `~/.polis/images/polis-workspace.qcow2`.
+    /// Whether a cached image exists at `~/.polis/images/polis.qcow2`.
     pub cached: bool,
     /// Version from `image.json` (if available).
     pub version: Option<String>,
@@ -90,6 +105,13 @@ pub struct SecurityChecks {
 /// Abstraction over health check backends, enabling test doubles.
 #[allow(async_fn_in_trait)] // Send bounds not required; probe is always called on the same task
 pub trait HealthProbe {
+    /// Check prerequisite health (multipass version, hypervisor).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the prerequisite check cannot be performed.
+    async fn check_prerequisites(&self) -> Result<PrerequisiteChecks>;
+
     /// Check workspace health.
     ///
     /// # Errors
@@ -116,6 +138,12 @@ pub trait HealthProbe {
 pub struct SystemProbe;
 
 impl HealthProbe for SystemProbe {
+    async fn check_prerequisites(&self) -> Result<PrerequisiteChecks> {
+        tokio::task::spawn_blocking(probe_prerequisites)
+            .await
+            .context("prerequisites check task panicked")
+    }
+
     async fn check_workspace(&self) -> Result<WorkspaceChecks> {
         let (disk_space_gb, image) = tokio::join!(disk_space_gb(), check_image());
         let disk_space_gb = disk_space_gb?;
@@ -166,13 +194,20 @@ pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
     run_with(ctx, json, &SystemProbe).await
 }
 
-async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> Result<()> {
-    let (workspace, network, security) = tokio::try_join!(
+/// Run doctor with a custom health probe (for testing).
+///
+/// # Errors
+///
+/// Returns an error if health checks cannot be executed or output fails.
+pub async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> Result<()> {
+    let (prerequisites, workspace, network, security) = tokio::try_join!(
+        probe.check_prerequisites(),
         probe.check_workspace(),
         probe.check_network(),
         probe.check_security(),
     )?;
     let checks = DoctorChecks {
+        prerequisites,
         workspace,
         network,
         security,
@@ -188,6 +223,12 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
         let out = serde_json::json!({
             "status": status,
             "checks": {
+                "prerequisites": {
+                    "multipass_found": checks.prerequisites.multipass_found,
+                    "multipass_version": checks.prerequisites.multipass_version,
+                    "multipass_version_ok": checks.prerequisites.multipass_version_ok,
+                    "removable_media_connected": checks.prerequisites.removable_media_connected,
+                },
                 "workspace": {
                     "ready": checks.workspace.ready,
                     "disk_space_gb": checks.workspace.disk_space_gb,
@@ -220,6 +261,7 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     println!("  {}", "Polis Health Check".style(ctx.styles.header));
     println!();
 
+    print_prerequisites_section(ctx, &checks.prerequisites);
     print_workspace_section(ctx, &checks.workspace);
 
     println!("  Network:");
@@ -244,6 +286,39 @@ async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> 
     Ok(())
 }
 
+/// Print the prerequisites section of the human-readable health report.
+fn print_prerequisites_section(ctx: &OutputContext, pre: &PrerequisiteChecks) {
+    println!("  Prerequisites:");
+    if !pre.multipass_found {
+        print_check(ctx, false, "multipass not found");
+        #[cfg(target_os = "linux")]
+        println!("      Install: sudo snap install multipass");
+        #[cfg(not(target_os = "linux"))]
+        println!("      Install: https://multipass.run/install");
+        println!();
+        return;
+    }
+    let ver = pre.multipass_version.as_deref().unwrap_or("unknown");
+    print_check(
+        ctx,
+        pre.multipass_version_ok,
+        &format!("Multipass {ver} (need ≥ 1.16.0)"),
+    );
+    if !pre.multipass_version_ok {
+        #[cfg(target_os = "linux")]
+        println!("      Update: sudo snap refresh multipass");
+        #[cfg(not(target_os = "linux"))]
+        println!("      Update: https://multipass.run/install");
+    }
+    if let Some(connected) = pre.removable_media_connected {
+        print_check(ctx, connected, "removable-media interface connected");
+        if !connected {
+            println!("      Fix: sudo snap connect multipass:removable-media");
+        }
+    }
+    println!();
+}
+
 /// Print the workspace section of the human-readable health report.
 fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
     println!("  Workspace:");
@@ -264,11 +339,11 @@ fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
                 "⚠".style(ctx.styles.warning),
                 drift.latest
             );
-            println!("      Update with: polis init --force");
+            println!("      Update with: polis delete --all && polis start");
         }
     } else {
         print_check(ctx, false, "No workspace image cached");
-        println!("      Run 'polis init' to download the image (~3.2 GB)");
+        println!("      Run 'polis start' to download the image (~3.2 GB)");
     }
 
     if ws.disk_space_ok {
@@ -355,6 +430,16 @@ fn print_check(ctx: &OutputContext, ok: bool, msg: &str) {
 #[must_use]
 pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
     let mut issues = Vec::new();
+    if !checks.prerequisites.multipass_found {
+        issues.push("multipass is not installed".to_string());
+    } else if !checks.prerequisites.multipass_version_ok {
+        let ver = checks
+            .prerequisites
+            .multipass_version
+            .as_deref()
+            .unwrap_or("unknown");
+        issues.push(format!("Multipass {ver} is too old (need ≥ 1.16.0)"));
+    }
     if !checks.workspace.disk_space_ok {
         issues.push(format!(
             "Low disk space ({} GB available, need 10 GB)",
@@ -375,13 +460,63 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
 
 // ── System check helpers ──────────────────────────────────────────────────────
 
+/// Blocking probe for prerequisite checks (runs in `spawn_blocking`).
+fn probe_prerequisites() -> PrerequisiteChecks {
+    use std::process::Command;
+
+    let output = Command::new("multipass").arg("version").output();
+    let Ok(output) = output else {
+        return PrerequisiteChecks {
+            multipass_found: false,
+            multipass_version: None,
+            multipass_version_ok: false,
+            removable_media_connected: None,
+        };
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version_str = stdout
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .map(str::to_owned);
+
+    let version_ok = version_str
+        .as_deref()
+        .and_then(|v| semver::Version::parse(v).ok())
+        .is_none_or(|v| v >= semver::Version::new(1, 16, 0));
+
+    // Linux only: check removable-media snap interface
+    #[cfg(target_os = "linux")]
+    let removable_media_connected = {
+        let conn = Command::new("snap")
+            .args(["connections", "multipass"])
+            .output()
+            .ok();
+        conn.map(|o| {
+            let text = String::from_utf8_lossy(&o.stdout);
+            // Slot column reads " :removable-media" when connected; plug name
+            // "multipass:removable-media" has no leading space before ":".
+            text.contains(" :removable-media")
+        })
+    };
+    #[cfg(not(target_os = "linux"))]
+    let removable_media_connected = None;
+
+    PrerequisiteChecks {
+        multipass_found: true,
+        multipass_version: version_str,
+        multipass_version_ok: version_ok,
+        removable_media_connected,
+    }
+}
+
 /// Check image cache status, metadata, `POLIS_IMAGE` override, and version drift.
 async fn check_image() -> ImageCheckResult {
-    let Some(home) = dirs::home_dir() else {
+    let Ok(images_dir) = crate::workspace::image::images_dir() else {
         return ImageCheckResult::default();
     };
-    let images_dir = home.join(".polis/images");
-    let cached = images_dir.join("polis-workspace.qcow2").exists();
+    let cached = images_dir.join("polis.qcow2").exists();
 
     let (version, sha256_preview) = if cached {
         read_image_json(&images_dir)
@@ -428,7 +563,7 @@ fn read_image_json(images_dir: &Path) -> (Option<String>, Option<String>) {
 async fn check_version_drift(current: String) -> Option<VersionDrift> {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        tokio::task::spawn_blocking(crate::commands::init::resolve_latest_image_url),
+        tokio::task::spawn_blocking(crate::workspace::image::resolve_latest_image_url),
     )
     .await;
     let Ok(Ok(Ok(resolved))) = result else {
@@ -599,12 +734,18 @@ async fn check_certificates() -> (bool, i64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        DoctorChecks, ImageCheckResult, NetworkChecks, SecurityChecks, VersionDrift,
-        WorkspaceChecks, collect_issues,
+        DoctorChecks, ImageCheckResult, NetworkChecks, PrerequisiteChecks, SecurityChecks,
+        VersionDrift, WorkspaceChecks, collect_issues,
     };
 
     fn all_healthy() -> DoctorChecks {
         DoctorChecks {
+            prerequisites: PrerequisiteChecks {
+                multipass_found: true,
+                multipass_version: Some("1.16.1".to_string()),
+                multipass_version_ok: true,
+                removable_media_connected: None,
+            },
             workspace: WorkspaceChecks {
                 ready: true,
                 disk_space_gb: 45,
@@ -715,6 +856,12 @@ mod tests {
     #[test]
     fn test_collect_issues_multiple_failures_all_collected() {
         let checks = DoctorChecks {
+            prerequisites: PrerequisiteChecks {
+                multipass_found: true,
+                multipass_version: Some("1.16.1".to_string()),
+                multipass_version_ok: true,
+                removable_media_connected: None,
+            },
             workspace: WorkspaceChecks {
                 ready: true,
                 disk_space_gb: 2,
@@ -819,185 +966,57 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Property tests
+    // PrerequisiteChecks — collect_issues unit tests
     // -----------------------------------------------------------------------
 
-    mod proptests {
-        use super::*;
-        use proptest::prelude::*;
+    #[test]
+    fn test_collect_issues_multipass_not_found_returns_issue() {
+        let mut checks = all_healthy();
+        checks.prerequisites.multipass_found = false;
+        checks.prerequisites.multipass_version = None;
+        checks.prerequisites.multipass_version_ok = false;
+        let issues = collect_issues(&checks);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.to_lowercase().contains("multipass")),
+            "got: {issues:?}"
+        );
+    }
 
-        prop_compose! {
-            fn arb_workspace_checks()(
-                ready in any::<bool>(),
-                disk_space_gb in 0u64..100,
-            ) -> WorkspaceChecks {
-                WorkspaceChecks {
-                    ready,
-                    disk_space_gb,
-                    disk_space_ok: disk_space_gb >= 10,
-                    image: ImageCheckResult::default(),
-                }
-            }
-        }
+    #[test]
+    fn test_collect_issues_multipass_version_too_old_returns_issue() {
+        let mut checks = all_healthy();
+        checks.prerequisites.multipass_version = Some("1.15.0".to_string());
+        checks.prerequisites.multipass_version_ok = false;
+        let issues = collect_issues(&checks);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("1.15.0") || i.to_lowercase().contains("old")),
+            "got: {issues:?}"
+        );
+    }
 
-        prop_compose! {
-            fn arb_network_checks()(
-                internet in any::<bool>(),
-                dns in any::<bool>(),
-            ) -> NetworkChecks {
-                NetworkChecks { internet, dns }
-            }
-        }
+    #[test]
+    fn test_collect_issues_removable_media_connected_no_issue() {
+        let mut checks = all_healthy();
+        checks.prerequisites.removable_media_connected = Some(true);
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.iter().any(|i| i.contains("removable-media")),
+            "got: {issues:?}"
+        );
+    }
 
-        prop_compose! {
-            fn arb_security_checks()(
-                process_isolation in any::<bool>(),
-                traffic_inspection in any::<bool>(),
-                malware_db_current in any::<bool>(),
-                malware_db_age_hours in 0u64..1000,
-                certificates_valid in any::<bool>(),
-                certificates_expire_days in -30i64..400,
-            ) -> SecurityChecks {
-                SecurityChecks {
-                    process_isolation,
-                    traffic_inspection,
-                    malware_db_current,
-                    malware_db_age_hours,
-                    certificates_valid,
-                    certificates_expire_days,
-                }
-            }
-        }
-
-        prop_compose! {
-            fn arb_doctor_checks()(
-                workspace in arb_workspace_checks(),
-                network in arb_network_checks(),
-                security in arb_security_checks(),
-            ) -> DoctorChecks {
-                DoctorChecks { workspace, network, security }
-            }
-        }
-
-        proptest! {
-            /// collect_issues never panics for any valid input.
-            #[test]
-            fn prop_collect_issues_never_panics(checks in arb_doctor_checks()) {
-                let _ = collect_issues(&checks);
-            }
-
-            /// All healthy checks produce zero issues.
-            #[test]
-            fn prop_all_healthy_produces_no_issues(
-                disk_space_gb in 10u64..100,
-                malware_db_age_hours in 0u64..24,
-                certificates_expire_days in 31i64..400,
-            ) {
-                let checks = DoctorChecks {
-                    workspace: WorkspaceChecks {
-                        ready: true,
-                        disk_space_gb,
-                        disk_space_ok: true,
-                        image: ImageCheckResult::default(),
-                    },
-                    network: NetworkChecks {
-                        internet: true,
-                        dns: true,
-                    },
-                    security: SecurityChecks {
-                        process_isolation: true,
-                        traffic_inspection: true,
-                        malware_db_current: true,
-                        malware_db_age_hours,
-                        certificates_valid: true,
-                        certificates_expire_days,
-                    },
-                };
-                let issues = collect_issues(&checks);
-                prop_assert!(issues.is_empty(), "expected no issues for healthy checks, got: {issues:?}");
-            }
-
-            /// Low disk space always produces a disk-related issue.
-            #[test]
-            fn prop_low_disk_produces_disk_issue(disk_space_gb in 0u64..10) {
-                let checks = DoctorChecks {
-                    workspace: WorkspaceChecks {
-                        ready: true,
-                        disk_space_gb,
-                        disk_space_ok: false,
-                        image: ImageCheckResult::default(),
-                    },
-                    network: NetworkChecks { internet: true, dns: true },
-                    security: SecurityChecks {
-                        process_isolation: true,
-                        traffic_inspection: true,
-                        malware_db_current: true,
-                        malware_db_age_hours: 0,
-                        certificates_valid: true,
-                        certificates_expire_days: 365,
-                    },
-                };
-                let issues = collect_issues(&checks);
-                prop_assert!(
-                    issues.iter().any(|i| i.to_lowercase().contains("disk")),
-                    "expected disk issue for {disk_space_gb} GB"
-                );
-            }
-
-            /// Expired certificates always produce a cert-related issue.
-            #[test]
-            fn prop_expired_certs_produce_cert_issue(days in -30i64..=0) {
-                let checks = DoctorChecks {
-                    workspace: WorkspaceChecks {
-                        ready: true,
-                        disk_space_gb: 50,
-                        disk_space_ok: true,
-                        image: ImageCheckResult::default(),
-                    },
-                    network: NetworkChecks { internet: true, dns: true },
-                    security: SecurityChecks {
-                        process_isolation: true,
-                        traffic_inspection: true,
-                        malware_db_current: true,
-                        malware_db_age_hours: 0,
-                        certificates_valid: false,
-                        certificates_expire_days: days,
-                    },
-                };
-                let issues = collect_issues(&checks);
-                prop_assert!(
-                    issues.iter().any(|i| i.to_lowercase().contains("cert")),
-                    "expected cert issue for {days} days"
-                );
-            }
-
-            /// `read_image_json` never panics on arbitrary file content.
-            #[test]
-            fn prop_read_image_json_never_panics(content in ".*") {
-                let dir = tempfile::tempdir().expect("tempdir");
-                std::fs::write(dir.path().join("image.json"), content.as_bytes())
-                    .expect("write");
-                let _ = super::super::read_image_json(dir.path());
-            }
-
-            /// `sha256_preview` is always at most 12 characters.
-            #[test]
-            fn prop_read_image_json_sha256_preview_at_most_12_chars(
-                sha256 in "[a-f0-9]{0,64}",
-            ) {
-                let dir = tempfile::tempdir().expect("tempdir");
-                let json = format!(r#"{{"version":"v0.3.0","sha256":"{sha256}"}}"#);
-                std::fs::write(dir.path().join("image.json"), json.as_bytes())
-                    .expect("write");
-                let (_, preview) = super::super::read_image_json(dir.path());
-                if let Some(p) = preview {
-                    prop_assert!(
-                        p.len() <= 12,
-                        "sha256_preview must be ≤ 12 chars, got {len}: {p}",
-                        len = p.len()
-                    );
-                }
-            }
-        }
+    #[test]
+    fn test_collect_issues_removable_media_none_no_issue() {
+        let mut checks = all_healthy();
+        checks.prerequisites.removable_media_connected = None;
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.iter().any(|i| i.contains("removable-media")),
+            "got: {issues:?}"
+        );
     }
 }

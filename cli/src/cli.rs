@@ -33,47 +33,35 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Create workspace and start agent
-    Run(commands::run::RunArgs),
+    /// Start workspace
+    Start(commands::start::StartArgs),
 
-    /// Start existing workspace
-    Start,
-
-    /// Stop workspace (preserves state)
+    /// Stop workspace
     Stop,
 
     /// Remove workspace
     Delete(commands::DeleteArgs),
 
-    /// Show workspace and agent status
+    /// Show workspace status
     Status,
 
-    /// Enter workspace terminal
-    Shell,
-
-    /// Show/open connection options
+    /// Show connection options
     Connect(commands::connect::ConnectArgs),
-
-    /// Manage agents
-    #[command(subcommand)]
-    Agents(commands::agents::AgentsCommand),
 
     /// Manage configuration
     #[command(subcommand)]
     Config(commands::config::ConfigCommand),
 
-    /// Download and verify the workspace VM image
-    Init(commands::init::InitArgs),
-
     /// Diagnose issues
     Doctor,
 
     /// Update Polis
-    Update,
+    Update(commands::update::UpdateArgs),
 
     /// Show version
     Version,
 
+    // --- Internal ---
     #[command(hide = true, name = "_ssh-proxy")]
     SshProxy,
 
@@ -98,57 +86,59 @@ impl Cli {
             command,
         } = self;
         let no_color = no_color || std::env::var("NO_COLOR").is_ok();
+
         match command {
-            Command::Version => commands::version::run(json),
+            Command::Start(args) => {
+                let mp = crate::multipass::MultipassCli;
+                commands::start::run(&args, &mp, quiet)
+            }
+
+            Command::Stop => {
+                let mp = crate::multipass::MultipassCli;
+                commands::stop::run(&mp, quiet)
+            }
+
+            Command::Delete(args) => {
+                let mp = crate::multipass::MultipassCli;
+                commands::delete::run(&args, &mp, quiet)
+            }
+
             Command::Status => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 let mp = crate::multipass::MultipassCli;
                 commands::status::run(&ctx, json, &mp).await
             }
-            Command::Run(args) => {
-                let mp = crate::multipass::MultipassCli;
-                commands::run::run(&args, &mp)
-            }
-            Command::Start => {
-                let state_mgr = crate::state::StateManager::new()?;
-                let driver = crate::workspace::MultipassDriver;
-                commands::start::run(&state_mgr, &driver)
-            }
-            Command::Stop => {
-                let state_mgr = crate::state::StateManager::new()?;
-                let driver = crate::workspace::MultipassDriver;
-                commands::stop::run(&state_mgr, &driver)
-            }
-            Command::Delete(args) => {
-                let state_mgr = crate::state::StateManager::new()?;
-                let driver = crate::workspace::MultipassDriver;
-                commands::delete::run(&args, &state_mgr, &driver)
-            }
+
             Command::Connect(args) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::connect::run(&ctx, args).await
             }
-            Command::Agents(cmd) => {
-                let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::agents::run(&ctx, cmd, json)
-            }
+
             Command::Config(cmd) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::config::run(&ctx, cmd)
+                commands::config::run(&ctx, cmd, json)
             }
-            Command::Update => {
+
+            Command::Update(args) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 let mp = crate::multipass::MultipassCli;
-                commands::update::run(&ctx, &commands::update::GithubUpdateChecker, &mp).await
+                commands::update::run(&args, &ctx, &commands::update::GithubUpdateChecker, &mp)
+                    .await
             }
-            Command::Init(args) => commands::init::run(&args),
+
             Command::Doctor => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::doctor::run(&ctx, json).await
             }
+
+            Command::Version => commands::version::run(json),
+
+            // --- Internal commands ---
             Command::SshProxy => commands::internal::ssh_proxy().await,
             Command::ExtractHostKey => commands::internal::extract_host_key().await,
-            _ => anyhow::bail!("Command not yet implemented"),
+            Command::Provision => {
+                anyhow::bail!("Provision command is internal only")
+            }
         }
     }
 }

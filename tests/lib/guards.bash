@@ -10,6 +10,18 @@ require_container() {
         health=$(docker inspect --format '{{.State.Health.Status}}' "$c" 2>/dev/null || echo "none")
         [[ "$health" == "none" || "$health" == "healthy" ]] || skip "Container $c not healthy ($health)"
     done
+    return 0
+}
+
+# Guard for init containers — they exit after running, so check exited with status 0
+require_init_container() {
+    for c in "$@"; do
+        local state exit_code
+        state=$(docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null || echo "missing")
+        [[ "$state" == "exited" ]] || skip "Init container $c not found (state: $state)"
+        exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$c" 2>/dev/null || echo "1")
+        [[ "$exit_code" == "0" ]] || skip "Init container $c exited with code $exit_code"
+    done
 }
 
 require_agents_mounted() {

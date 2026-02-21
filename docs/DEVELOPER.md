@@ -8,14 +8,14 @@ This guide covers the development workflow, tools, and CI/CD for Polis.
 # 1. Setup (generate certs and secrets)
 just setup
 
-# 2. Build all Docker images
+# 2. Build CLI + Docker images + VM image
 just build
 
-# 3. Start services
-just up
+# 3. Install dev build
+bash scripts/install-dev.sh
 
-# 4. Run tests
-just test-bats
+# 4. Run workspace
+polis run
 ```
 
 ## Prerequisites
@@ -69,9 +69,11 @@ Run `just --list` to see all available recipes.
 | `just setup-ca` | Generate CA certificate only |
 | `just setup-valkey` | Generate Valkey certs and secrets |
 | `just setup-toolbox` | Generate Toolbox certificates |
-| `just build` | Build all Docker images |
-| `just build-service <name>` | Build a specific service |
-| `just build-vm` | Build VM image via Packer |
+| `just build` | Build CLI + Docker images + VM image |
+| `just build-cli` | Build the Rust CLI binary |
+| `just build-docker` | Build all Docker images |
+| `just build-vm` | Build VM image via Packer (sign included) |
+| `just build-service <name>` | Build a specific Docker service |
 
 ### Lifecycle
 
@@ -86,14 +88,15 @@ Run `just --list` to see all available recipes.
 
 | Recipe | Description |
 |--------|-------------|
-| `just test` | Run all tests (Rust, C, BATS unit) |
-| `just test-all` | Run all test tiers (unit + integration + e2e) |
-| `just test-clean` | Full clean → build → setup → up → test-all (stops on first failure) |
-| `just test-rust` | Run Rust tests |
-| `just test-c` | Run C tests |
-| `just test-bats` | Run BATS unit tests |
-| `just test-integration` | Run integration tests (requires running containers) |
-| `just test-e2e` | Run E2E tests (requires full stack) |
+| `just test` | Run Rust + C + BATS unit tests |
+| `just test-all` | Run all tiers (unit + integration + e2e) |
+| `just test-clean` | Full clean → build-docker → setup → up → test-all (stops on first failure) |
+| `just test-rust` | Run all Rust tests (cli + toolbox + polis-common) |
+| `just test-c` | Run C unit tests (sentinel modules) |
+| `just test-unit` | Run BATS unit tests (~30s, no Docker) |
+| `just test-cli [filter]` | Run CLI BATS spec tests (requires multipass + built VM + installed polis) |
+| `just test-integration` | Run integration tests (~3min, requires running containers) |
+| `just test-e2e` | Run E2E tests (~10min, requires full stack) |
 
 ### Linting
 
@@ -407,7 +410,7 @@ validate → docker (build + tag + push to GHCR + generate versions.json)
 
 | Artifact | Description |
 |----------|-------------|
-| `polis-workspace-vX.X.X-amd64.qcow2` | VM image with Docker + Sysbox + Polis |
+| `polis-vX.X.X-amd64.qcow2` | VM image with Docker + Sysbox + Polis |
 | `checksums.sha256` | SHA256 checksums for VM |
 | `polis-linux-amd64` | CLI binary |
 | `polis-linux-amd64.sha256` | CLI checksum |
@@ -445,7 +448,7 @@ Each release publishes a signed `versions.json` that maps container names to the
 ```json
 {
   "manifest_version": 1,
-  "vm_image": { "version": "v0.3.0", "asset": "polis-workspace-v0.3.0-amd64.qcow2" },
+  "vm_image": { "version": "v0.3.0", "asset": "polis-v0.3.0-amd64.qcow2" },
   "containers": {
     "polis-gate-oss": "v0.3.0",
     "polis-sentinel-oss": "v0.3.0",
@@ -481,7 +484,7 @@ base64 -w0 .secrets/polis-release.key
 
 ```bash
 # Verify VM image provenance
-gh attestation verify polis-workspace-v0.3.0-amd64.qcow2 --owner OdraLabsHQ
+gh attestation verify polis-v0.3.0-amd64.qcow2 --owner OdraLabsHQ
 
 # Verify CLI binary provenance
 gh attestation verify polis-linux-amd64 --owner OdraLabsHQ
@@ -519,13 +522,19 @@ This installs: docker.io, shellcheck, hadolint (v2.12.0), container-structure-te
 ### Local Build
 
 ```bash
-# Build Docker images first
-just build
+# Build CLI binary
+just build-cli
+
+# Build Docker images
+just build-docker
 
 # Build VM image (amd64, default)
 just build-vm
 
-# Build for arm64
+# Build everything
+just build
+
+# Build VM for arm64
 just build-vm arch=arm64
 
 # Debug: open QEMU console to watch boot progress
@@ -533,11 +542,12 @@ just build-vm headless=false
 ```
 
 This runs:
-1. `docker compose build` - Build all service images
-2. `docker save` - Export images to `.build/polis-images.tar`
-3. `packer build` - Create VM with Docker, Sysbox, and pre-loaded images
+1. `cargo build --release` - Build the CLI binary
+2. `docker compose build` - Build all service images
+3. `docker save` - Export images to `.build/polis-images.tar`
+4. `packer build` - Create VM with Docker, Sysbox, and pre-loaded images
 
-Output: `output/polis-vm-<version>-amd64.qcow2`
+Output: `packer/output/polis-<version>-amd64.qcow2`
 
 ### VM Image Validation (Goss)
 
@@ -595,6 +605,24 @@ multipass stop polis-dev
 Set-VMProcessor -VMName "polis-dev" -ExposeVirtualizationExtensions $true
 multipass start polis-dev
 ```
+
+**Disk space requirements**
+
+`polis run` causes multipassd to copy the workspace image (~3.4 GB) into its vault, then expand a 50 GB virtual disk inside the nested VM. The dev VM needs enough free space to hold both. Recommended minimum: **200 GB**.
+
+To check and resize from the host:
+
+```bash
+# Find the VM name
+multipass list
+
+# Stop, resize, restart
+multipass stop <name>
+multipass set local.<name>.disk=200G
+multipass start <name>
+```
+
+The filesystem inside the VM expands automatically on next boot via `growpart`.
 
 VMware Workstation: VM Settings → Processors → enable "Virtualize Intel VT-x/EPT or AMD-V/RVI"
 
@@ -680,11 +708,51 @@ docker exec polis-workspace systemctl restart openclaw
 The user-facing CLI is built in Rust under `cli/src/`. To build and install locally:
 
 ```bash
-cd cli && cargo build --release
-cp target/release/polis ~/.local/bin/
+just build-cli
+cp cli/target/release/polis ~/.local/bin/
 ```
 
 Or use the pre-built binary from GitHub releases.
+
+---
+
+## Local Install (Dev Build)
+
+`scripts/install-dev.sh` installs Polis from local build artifacts instead of GitHub releases. Use this to test the full install flow without publishing a release.
+
+### Prerequisites
+
+```bash
+# 1. Build the CLI
+just build-cli
+
+# 2. Build the VM image
+just build-vm
+```
+
+### Install
+
+```bash
+./scripts/install-dev.sh
+```
+
+This installs:
+- CLI from `cli/target/release/polis` → `~/.polis/bin/polis`
+- Symlink at `~/.local/bin/polis`
+- VM image from `packer/output/*.qcow2` via `polis init --image file://...`
+
+### Options
+
+```bash
+# Override repo path (e.g. when running from outside the repo)
+./scripts/install-dev.sh --repo /path/to/polis
+
+# Or via env var
+POLIS_REPO=/path/to/polis ./scripts/install-dev.sh
+
+# Override install dir (default: ~/.polis)
+POLIS_HOME=/opt/polis ./scripts/install-dev.sh
+```
 
 ---
 

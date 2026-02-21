@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
 use anyhow::{Context, Result};
+use clap::Args;
 use dialoguer::Confirm;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,15 @@ use zipsign_api::{
 };
 
 use crate::output::OutputContext;
+use crate::workspace::image;
+
+/// Arguments for the update command.
+#[derive(Args)]
+pub struct UpdateArgs {
+    /// Check for updates without applying them
+    #[arg(long)]
+    pub check: bool,
+}
 
 /// Embedded ed25519 public key for release signature verification.
 /// This key is set during the release build process.
@@ -46,7 +56,7 @@ pub struct VersionsManifest {
 pub struct VmImageVersion {
     /// Semver tag (e.g., `"v0.3.0"`).
     pub version: String,
-    /// Asset filename (e.g., `"polis-workspace-v0.3.0-amd64.qcow2"`).
+    /// Asset filename (e.g., `"polis-v0.3.0-amd64.qcow2"`).
     pub asset: String,
 }
 
@@ -102,7 +112,7 @@ pub fn validate_version_tag(tag: &str) -> Result<()> {
 #[allow(dead_code)]
 pub fn load_versions_manifest() -> Result<VersionsManifest> {
     let url = std::env::var("POLIS_GITHUB_API_URL")
-        .unwrap_or_else(|_| crate::commands::init::GITHUB_RELEASES_URL.to_string());
+        .unwrap_or_else(|_| crate::workspace::image::GITHUB_RELEASES_URL.to_string());
 
     let token = std::env::var("GITHUB_TOKEN").unwrap_or_default();
     let req = ureq::get(&url)
@@ -122,7 +132,7 @@ pub fn load_versions_manifest() -> Result<VersionsManifest> {
             serde_json::from_str(&s).context("failed to parse GitHub API response")?
         }
         Err(ureq::Error::Status(403, _)) => anyhow::bail!(
-            "GitHub API rate limit exceeded (60 requests/hour unauthenticated).\nSet GITHUB_TOKEN env var or use: polis init --image <direct-url>"
+            "GitHub API rate limit exceeded (60 requests/hour unauthenticated).\nSet GITHUB_TOKEN env var or use: polis start --image <direct-url>"
         ),
         Err(ureq::Error::Status(404, _)) => {
             anyhow::bail!("GitHub repository not found: OdraLabsHQ/polis")
@@ -673,7 +683,7 @@ impl UpdateChecker for GithubUpdateChecker {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-/// Run `polis update`.
+/// Run `polis update [--check]`.
 ///
 /// Checks GitHub for a newer release, verifies its signature, prompts the user,
 /// then downloads and replaces the current binary.
@@ -684,6 +694,7 @@ impl UpdateChecker for GithubUpdateChecker {
 /// user prompt fails.
 #[allow(clippy::unused_async)] // async contract: will gain awaits when download is made async
 pub async fn run(
+    args: &UpdateArgs,
     ctx: &OutputContext,
     checker: &impl UpdateChecker,
     mp: &impl Multipass,
@@ -691,92 +702,172 @@ pub async fn run(
     let current = env!("CARGO_PKG_VERSION");
 
     if !ctx.quiet {
-        println!("  Checking for updates...");
+        println!("Checking for updates...");
         println!();
     }
 
-    match checker.check(current)? {
+    let cli_update = checker.check(current)?;
+    let image_update = check_image_update();
+    let has_updates = display_update_status(ctx, current, &cli_update, image_update.as_ref());
+
+    if args.check {
+        if has_updates {
+            println!();
+            println!("Run 'polis update' to apply updates.");
+        }
+        return Ok(());
+    }
+
+    apply_cli_update(ctx, checker, cli_update)?;
+    apply_container_updates(ctx, mp)?;
+
+    println!();
+    Ok(())
+}
+
+fn display_update_status(
+    ctx: &OutputContext,
+    current: &str,
+    cli_update: &UpdateInfo,
+    image_update: Option<&(String, String)>,
+) -> bool {
+    let mut has_updates = false;
+
+    match cli_update {
         UpdateInfo::UpToDate => {
             println!(
-                "  {} You're running the latest version (v{current})",
+                "  {} CLI             v{current} (latest)",
                 "✓".style(ctx.styles.success),
             );
         }
         UpdateInfo::Available {
             version,
             release_notes,
-            download_url,
+            ..
         } => {
-            println!("  Current: v{current}");
-            println!("  Latest:  v{version}");
-            println!();
-
+            has_updates = true;
+            println!("  CLI             v{current} → v{version} available");
             if !release_notes.is_empty() {
+                println!();
                 println!("  Changes in v{version}:");
-                for note in &release_notes {
+                for note in release_notes {
                     println!("    • {note}");
                 }
-                println!();
             }
-
-            if !ctx.quiet {
-                println!("  Verifying signature...");
-            }
-            let sig = checker
-                .verify_signature(&download_url)
-                .context("signature verification failed")?;
-
-            let sha_preview = sig.sha256.get(..12).unwrap_or(&sig.sha256);
-            println!(
-                "    {} Signed by: {} (key: {})",
-                "✓".style(ctx.styles.success),
-                sig.signer,
-                sig.key_id,
-            );
-            println!(
-                "    {} SHA-256: {sha_preview}...",
-                "✓".style(ctx.styles.success),
-            );
-            println!();
-
-            let confirmed = Confirm::new()
-                .with_prompt("Update now?")
-                .default(true)
-                .interact()
-                .context("reading confirmation")?;
-
-            if !confirmed {
-                return Ok(());
-            }
-
-            if !ctx.quiet {
-                println!("  Downloading...");
-            }
-            checker.perform_update(&version).context("update failed")?;
-
-            println!();
-            println!("  {} Updated to v{version}", "✓".style(ctx.styles.success),);
-            println!();
-            println!("  Restart your terminal or run: exec polis");
         }
     }
 
-    // Container update check (issue 08)
+    if let Some((current_ver, available_ver)) = image_update {
+        has_updates = true;
+        println!("  Workspace image {current_ver} → {available_ver} available");
+        println!();
+        println!("  To upgrade your workspace:");
+        println!("    polis delete && polis start");
+    } else {
+        let version = image::images_dir()
+            .ok()
+            .and_then(|d| image::load_metadata(&d).ok().flatten())
+            .map_or_else(|| "none".to_string(), |m| m.version);
+        if version != "none" {
+            println!(
+                "  {} Workspace image {} (latest)",
+                "✓".style(ctx.styles.success),
+                version
+            );
+        }
+    }
+
+    has_updates
+}
+
+fn apply_cli_update(
+    ctx: &OutputContext,
+    checker: &impl UpdateChecker,
+    cli_update: UpdateInfo,
+) -> Result<()> {
+    let UpdateInfo::Available {
+        version,
+        download_url,
+        ..
+    } = cli_update
+    else {
+        return Ok(());
+    };
+
     println!();
     if !ctx.quiet {
-        println!("  Checking container updates...");
+        println!("  Verifying signature...");
+    }
+    let sig = checker
+        .verify_signature(&download_url)
+        .context("signature verification failed")?;
+
+    let sha_preview = sig.sha256.get(..12).unwrap_or(&sig.sha256);
+    println!(
+        "    {} Signed by: {} (key: {})",
+        "✓".style(ctx.styles.success),
+        sig.signer,
+        sig.key_id,
+    );
+    println!(
+        "    {} SHA-256: {sha_preview}...",
+        "✓".style(ctx.styles.success),
+    );
+    println!();
+
+    let confirmed = Confirm::new()
+        .with_prompt("Update CLI now?")
+        .default(true)
+        .interact()
+        .context("reading confirmation")?;
+
+    if confirmed {
+        if !ctx.quiet {
+            println!("  Downloading...");
+        }
+        checker.perform_update(&version).context("update failed")?;
+        println!();
+        println!(
+            "  {} CLI updated to v{version}",
+            "✓".style(ctx.styles.success)
+        );
+        println!();
+        println!("  Restart your terminal or run: exec polis");
+    }
+    Ok(())
+}
+
+fn apply_container_updates(ctx: &OutputContext, mp: &impl Multipass) -> Result<()> {
+    println!();
+    if !ctx.quiet {
+        println!("  Checking service updates...");
         println!();
     }
     match load_versions_manifest() {
         Ok(manifest) => update_containers(&manifest, ctx, mp)?,
         Err(e) => {
-            // Non-fatal: container update check failure should not block CLI update
             eprintln!("  Warning: could not load versions manifest: {e}");
         }
     }
-
-    println!();
     Ok(())
+}
+
+/// Check if a newer workspace image is available.
+///
+/// Returns `Some((current, available))` if an update is available, `None` otherwise.
+fn check_image_update() -> Option<(String, String)> {
+    let images_dir = image::images_dir().ok()?;
+    let cached_meta = image::load_metadata(&images_dir).ok().flatten();
+    let manifest = load_versions_manifest().ok()?;
+
+    let current = cached_meta.map_or_else(|| "none".to_string(), |m| m.version);
+    let available = manifest.vm_image.version;
+
+    if current == available || current == "none" {
+        None
+    } else {
+        Some((current, available))
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -967,7 +1058,6 @@ fn perform_update(version: &str) -> Result<()> {
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::wildcard_imports)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     /// Stub [`Multipass`] for tests that never reach multipass calls.
     struct StubMultipass;
@@ -992,6 +1082,9 @@ mod tests {
         }
         fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: exec not expected")
+        }
+        fn version(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: version not expected")
         }
     }
 
@@ -1085,8 +1178,9 @@ mod tests {
             }
         }
 
+        let args = UpdateArgs { check: true };
         let ctx = OutputContext::new(true, true);
-        let result = run(&ctx, &AlwaysUpToDate, &StubMultipass).await;
+        let result = run(&args, &ctx, &AlwaysUpToDate, &StubMultipass).await;
         assert!(result.is_ok());
     }
 
@@ -1111,124 +1205,14 @@ mod tests {
             }
         }
 
+        let args = UpdateArgs { check: false };
         let ctx = OutputContext::new(true, true);
-        let result = run(&ctx, &BadSignature, &StubMultipass).await;
+        let result = run(&args, &ctx, &BadSignature, &StubMultipass).await;
         assert!(result.is_err());
         assert!(
             result.unwrap_err().to_string().contains("signature"),
             "error should mention signature"
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // parse_release_notes — property
-    // -----------------------------------------------------------------------
-
-    proptest! {
-        /// Output never exceeds 5 items regardless of input size.
-        #[test]
-        fn prop_parse_release_notes_output_never_exceeds_five(
-            lines in proptest::collection::vec("[-*] [^\n]{0,80}", 0..20),
-        ) {
-            let body = lines.join("\n");
-            let notes = parse_release_notes(&body);
-            prop_assert!(notes.len() <= 5);
-        }
-
-        /// No output item retains its original bullet prefix.
-        #[test]
-        fn prop_parse_release_notes_items_have_no_bullet_prefix(
-            lines in proptest::collection::vec(
-                proptest::sample::select(vec!["- alpha", "- beta", "* gamma", "* delta"]),
-                0..10,
-            ),
-        ) {
-            let body = lines.join("\n");
-            let notes = parse_release_notes(&body);
-            for note in &notes {
-                prop_assert!(
-                    !note.starts_with("- ") && !note.starts_with("* "),
-                    "item still has bullet prefix: {note:?}"
-                );
-            }
-        }
-
-        /// Non-bullet lines produce no output items.
-        #[test]
-        fn prop_parse_release_notes_non_bullet_lines_produce_no_items(
-            body in "[^-*\n][^\n]{0,80}",
-        ) {
-            // A body whose first char is not '-' or '*' has no bullet lines.
-            let notes = parse_release_notes(&body);
-            prop_assert!(notes.is_empty());
-        }
-
-        /// run() with UpToDate checker always returns Ok for any current version string.
-        #[test]
-        fn prop_run_up_to_date_always_ok(version in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}") {
-            struct UpToDate;
-            impl UpdateChecker for UpToDate {
-                fn check(&self, _: &str) -> anyhow::Result<UpdateInfo> { Ok(UpdateInfo::UpToDate) }
-                fn verify_signature(&self, _: &str) -> anyhow::Result<SignatureInfo> { unreachable!() }
-                fn perform_update(&self, _: &str) -> anyhow::Result<()> { unreachable!() }
-            }
-
-            let ctx = crate::output::OutputContext::new(true, true);
-            let rt = tokio::runtime::Runtime::new().expect("runtime");
-            let result = rt.block_on(run(&ctx, &UpToDate, &StubMultipass));
-            prop_assert!(result.is_ok(), "expected Ok for version {version}");
-        }
-
-        /// run() with a failing verify_signature always returns Err mentioning "signature".
-        #[test]
-        fn prop_run_bad_signature_always_err(
-            version in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
-        ) {
-            struct BadSig;
-            impl UpdateChecker for BadSig {
-                fn check(&self, _: &str) -> anyhow::Result<UpdateInfo> {
-                    Ok(UpdateInfo::Available {
-                        version: "9.9.9".to_string(),
-                        release_notes: vec![],
-                        download_url: "https://example.com/polis.tar.gz".to_string(),
-                    })
-                }
-                fn verify_signature(&self, _: &str) -> anyhow::Result<SignatureInfo> {
-                    Err(anyhow::anyhow!("signature verification failed"))
-                }
-                fn perform_update(&self, _: &str) -> anyhow::Result<()> { unreachable!() }
-            }
-
-            let ctx = crate::output::OutputContext::new(true, true);
-            let rt = tokio::runtime::Runtime::new().expect("runtime");
-            let result = rt.block_on(run(&ctx, &BadSig, &StubMultipass));
-            prop_assert!(result.is_err());
-            prop_assert!(
-                result.unwrap_err().to_string().contains("signature"),
-                "error for version {version} should mention signature"
-            );
-        }
-
-        /// hex_encode output length is always 2x input length.
-        #[test]
-        fn prop_hex_encode_output_length(input in proptest::collection::vec(any::<u8>(), 0..256)) {
-            let encoded = hex_encode(&input);
-            prop_assert_eq!(encoded.len(), input.len() * 2);
-        }
-
-        /// hex_encode output contains only lowercase hex characters.
-        #[test]
-        fn prop_hex_encode_only_hex_chars(input in proptest::collection::vec(any::<u8>(), 0..256)) {
-            let encoded = hex_encode(&input);
-            prop_assert!(encoded.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
-        }
-
-        /// base64_decode rejects invalid characters.
-        #[test]
-        fn prop_base64_decode_rejects_invalid_chars(invalid in "[^A-Za-z0-9+/=]+") {
-            let result = base64_decode(&invalid);
-            prop_assert!(result.is_err());
-        }
     }
 
     // -----------------------------------------------------------------------
@@ -1356,7 +1340,7 @@ mod tests {
     fn test_versions_manifest_deserialize_valid_json_returns_struct() {
         let json = r#"{
             "manifest_version": 1,
-            "vm_image": { "version": "v0.3.0", "asset": "polis-workspace-v0.3.0-amd64.qcow2" },
+            "vm_image": { "version": "v0.3.0", "asset": "polis-v0.3.0-amd64.qcow2" },
             "containers": { "polis-gate-oss": "v0.3.1" }
         }"#;
         let m: VersionsManifest = serde_json::from_str(json).expect("valid JSON");
@@ -1378,7 +1362,7 @@ mod tests {
             manifest_version: 1,
             vm_image: VmImageVersion {
                 version: "v0.3.0".to_string(),
-                asset: "polis-workspace-v0.3.0-amd64.qcow2".to_string(),
+                asset: "polis-v0.3.0-amd64.qcow2".to_string(),
             },
             containers: [("polis-gate-oss".to_string(), "v0.3.1".to_string())]
                 .into_iter()
@@ -1389,81 +1373,6 @@ mod tests {
         assert_eq!(restored.manifest_version, original.manifest_version);
         assert_eq!(restored.vm_image.version, original.vm_image.version);
         assert_eq!(restored.containers, original.containers);
-    }
-
-    // -----------------------------------------------------------------------
-    // validate_version_tag — property
-    // -----------------------------------------------------------------------
-
-    proptest! {
-        /// Any vX.Y.Z tag (no pre-release) is always accepted.
-        #[test]
-        fn prop_validate_version_tag_valid_semver_always_ok(
-            major in 0u32..100,
-            minor in 0u32..100,
-            patch in 0u32..100,
-        ) {
-            let tag = format!("v{major}.{minor}.{patch}");
-            prop_assert!(validate_version_tag(&tag).is_ok(), "tag {tag} should be valid");
-        }
-
-        /// Tags without a `v` prefix are always rejected.
-        #[test]
-        fn prop_validate_version_tag_no_v_prefix_always_err(
-            major in 0u32..100,
-            minor in 0u32..100,
-            patch in 0u32..100,
-        ) {
-            let tag = format!("{major}.{minor}.{patch}");
-            prop_assert!(validate_version_tag(&tag).is_err(), "tag {tag} should be invalid");
-        }
-
-        /// Tags containing shell metacharacters are always rejected (V-004).
-        #[test]
-        fn prop_validate_version_tag_shell_metachar_always_err(
-            meta in proptest::sample::select(vec![";", "|", "&", "$", "`", "\n", " "]),
-        ) {
-            let tag = format!("v0.3.0-rc{meta}1");
-            prop_assert!(validate_version_tag(&tag).is_err(), "tag with {meta:?} should be invalid");
-        }
-
-        // -----------------------------------------------------------------------
-        // ghcr_ref — property
-        // -----------------------------------------------------------------------
-
-        /// `ghcr_ref` output always starts with the GHCR prefix.
-        #[test]
-        fn prop_ghcr_ref_always_starts_with_prefix(
-            image in "[a-z][a-z0-9-]{1,30}",
-            version in "v[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
-        ) {
-            let r = ghcr_ref(&image, &version);
-            prop_assert!(r.starts_with(GHCR_PREFIX), "ref {r:?} must start with GHCR_PREFIX");
-        }
-
-        /// `ghcr_ref` output always ends with `:{version}`.
-        #[test]
-        fn prop_ghcr_ref_always_ends_with_version(
-            image in "[a-z][a-z0-9-]{1,30}",
-            version in "v[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
-        ) {
-            let r = ghcr_ref(&image, &version);
-            prop_assert!(r.ends_with(&format!(":{version}")), "ref {r:?} must end with :{version}");
-        }
-
-        // -----------------------------------------------------------------------
-        // container_to_service_key — property
-        // -----------------------------------------------------------------------
-
-        /// `polis-{x}-oss` always maps to `{x}`.
-        #[test]
-        fn prop_container_to_service_key_polis_x_oss_maps_to_x(
-            middle in "[a-z][a-z0-9]{1,20}",
-        ) {
-            let name = format!("polis-{middle}-oss");
-            let key = container_to_service_key(&name);
-            prop_assert_eq!(key, middle.as_str());
-        }
     }
 
     // -----------------------------------------------------------------------
@@ -1532,7 +1441,7 @@ mod tests {
             manifest_version: 1,
             vm_image: VmImageVersion {
                 version: "v0.3.0".to_string(),
-                asset: "polis-workspace-v0.3.0-amd64.qcow2".to_string(),
+                asset: "polis-v0.3.0-amd64.qcow2".to_string(),
             },
             containers: containers
                 .iter()

@@ -29,7 +29,7 @@ cat > "${SERVE_DIR}/versions.json.plain" << EOF
   "manifest_version": 1,
   "vm_image": {
     "version": "${VERSION}",
-    "asset": "polis-workspace-${VERSION}-amd64.qcow2"
+    "asset": "polis-${VERSION}-amd64.qcow2"
   },
   "containers": {
     "polis-resolver-oss": "${VERSION}",

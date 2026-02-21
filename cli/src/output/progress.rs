@@ -16,11 +16,16 @@ pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
+            .tick_strings(&[
+                "⠁", "⠂", "⠄", "⡀", "⡈", "⡐", "⡠", "⣀", "⣁", "⣂", "⣄", "⣌", "⣔", "⣤", "⣥", "⣦",
+                "⣮", "⣶", "⣷", "⣿", "⡿", "⠿", "⢟", "⠟", "⡛", "⠛", "⠫", "⢋", "⠋", "⠍", "⡉", "⠉",
+                "⠑", "⠡", "⢁",
+            ])
             .template("{spinner:.cyan} {msg}")
             .expect("valid template"),
     );
     pb.set_message(msg.to_string());
-    pb.enable_steady_tick(Duration::from_millis(100));
+    pb.enable_steady_tick(Duration::from_millis(80));
     pb
 }
 
@@ -40,6 +45,21 @@ pub fn bar(len: u64, msg: &str) -> ProgressBar {
     );
     pb.set_message(msg.to_string());
     pb
+}
+
+/// Finish a spinner with a checkmark on the left.
+///
+/// # Panics
+///
+/// Panics if the spinner template string is invalid (it is a compile-time constant and will not panic).
+pub fn finish_ok(pb: &ProgressBar, msg: &str) {
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{prefix} {msg}")
+            .expect("valid template"),
+    );
+    pb.set_prefix("✓");
+    pb.finish_with_message(msg.to_string());
 }
 
 /// Finish a progress bar with a success message.

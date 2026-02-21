@@ -110,7 +110,7 @@ source "qemu" "polis" {
   iso_checksum     = local.ubuntu_checksum
   disk_image       = true
   output_directory = "output"
-  vm_name          = "polis-workspace-${var.polis_version}-${var.arch}.qcow2"
+  vm_name          = "polis-${var.polis_version}-${var.arch}.qcow2"
   format           = "qcow2"
   disk_size        = "20G"
   memory           = 4096

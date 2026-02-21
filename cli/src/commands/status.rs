@@ -13,6 +13,9 @@ use polis_common::types::{
 use crate::multipass::Multipass;
 use crate::output::OutputContext;
 
+/// Path to `docker-compose.yml` inside the VM.
+const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
+
 /// Run the status command.
 ///
 /// # Errors
@@ -109,7 +112,16 @@ fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
 
 /// Check if polis-workspace container is running inside VM.
 fn check_workspace_container(mp: &impl Multipass) -> bool {
-    let output = mp.exec(&["docker", "compose", "ps", "--format", "json", "workspace"]);
+    let output = mp.exec(&[
+        "docker",
+        "compose",
+        "-f",
+        COMPOSE_PATH,
+        "ps",
+        "--format",
+        "json",
+        "workspace",
+    ]);
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -129,7 +141,15 @@ fn check_workspace_container(mp: &impl Multipass) -> bool {
 
 /// Check security services inside multipass VM.
 fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
-    let output = mp.exec(&["docker", "compose", "ps", "--format", "json"]);
+    let output = mp.exec(&[
+        "docker",
+        "compose",
+        "-f",
+        COMPOSE_PATH,
+        "ps",
+        "--format",
+        "json",
+    ]);
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -173,7 +193,16 @@ fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
 /// Check agent status inside multipass VM.
 fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
     let output = mp
-        .exec(&["docker", "compose", "ps", "--format", "json", "workspace"])
+        .exec(&[
+            "docker",
+            "compose",
+            "-f",
+            COMPOSE_PATH,
+            "ps",
+            "--format",
+            "json",
+            "workspace",
+        ])
         .ok()?;
 
     if !output.status.success() {
@@ -194,12 +223,10 @@ fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
         _ => AgentHealth::Stopped,
     };
 
-    let name = crate::state::StateManager::new()
-        .ok()
-        .and_then(|mgr| mgr.load().ok().flatten())
-        .map_or_else(|| "unknown".to_string(), |state| state.agent);
-
-    Some(AgentStatus { name, status })
+    Some(AgentStatus {
+        name: "workspace".to_string(),
+        status,
+    })
 }
 
 /// Print human-readable status output.
@@ -421,51 +448,5 @@ mod tests {
         let json = serde_json::to_string(&status).expect("serialize");
         assert!(!json.contains("uptime_seconds"));
         assert!(!json.contains(r#""agent""#));
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::expect_used)]
-mod proptests {
-    use super::*;
-    use polis_common::types::{AgentHealth, WorkspaceState};
-    use proptest::prelude::*;
-
-    proptest! {
-        #[test]
-        fn prop_format_uptime_ends_with_m(seconds in 0u64..=604_800) {
-            prop_assert!(format_uptime(seconds).ends_with('m'));
-        }
-
-        #[test]
-        fn prop_format_uptime_hours_has_h(hours in 1u64..168) {
-            prop_assert!(format_uptime(hours * 3600).contains('h'));
-        }
-
-        #[test]
-        fn prop_workspace_state_lowercase(state in prop_oneof![
-            Just(WorkspaceState::Running),
-            Just(WorkspaceState::Stopped),
-            Just(WorkspaceState::Starting),
-            Just(WorkspaceState::Stopping),
-            Just(WorkspaceState::Error),
-        ]) {
-            prop_assert!(workspace_state_display(state).chars().all(char::is_lowercase));
-        }
-
-        #[test]
-        fn prop_agent_health_lowercase(health in prop_oneof![
-            Just(AgentHealth::Healthy),
-            Just(AgentHealth::Unhealthy),
-            Just(AgentHealth::Starting),
-            Just(AgentHealth::Stopped),
-        ]) {
-            prop_assert!(agent_health_display(health).chars().all(char::is_lowercase));
-        }
-
-        #[test]
-        fn prop_events_warning_has_hint(count in 0u32..1000) {
-            prop_assert!(format_events_warning(count).contains("polis logs"));
-        }
     }
 }

@@ -13,6 +13,7 @@ setup() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
+    require_init_container "$CTR_SCANNER_INIT" "$CTR_STATE_INIT"
 }
 
 _inspect() { local var="${1//-/_}_INSPECT"; echo "${!var}"; }

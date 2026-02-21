@@ -21,7 +21,7 @@ echo "CA directory: ${CA_DIR}"
 # Check CA exists
 if [[ ! -f "${CA_DIR}/ca.pem" ]] || [[ ! -f "${CA_DIR}/ca.key" ]]; then
     echo "ERROR: CA certificate not found at ${CA_DIR}"
-    echo "Run 'polis init' or generate CA first."
+    echo "Run 'polis start' or generate CA first."
     exit 1
 fi
 

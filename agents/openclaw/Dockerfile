@@ -8,6 +8,7 @@
 # The base workspace image must be built first (docker compose build workspace).
 
 ARG WORKSPACE_IMAGE=ghcr.io/odralabshq/polis-workspace-oss:latest
+# checkov:skip=CKV_DOCKER_7: base image is injected at build time via WORKSPACE_IMAGE ARG; default :latest is never used in production
 FROM ${WORKSPACE_IMAGE}
 
 # ── Install Node.js 22 + build deps ────────────────────────────────

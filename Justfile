@@ -2,6 +2,8 @@
 # Install just: https://github.com/casey/just
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
+set dotenv-load := false
+set export
 
 default:
     @just --list
@@ -62,12 +64,18 @@ lint-shell:
 test: test-rust test-c test-unit
 
 test-rust:
-    cargo test --workspace --manifest-path cli/Cargo.toml -- --skip proptests
+    cargo test --workspace --manifest-path cli/Cargo.toml
     cargo test --workspace --manifest-path services/toolbox/Cargo.toml
     cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 
-test-rust-proptests:
-    cargo test --workspace --manifest-path cli/Cargo.toml -- proptests
+
+# Run CLI BATS spec tests (tests/bats/cli-spec.bats) — needs multipass + built VM + installed polis
+test-cli filter="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [[ -n "{{filter}}" ]] && args+=(--filter "{{filter}}")
+    ./tests/bats/run-cli-spec-tests.sh "${args[@]}"
 
 test-c:
     #!/usr/bin/env bash
@@ -81,22 +89,20 @@ test-c:
 test-unit:
     ./tests/run-tests.sh unit
 
-# Alias for test-c
-test-native: test-c
-
 # Run integration tests (requires running containers)
 test-integration:
     ./tests/run-tests.sh --ci integration
 
 # Run E2E tests (requires running containers)
 test-e2e:
-    ./tests/run-tests.sh --ci e2e
+    docker compose --profile test up -d httpbin
+    ./tests/run-tests.sh --ci e2e; rc=$?; docker compose --profile test rm -sf httpbin; exit $rc
 
 # Run all test tiers (unit + integration + e2e)
 test-all: test test-integration test-e2e
 
 # Full clean-build-test cycle — CI equivalent, stops on first failure
-test-clean: clean-all build setup up test-all
+test-clean: clean-all build-docker setup up test-all
 
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
@@ -104,7 +110,14 @@ fmt:
     cargo fmt --all --manifest-path services/toolbox/Cargo.toml
 
 # ── Build ───────────────────────────────────────────────────────────
-build:
+build: build-cli build-docker build-vm
+
+# Build the CLI binary
+build-cli:
+    cargo build --release --manifest-path cli/Cargo.toml
+
+# Build Docker images
+build-docker:
     docker compose build
 
 # Build a specific service
@@ -113,25 +126,54 @@ build-service service:
 
 # Build VM image (requires packer)
 # Usage: just build-vm [arch=amd64|arm64] [headless=true|false]
-build-vm arch="amd64" headless="true": build _export-images _bundle-config
+build-vm arch="amd64" headless="true": _export-images _bundle-config
     #!/usr/bin/env bash
     set -euo pipefail
+    ROOT="${PWD}"
     cd packer
+    rm -rf output
     packer init .
     packer build \
-        -var "images_tar=${PWD}/../.build/polis-images.tar" \
-        -var "config_tar=${PWD}/../.build/polis-config.tar.gz" \
+        -var "images_tar=${ROOT}/.build/polis-images.tar" \
+        -var "config_tar=${ROOT}/.build/polis-config.tar.gz" \
         -var "arch={{arch}}" \
         -var "headless={{headless}}" \
         polis-vm.pkr.hcl
+    just --justfile "${ROOT}/Justfile" --working-directory "${ROOT}" _sign-vm {{arch}}
+
+# Internal: sign the VM image with a dev keypair, producing a .sha256 sidecar
+_sign-vm arch="amd64":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SIGNING_KEY=".secrets/polis-release.key"
+    PUB_KEY=".secrets/polis-release.pub"
+    if [[ ! -f "${SIGNING_KEY}" ]]; then
+        echo "No signing key found — generating dev keypair at ${SIGNING_KEY}..."
+        mkdir -p .secrets
+        zipsign gen-key "${SIGNING_KEY}" "${PUB_KEY}"
+        echo "✓ Dev keypair generated (gitignored)"
+    fi
+    IMAGE=$(find packer/output -name "*-{{arch}}.qcow2" | sort | tail -1)
+    if [[ -z "${IMAGE}" ]]; then
+        echo "ERROR: No .qcow2 found in packer/output" >&2
+        exit 1
+    fi
+    SIDECAR="${IMAGE%.qcow2}.qcow2.sha256"
+    CHECKSUM=$(sha256sum "${IMAGE}" | cut -d' ' -f1)
+    PLAIN_FILE=$(mktemp)
+    echo "${CHECKSUM}  $(basename "${IMAGE}")" > "${PLAIN_FILE}"
+    tar -czf "${PLAIN_FILE}.tar.gz" -C "$(dirname "${PLAIN_FILE}")" "$(basename "${PLAIN_FILE}")"
+    zipsign sign tar --context "" "${PLAIN_FILE}.tar.gz" "${SIGNING_KEY}" -o "${SIDECAR}" -f
+    rm -f "${PLAIN_FILE}" "${PLAIN_FILE}.tar.gz"
+    echo "✓ Signed sidecar: ${SIDECAR}"
+    echo "  Public key: $(base64 -w0 "${PUB_KEY}")"
 
 # Internal: export Docker images for VM build
 _export-images:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
-        echo "ERROR: POLIS_IMAGE_VERSION is not set" >&2
-        exit 1
+        POLIS_IMAGE_VERSION="latest"
     fi
     # Set per-service vars so docker compose config resolves the image refs
     for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX; do
@@ -172,21 +214,11 @@ _bundle-config:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
-        echo "Resolving latest image version from GitHub..."
-        POLIS_IMAGE_VERSION=$(curl -fsSL --proto '=https' \
-            -H 'Accept: application/vnd.github+json' \
-            'https://api.github.com/repos/OdraLabsHQ/polis/releases/latest' \
-            | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-        if [[ -z "${POLIS_IMAGE_VERSION}" ]]; then
-            echo "ERROR: Failed to resolve latest image version" >&2
-            exit 1
-        fi
-        echo "Using image version: ${POLIS_IMAGE_VERSION}"
+        POLIS_IMAGE_VERSION="latest"
     fi
     export POLIS_IMAGE_VERSION
     bash packer/scripts/bundle-polis-config.sh
 
-build-all: build-vm
 
 # ── Setup ───────────────────────────────────────────────────────────
 setup: setup-ca setup-valkey setup-toolbox
@@ -292,8 +324,8 @@ package-vm arch="amd64":
     #!/usr/bin/env bash
     set -euo pipefail
     VERSION=$(git describe --tags --always)
-    cp packer/output/polis-workspace-*.qcow2 "polis-workspace-${VERSION}-{{arch}}.qcow2"
-    sha256sum "polis-workspace-${VERSION}-{{arch}}.qcow2" > "polis-workspace-${VERSION}-{{arch}}.qcow2.sha256"
+    cp packer/output/polis-*.qcow2 "polis-${VERSION}-{{arch}}.qcow2"
+    sha256sum "polis-${VERSION}-{{arch}}.qcow2" > "polis-${VERSION}-{{arch}}.qcow2.sha256"
 
 # ── Clean ───────────────────────────────────────────────────────────
 clean:

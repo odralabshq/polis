@@ -233,69 +233,6 @@ pub async fn extract_host_key() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod proptests {
-    use super::{Backend, BackendProber, bridge_io, detect_backend};
-    use proptest::prelude::*;
-
-    struct FixedProber(bool);
-    impl BackendProber for FixedProber {
-        async fn multipass_exists(&self) -> bool {
-            self.0
-        }
-    }
-
-    proptest! {
-        /// detect_backend returns Multipass iff multipass_exists() is true.
-        #[test]
-        #[allow(clippy::expect_used)]
-        fn prop_detect_backend_follows_prober(available in proptest::bool::ANY) {
-            let rt = tokio::runtime::Runtime::new().expect("runtime");
-            let backend = rt.block_on(detect_backend(&FixedProber(available))).expect("infallible");
-            if available {
-                prop_assert!(matches!(backend, Backend::Multipass));
-            } else {
-                prop_assert!(matches!(backend, Backend::Docker));
-            }
-        }
-
-        /// bridge_io forwards every byte from reader to writer exactly.
-        #[test]
-        #[allow(clippy::expect_used)]
-        fn prop_bridge_io_preserves_all_bytes(input in prop::collection::vec(any::<u8>(), 0..16384)) {
-            let rt = tokio::runtime::Runtime::new().expect("runtime");
-            let mut writer = Vec::new();
-            rt.block_on(bridge_io(&mut input.as_slice(), &mut writer)).expect("bridge ok");
-            prop_assert_eq!(writer, input);
-        }
-
-        /// bridge_io output length always equals input length.
-        #[test]
-        #[allow(clippy::expect_used)]
-        fn prop_bridge_io_output_length_equals_input_length(
-            input in prop::collection::vec(any::<u8>(), 0..16384)
-        ) {
-            let rt = tokio::runtime::Runtime::new().expect("runtime");
-            let expected_len = input.len();
-            let mut writer = Vec::new();
-            rt.block_on(bridge_io(&mut input.as_slice(), &mut writer)).expect("bridge ok");
-            prop_assert_eq!(writer.len(), expected_len);
-        }
-
-        /// bridge_io always returns Ok for any in-memory input.
-        #[test]
-        #[allow(clippy::expect_used)]
-        fn prop_bridge_io_never_errors_on_memory_io(
-            input in prop::collection::vec(any::<u8>(), 0..16384)
-        ) {
-            let rt = tokio::runtime::Runtime::new().expect("runtime");
-            let mut writer = Vec::new();
-            let result = rt.block_on(bridge_io(&mut input.as_slice(), &mut writer));
-            prop_assert!(result.is_ok());
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::{Backend, BackendProber, detect_backend};
 

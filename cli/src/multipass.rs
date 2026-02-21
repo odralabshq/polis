@@ -46,6 +46,13 @@ pub trait Multipass {
     ///
     /// Returns an error if the command cannot be spawned.
     fn exec(&self, args: &[&str]) -> Result<Output>;
+
+    /// Run `multipass version`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command cannot be spawned (i.e. multipass not on PATH).
+    fn version(&self) -> Result<Output>;
 }
 
 /// Production implementation — shells out to the `multipass` binary.
@@ -90,5 +97,12 @@ impl Multipass for MultipassCli {
             .args(&cmd_args)
             .output()
             .context("failed to run multipass exec")
+    }
+
+    fn version(&self) -> Result<Output> {
+        Command::new("multipass")
+            .arg("version")
+            .output()
+            .context("failed to run multipass version")
     }
 }
