@@ -141,7 +141,11 @@ fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()> {
     if !output.status.success() {
         // List available agents for the error message
         let list_output = mp
-            .exec(&["bash", "-c", &format!("ls {VM_POLIS_ROOT}/agents/ 2>/dev/null || true")])
+            .exec(&[
+                "bash",
+                "-c",
+                &format!("ls {VM_POLIS_ROOT}/agents/ 2>/dev/null || true"),
+            ])
             .unwrap_or_else(|_| std::process::Output {
                 status: std::process::ExitStatus::default(),
                 stdout: vec![],
@@ -191,12 +195,7 @@ fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> Result<()>
 /// Start docker compose inside the VM, optionally with an agent overlay.
 fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Result<()> {
     let base = format!("{VM_POLIS_ROOT}/docker-compose.yml");
-    let mut args: Vec<String> = vec![
-        "docker".into(),
-        "compose".into(),
-        "-f".into(),
-        base,
-    ];
+    let mut args: Vec<String> = vec!["docker".into(), "compose".into(), "-f".into(), base];
     if let Some(name) = agent_name {
         let overlay = format!("{VM_POLIS_ROOT}/agents/{name}/.generated/compose.agent.yaml");
         args.push("-f".into());

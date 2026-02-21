@@ -51,11 +51,7 @@ fn add(args: AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     let folder = std::path::Path::new(&args.path);
     anyhow::ensure!(folder.exists(), "Path not found: {}", args.path);
     let manifest = folder.join("agent.yaml");
-    anyhow::ensure!(
-        manifest.exists(),
-        "No agent.yaml found in: {}",
-        args.path
-    );
+    anyhow::ensure!(manifest.exists(), "No agent.yaml found in: {}", args.path);
 
     // Read agent name from manifest via local yq
     let name_out = std::process::Command::new("yq")
@@ -67,7 +63,10 @@ fn add(args: AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
         "Failed to read metadata.name from agent.yaml"
     );
     let name = String::from_utf8_lossy(&name_out.stdout).trim().to_string();
-    anyhow::ensure!(!name.is_empty() && name != "null", "metadata.name is missing in agent.yaml");
+    anyhow::ensure!(
+        !name.is_empty() && name != "null",
+        "metadata.name is missing in agent.yaml"
+    );
 
     // VM must be running
     anyhow::ensure!(
@@ -128,10 +127,7 @@ fn remove(args: RemoveArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
 
     // Must exist
     let exists = mp.exec(&["test", "-d", &agent_dir])?;
-    anyhow::ensure!(
-        exists.status.success(),
-        "Agent '{name}' is not installed."
-    );
+    anyhow::ensure!(exists.status.success(), "Agent '{name}' is not installed.");
 
     let state_mgr = StateManager::new()?;
     let active = state_mgr.load()?.and_then(|s| s.active_agent);
@@ -275,7 +271,14 @@ fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
     let base = format!("{VM_ROOT}/docker-compose.yml");
     let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
     let out = mp.exec(&[
-        "docker", "compose", "-f", &base, "-f", &overlay, "restart", "workspace",
+        "docker",
+        "compose",
+        "-f",
+        &base,
+        "-f",
+        &overlay,
+        "restart",
+        "workspace",
     ])?;
     anyhow::ensure!(
         out.status.success(),
@@ -316,7 +319,15 @@ fn update(mp: &impl Multipass, quiet: bool) -> Result<()> {
     let base = format!("{VM_ROOT}/docker-compose.yml");
     let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
     let out = mp.exec(&[
-        "docker", "compose", "-f", &base, "-f", &overlay, "up", "-d", "--force-recreate",
+        "docker",
+        "compose",
+        "-f",
+        &base,
+        "-f",
+        &overlay,
+        "up",
+        "-d",
+        "--force-recreate",
         "workspace",
     ])?;
     anyhow::ensure!(
