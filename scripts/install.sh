@@ -109,23 +109,6 @@ install_multipass_macos() {
     rm -f "${pkg_file}"
 }
 
-# Post-install Linux config: socket group check only
-# (removable-media is no longer needed — polis images live in ~/polis/images/,
-#  a non-hidden path that snap multipassd can read without any extra interface)
-configure_multipass_linux() {
-    if ! command -v snap &>/dev/null; then
-        return 0
-    fi
-    local socket="/var/snap/multipass/common/multipass_socket"
-    if [[ -S "${socket}" ]] && ! test -r "${socket}" -a -w "${socket}"; then
-        local socket_group
-        socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
-        log_warn "Your user cannot access the multipass socket."
-        echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
-        echo "  Then log out and back in, or run: newgrp ${socket_group}"
-    fi
-}
-
 # Check for Multipass: auto-install if missing, verify version >= minimum
 check_multipass() {
     local os
@@ -255,17 +238,21 @@ verify_attestation() {
     fi
 }
 
-# Non-fatal start step
-run_init() {
-    log_info "Running: polis start"
+# Non-fatal image init step
+init_image() {
+    local bin="${INSTALL_DIR}/bin/polis"
+    if [[ ! -x "${bin}" ]]; then
+        log_warn "Image download failed. Run 'polis init' to retry."
+        return 0
+    fi
     if [[ -n "${IMAGE_URL}" ]]; then
-        "${INSTALL_DIR}/bin/polis" start --image "${IMAGE_URL}" || {
-            log_warn "polis start failed. Run 'polis start' to retry."
+        "${bin}" init --image "${IMAGE_URL}" || {
+            log_warn "Image download failed. Run 'polis init' to retry."
             return 0
         }
     else
-        "${INSTALL_DIR}/bin/polis" start || {
-            log_warn "polis start failed. Run 'polis start' to retry."
+        "${bin}" init || {
+            log_warn "Image download failed. Run 'polis init' to retry."
             return 0
         }
     fi
@@ -298,7 +285,7 @@ main() {
     download_and_verify
     verify_attestation
     create_symlink
-    run_init
+    init_image
 
     echo ""
     log_ok "Polis installed successfully!"

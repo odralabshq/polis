@@ -88,14 +88,15 @@ Run `just --list` to see all available recipes.
 
 | Recipe | Description |
 |--------|-------------|
-| `just test` | Run all tests (Rust, C, BATS unit) |
-| `just test-all` | Run all test tiers (unit + integration + e2e) |
-| `just test-clean` | Full clean → build → setup → up → test-all (stops on first failure) |
-| `just test-rust` | Run Rust tests |
-| `just test-c` | Run C tests |
-| `just test-bats` | Run BATS unit tests |
-| `just test-integration` | Run integration tests (requires running containers) |
-| `just test-e2e` | Run E2E tests (requires full stack) |
+| `just test` | Run Rust + C + BATS unit tests |
+| `just test-all` | Run all tiers (unit + integration + e2e) |
+| `just test-clean` | Full clean → build-docker → setup → up → test-all (stops on first failure) |
+| `just test-rust` | Run all Rust tests (cli + toolbox + polis-common) |
+| `just test-c` | Run C unit tests (sentinel modules) |
+| `just test-unit` | Run BATS unit tests (~30s, no Docker) |
+| `just test-cli [filter]` | Run CLI BATS spec tests (requires multipass + built VM + installed polis) |
+| `just test-integration` | Run integration tests (~3min, requires running containers) |
+| `just test-e2e` | Run E2E tests (~10min, requires full stack) |
 
 ### Linting
 

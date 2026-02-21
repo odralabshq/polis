@@ -2,7 +2,7 @@
 # Install just: https://github.com/casey/just
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
-set dotenv-load
+set dotenv-load := false
 set export
 
 default:
@@ -64,12 +64,18 @@ lint-shell:
 test: test-rust test-c test-unit
 
 test-rust:
-    cargo test --workspace --manifest-path cli/Cargo.toml -- --skip proptests
+    cargo test --workspace --manifest-path cli/Cargo.toml
     cargo test --workspace --manifest-path services/toolbox/Cargo.toml
     cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 
-test-rust-proptests:
-    cargo test --workspace --manifest-path cli/Cargo.toml -- proptests
+
+# Run CLI BATS spec tests (tests/bats/cli-spec.bats) — needs multipass + built VM + installed polis
+test-cli filter="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [[ -n "{{filter}}" ]] && args+=(--filter "{{filter}}")
+    ./tests/bats/run-cli-spec-tests.sh "${args[@]}"
 
 test-c:
     #!/usr/bin/env bash
@@ -83,9 +89,6 @@ test-c:
 test-unit:
     ./tests/run-tests.sh unit
 
-# Alias for test-c
-test-native: test-c
-
 # Run integration tests (requires running containers)
 test-integration:
     ./tests/run-tests.sh --ci integration
@@ -98,7 +101,7 @@ test-e2e:
 test-all: test test-integration test-e2e
 
 # Full clean-build-test cycle — CI equivalent, stops on first failure
-test-clean: clean-all build setup up test-all
+test-clean: clean-all build-docker setup up test-all
 
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
