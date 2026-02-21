@@ -121,3 +121,85 @@ pub fn check(mp: &impl Multipass) -> HealthStatus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+
+    use anyhow::Result;
+
+    use super::*;
+    use crate::multipass::Multipass;
+
+    fn mock_output(stdout: &[u8]) -> Output {
+        Output {
+            status: ExitStatus::from_raw(0),
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    struct MockMp(Result<Output>);
+    impl Multipass for MockMp {
+        fn vm_info(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        fn start(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        fn version(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        fn exec(&self, _: &[&str]) -> Result<Output> {
+            match &self.0 {
+                Ok(o) => Ok(Output {
+                    status: o.status,
+                    stdout: o.stdout.clone(),
+                    stderr: o.stderr.clone(),
+                }),
+                Err(e) => Err(anyhow::anyhow!("{e}")),
+            }
+        }
+    }
+
+    #[test]
+    fn check_healthy() {
+        let mp = MockMp(Ok(mock_output(
+            br#"{"State":"running","Health":"healthy"}"#,
+        )));
+        assert_eq!(check(&mp), HealthStatus::Healthy);
+    }
+
+    #[test]
+    fn check_running_not_healthy() {
+        let mp = MockMp(Ok(mock_output(
+            br#"{"State":"running","Health":"starting"}"#,
+        )));
+        assert!(matches!(check(&mp), HealthStatus::Unhealthy { .. }));
+    }
+
+    #[test]
+    fn check_not_running() {
+        let mp = MockMp(Ok(mock_output(br#"{"State":"exited","Health":""}"#)));
+        assert!(matches!(check(&mp), HealthStatus::Unhealthy { .. }));
+    }
+
+    #[test]
+    fn check_exec_fails_returns_unknown() {
+        let mp = MockMp(Err(anyhow::anyhow!("exec failed")));
+        assert_eq!(check(&mp), HealthStatus::Unknown);
+    }
+
+    #[test]
+    fn check_bad_json_returns_unknown() {
+        let mp = MockMp(Ok(mock_output(b"not json")));
+        assert_eq!(check(&mp), HealthStatus::Unknown);
+    }
+}

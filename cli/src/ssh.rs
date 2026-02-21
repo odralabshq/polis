@@ -19,6 +19,50 @@ pub fn validate_host_key(key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Generates a passphrase-free ED25519 keypair at `~/.polis/id_ed25519` if it
+/// does not already exist.
+///
+/// Returns the public key string (`ssh-ed25519 <material>`).
+///
+/// # Errors
+///
+/// Returns an error if key generation or file I/O fails.
+pub fn ensure_identity_key() -> Result<String> {
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let key_path = home.join(".polis").join("id_ed25519");
+    let pub_path = home.join(".polis").join("id_ed25519.pub");
+
+    if !key_path.exists() {
+        if let Some(parent) = key_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create dir {}", parent.display()))?;
+            set_permissions(parent, 0o700)?;
+        }
+        let status = std::process::Command::new("ssh-keygen")
+            .args([
+                "-t",
+                "ed25519",
+                "-N",
+                "", // no passphrase
+                "-f",
+                key_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("non-UTF8 path"))?,
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .context("ssh-keygen not found")?;
+        anyhow::ensure!(status.success(), "ssh-keygen failed");
+        set_permissions(&key_path, 0o600)?;
+    }
+
+    let pubkey = std::fs::read_to_string(&pub_path)
+        .with_context(|| format!("read {}", pub_path.display()))?;
+    Ok(pubkey.trim().to_string())
+}
+
 /// Manages `~/.polis/known_hosts` for SSH host key pinning.
 pub struct KnownHostsManager {
     path: PathBuf,
@@ -329,10 +373,12 @@ impl SshConfigManager {
         const CONFIG: &str = "\
 # ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
 Host workspace
+    HostName workspace
     User polis
     ProxyCommand polis _ssh-proxy
     StrictHostKeyChecking yes
     UserKnownHostsFile ~/.polis/known_hosts
+    IdentityFile ~/.polis/id_ed25519
     ControlMaster auto
     ControlPath ~/.polis/sockets/%r@%h:%p
     ControlPersist 30s

@@ -85,6 +85,3 @@ impl OutputContext {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -19,6 +19,9 @@ pub struct WorkspaceState {
     /// Image SHA256 used to create workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_sha256: Option<String>,
+    /// Custom image source (path or URL) used to create workspace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_source: Option<String>,
 }
 
 /// State file manager.
@@ -151,6 +154,7 @@ mod tests {
             workspace_id: "polis-test".to_string(),
             created_at: Utc::now(),
             image_sha256: Some("abc123".to_string()),
+            image_source: None,
         };
         m.save(&state).expect("save");
         let loaded = m.load().expect("load").expect("state present");
@@ -165,6 +169,7 @@ mod tests {
             workspace_id: "polis-test".to_string(),
             created_at: Utc::now(),
             image_sha256: None,
+            image_source: None,
         };
         m.save(&state).expect("save");
         m.clear().expect("clear");
@@ -188,6 +193,7 @@ mod tests {
             workspace_id: "polis-test".to_string(),
             created_at: Utc::now(),
             image_sha256: None,
+            image_source: None,
         };
         StateManager::with_path(nested.clone())
             .save(&state)
@@ -205,6 +211,7 @@ mod tests {
             workspace_id: "polis-test".to_string(),
             created_at: Utc::now(),
             image_sha256: None,
+            image_source: None,
         };
         m.save(&state).expect("save");
         let perms = std::fs::metadata(dir.path().join("state.json"))

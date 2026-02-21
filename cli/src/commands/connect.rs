@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::output::OutputContext;
-use crate::ssh::SshConfigManager;
+use crate::ssh::{SshConfigManager, ensure_identity_key};
 
 /// Arguments for the connect command.
 #[derive(Args)]
@@ -31,11 +31,22 @@ pub async fn run(ctx: &OutputContext, args: ConnectArgs) -> Result<()> {
 
     let ssh_mgr = SshConfigManager::new()?;
 
-    if !ssh_mgr.is_configured()? {
+    if ssh_mgr.is_configured()? {
+        // Refresh polis config to pick up any template changes (idempotent).
+        ssh_mgr.create_polis_config()?;
+        ssh_mgr.create_sockets_dir()?;
+    } else {
         setup_ssh_config(&ssh_mgr)?;
     }
 
     ssh_mgr.validate_permissions()?;
+
+    // Ensure a passphrase-free identity key exists and is installed in the workspace.
+    let pubkey = ensure_identity_key()?;
+    install_pubkey(&pubkey).await?;
+
+    // Pin the workspace host key so StrictHostKeyChecking can verify it.
+    pin_host_key().await;
 
     if let Some(ref ide) = args.ide {
         open_ide(ide).await
@@ -95,6 +106,130 @@ pub fn resolve_ide(name: &str) -> Result<(&'static str, &'static [&'static str])
     }
 }
 
+/// Installs `pubkey` into `~/.ssh/authorized_keys` of the `polis` user inside
+/// the workspace container. Idempotent.
+async fn install_pubkey(pubkey: &str) -> Result<()> {
+    // Detect backend the same way _ssh-proxy does.
+    use crate::commands::internal::{Backend, BackendProber};
+
+    struct Prober;
+    impl BackendProber for Prober {
+        async fn multipass_exists(&self) -> bool {
+            tokio::process::Command::new("multipass")
+                .args(["info", "polis", "--format", "json"])
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+    }
+
+    let backend = crate::commands::internal::detect_backend(&Prober).await?;
+
+    let script = format!(
+        "mkdir -p /home/polis/.ssh && chmod 700 /home/polis/.ssh && \
+         grep -qxF '{pubkey}' /home/polis/.ssh/authorized_keys 2>/dev/null || \
+         echo '{pubkey}' >> /home/polis/.ssh/authorized_keys && \
+         chmod 600 /home/polis/.ssh/authorized_keys && \
+         chown -R polis:polis /home/polis/.ssh"
+    );
+
+    let status = match backend {
+        Backend::Multipass => tokio::process::Command::new("multipass")
+            .args([
+                "exec",
+                "polis",
+                "--",
+                "docker",
+                "exec",
+                "polis-workspace",
+                "bash",
+                "-c",
+                &script,
+            ])
+            .status()
+            .await
+            .context("multipass exec failed")?,
+        Backend::Docker => tokio::process::Command::new("docker")
+            .args(["exec", "polis-workspace", "bash", "-c", &script])
+            .status()
+            .await
+            .context("docker exec failed")?,
+    };
+
+    anyhow::ensure!(
+        status.success(),
+        "failed to install public key in workspace"
+    );
+    Ok(())
+}
+
+/// Formats a raw public key as a `known_hosts` line and writes it via the
+/// given manager. Returns `Ok(())` on success.
+fn write_host_key(mgr: &crate::ssh::KnownHostsManager, raw_key: &str) -> Result<()> {
+    let trimmed = raw_key.trim();
+    anyhow::ensure!(!trimmed.is_empty(), "empty host key");
+    crate::ssh::validate_host_key(trimmed)?;
+    let host_key = format!("workspace {trimmed}");
+    mgr.update(&host_key)
+}
+
+/// Extracts the workspace SSH host key and writes it to `~/.polis/known_hosts`.
+async fn pin_host_key() {
+    use crate::commands::internal::{Backend, BackendProber};
+
+    struct Prober;
+    impl BackendProber for Prober {
+        async fn multipass_exists(&self) -> bool {
+            tokio::process::Command::new("multipass")
+                .args(["info", "polis", "--format", "json"])
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+    }
+
+    let Ok(backend) = crate::commands::internal::detect_backend(&Prober).await else {
+        return;
+    };
+
+    let args: &[&str] = match backend {
+        Backend::Multipass => &[
+            "exec",
+            "polis",
+            "--",
+            "docker",
+            "exec",
+            "polis-workspace",
+            "cat",
+            "/etc/ssh/ssh_host_ed25519_key.pub",
+        ],
+        Backend::Docker => &[
+            "exec",
+            "polis-workspace",
+            "cat",
+            "/etc/ssh/ssh_host_ed25519_key.pub",
+        ],
+    };
+
+    let cmd = match backend {
+        Backend::Multipass => "multipass",
+        Backend::Docker => "docker",
+    };
+
+    let Ok(output) = tokio::process::Command::new(cmd).args(args).output().await else {
+        return;
+    };
+
+    if output.status.success()
+        && let Ok(key) = String::from_utf8(output.stdout)
+    {
+        let mgr = crate::ssh::KnownHostsManager::new();
+        let _ = mgr.and_then(|m| write_host_key(&m, &key));
+    }
+}
+
 async fn open_ide(ide: &str) -> Result<()> {
     let (cmd, args) = resolve_ide(ide)?;
     let status = tokio::process::Command::new(cmd)
@@ -104,4 +239,112 @@ async fn open_ide(ide: &str) -> Result<()> {
         .with_context(|| format!("{cmd} is not installed or not in PATH"))?;
     anyhow::ensure!(status.success(), "{cmd} exited with failure");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_ide_vscode() {
+        let (cmd, args) = resolve_ide("vscode").expect("should resolve");
+        assert_eq!(cmd, "code");
+        assert_eq!(args, &["--remote", "ssh-remote+workspace", "/workspace"]);
+    }
+
+    #[test]
+    fn test_resolve_ide_code() {
+        let (cmd, args) = resolve_ide("code").expect("should resolve");
+        assert_eq!(cmd, "code");
+        assert_eq!(args, &["--remote", "ssh-remote+workspace", "/workspace"]);
+    }
+
+    #[test]
+    fn test_resolve_ide_cursor() {
+        let (cmd, args) = resolve_ide("cursor").expect("should resolve");
+        assert_eq!(cmd, "cursor");
+        assert_eq!(args, &["--remote", "ssh-remote+workspace", "/workspace"]);
+    }
+
+    #[test]
+    fn test_resolve_ide_unknown() {
+        let result = resolve_ide("unknown-ide");
+        assert!(result.is_err());
+        assert!(
+            result
+                .expect_err("should fail")
+                .to_string()
+                .contains("Unknown IDE")
+        );
+    }
+
+    #[test]
+    fn test_resolve_ide_case_insensitive() {
+        let (cmd, _) = resolve_ide("VsCode").expect("should resolve");
+        assert_eq!(cmd, "code");
+        let (cmd, _) = resolve_ide("CURSOR").expect("should resolve");
+        assert_eq!(cmd, "cursor");
+    }
+
+    // -----------------------------------------------------------------------
+    // write_host_key
+    // -----------------------------------------------------------------------
+
+    fn known_hosts_in(dir: &tempfile::TempDir) -> crate::ssh::KnownHostsManager {
+        crate::ssh::KnownHostsManager::with_path(dir.path().join("known_hosts"))
+    }
+
+    #[test]
+    fn test_write_host_key_writes_known_hosts_with_workspace_prefix() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = known_hosts_in(&dir);
+        write_host_key(&mgr, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey")
+            .expect("should succeed");
+        let content = std::fs::read_to_string(dir.path().join("known_hosts")).expect("read");
+        assert_eq!(
+            content,
+            "workspace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey"
+        );
+    }
+
+    #[test]
+    fn test_write_host_key_trims_whitespace() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = known_hosts_in(&dir);
+        write_host_key(&mgr, "  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey\n")
+            .expect("should succeed");
+        let content = std::fs::read_to_string(dir.path().join("known_hosts")).expect("read");
+        assert_eq!(
+            content,
+            "workspace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey"
+        );
+    }
+
+    #[test]
+    fn test_write_host_key_rejects_empty_key() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = known_hosts_in(&dir);
+        assert!(write_host_key(&mgr, "").is_err());
+        assert!(write_host_key(&mgr, "   \n").is_err());
+    }
+
+    #[test]
+    fn test_write_host_key_rejects_non_ed25519_key() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = known_hosts_in(&dir);
+        assert!(write_host_key(&mgr, "ssh-rsa AAAAB3NzaC1yc2EAAA").is_err());
+    }
+
+    #[test]
+    fn test_write_host_key_overwrites_previous_key() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = known_hosts_in(&dir);
+        write_host_key(&mgr, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOldKey").expect("first");
+        write_host_key(&mgr, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewKey").expect("second");
+        let content = std::fs::read_to_string(dir.path().join("known_hosts")).expect("read");
+        assert_eq!(
+            content,
+            "workspace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewKey"
+        );
+    }
 }
