@@ -41,7 +41,7 @@ pub struct ImageMetadata {
 
 /// Returns the image cache directory.
 ///
-/// Linux: `~/polis/images/` (snap AppArmor requires non-hidden)
+/// Linux: `~/polis/images/` (snap `AppArmor` requires non-hidden)
 /// macOS/Windows: `~/.polis/images/`
 ///
 /// # Errors
@@ -57,6 +57,10 @@ pub fn images_dir() -> Result<PathBuf> {
 }
 
 /// Check if a valid image exists in cache.
+///
+/// # Errors
+///
+/// Returns an error if the image cache directory cannot be determined.
 #[allow(dead_code)] // API for future use
 pub fn is_cached() -> Result<bool> {
     let dir = images_dir()?;
@@ -64,6 +68,10 @@ pub fn is_cached() -> Result<bool> {
 }
 
 /// Get path to cached image, or None if not cached.
+///
+/// # Errors
+///
+/// Returns an error if the image cache directory cannot be determined.
 #[allow(dead_code)] // API for future use
 pub fn cached_path() -> Result<Option<PathBuf>> {
     let path = images_dir()?.join(IMAGE_FILENAME);
@@ -71,6 +79,10 @@ pub fn cached_path() -> Result<Option<PathBuf>> {
 }
 
 /// Load existing metadata from cache.
+///
+/// # Errors
+///
+/// Returns an error if the metadata file cannot be read or parsed.
 pub fn load_metadata(images_dir: &Path) -> Result<Option<ImageMetadata>> {
     let path = images_dir.join(METADATA_FILENAME);
     if !path.exists() {

@@ -301,6 +301,10 @@ main() {
     echo ""
     log_ok "Polis installed successfully!"
     echo ""
+    echo "Get started:"
+    echo "  polis start          # Create workspace"
+    echo "  polis start claude   # Create workspace with Claude agent"
+    echo ""
     return 0
 }
 

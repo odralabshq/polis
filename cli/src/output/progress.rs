@@ -48,6 +48,10 @@ pub fn bar(len: u64, msg: &str) -> ProgressBar {
 }
 
 /// Finish a spinner with a checkmark on the left.
+///
+/// # Panics
+///
+/// Panics if the spinner template string is invalid (it is a compile-time constant and will not panic).
 pub fn finish_ok(pb: &ProgressBar, msg: &str) {
     pb.set_style(
         ProgressStyle::default_spinner()

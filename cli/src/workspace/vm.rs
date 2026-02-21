@@ -23,11 +23,15 @@ pub enum VmState {
 }
 
 /// Check if VM exists.
-pub fn exists(mp: &impl Multipass) -> Result<bool> {
-    Ok(mp.vm_info().map(|o| o.status.success()).unwrap_or(false))
+pub fn exists(mp: &impl Multipass) -> bool {
+    mp.vm_info().map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Get current VM state.
+///
+/// # Errors
+///
+/// Returns an error if the multipass output cannot be parsed.
 pub fn state(mp: &impl Multipass) -> Result<VmState> {
     let output = match mp.vm_info() {
         Ok(o) if o.status.success() => o,
@@ -49,6 +53,10 @@ pub fn state(mp: &impl Multipass) -> Result<VmState> {
 }
 
 /// Check if VM is running.
+///
+/// # Errors
+///
+/// Returns an error if the VM state cannot be determined.
 #[allow(dead_code)] // API for future use
 pub fn is_running(mp: &impl Multipass) -> Result<bool> {
     Ok(state(mp)? == VmState::Running)
@@ -58,7 +66,8 @@ pub fn is_running(mp: &impl Multipass) -> Result<bool> {
 ///
 /// # Errors
 ///
-/// Returns an error if prerequisites are not met or launch fails.
+/// Returns an error if prerequisites are not met, the image path cannot be
+/// canonicalized, or the multipass launch fails.
 pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()> {
     check_prerequisites(mp)?;
 
@@ -96,12 +105,12 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
         anyhow::bail!("Failed to create workspace.\n\nRun 'polis doctor' to diagnose.");
     }
 
-    configure_credentials(mp)?;
+    configure_credentials(mp);
 
     let pb = (!quiet).then(|| {
         crate::output::progress::spinner(&inception_line("L2", "agent isolation starting..."))
     });
-    start_services(mp)?;
+    start_services(mp);
     if let Some(pb) = pb {
         crate::output::progress::finish_ok(
             &pb,
@@ -129,6 +138,10 @@ fn inception_line(level: &str, msg: &str) -> String {
 }
 
 /// Start existing VM.
+///
+/// # Errors
+///
+/// Returns an error if the multipass start command fails.
 pub fn start(mp: &impl Multipass) -> Result<()> {
     let output = mp.start().context("starting workspace")?;
     if !output.status.success() {
@@ -139,6 +152,10 @@ pub fn start(mp: &impl Multipass) -> Result<()> {
 }
 
 /// Stop VM.
+///
+/// # Errors
+///
+/// Returns an error if the multipass stop command fails.
 pub fn stop(mp: &impl Multipass) -> Result<()> {
     let _ = mp.exec(&["docker", "compose", "-f", COMPOSE_PATH, "stop"]);
     let output = std::process::Command::new("multipass")
@@ -153,17 +170,21 @@ pub fn stop(mp: &impl Multipass) -> Result<()> {
 }
 
 /// Delete VM.
-pub fn delete(_mp: &impl Multipass) -> Result<()> {
+pub fn delete(_mp: &impl Multipass) {
     let _ = std::process::Command::new("multipass")
         .args(["delete", "polis"])
         .output();
     let _ = std::process::Command::new("multipass")
         .args(["purge"])
         .output();
-    Ok(())
 }
 
 /// Ensure VM is running (create if needed, start if stopped).
+///
+/// # Errors
+///
+/// Returns an error if the VM state cannot be determined, creation fails, or
+/// starting a stopped VM fails.
 pub fn ensure_running(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()> {
     match state(mp)? {
         VmState::Running => Ok(()),
@@ -192,29 +213,23 @@ fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
         .lines()
         .next()
         .and_then(|l| l.split_whitespace().nth(1))
+        && let Ok(v) = semver::Version::parse(ver_str)
+        && v < MULTIPASS_MIN_VERSION
     {
-        if let Ok(v) = semver::Version::parse(ver_str) {
-            if v < MULTIPASS_MIN_VERSION {
-                anyhow::bail!(
-                    "Workspace runtime needs update.\n\nRun 'polis doctor' to diagnose and fix."
-                );
-            }
-        }
+        anyhow::bail!("Workspace runtime needs update.\n\nRun 'polis doctor' to diagnose and fix.");
     }
     Ok(())
 }
 
-fn configure_credentials(mp: &impl Multipass) -> Result<()> {
+fn configure_credentials(mp: &impl Multipass) {
     let ca_cert = std::path::PathBuf::from("certs/ca/ca.pem");
     if ca_cert.exists() {
         let _ = mp.transfer(&ca_cert.to_string_lossy(), "/tmp/ca.pem");
     }
-    Ok(())
 }
 
-fn start_services(mp: &impl Multipass) -> Result<()> {
+fn start_services(mp: &impl Multipass) {
     let _ = mp.exec(&["sudo", "systemctl", "start", "polis"]);
-    Ok(())
 }
 
 fn pin_host_key() {
@@ -222,12 +237,9 @@ fn pin_host_key() {
     if let Ok(output) = std::process::Command::new(exe)
         .args(["_extract-host-key"])
         .output()
+        && output.status.success()
+        && let Ok(host_key) = String::from_utf8(output.stdout)
     {
-        if output.status.success() {
-            if let Ok(host_key) = String::from_utf8(output.stdout) {
-                let _ =
-                    crate::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim()));
-            }
-        }
+        let _ = crate::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim()));
     }
 }

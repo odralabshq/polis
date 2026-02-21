@@ -13,7 +13,7 @@ use std::path::PathBuf;
 pub struct WorkspaceState {
     /// Workspace identifier (e.g., "polis-abc123def456").
     pub workspace_id: String,
-    /// When workspace was created (accepts legacy "started_at" field).
+    /// When workspace was created (accepts legacy `"started_at"` field).
     #[serde(alias = "started_at")]
     pub created_at: DateTime<Utc>,
     /// Image SHA256 used to create workspace.

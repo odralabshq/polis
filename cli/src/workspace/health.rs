@@ -44,7 +44,7 @@ pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
     let delay = Duration::from_secs(2);
 
     for attempt in 1..=max_attempts {
-        match check(mp)? {
+        match check(mp) {
             HealthStatus::Healthy => {
                 if let Some(pb) = pb {
                     crate::output::progress::finish_ok(&pb, &fmt("agent containment active."));
@@ -72,8 +72,8 @@ pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
 }
 
 /// Check current health status.
-pub fn check(mp: &impl Multipass) -> Result<HealthStatus> {
-    let output = match mp.exec(&[
+pub fn check(mp: &impl Multipass) -> HealthStatus {
+    let Ok(output) = mp.exec(&[
         "docker",
         "compose",
         "-f",
@@ -82,23 +82,22 @@ pub fn check(mp: &impl Multipass) -> Result<HealthStatus> {
         "--format",
         "json",
         "workspace",
-    ]) {
-        Ok(o) => o,
-        Err(_) => return Ok(HealthStatus::Unknown),
+    ]) else {
+        return HealthStatus::Unknown;
     };
 
     if !output.status.success() {
-        return Ok(HealthStatus::Unknown);
+        return HealthStatus::Unknown;
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let Some(line) = stdout.lines().next() else {
-        return Ok(HealthStatus::Unknown);
+        return HealthStatus::Unknown;
     };
 
     let container: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
-        Err(_) => return Ok(HealthStatus::Unknown),
+        Err(_) => return HealthStatus::Unknown,
     };
 
     let state = container
@@ -111,14 +110,14 @@ pub fn check(mp: &impl Multipass) -> Result<HealthStatus> {
         .unwrap_or("");
 
     if state == "running" && health == "healthy" {
-        Ok(HealthStatus::Healthy)
+        HealthStatus::Healthy
     } else if state == "running" {
-        Ok(HealthStatus::Unhealthy {
+        HealthStatus::Unhealthy {
             reason: format!("health: {health}"),
-        })
+        }
     } else {
-        Ok(HealthStatus::Unhealthy {
+        HealthStatus::Unhealthy {
             reason: format!("state: {state}"),
-        })
+        }
     }
 }

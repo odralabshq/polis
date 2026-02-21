@@ -708,7 +708,7 @@ pub async fn run(
 
     let cli_update = checker.check(current)?;
     let image_update = check_image_update();
-    let has_updates = display_update_status(ctx, current, &cli_update, &image_update);
+    let has_updates = display_update_status(ctx, current, &cli_update, image_update.as_ref());
 
     if args.check {
         if has_updates {
@@ -729,7 +729,7 @@ fn display_update_status(
     ctx: &OutputContext,
     current: &str,
     cli_update: &UpdateInfo,
-    image_update: &Option<(String, String)>,
+    image_update: Option<&(String, String)>,
 ) -> bool {
     let mut has_updates = false;
 
@@ -757,27 +757,23 @@ fn display_update_status(
         }
     }
 
-    match image_update {
-        Some((current_ver, available_ver)) => {
-            has_updates = true;
-            println!("  Workspace image {current_ver} → {available_ver} available");
-            println!();
-            println!("  To upgrade your workspace:");
-            println!("    polis delete && polis start");
-        }
-        None => {
-            let version = image::images_dir()
-                .ok()
-                .and_then(|d| image::load_metadata(&d).ok().flatten())
-                .map(|m| m.version)
-                .unwrap_or_else(|| "none".to_string());
-            if version != "none" {
-                println!(
-                    "  {} Workspace image {} (latest)",
-                    "✓".style(ctx.styles.success),
-                    version
-                );
-            }
+    if let Some((current_ver, available_ver)) = image_update {
+        has_updates = true;
+        println!("  Workspace image {current_ver} → {available_ver} available");
+        println!();
+        println!("  To upgrade your workspace:");
+        println!("    polis delete && polis start");
+    } else {
+        let version = image::images_dir()
+            .ok()
+            .and_then(|d| image::load_metadata(&d).ok().flatten())
+            .map_or_else(|| "none".to_string(), |m| m.version);
+        if version != "none" {
+            println!(
+                "  {} Workspace image {} (latest)",
+                "✓".style(ctx.styles.success),
+                version
+            );
         }
     }
 
@@ -864,9 +860,7 @@ fn check_image_update() -> Option<(String, String)> {
     let cached_meta = image::load_metadata(&images_dir).ok().flatten();
     let manifest = load_versions_manifest().ok()?;
 
-    let current = cached_meta
-        .map(|m| m.version)
-        .unwrap_or_else(|| "none".to_string());
+    let current = cached_meta.map_or_else(|| "none".to_string(), |m| m.version);
     let available = manifest.vm_image.version;
 
     if current == available || current == "none" {

@@ -1,6 +1,6 @@
 //! Integration tests for `polis doctor` (issue 17).
 //!
-//! Tests use mocked HealthProbe to avoid slow real system checks.
+//! Tests use mocked `HealthProbe` to avoid slow real system checks.
 
 #![allow(clippy::expect_used)]
 

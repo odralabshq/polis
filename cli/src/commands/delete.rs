@@ -36,11 +36,11 @@ fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Resu
     }
 
     // Stop and delete VM
-    if vm::exists(mp)? {
+    if vm::exists(mp) {
         if !quiet {
             println!("Removing workspace...");
         }
-        vm::delete(mp)?;
+        vm::delete(mp);
     }
 
     // Clear state file
@@ -74,11 +74,11 @@ fn delete_all(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()>
     }
 
     // Stop and delete VM
-    if vm::exists(mp)? {
+    if vm::exists(mp) {
         if !quiet {
             println!("Removing workspace...");
         }
-        vm::delete(mp)?;
+        vm::delete(mp);
     }
 
     // Clear state file

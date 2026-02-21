@@ -200,14 +200,14 @@ _run_script() {
 
 # ── main() success message ────────────────────────────────────────────────
 
-@test "install: success message shows polis run" {
+@test "install: success message shows polis start" {
     run _run_script --version v0.1.0
     assert_success
-    assert_output --partial "polis run"
+    assert_output --partial "polis start"
 }
 
-@test "install: success message shows polis run claude" {
+@test "install: success message shows polis start claude" {
     run _run_script --version v0.1.0
     assert_success
-    assert_output --partial "polis run claude"
+    assert_output --partial "polis start claude"
 }

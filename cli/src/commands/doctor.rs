@@ -195,6 +195,10 @@ pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
 }
 
 /// Run doctor with a custom health probe (for testing).
+///
+/// # Errors
+///
+/// Returns an error if health checks cannot be executed or output fails.
 pub async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> Result<()> {
     let (prerequisites, workspace, network, security) = tokio::try_join!(
         probe.check_prerequisites(),
