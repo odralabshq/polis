@@ -57,11 +57,20 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
     check_prerequisites(mp)?;
 
     if !quiet {
-        println!("Creating workspace...");
+        println!("✓ {}", inception_line("L0", "sequence started."));
     }
 
     let image_url = format!("file://{}", image_path.canonicalize()?.display());
+
+    let pb = (!quiet).then(|| crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting...")));
     let output = mp.launch(&image_url, VM_CPUS, VM_MEMORY, VM_DISK).context("launching workspace")?;
+    if let Some(pb) = pb {
+        if output.status.success() {
+            crate::output::progress::finish_ok(&pb, &inception_line("L1", "workspace isolation starting..."));
+        } else {
+            pb.finish_and_clear();
+        }
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -73,9 +82,30 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
     }
 
     configure_credentials(mp)?;
+
+    let pb = (!quiet).then(|| crate::output::progress::spinner(&inception_line("L2", "agent isolation starting...")));
     start_services(mp)?;
+    if let Some(pb) = pb {
+        crate::output::progress::finish_ok(&pb, &inception_line("L2", "agent isolation starting..."));
+    }
+
     pin_host_key();
     Ok(())
+}
+
+fn inception_line(level: &str, msg: &str) -> String {
+    use owo_colors::{OwoColorize, Style, Stream::Stdout};
+    let tag_style = match level {
+        "L0" => Style::new().truecolor(107, 33, 168),  // stop 1
+        "L1" => Style::new().truecolor(93, 37, 163),   // stop 2
+        "L2" => Style::new().truecolor(64, 47, 153),   // stop 3
+        _    => Style::new().truecolor(46, 53, 147),   // stop 4
+    };
+    format!(
+        "{}  {}",
+        "[inception]".if_supports_color(Stdout, |t| t.style(tag_style)),
+        msg
+    )
 }
 
 /// Start existing VM.

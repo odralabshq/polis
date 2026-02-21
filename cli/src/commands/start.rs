@@ -90,9 +90,13 @@ pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
 }
 
 fn print_guarantees() {
-    println!("✓ Governance    Policy engine active · Audit trail recording");
-    println!("✓ Security      Workspace isolated · Traffic inspection enabled");
-    println!("✓ Observability Action tracing live · Trust scoring active");
+    use owo_colors::{OwoColorize, Stream::Stdout, Style};
+    let gov  = Style::new().truecolor(37, 56, 144);   // stop 5
+    let sec  = Style::new().truecolor(26, 107, 160);  // stop 6
+    let obs  = Style::new().truecolor(26, 151, 179);  // stop 7
+    println!("✓ {}  policy engine active · audit trail recording",      "[governance]   ".if_supports_color(Stdout, |t| t.style(gov)));
+    println!("✓ {}  workspace isolated · traffic inspection enabled",    "[security]     ".if_supports_color(Stdout, |t| t.style(sec)));
+    println!("✓ {}  action tracing live · trust scoring active",         "[observability]".if_supports_color(Stdout, |t| t.style(obs)));
 }
 
 fn generate_workspace_id() -> String {

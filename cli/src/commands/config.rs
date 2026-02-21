@@ -64,18 +64,23 @@ fn default_security_level() -> String {
 ///
 /// Returns an error if the config file cannot be read or written, or if
 /// the key or value fails validation.
-pub fn run(ctx: &OutputContext, cmd: ConfigCommand) -> Result<()> {
+pub fn run(ctx: &OutputContext, cmd: ConfigCommand, json: bool) -> Result<()> {
     match cmd {
-        ConfigCommand::Show => show_config(ctx),
+        ConfigCommand::Show => show_config(ctx, json),
         ConfigCommand::Set { key, value } => set_config(ctx, &key, &value),
     }
 }
 
 // ── Subcommand handlers ──────────────────────────────────────────────────────
 
-fn show_config(ctx: &OutputContext) -> Result<()> {
+fn show_config(ctx: &OutputContext, json: bool) -> Result<()> {
     let path = get_config_path()?;
     let config = load_config(&path)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&config)?);
+        return Ok(());
+    }
 
     println!();
     println!(

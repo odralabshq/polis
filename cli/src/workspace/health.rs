@@ -25,23 +25,38 @@ pub enum HealthStatus {
 ///
 /// Returns an error if the workspace does not become healthy within timeout.
 pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
-    if !quiet {
-        println!("Activating security controls...");
-    }
+    use owo_colors::{OwoColorize, Style, Stream::Stdout};
+    // Logo gradient stop 4 (46,53,147) — L3
+    let tag_style = Style::new().truecolor(46, 53, 147);
+
+    let fmt = |msg: &str| format!(
+        "{}  {}",
+        "[inception]".if_supports_color(Stdout, |t| t.style(tag_style)),
+        msg,
+    );
+
+    let pb = (!quiet).then(|| crate::output::progress::spinner(&fmt("agent isolation complete...")));
 
     let max_attempts = 30;
     let delay = Duration::from_secs(2);
 
     for attempt in 1..=max_attempts {
         match check(mp)? {
-            HealthStatus::Healthy => return Ok(()),
+            HealthStatus::Healthy => {
+                if let Some(pb) = pb {
+                    crate::output::progress::finish_ok(&pb, &fmt("agent containment active."));
+                }
+                return Ok(());
+            }
             HealthStatus::Unhealthy { reason } if attempt == max_attempts => {
+                if let Some(pb) = &pb { pb.finish_and_clear(); }
                 anyhow::bail!("Workspace did not start properly.\n\nReason: {reason}\nDiagnose: polis doctor\nView logs: polis logs");
             }
             _ => std::thread::sleep(delay),
         }
     }
 
+    if let Some(pb) = pb { pb.finish_and_clear(); }
     anyhow::bail!("Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs")
 }
 

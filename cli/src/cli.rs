@@ -117,7 +117,7 @@ impl Cli {
 
             Command::Config(cmd) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::config::run(&ctx, cmd)
+                commands::config::run(&ctx, cmd, json)
             }
 
             Command::Update(args) => {

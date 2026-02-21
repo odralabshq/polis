@@ -172,6 +172,3 @@ run_init
 echo ""
 log_ok "Polis (dev build) installed successfully!"
 echo ""
-echo "Get started:"
-echo "  polis run"
-echo ""

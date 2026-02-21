@@ -237,7 +237,8 @@ pub enum WorkspaceState {
 /// Workspace status for CLI display and JSON output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceStatus {
-    /// Current status (running, stopped, etc.)
+    /// Current state (running, stopped, etc.)
+    #[serde(rename = "state")]
     pub status: WorkspaceState,
     /// Uptime in seconds (only if running)
     #[serde(skip_serializing_if = "Option::is_none")]
