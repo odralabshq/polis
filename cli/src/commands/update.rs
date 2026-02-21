@@ -723,7 +723,11 @@ pub async fn run(
                 "✓".style(ctx.styles.success),
             );
         }
-        UpdateInfo::Available { version, release_notes, .. } => {
+        UpdateInfo::Available {
+            version,
+            release_notes,
+            ..
+        } => {
             has_updates = true;
             println!("  CLI             v{current} → v{version} available");
             if !release_notes.is_empty() {
@@ -811,7 +815,10 @@ pub async fn run(
             checker.perform_update(&version).context("update failed")?;
 
             println!();
-            println!("  {} CLI updated to v{version}", "✓".style(ctx.styles.success));
+            println!(
+                "  {} CLI updated to v{version}",
+                "✓".style(ctx.styles.success)
+            );
             println!();
             println!("  Restart your terminal or run: exec polis");
         }
@@ -843,7 +850,9 @@ fn check_image_update() -> Option<(String, String)> {
     let cached_meta = image::load_metadata(&images_dir).ok().flatten();
     let manifest = load_versions_manifest().ok()?;
 
-    let current = cached_meta.map(|m| m.version).unwrap_or_else(|| "none".to_string());
+    let current = cached_meta
+        .map(|m| m.version)
+        .unwrap_or_else(|| "none".to_string());
     let available = manifest.vm_image.version;
 
     if current == available || current == "none" {

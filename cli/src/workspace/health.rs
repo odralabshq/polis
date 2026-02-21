@@ -25,17 +25,20 @@ pub enum HealthStatus {
 ///
 /// Returns an error if the workspace does not become healthy within timeout.
 pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
-    use owo_colors::{OwoColorize, Style, Stream::Stdout};
+    use owo_colors::{OwoColorize, Stream::Stdout, Style};
     // Logo gradient stop 4 (46,53,147) — L3
     let tag_style = Style::new().truecolor(46, 53, 147);
 
-    let fmt = |msg: &str| format!(
-        "{}  {}",
-        "[inception]".if_supports_color(Stdout, |t| t.style(tag_style)),
-        msg,
-    );
+    let fmt = |msg: &str| {
+        format!(
+            "{}  {}",
+            "[inception]".if_supports_color(Stdout, |t| t.style(tag_style)),
+            msg,
+        )
+    };
 
-    let pb = (!quiet).then(|| crate::output::progress::spinner(&fmt("agent isolation complete...")));
+    let pb =
+        (!quiet).then(|| crate::output::progress::spinner(&fmt("agent isolation complete...")));
 
     let max_attempts = 30;
     let delay = Duration::from_secs(2);
@@ -49,21 +52,36 @@ pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
                 return Ok(());
             }
             HealthStatus::Unhealthy { reason } if attempt == max_attempts => {
-                if let Some(pb) = &pb { pb.finish_and_clear(); }
-                anyhow::bail!("Workspace did not start properly.\n\nReason: {reason}\nDiagnose: polis doctor\nView logs: polis logs");
+                if let Some(pb) = &pb {
+                    pb.finish_and_clear();
+                }
+                anyhow::bail!(
+                    "Workspace did not start properly.\n\nReason: {reason}\nDiagnose: polis doctor\nView logs: polis logs"
+                );
             }
             _ => std::thread::sleep(delay),
         }
     }
 
-    if let Some(pb) = pb { pb.finish_and_clear(); }
-    anyhow::bail!("Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs")
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
+    anyhow::bail!(
+        "Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs"
+    )
 }
 
 /// Check current health status.
 pub fn check(mp: &impl Multipass) -> Result<HealthStatus> {
     let output = match mp.exec(&[
-        "docker", "compose", "-f", COMPOSE_PATH, "ps", "--format", "json", "workspace",
+        "docker",
+        "compose",
+        "-f",
+        COMPOSE_PATH,
+        "ps",
+        "--format",
+        "json",
+        "workspace",
     ]) {
         Ok(o) => o,
         Err(_) => return Ok(HealthStatus::Unknown),
@@ -83,14 +101,24 @@ pub fn check(mp: &impl Multipass) -> Result<HealthStatus> {
         Err(_) => return Ok(HealthStatus::Unknown),
     };
 
-    let state = container.get("State").and_then(|s| s.as_str()).unwrap_or("");
-    let health = container.get("Health").and_then(|s| s.as_str()).unwrap_or("");
+    let state = container
+        .get("State")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    let health = container
+        .get("Health")
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
 
     if state == "running" && health == "healthy" {
         Ok(HealthStatus::Healthy)
     } else if state == "running" {
-        Ok(HealthStatus::Unhealthy { reason: format!("health: {health}") })
+        Ok(HealthStatus::Unhealthy {
+            reason: format!("health: {health}"),
+        })
     } else {
-        Ok(HealthStatus::Unhealthy { reason: format!("state: {state}") })
+        Ok(HealthStatus::Unhealthy {
+            reason: format!("state: {state}"),
+        })
     }
 }

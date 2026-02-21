@@ -33,8 +33,14 @@ pub fn state(mp: &impl Multipass) -> Result<VmState> {
         Ok(o) if o.status.success() => o,
         _ => return Ok(VmState::NotFound),
     };
-    let info: serde_json::Value = serde_json::from_slice(&output.stdout).context("parsing multipass info")?;
-    let state_str = info.get("info").and_then(|i| i.get("polis")).and_then(|p| p.get("state")).and_then(|s| s.as_str()).unwrap_or("Unknown");
+    let info: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("parsing multipass info")?;
+    let state_str = info
+        .get("info")
+        .and_then(|i| i.get("polis"))
+        .and_then(|p| p.get("state"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("Unknown");
     Ok(match state_str {
         "Running" => VmState::Running,
         "Starting" => VmState::Starting,
@@ -62,11 +68,18 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
 
     let image_url = format!("file://{}", image_path.canonicalize()?.display());
 
-    let pb = (!quiet).then(|| crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting...")));
-    let output = mp.launch(&image_url, VM_CPUS, VM_MEMORY, VM_DISK).context("launching workspace")?;
+    let pb = (!quiet).then(|| {
+        crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
+    });
+    let output = mp
+        .launch(&image_url, VM_CPUS, VM_MEMORY, VM_DISK)
+        .context("launching workspace")?;
     if let Some(pb) = pb {
         if output.status.success() {
-            crate::output::progress::finish_ok(&pb, &inception_line("L1", "workspace isolation starting..."));
+            crate::output::progress::finish_ok(
+                &pb,
+                &inception_line("L1", "workspace isolation starting..."),
+            );
         } else {
             pb.finish_and_clear();
         }
@@ -76,17 +89,24 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
         let stderr = String::from_utf8_lossy(&output.stderr);
         #[cfg(target_os = "linux")]
         if stderr.contains("Failed to copy") {
-            anyhow::bail!("Failed to create workspace.\n\nFix: sudo snap connect multipass:removable-media");
+            anyhow::bail!(
+                "Failed to create workspace.\n\nFix: sudo snap connect multipass:removable-media"
+            );
         }
         anyhow::bail!("Failed to create workspace.\n\nRun 'polis doctor' to diagnose.");
     }
 
     configure_credentials(mp)?;
 
-    let pb = (!quiet).then(|| crate::output::progress::spinner(&inception_line("L2", "agent isolation starting...")));
+    let pb = (!quiet).then(|| {
+        crate::output::progress::spinner(&inception_line("L2", "agent isolation starting..."))
+    });
     start_services(mp)?;
     if let Some(pb) = pb {
-        crate::output::progress::finish_ok(&pb, &inception_line("L2", "agent isolation starting..."));
+        crate::output::progress::finish_ok(
+            &pb,
+            &inception_line("L2", "agent isolation starting..."),
+        );
     }
 
     pin_host_key();
@@ -94,12 +114,12 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
 }
 
 fn inception_line(level: &str, msg: &str) -> String {
-    use owo_colors::{OwoColorize, Style, Stream::Stdout};
+    use owo_colors::{OwoColorize, Stream::Stdout, Style};
     let tag_style = match level {
-        "L0" => Style::new().truecolor(107, 33, 168),  // stop 1
-        "L1" => Style::new().truecolor(93, 37, 163),   // stop 2
-        "L2" => Style::new().truecolor(64, 47, 153),   // stop 3
-        _    => Style::new().truecolor(46, 53, 147),   // stop 4
+        "L0" => Style::new().truecolor(107, 33, 168), // stop 1
+        "L1" => Style::new().truecolor(93, 37, 163),  // stop 2
+        "L2" => Style::new().truecolor(64, 47, 153),  // stop 3
+        _ => Style::new().truecolor(46, 53, 147),     // stop 4
     };
     format!(
         "{}  {}",
@@ -121,7 +141,10 @@ pub fn start(mp: &impl Multipass) -> Result<()> {
 /// Stop VM.
 pub fn stop(mp: &impl Multipass) -> Result<()> {
     let _ = mp.exec(&["docker", "compose", "-f", COMPOSE_PATH, "stop"]);
-    let output = std::process::Command::new("multipass").args(["stop", "polis"]).output().context("stopping workspace")?;
+    let output = std::process::Command::new("multipass")
+        .args(["stop", "polis"])
+        .output()
+        .context("stopping workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("Failed to stop workspace: {stderr}");
@@ -131,8 +154,12 @@ pub fn stop(mp: &impl Multipass) -> Result<()> {
 
 /// Delete VM.
 pub fn delete(_mp: &impl Multipass) -> Result<()> {
-    let _ = std::process::Command::new("multipass").args(["delete", "polis"]).output();
-    let _ = std::process::Command::new("multipass").args(["purge"]).output();
+    let _ = std::process::Command::new("multipass")
+        .args(["delete", "polis"])
+        .output();
+    let _ = std::process::Command::new("multipass")
+        .args(["purge"])
+        .output();
     Ok(())
 }
 
@@ -155,12 +182,22 @@ pub fn ensure_running(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Re
 const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
 
 fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
-    let output = mp.version().map_err(|_| anyhow::anyhow!("Workspace runtime not available.\n\nRun 'polis doctor' to diagnose and fix."))?;
+    let output = mp.version().map_err(|_| {
+        anyhow::anyhow!(
+            "Workspace runtime not available.\n\nRun 'polis doctor' to diagnose and fix."
+        )
+    })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    if let Some(ver_str) = stdout.lines().next().and_then(|l| l.split_whitespace().nth(1)) {
+    if let Some(ver_str) = stdout
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+    {
         if let Ok(v) = semver::Version::parse(ver_str) {
             if v < MULTIPASS_MIN_VERSION {
-                anyhow::bail!("Workspace runtime needs update.\n\nRun 'polis doctor' to diagnose and fix.");
+                anyhow::bail!(
+                    "Workspace runtime needs update.\n\nRun 'polis doctor' to diagnose and fix."
+                );
             }
         }
     }
@@ -182,10 +219,14 @@ fn start_services(mp: &impl Multipass) -> Result<()> {
 
 fn pin_host_key() {
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("polis"));
-    if let Ok(output) = std::process::Command::new(exe).args(["_extract-host-key"]).output() {
+    if let Ok(output) = std::process::Command::new(exe)
+        .args(["_extract-host-key"])
+        .output()
+    {
         if output.status.success() {
             if let Ok(host_key) = String::from_utf8(output.stdout) {
-                let _ = crate::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim()));
+                let _ =
+                    crate::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim()));
             }
         }
     }

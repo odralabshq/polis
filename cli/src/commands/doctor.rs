@@ -973,7 +973,9 @@ mod tests {
         checks.prerequisites.multipass_version_ok = false;
         let issues = collect_issues(&checks);
         assert!(
-            issues.iter().any(|i| i.to_lowercase().contains("multipass")),
+            issues
+                .iter()
+                .any(|i| i.to_lowercase().contains("multipass")),
             "got: {issues:?}"
         );
     }
@@ -985,7 +987,9 @@ mod tests {
         checks.prerequisites.multipass_version_ok = false;
         let issues = collect_issues(&checks);
         assert!(
-            issues.iter().any(|i| i.contains("1.15.0") || i.to_lowercase().contains("old")),
+            issues
+                .iter()
+                .any(|i| i.contains("1.15.0") || i.to_lowercase().contains("old")),
             "got: {issues:?}"
         );
     }

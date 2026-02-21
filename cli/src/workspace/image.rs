@@ -8,9 +8,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zipsign_api::{unsign::copy_and_unsign_tar, verify::verify_tar, VerifyingKey, PUBLIC_KEY_LENGTH};
+use zipsign_api::{
+    PUBLIC_KEY_LENGTH, VerifyingKey, unsign::copy_and_unsign_tar, verify::verify_tar,
+};
 
-use crate::commands::update::{base64_decode, hex_encode, POLIS_PUBLIC_KEY_B64};
+use crate::commands::update::{POLIS_PUBLIC_KEY_B64, base64_decode, hex_encode};
 
 const IMAGE_FILENAME: &str = "polis.qcow2";
 const SIDECAR_FILENAME: &str = "polis.qcow2.sha256";
@@ -46,7 +48,8 @@ pub struct ImageMetadata {
 ///
 /// Returns an error if the home directory cannot be determined.
 pub fn images_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
     #[cfg(target_os = "linux")]
     return Ok(home.join("polis").join("images"));
     #[cfg(not(target_os = "linux"))]
@@ -73,8 +76,10 @@ pub fn load_metadata(images_dir: &Path) -> Result<Option<ImageMetadata>> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let meta = serde_json::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
+    let content =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let meta =
+        serde_json::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
     Ok(Some(meta))
 }
 
@@ -189,9 +194,20 @@ fn download_with_resume(url: &str, dest: &Path, quiet: bool) -> Result<()> {
     do_download(url, dest, &partial, existing, quiet, true)
 }
 
-fn do_download(url: &str, dest: &Path, partial: &Path, existing: u64, quiet: bool, allow_retry: bool) -> Result<()> {
+fn do_download(
+    url: &str,
+    dest: &Path,
+    partial: &Path,
+    existing: u64,
+    quiet: bool,
+    allow_retry: bool,
+) -> Result<()> {
     let req = ureq::get(url);
-    let req = if existing > 0 { req.set("Range", &format!("bytes={existing}-")) } else { req };
+    let req = if existing > 0 {
+        req.set("Range", &format!("bytes={existing}-"))
+    } else {
+        req
+    };
 
     let response = match req.call() {
         Ok(r) => r,
@@ -205,14 +221,32 @@ fn do_download(url: &str, dest: &Path, partial: &Path, existing: u64, quiet: boo
 
     let status = response.status();
     let (mut file, start_pos) = if status == 206 {
-        (OpenOptions::new().append(true).create(true).open(partial).context("opening partial file")?, existing)
+        (
+            OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(partial)
+                .context("opening partial file")?,
+            existing,
+        )
     } else if status == 200 {
-        (OpenOptions::new().write(true).create(true).truncate(true).open(partial).context("opening partial file")?, 0)
+        (
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(partial)
+                .context("opening partial file")?,
+            0,
+        )
     } else {
         anyhow::bail!("Download failed: HTTP {status}");
     };
 
-    let total = response.header("Content-Length").and_then(|v| v.parse::<u64>().ok()).map(|len| if status == 206 { start_pos + len } else { len });
+    let total = response
+        .header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|len| if status == 206 { start_pos + len } else { len });
 
     if start_pos > 0 && total.is_some_and(|t| start_pos >= t) {
         drop(file);
@@ -224,9 +258,12 @@ fn do_download(url: &str, dest: &Path, partial: &Path, existing: u64, quiet: boo
         indicatif::ProgressBar::hidden()
     } else if let Some(t) = total {
         let pb = indicatif::ProgressBar::new(t);
-        pb.set_style(indicatif::ProgressStyle::default_bar()
-            .template("[{bar:40}] {percent}%").unwrap_or_else(|_| indicatif::ProgressStyle::default_bar())
-            .progress_chars("█▓░"));
+        pb.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template("[{bar:40}] {percent}%")
+                .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar())
+                .progress_chars("█▓░"),
+        );
         pb.set_position(start_pos);
         pb
     } else {
@@ -237,7 +274,9 @@ fn do_download(url: &str, dest: &Path, partial: &Path, existing: u64, quiet: boo
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         let n = reader.read(&mut buf).context("Download interrupted")?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         file.write_all(&buf[..n]).context("Download interrupted")?;
         pb.inc(n as u64);
     }
@@ -250,12 +289,19 @@ fn do_download(url: &str, dest: &Path, partial: &Path, existing: u64, quiet: boo
 // ── Verification ─────────────────────────────────────────────────────────────
 
 fn verify_image_integrity(image_path: &Path, sidecar_path: &Path) -> Result<String> {
-    let sidecar_bytes = std::fs::read(sidecar_path).with_context(|| format!("reading {}", sidecar_path.display()))?;
+    let sidecar_bytes = std::fs::read(sidecar_path)
+        .with_context(|| format!("reading {}", sidecar_path.display()))?;
 
-    let key_b64 = std::env::var("POLIS_VERIFYING_KEY_B64").unwrap_or_else(|_| POLIS_PUBLIC_KEY_B64.to_string());
+    let key_b64 = std::env::var("POLIS_VERIFYING_KEY_B64")
+        .unwrap_or_else(|_| POLIS_PUBLIC_KEY_B64.to_string());
     let key_bytes = base64_decode(&key_b64).context("invalid public key")?;
-    anyhow::ensure!(key_bytes.len() == PUBLIC_KEY_LENGTH, "public key length mismatch");
-    let key_array: [u8; PUBLIC_KEY_LENGTH] = key_bytes.try_into().map_err(|_| anyhow::anyhow!("invalid public key"))?;
+    anyhow::ensure!(
+        key_bytes.len() == PUBLIC_KEY_LENGTH,
+        "public key length mismatch"
+    );
+    let key_array: [u8; PUBLIC_KEY_LENGTH] = key_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid public key"))?;
     let verifying_key = VerifyingKey::from_bytes(&key_array).context("invalid public key")?;
 
     verify_tar(&mut Cursor::new(&sidecar_bytes), &[verifying_key], None).context(
@@ -264,34 +310,51 @@ fn verify_image_integrity(image_path: &Path, sidecar_path: &Path) -> Result<Stri
 
     let expected = extract_checksum_from_signed_file(sidecar_path)?;
     let actual = sha256_file(image_path)?;
-    anyhow::ensure!(actual == expected, "Workspace image failed integrity check.\n\nThis may indicate a corrupted download or tampering.\nRetry with: polis delete --all && polis start");
+    anyhow::ensure!(
+        actual == expected,
+        "Workspace image failed integrity check.\n\nThis may indicate a corrupted download or tampering.\nRetry with: polis delete --all && polis start"
+    );
     Ok(actual)
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
-    let mut file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 65536];
     loop {
         let n = file.read(&mut buf).context("reading image file")?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buf[..n]);
     }
     Ok(hex_encode(&hasher.finalize()))
 }
 
 fn extract_checksum_from_signed_file(checksum_path: &Path) -> Result<String> {
-    let signed_bytes = std::fs::read(checksum_path).with_context(|| format!("reading {}", checksum_path.display()))?;
+    let signed_bytes = std::fs::read(checksum_path)
+        .with_context(|| format!("reading {}", checksum_path.display()))?;
     let mut unsigned = Cursor::new(Vec::new());
-    copy_and_unsign_tar(&mut Cursor::new(&signed_bytes), &mut unsigned).context("failed to unsign checksum")?;
+    copy_and_unsign_tar(&mut Cursor::new(&signed_bytes), &mut unsigned)
+        .context("failed to unsign checksum")?;
     unsigned.set_position(0);
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(unsigned));
     let mut content = String::new();
     if let Some(entry) = tar.entries().context("reading sidecar")?.next() {
-        entry.context("reading entry")?.read_to_string(&mut content).context("reading content")?;
+        entry
+            .context("reading entry")?
+            .read_to_string(&mut content)
+            .context("reading content")?;
     }
-    let hex = content.split_whitespace().next().ok_or_else(|| anyhow::anyhow!("malformed checksum file"))?;
-    anyhow::ensure!(hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()), "malformed checksum file");
+    let hex = content
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("malformed checksum file"))?;
+    anyhow::ensure!(
+        hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()),
+        "malformed checksum file"
+    );
     Ok(hex.to_string())
 }
 
@@ -306,7 +369,8 @@ pub struct ResolvedRelease {
 }
 
 /// GitHub releases API URL.
-pub const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/OdraLabsHQ/polis/releases?per_page=10";
+pub const GITHUB_RELEASES_URL: &str =
+    "https://api.github.com/repos/OdraLabsHQ/polis/releases?per_page=10";
 
 /// Resolve the latest image URL from GitHub releases.
 ///
@@ -315,17 +379,31 @@ pub const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/OdraLabsHQ/p
 /// Returns an error if the network is unavailable or no suitable release is found.
 pub fn resolve_latest_image_url() -> Result<ResolvedRelease> {
     let arch = current_arch()?;
-    let url = std::env::var("POLIS_GITHUB_API_URL").unwrap_or_else(|_| GITHUB_RELEASES_URL.to_string());
+    let url =
+        std::env::var("POLIS_GITHUB_API_URL").unwrap_or_else(|_| GITHUB_RELEASES_URL.to_string());
     let token = std::env::var("GITHUB_TOKEN").unwrap_or_default();
 
-    let req = ureq::get(&url).set("Accept", "application/vnd.github+json").set("User-Agent", "polis-cli");
-    let req = if token.is_empty() { req } else { req.set("Authorization", &format!("Bearer {token}")) };
+    let req = ureq::get(&url)
+        .set("Accept", "application/vnd.github+json")
+        .set("User-Agent", "polis-cli");
+    let req = if token.is_empty() {
+        req
+    } else {
+        req.set("Authorization", &format!("Bearer {token}"))
+    };
 
     let body: serde_json::Value = match req.call() {
-        Ok(resp) => serde_json::from_str(&resp.into_string().context("reading response")?).context("parsing response")?,
-        Err(ureq::Error::Status(403, _)) => anyhow::bail!("Cannot check for updates: rate limited.\n\nTry again in a few minutes, or set GITHUB_TOKEN."),
-        Err(ureq::Error::Status(code, _)) => anyhow::bail!("Cannot download workspace: HTTP {code}"),
-        Err(_) => anyhow::bail!("Cannot download workspace: no network connection.\n\nFor offline setup: https://polis.dev/docs/offline"),
+        Ok(resp) => serde_json::from_str(&resp.into_string().context("reading response")?)
+            .context("parsing response")?,
+        Err(ureq::Error::Status(403, _)) => anyhow::bail!(
+            "Cannot check for updates: rate limited.\n\nTry again in a few minutes, or set GITHUB_TOKEN."
+        ),
+        Err(ureq::Error::Status(code, _)) => {
+            anyhow::bail!("Cannot download workspace: HTTP {code}")
+        }
+        Err(_) => anyhow::bail!(
+            "Cannot download workspace: no network connection.\n\nFor offline setup: https://polis.dev/docs/offline"
+        ),
     };
 
     let qcow2_suffix = format!("-{arch}.qcow2");
@@ -334,10 +412,24 @@ pub fn resolve_latest_image_url() -> Result<ResolvedRelease> {
 
     for release in releases {
         let tag = release["tag_name"].as_str().unwrap_or_default().to_string();
-        let Some(assets) = release["assets"].as_array() else { continue };
-        let find_url = |suffix: &str| assets.iter().find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(suffix))).and_then(|a| a["browser_download_url"].as_str()).map(str::to_string);
-        if let (Some(image_url), Some(checksum_url)) = (find_url(&qcow2_suffix), find_url(&sha256_suffix)) {
-            return Ok(ResolvedRelease { tag, image_url, checksum_url });
+        let Some(assets) = release["assets"].as_array() else {
+            continue;
+        };
+        let find_url = |suffix: &str| {
+            assets
+                .iter()
+                .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(suffix)))
+                .and_then(|a| a["browser_download_url"].as_str())
+                .map(str::to_string)
+        };
+        if let (Some(image_url), Some(checksum_url)) =
+            (find_url(&qcow2_suffix), find_url(&sha256_suffix))
+        {
+            return Ok(ResolvedRelease {
+                tag,
+                image_url,
+                checksum_url,
+            });
         }
     }
     anyhow::bail!("No workspace image found in recent releases.\n\nUse: polis start --image <url>")

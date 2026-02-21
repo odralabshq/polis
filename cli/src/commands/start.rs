@@ -63,7 +63,10 @@ pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
 
     // Save state if this is a new workspace
     if vm_state == vm::VmState::NotFound {
-        let sha256 = image::load_metadata(&image::images_dir()?).ok().flatten().map(|m| m.sha256);
+        let sha256 = image::load_metadata(&image::images_dir()?)
+            .ok()
+            .flatten()
+            .map(|m| m.sha256);
         let state = WorkspaceState {
             workspace_id: generate_workspace_id(),
             created_at: Utc::now(),
@@ -91,12 +94,21 @@ pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
 
 fn print_guarantees() {
     use owo_colors::{OwoColorize, Stream::Stdout, Style};
-    let gov  = Style::new().truecolor(37, 56, 144);   // stop 5
-    let sec  = Style::new().truecolor(26, 107, 160);  // stop 6
-    let obs  = Style::new().truecolor(26, 151, 179);  // stop 7
-    println!("✓ {}  policy engine active · audit trail recording",      "[governance]   ".if_supports_color(Stdout, |t| t.style(gov)));
-    println!("✓ {}  workspace isolated · traffic inspection enabled",    "[security]     ".if_supports_color(Stdout, |t| t.style(sec)));
-    println!("✓ {}  action tracing live · trust scoring active",         "[observability]".if_supports_color(Stdout, |t| t.style(obs)));
+    let gov = Style::new().truecolor(37, 56, 144); // stop 5
+    let sec = Style::new().truecolor(26, 107, 160); // stop 6
+    let obs = Style::new().truecolor(26, 151, 179); // stop 7
+    println!(
+        "✓ {}  policy engine active · audit trail recording",
+        "[governance]   ".if_supports_color(Stdout, |t| t.style(gov))
+    );
+    println!(
+        "✓ {}  workspace isolated · traffic inspection enabled",
+        "[security]     ".if_supports_color(Stdout, |t| t.style(sec))
+    );
+    println!(
+        "✓ {}  action tracing live · trust scoring active",
+        "[observability]".if_supports_color(Stdout, |t| t.style(obs))
+    );
 }
 
 fn generate_workspace_id() -> String {

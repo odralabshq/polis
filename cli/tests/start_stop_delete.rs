@@ -8,8 +8,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{ExitStatus, Output};
 
 use anyhow::Result;
-use polis_cli::commands::{stop, DeleteArgs};
 use polis_cli::commands::delete;
+use polis_cli::commands::{DeleteArgs, stop};
 use polis_cli::multipass::Multipass;
 
 /// Mock multipass that returns "VM not found"
@@ -93,7 +93,10 @@ fn test_stop_already_stopped_succeeds() {
 #[test]
 fn test_delete_no_workspace_succeeds() {
     let mp = MockNotFound;
-    let args = DeleteArgs { all: false, yes: true };
+    let args = DeleteArgs {
+        all: false,
+        yes: true,
+    };
     // With no workspace, delete should succeed (nothing to delete)
     let result = delete::run(&args, &mp, true);
     assert!(result.is_ok());
@@ -102,7 +105,10 @@ fn test_delete_no_workspace_succeeds() {
 #[test]
 fn test_delete_all_no_workspace_succeeds() {
     let mp = MockNotFound;
-    let args = DeleteArgs { all: true, yes: true };
+    let args = DeleteArgs {
+        all: true,
+        yes: true,
+    };
     let result = delete::run(&args, &mp, true);
     assert!(result.is_ok());
 }

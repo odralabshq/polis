@@ -62,7 +62,6 @@ pub enum Command {
     Version,
 
     // --- Internal ---
-
     #[command(hide = true, name = "_ssh-proxy")]
     SshProxy,
 
@@ -135,7 +134,6 @@ impl Cli {
             Command::Version => commands::version::run(json),
 
             // --- Internal commands ---
-
             Command::SshProxy => commands::internal::ssh_proxy().await,
             Command::ExtractHostKey => commands::internal::extract_host_key().await,
             Command::Provision => {
