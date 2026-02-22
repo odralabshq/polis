@@ -245,7 +245,7 @@ pub async fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Res
         args.push("-f".into());
         args.push(overlay);
     }
-    args.extend(["up".into(), "-d".into()]);
+    args.extend(["up".into(), "-d".into(), "--remove-orphans".into()]);
 
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let output = mp.exec(&arg_refs).await.context("starting platform")?;

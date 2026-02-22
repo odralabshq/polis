@@ -41,14 +41,16 @@ export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 npm install -g pnpm@latest  # NOSONAR - controlled sandbox environment, protected by Polis security stack (DLP, ICAP, malware scanning)
 rm -rf /var/lib/apt/lists/*
 
-# Install Bun
+# Install Bun (optional — not required for the build, but some plugins may use it)
 export HOME="${HOME:-/root}"
-curl -fsSL https://bun.sh/install | bash
+curl -fsSL https://bun.sh/install | bash || echo "[openclaw-install] WARNING: Bun install failed (non-fatal)"
 export PATH="/root/.bun/bin:${PATH}"
 
 # Clone and build OpenClaw
 cd /app || { mkdir -p /app && cd /app; }
-git clone --depth 1 https://github.com/openclaw/openclaw.git .
+if [[ ! -f package.json ]]; then
+    git clone --depth 1 https://github.com/openclaw/openclaw.git .
+fi
 pnpm install --frozen-lockfile --network-concurrency=4  # NOSONAR - controlled sandbox environment, protected by Polis security stack
 OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build
 OPENCLAW_PREFER_PNPM=1 pnpm ui:build
