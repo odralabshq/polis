@@ -313,9 +313,9 @@ gen_systemd() {
             echo "EnvironmentFile=-${RUNTIME_ENV_FILE}"
         fi
         echo ""
-        echo "Environment=NODE_EXTRA_CA_CERTS=/etc/ssl/certs/polis-ca.crt"
-        echo "Environment=SSL_CERT_FILE=/etc/ssl/certs/polis-ca.crt"
-        echo "Environment=REQUESTS_CA_BUNDLE=/etc/ssl/certs/polis-ca.crt"
+        echo "Environment=NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/polis-ca.crt"
+        echo "Environment=SSL_CERT_FILE=/usr/local/share/ca-certificates/polis-ca.crt"
+        echo "Environment=REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/polis-ca.crt"
         if [[ -n "${env_lines}" ]]; then
             printf '%s' "${env_lines}"
         fi
@@ -325,7 +325,7 @@ gen_systemd() {
         fi
         echo "ExecStart=${RUNTIME_CMD}"
         echo ""
-        echo "Restart=on-failure"
+        echo "Restart=always"
         echo "RestartSec=5"
         echo "StartLimitBurst=3"
         echo ""
