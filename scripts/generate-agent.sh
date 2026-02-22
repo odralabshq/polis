@@ -195,18 +195,38 @@ gen_compose() {
 
     local healthcheck_test="systemctl is-active polis-init.service && systemctl is-active ${NAME}.service && ${HEALTH_CMD} && ip route | grep -q default"
 
-    # Socat proxy runs as a VM-level systemd service (see gen_proxy below).
-    # No container-level proxy needed.
+    # Socat proxy sidecar: the workspace container uses sysbox-runc which breaks
+    # Docker's iptables-based port publishing. A lightweight socat container on
+    # the default runtime handles port forwarding instead.
+    # It joins internal-bridge (to reach workspace) and default (non-internal,
+    # so Docker can publish ports to the VM host).
     local socat_services_yaml=""
+    for ((i=0; i<port_count; i++)); do
+        local container_port host_env default_port
+        container_port=$(yq ".spec.ports[${i}].container" "${MANIFEST}")
+        host_env=$(yq ".spec.ports[${i}].hostEnv" "${MANIFEST}")
+        default_port=$(yq ".spec.ports[${i}].default" "${MANIFEST}")
+        socat_services_yaml="${socat_services_yaml}  ${NAME}-proxy-${container_port}:
+    image: alpine/socat:latest
+    restart: unless-stopped
+    ports:
+      - \"\${${host_env}:-${default_port}}:${container_port}\"
+    command: TCP-LISTEN:${container_port},fork,reuseaddr TCP:polis-workspace:${container_port}
+    networks:
+      - internal-bridge
+      - default
+    depends_on:
+      - workspace
+"
+    done
 
     {
         echo "# Generated from ${MANIFEST} - DO NOT EDIT"
         echo "services:"
         echo "  workspace:"
-        if [[ -n "${ports_yaml}" ]]; then
-            echo "    ports:"
-            printf '%s' "${ports_yaml}"
-        fi
+        # NOTE: ports are NOT published on workspace directly because it uses
+        # sysbox-runc which breaks Docker's iptables port publishing. The socat
+        # proxy sidecar(s) below handle port forwarding instead.
         echo "    env_file:"
         echo "      - .env"
         echo "    volumes:"
@@ -378,41 +398,6 @@ gen_env() {
 }
 
 # ---------------------------------------------------------------------------
-# Generate VM-level socat proxy units (one per port)
-# These run on the VM host (not in a container) to create real TCP listeners
-# that Hyper-V's virtual switch can route to.
-# ---------------------------------------------------------------------------
-
-gen_proxy() {
-    local port_count
-    port_count=$(yq '.spec.ports | length' "${MANIFEST}")
-    for ((i=0; i<port_count; i++)); do
-        local container_port host_env default_port
-        container_port=$(yq ".spec.ports[${i}].container" "${MANIFEST}")
-        host_env=$(yq ".spec.ports[${i}].hostEnv" "${MANIFEST}")
-        default_port=$(yq ".spec.ports[${i}].default" "${MANIFEST}")
-        local out="${OUT_DIR}/${NAME}-proxy-${container_port}.service"
-        {
-            echo "# Generated from ${MANIFEST} - DO NOT EDIT"
-            echo "# Install on the VM host: cp ${out} /etc/systemd/system/"
-            echo "[Unit]"
-            echo "Description=Polis socat proxy for ${NAME} port ${container_port}"
-            echo "After=docker.service"
-            echo "Requires=docker.service"
-            echo ""
-            echo "[Service]"
-            echo "Type=simple"
-            echo "Restart=always"
-            echo "RestartSec=3"
-            echo "ExecStart=/bin/sh -c 'IP=\$(docker inspect polis-workspace --format \"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}\"); exec /usr/bin/socat TCP-LISTEN:\${${host_env}:-${default_port}},fork,reuseaddr TCP:\$IP:${container_port}'"
-            echo ""
-            echo "[Install]"
-            echo "WantedBy=multi-user.target"
-        } > "${out}"
-    done
-}
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -425,4 +410,3 @@ gen_compose
 gen_systemd
 gen_hash
 gen_env
-gen_proxy
