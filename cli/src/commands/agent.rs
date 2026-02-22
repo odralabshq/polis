@@ -2,8 +2,10 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+use serde::Deserialize;
 
 use crate::multipass::Multipass;
+use crate::output::OutputContext;
 use crate::state::StateManager;
 use crate::workspace::vm;
 
@@ -36,69 +38,75 @@ pub struct RemoveArgs {
     pub name: String,
 }
 
+/// Minimal agent manifest shape — only the fields we need.
+#[derive(Deserialize)]
+struct AgentManifest {
+    metadata: AgentMetadata,
+}
+
+#[derive(Deserialize)]
+struct AgentMetadata {
+    name: String,
+}
+
 /// Run the given agent subcommand.
 ///
 /// # Errors
 ///
 /// Returns an error if the subcommand fails (e.g. VM not running, agent not
 /// found, artifact generation failure).
-pub fn run(cmd: AgentCommand, mp: &impl Multipass, quiet: bool, json: bool) -> Result<()> {
+pub async fn run(
+    cmd: AgentCommand,
+    mp: &impl Multipass,
+    ctx: &OutputContext,
+    json: bool,
+) -> Result<()> {
     match cmd {
-        AgentCommand::Add(args) => add(&args, mp, quiet),
-        AgentCommand::Remove(args) => remove(&args, mp, quiet),
-        AgentCommand::List => list(mp, quiet, json),
-        AgentCommand::Restart => restart(mp, quiet),
-        AgentCommand::Update => update(mp, quiet),
+        AgentCommand::Add(args) => add(&args, mp, ctx).await,
+        AgentCommand::Remove(args) => remove(&args, mp, ctx).await,
+        AgentCommand::List => list(mp, ctx, json).await,
+        AgentCommand::Restart => restart(mp, ctx).await,
+        AgentCommand::Update => update(mp, ctx).await,
     }
 }
 
-fn add(args: &AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     // Validate local path
     let folder = std::path::Path::new(&args.path);
     anyhow::ensure!(folder.exists(), "Path not found: {}", args.path);
-    let manifest = folder.join("agent.yaml");
-    anyhow::ensure!(manifest.exists(), "No agent.yaml found in: {}", args.path);
+    let manifest_path = folder.join("agent.yaml");
+    anyhow::ensure!(manifest_path.exists(), "No agent.yaml found in: {}", args.path);
 
-    // Read agent name from manifest via local yq
-    let manifest_str = manifest
-        .to_str()
-        .context("agent.yaml path contains invalid UTF-8")?;
-    let name_out = std::process::Command::new("yq")
-        .args([".metadata.name", manifest_str])
-        .output()
-        .context("running yq to read agent name (yq must be installed locally)")?;
-    anyhow::ensure!(
-        name_out.status.success(),
-        "Failed to read metadata.name from agent.yaml"
-    );
-    let name = String::from_utf8_lossy(&name_out.stdout).trim().to_string();
-    anyhow::ensure!(
-        !name.is_empty() && name != "null",
-        "metadata.name is missing in agent.yaml"
-    );
+    // Parse agent name from manifest using serde_yaml (no yq dependency)
+    let manifest_content = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest: AgentManifest = serde_yaml::from_str(&manifest_content)
+        .context("failed to parse agent.yaml: missing or invalid metadata.name")?;
+    let name = manifest.metadata.name;
+    anyhow::ensure!(!name.is_empty(), "metadata.name is empty in agent.yaml");
 
     // VM must be running
     anyhow::ensure!(
-        vm::state(mp)? == vm::VmState::Running,
+        vm::state(mp).await? == vm::VmState::Running,
         "VM is not running. Start it first: polis start"
     );
 
     // Check agent doesn't already exist
     let target_dir = format!("{VM_ROOT}/agents/{name}");
-    let exists = mp.exec(&["test", "-d", &target_dir])?;
+    let exists = mp.exec(&["test", "-d", &target_dir]).await?;
     anyhow::ensure!(
         !exists.status.success(),
         "Agent '{name}' already installed. Remove it first: polis agent remove {name}"
     );
 
-    // Transfer folder to VM using multipass transfer --recursive
-    if !quiet {
+    // Transfer folder to VM using the Multipass trait
+    if !ctx.quiet {
         println!("Copying agent '{name}' to VM...");
     }
-    let dest = format!("polis:{VM_ROOT}/agents/{name}");
-    let out = std::process::Command::new("multipass")
-        .args(["transfer", "--recursive", &args.path, &dest])
-        .output()
+    let dest = format!("{VM_ROOT}/agents/{name}");
+    let out = mp
+        .transfer_recursive(&args.path, &dest)
+        .await
         .context("multipass transfer")?;
     anyhow::ensure!(
         out.status.success(),
@@ -107,35 +115,36 @@ fn add(args: &AddArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     );
 
     // Generate artifacts
-    if !quiet {
+    if !ctx.quiet {
         println!("Generating artifacts...");
     }
     let script = format!("{VM_ROOT}/scripts/generate-agent.sh");
     let all_agents = format!("{VM_ROOT}/agents");
     let gen_out = mp
         .exec(&["bash", &script, &name, &all_agents])
+        .await
         .context("generate-agent.sh")?;
     if !gen_out.status.success() {
         // Cleanup on failure
-        let _ = mp.exec(&["rm", "-rf", &target_dir]);
+        let _ = mp.exec(&["rm", "-rf", &target_dir]).await;
         let stderr = String::from_utf8_lossy(&gen_out.stderr);
         let stdout = String::from_utf8_lossy(&gen_out.stdout);
         let detail = if stderr.is_empty() { stdout } else { stderr };
         anyhow::bail!("Artifact generation failed:\n{detail}");
     }
 
-    if !quiet {
+    if !ctx.quiet {
         println!("Agent '{name}' installed. Start with: polis start --agent {name}");
     }
     Ok(())
 }
 
-fn remove(args: &RemoveArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+async fn remove(args: &RemoveArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     let name = &args.name;
     let agent_dir = format!("{VM_ROOT}/agents/{name}");
 
     // Must exist
-    let exists = mp.exec(&["test", "-d", &agent_dir])?;
+    let exists = mp.exec(&["test", "-d", &agent_dir]).await?;
     anyhow::ensure!(exists.status.success(), "Agent '{name}' is not installed.");
 
     let state_mgr = StateManager::new()?;
@@ -143,13 +152,14 @@ fn remove(args: &RemoveArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     let is_active = active.as_deref() == Some(name.as_str());
 
     if is_active {
-        if !quiet {
+        if !ctx.quiet {
             println!("Stopping active agent '{name}'...");
         }
-        // Compose down full stack
         let base = format!("{VM_ROOT}/docker-compose.yml");
         let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
-        let down = mp.exec(&["docker", "compose", "-f", &base, "-f", &overlay, "down"])?;
+        let down = mp
+            .exec(&["docker", "compose", "-f", &base, "-f", &overlay, "down"])
+            .await?;
         anyhow::ensure!(
             down.status.success(),
             "Failed to stop stack: {}",
@@ -157,8 +167,7 @@ fn remove(args: &RemoveArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
         );
     }
 
-    // Delete agent directory
-    let rm = mp.exec(&["rm", "-rf", &agent_dir])?;
+    let rm = mp.exec(&["rm", "-rf", &agent_dir]).await?;
     anyhow::ensure!(
         rm.status.success(),
         "Failed to remove agent directory: {}",
@@ -166,95 +175,94 @@ fn remove(args: &RemoveArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     );
 
     if is_active {
-        // Restart control plane only
-        if !quiet {
+        if !ctx.quiet {
             println!("Restarting control plane...");
         }
         let base = format!("{VM_ROOT}/docker-compose.yml");
-        let up = mp.exec(&["docker", "compose", "-f", &base, "up", "-d"])?;
+        let up = mp
+            .exec(&["docker", "compose", "-f", &base, "up", "-d"])
+            .await?;
         anyhow::ensure!(
             up.status.success(),
             "Failed to restart control plane: {}",
             String::from_utf8_lossy(&up.stderr)
         );
 
-        // Clear active_agent in state
         if let Ok(Some(mut state)) = state_mgr.load() {
             state.active_agent = None;
             let _ = state_mgr.save(&state);
         }
     }
 
-    if !quiet {
+    if !ctx.quiet {
         println!("Agent '{name}' removed.");
     }
     Ok(())
 }
 
-fn list(mp: &impl Multipass, quiet: bool, json: bool) -> Result<()> {
-    // Scan agents/*/agent.yaml inside VM (exclude _template)
-    let scan = mp.exec(&[
-        "bash",
-        "-c",
-        &format!(
-            "for f in {VM_ROOT}/agents/*/agent.yaml; do \
-               dir=$(dirname \"$f\"); \
-               name=$(basename \"$dir\"); \
-               [ \"$name\" = \"_template\" ] && continue; \
-               [ -f \"$f\" ] || continue; \
-               n=$(yq '.metadata.name' \"$f\" 2>/dev/null); \
-               v=$(yq '.metadata.version' \"$f\" 2>/dev/null); \
-               d=$(yq '.metadata.description' \"$f\" 2>/dev/null); \
-               echo \"$name|${{n:-null}}|${{v:-null}}|${{d:-null}}\"; \
-             done"
-        ),
-    ])?;
+async fn list(mp: &impl Multipass, ctx: &OutputContext, json: bool) -> Result<()> {
+    // Scan agents/*/agent.yaml inside VM (exclude _template), emit JSON per line
+    let scan = mp
+        .exec(&[
+            "bash",
+            "-c",
+            &format!(
+                "for f in {VM_ROOT}/agents/*/agent.yaml; do \
+                   dir=$(dirname \"$f\"); \
+                   name=$(basename \"$dir\"); \
+                   [ \"$name\" = \"_template\" ] && continue; \
+                   [ -f \"$f\" ] || continue; \
+                   n=$(yq -o=json '.metadata.name' \"$f\" 2>/dev/null); \
+                   v=$(yq -o=json '.metadata.version' \"$f\" 2>/dev/null); \
+                   d=$(yq -o=json '.metadata.description' \"$f\" 2>/dev/null); \
+                   printf '{{\"dir\":\"%s\",\"name\":%s,\"version\":%s,\"description\":%s}}\\n' \
+                     \"$name\" \"${{n:-null}}\" \"${{v:-null}}\" \"${{d:-null}}\"; \
+                 done"
+            ),
+        ])
+        .await?;
 
     let output = String::from_utf8_lossy(&scan.stdout);
-    let lines: Vec<&str> = output.lines().filter(|l| !l.is_empty()).collect();
-
     let state_mgr = StateManager::new()?;
     let active = state_mgr.load()?.and_then(|s| s.active_agent);
 
+    // Parse each JSON line; skip malformed entries
+    let agents: Vec<serde_json::Value> = output
+        .lines()
+        .filter(|l| !l.is_empty())
+        .filter_map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line)
+                .map_err(|e| eprintln!("warning: skipping malformed agent entry: {e}"))
+                .ok()?;
+            let dir_name = v.get("dir")?.as_str()?.to_string();
+            let is_active = active.as_deref() == Some(&dir_name);
+            Some(serde_json::json!({
+                "name": v.get("name").cloned().unwrap_or(serde_json::Value::Null),
+                "version": v.get("version").cloned().unwrap_or(serde_json::Value::Null),
+                "description": v.get("description").cloned().unwrap_or(serde_json::Value::Null),
+                "active": is_active,
+            }))
+        })
+        .collect();
+
     if json {
-        let agents: Vec<serde_json::Value> = lines
-            .iter()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.splitn(4, '|').collect();
-                if parts.len() < 4 {
-                    return None;
-                }
-                let name = parts[0];
-                Some(serde_json::json!({
-                    "name": name,
-                    "version": null_or_str(parts[1]),
-                    "description": null_or_str(parts[2]),
-                    "active": active.as_deref() == Some(name),
-                }))
-            })
-            .collect();
         println!("{}", serde_json::json!({ "agents": agents }));
         return Ok(());
     }
 
-    if lines.is_empty() {
-        if !quiet {
+    if agents.is_empty() {
+        if !ctx.quiet {
             println!("No agents installed. Install one: polis agent add --path <folder>");
         }
         return Ok(());
     }
 
     println!("Available agents:\n");
-    for line in &lines {
-        let parts: Vec<&str> = line.splitn(4, '|').collect();
-        if parts.len() < 4 {
-            eprintln!("warning: skipping malformed entry: {line}");
-            continue;
-        }
-        let name = parts[0];
-        let version = null_or_str(parts[1]).unwrap_or_default();
-        let desc = null_or_str(parts[2]).unwrap_or_default();
-        let marker = if active.as_deref() == Some(name) {
+    for agent in &agents {
+        let name = agent["name"].as_str().unwrap_or("(unknown)");
+        let version = agent["version"].as_str().unwrap_or("");
+        let desc = agent["description"].as_str().unwrap_or("");
+        let marker = if agent["active"].as_bool().unwrap_or(false) {
             "  [active]"
         } else {
             ""
@@ -265,7 +273,7 @@ fn list(mp: &impl Multipass, quiet: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
+async fn restart(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     let state_mgr = StateManager::new()?;
     let name = state_mgr
         .load()?
@@ -273,49 +281,51 @@ fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No active agent. Start one: polis start --agent <name>"))?;
 
     anyhow::ensure!(
-        vm::state(mp)? == vm::VmState::Running,
+        vm::state(mp).await? == vm::VmState::Running,
         "Workspace is not running."
     );
 
     let base = format!("{VM_ROOT}/docker-compose.yml");
     let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
-    let out = mp.exec(&[
-        "docker",
-        "compose",
-        "-f",
-        &base,
-        "-f",
-        &overlay,
-        "restart",
-        "workspace",
-    ])?;
+    let out = mp
+        .exec(&[
+            "docker",
+            "compose",
+            "-f",
+            &base,
+            "-f",
+            &overlay,
+            "restart",
+            "workspace",
+        ])
+        .await?;
     anyhow::ensure!(
         out.status.success(),
         "Failed to restart workspace: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    if !quiet {
+    if !ctx.quiet {
         println!("Agent '{name}' workspace restarted.");
     }
     Ok(())
 }
 
-fn update(mp: &impl Multipass, quiet: bool) -> Result<()> {
+async fn update(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     let state_mgr = StateManager::new()?;
     let name = state_mgr
         .load()?
         .and_then(|s| s.active_agent)
         .ok_or_else(|| anyhow::anyhow!("No active agent. Start one: polis start --agent <name>"))?;
 
-    // Re-generate artifacts first
-    if !quiet {
+    if !ctx.quiet {
         println!("Regenerating artifacts for '{name}'...");
     }
     let script = format!("{VM_ROOT}/scripts/generate-agent.sh");
     let all_agents = format!("{VM_ROOT}/agents");
     let gen_out = mp
         .exec(&["bash", &script, &name, &all_agents])
+        .await
         .context("generate-agent.sh")?;
     if !gen_out.status.success() {
         let stderr = String::from_utf8_lossy(&gen_out.stderr);
@@ -324,37 +334,48 @@ fn update(mp: &impl Multipass, quiet: bool) -> Result<()> {
         anyhow::bail!("Artifact generation failed (workspace NOT recreated):\n{detail}");
     }
 
-    // Recreate workspace
     let base = format!("{VM_ROOT}/docker-compose.yml");
     let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
-    let out = mp.exec(&[
-        "docker",
-        "compose",
-        "-f",
-        &base,
-        "-f",
-        &overlay,
-        "up",
-        "-d",
-        "--force-recreate",
-        "workspace",
-    ])?;
+    let out = mp
+        .exec(&[
+            "docker",
+            "compose",
+            "-f",
+            &base,
+            "-f",
+            &overlay,
+            "up",
+            "-d",
+            "--force-recreate",
+            "workspace",
+        ])
+        .await?;
     anyhow::ensure!(
         out.status.success(),
         "Failed to recreate workspace: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    if !quiet {
+    if !ctx.quiet {
         println!("Agent '{name}' updated and workspace recreated.");
     }
     Ok(())
 }
 
-fn null_or_str(s: &str) -> Option<String> {
-    if s == "null" || s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_manifest_parses_name() {
+        let yaml = "metadata:\n  name: my-agent\n";
+        let m: AgentManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(m.metadata.name, "my-agent");
+    }
+
+    #[test]
+    fn test_agent_manifest_missing_name_returns_error() {
+        let yaml = "metadata:\n  version: v1.0\n";
+        assert!(serde_yaml::from_str::<AgentManifest>(yaml).is_err());
     }
 }

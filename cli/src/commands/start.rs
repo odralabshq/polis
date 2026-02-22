@@ -109,12 +109,12 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
 
         // If agent requested: validate it exists and generate artifacts
         if let Some(agent_name) = &args.agent {
-            validate_agent(mp, agent_name)?;
-            generate_agent_artifacts(mp, agent_name)?;
+            validate_agent(mp, agent_name).await?;
+            generate_agent_artifacts(mp, agent_name).await?;
         }
 
         // Start platform (with or without agent overlay)
-        start_compose(mp, args.agent.as_deref())?;
+        start_compose(mp, args.agent.as_deref()).await?;
         let sha256 = image::load_metadata(&image::images_dir()?)
             .ok()
             .flatten()
@@ -154,10 +154,11 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
 }
 
 /// Validate that the agent directory and manifest exist inside the VM.
-fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()> {
+pub async fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()> {
     let manifest_path = format!("{VM_POLIS_ROOT}/agents/{agent_name}/agent.yaml");
     let output = mp
         .exec(&["test", "-f", &manifest_path])
+        .await
         .context("checking agent manifest")?;
     if !output.status.success() {
         // List available agents for the error message
@@ -167,6 +168,7 @@ fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()> {
                 "-c",
                 &format!("ls {VM_POLIS_ROOT}/agents/ 2>/dev/null || true"),
             ])
+            .await
             .unwrap_or_else(|_| std::process::Output {
                 status: std::process::ExitStatus::default(),
                 stdout: vec![],
@@ -188,11 +190,12 @@ fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()> {
 }
 
 /// Call scripts/generate-agent.sh inside the VM.
-fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> Result<()> {
+pub async fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> Result<()> {
     let script = format!("{VM_POLIS_ROOT}/scripts/generate-agent.sh");
     let agents_dir = format!("{VM_POLIS_ROOT}/agents");
     let output = mp
         .exec(&["bash", &script, agent_name, &agents_dir])
+        .await
         .context("running generate-agent.sh")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -214,7 +217,7 @@ fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> Result<()>
 }
 
 /// Start docker compose inside the VM, optionally with an agent overlay.
-fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Result<()> {
+pub async fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Result<()> {
     let base = format!("{VM_POLIS_ROOT}/docker-compose.yml");
     let mut args: Vec<String> = vec!["docker".into(), "compose".into(), "-f".into(), base];
     if let Some(name) = agent_name {
@@ -225,7 +228,7 @@ fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Result<()> {
     args.extend(["up".into(), "-d".into()]);
 
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = mp.exec(&arg_refs).context("starting platform")?;
+    let output = mp.exec(&arg_refs).await.context("starting platform")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("Error: Failed to start platform.\n{stderr}");

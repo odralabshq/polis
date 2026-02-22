@@ -8,7 +8,9 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("polis"));
+    cmd.env("NO_COLOR", "1");
+    cmd
 }
 
 // --- Help and version tests ---
