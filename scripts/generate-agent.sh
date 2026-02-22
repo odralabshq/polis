@@ -293,7 +293,7 @@ gen_systemd() {
         fi
         echo ""
         if [[ -n "${SPEC_INIT}" ]]; then
-            echo "ExecStartPre=/tmp/agents/${NAME}/${SPEC_INIT}"
+            echo "ExecStartPre=/bin/bash /tmp/agents/${NAME}/${SPEC_INIT}"
         fi
         echo "ExecStart=${RUNTIME_CMD}"
         echo ""
