@@ -31,6 +31,7 @@
 /* Valkey/Redis client */
 #include <hiredis/hiredis.h>
 #include <hiredis/hiredis_ssl.h>
+#include <pthread.h>
 
 /* Constants */
 #define MAX_BODY_SCAN   2097152   /* 2MB body scan limit (CWE-400) */
@@ -41,6 +42,7 @@ static int time_gate_secs = 15;   /* Default time-gate delay */
 static int ott_ttl_secs   = 600;  /* OTT key TTL in Valkey */
 static regex_t approve_pattern;   /* Compiled regex for /polis-approve */
 static redisContext *valkey_ctx = NULL;  /* Valkey connection */
+static pthread_mutex_t valkey_mutex = PTHREAD_MUTEX_INITIALIZER;  /* Protects valkey_ctx (CWE-362) */
 
 /*
  * rewrite_req_data_t - Per-request state for body accumulation
@@ -117,8 +119,7 @@ static const char OTT_CHARSET[] =
 static int generate_ott(char *buf, size_t buf_len)
 {
     FILE *fp;
-    unsigned char random_bytes[OTT_RANDOM_BYTES];
-    size_t nread;
+    unsigned char b;
     int i;
 
     /* Validate output buffer can hold "ott-" + 8 chars + '\0' */
@@ -139,28 +140,32 @@ static int generate_ott(char *buf, size_t buf_len)
         return -1;
     }
 
-    /* Read 8 random bytes — fail closed on short read */
-    nread = fread(random_bytes, 1, OTT_RANDOM_BYTES, fp);
-    fclose(fp);
-
-    if (nread != OTT_RANDOM_BYTES) {
-        ci_debug_printf(0,
-            "CRITICAL: generate_ott: /dev/urandom short read "
-            "(%zu of %d bytes) — fail closed (CWE-457)\n",
-            nread, OTT_RANDOM_BYTES);
-        return -1;
-    }
-
     /* Write "ott-" prefix */
     buf[0] = 'o';
     buf[1] = 't';
     buf[2] = 't';
     buf[3] = '-';
 
-    /* Map each random byte to alphanumeric charset */
-    for (i = 0; i < OTT_RANDOM_BYTES; i++) {
-        buf[4 + i] = OTT_CHARSET[random_bytes[i] % OTT_CHARSET_LEN];
+    /*
+     * Rejection sampling — discard bytes >= 248 to eliminate modulo
+     * bias (256 % 62 = 8, so bytes 248-255 would over-represent the
+     * first 8 charset positions). Matches srv_polis_dlp.c (CWE-330).
+     */
+    i = 0;
+    while (i < OTT_RANDOM_BYTES) {
+        if (fread(&b, 1, 1, fp) != 1) {
+            fclose(fp);
+            ci_debug_printf(0,
+                "CRITICAL: generate_ott: /dev/urandom read failed "
+                "— fail closed (CWE-457)\n");
+            return -1;
+        }
+        if (b < 248) {
+            buf[4 + i] = OTT_CHARSET[b % OTT_CHARSET_LEN];
+            i++;
+        }
     }
+    fclose(fp);
 
     /* Null-terminate */
     buf[OTT_LEN] = '\0';
@@ -536,23 +541,32 @@ int rewrite_process(ci_request_t *req)
         "Found valid request_id: '%s'\n", req_id);
 
     /* -------------------------------------------------------------- */
-    /* Step 4: Check polis:blocked:{request_id} exists (Req 1.3)     */
+    /* Steps 4-7: All Valkey operations — protected by mutex (CWE-362) */
+    /* Lock once for the entire interaction to prevent concurrent     */
+    /* threads from corrupting the shared hiredis context.            */
     /* -------------------------------------------------------------- */
+    pthread_mutex_lock(&valkey_mutex);
+
     if (!valkey_ctx) {
+        pthread_mutex_unlock(&valkey_mutex);
         ci_debug_printf(1, "polis_approval_rewrite: "
             "Valkey unavailable — fail closed, "
             "no OTT rewrite for '%s'\n", req_id);
         return CI_MOD_ALLOW204;
     }
 
-    /* Lazy reconnect if connection was lost (Finding 5 fix) */
+    /* Lazy reconnect if connection was lost */
     if (!ensure_valkey_connected()) {
+        pthread_mutex_unlock(&valkey_mutex);
         ci_debug_printf(1, "polis_approval_rewrite: "
             "Valkey reconnect failed — fail closed, "
             "no OTT rewrite for '%s'\n", req_id);
         return CI_MOD_ALLOW204;
     }
 
+    /* -------------------------------------------------------------- */
+    /* Step 4: Check polis:blocked:{request_id} exists (Req 1.3)     */
+    /* -------------------------------------------------------------- */
     {
         redisReply *reply;
 
@@ -568,6 +582,7 @@ int rewrite_process(ci_request_t *req)
                 reply ? ": " : "",
                 reply ? reply->str : "");
             if (reply) freeReplyObject(reply);
+            pthread_mutex_unlock(&valkey_mutex);
             return CI_MOD_ALLOW204;
         }
 
@@ -576,6 +591,7 @@ int rewrite_process(ci_request_t *req)
                 "No blocked entry for '%s' — "
                 "skipping rewrite\n", req_id);
             freeReplyObject(reply);
+            pthread_mutex_unlock(&valkey_mutex);
             return CI_MOD_ALLOW204;
         }
         freeReplyObject(reply);
@@ -589,6 +605,7 @@ int rewrite_process(ci_request_t *req)
     /* Context binding: OTT is bound to the originating host         */
     /* -------------------------------------------------------------- */
     if (data->host[0] == '\0') {
+        pthread_mutex_unlock(&valkey_mutex);
         ci_debug_printf(1, "polis_approval_rewrite: "
             "No Host header available for context binding — "
             "fail closed, no OTT rewrite\n");
@@ -600,6 +617,7 @@ int rewrite_process(ci_request_t *req)
     /* Fail-closed: abort rewrite if generation fails                 */
     /* -------------------------------------------------------------- */
     if (generate_ott(ott_buf, sizeof(ott_buf)) != 0) {
+        pthread_mutex_unlock(&valkey_mutex);
         ci_debug_printf(0, "CRITICAL: polis_approval_rewrite: "
             "OTT generation failed — fail closed, "
             "no rewrite for '%s'\n", req_id);
@@ -635,6 +653,7 @@ int rewrite_process(ci_request_t *req)
                         "CRITICAL: polis_approval_rewrite: "
                         "OTT regeneration failed — "
                         "fail closed\n");
+                    pthread_mutex_unlock(&valkey_mutex);
                     return CI_MOD_ALLOW204;
                 }
             }
@@ -663,6 +682,7 @@ int rewrite_process(ci_request_t *req)
                     reply ? ": " : "",
                     reply ? reply->str : "");
                 if (reply) freeReplyObject(reply);
+                pthread_mutex_unlock(&valkey_mutex);
                 return CI_MOD_ALLOW204;
             }
 
@@ -691,6 +711,7 @@ int rewrite_process(ci_request_t *req)
                 "OTT collision on both attempts — "
                 "fail closed, no rewrite for '%s'\n",
                 req_id);
+            pthread_mutex_unlock(&valkey_mutex);
             return CI_MOD_ALLOW204;
         }
 
@@ -745,6 +766,7 @@ int rewrite_process(ci_request_t *req)
                 "Length mismatch: req_id=%zu, OTT=%d — "
                 "aborting substitution\n",
                 req_id_len, OTT_LEN);
+            pthread_mutex_unlock(&valkey_mutex);
             return CI_MOD_ALLOW204;
         }
 
@@ -757,6 +779,8 @@ int rewrite_process(ci_request_t *req)
             "(length-preserving, %zu bytes)\n",
             req_id, ott_buf, req_id_len);
     }
+
+    pthread_mutex_unlock(&valkey_mutex);
 
     /* Body was modified in-place — return CI_MOD_DONE to tell
      * c-ICAP to forward the request with the modified body.
@@ -926,6 +950,8 @@ void rewrite_close_service(void)
         redisFree(valkey_ctx);
         valkey_ctx = NULL;
     }
+
+    pthread_mutex_destroy(&valkey_mutex);
 
     ci_debug_printf(3, "polis_approval_rewrite: "
                        "Service closed, resources freed\n");

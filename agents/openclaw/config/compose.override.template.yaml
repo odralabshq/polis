@@ -16,6 +16,9 @@ services:
       start_period: 300s
     env_file:
       - .env
+    networks:
+      internal-bridge:
+        ipv4_address: 10.10.1.30
     volumes:
       - ./agents/openclaw/scripts/:/tmp/agents/openclaw/scripts/:ro
       - ./agents/openclaw/config/:/tmp/agents/openclaw/config/:ro
@@ -37,6 +40,7 @@ services:
   # Socat TCP proxy — creates a real listener on the host network so
   # Hyper-V / Multipass virtual switches can route traffic to the
   # sysbox workspace container (iptables DNAT alone is invisible to them).
+  # Workspace is assigned static IP 10.10.1.30 in this override.
   openclaw-port-forward:
     image: alpine/socat:1.8.0.1
     container_name: polis-openclaw-fwd
@@ -47,15 +51,9 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        WS_IP=$(printf 'GET /containers/polis-workspace/json HTTP/1.0\r\nHost: localhost\r\n\r\n' \
-          | socat - UNIX-CONNECT:/var/run/docker.sock 2>/dev/null \
-          | grep -o '"IPAddress":"[0-9.]*"' | head -1 | grep -o '[0-9.]*')
-        if [ -z "$WS_IP" ]; then echo "ERROR: Could not resolve workspace IP"; exit 1; fi
         PORT=${OPENCLAW_HOST_PORT:-18789}
-        echo "Proxying 0.0.0.0:$PORT -> $WS_IP:18789 via socat"
-        exec socat TCP-LISTEN:$PORT,bind=0.0.0.0,fork,reuseaddr TCP:$WS_IP:18789
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+        echo "Proxying 0.0.0.0:$PORT -> 10.10.1.30:18789 via socat"
+        exec socat TCP-LISTEN:$PORT,bind=0.0.0.0,fork,reuseaddr TCP:10.10.1.30:18789
     restart: unless-stopped
     logging:
       driver: json-file

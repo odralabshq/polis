@@ -72,7 +72,7 @@ RUN gcc -shared -fPIC -Wall -Werror ${CFLAGS_HARDEN} ${LDFLAGS_HARDEN} \
     /build/srv_polis_approval_rewrite.c \
     -I/build/c-icap-server-C_ICAP_0.6.4 \
     -I/build/c-icap-server-C_ICAP_0.6.4/include \
-    -L/usr/local/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto
+    -L/usr/local/lib -licapapi -lhiredis -lhiredis_ssl -lssl -lcrypto -lpthread
 
 # Copy and compile approval RESPMOD scanner module
 COPY services/sentinel/modules/approval/srv_polis_approval.c /build/
