@@ -41,7 +41,7 @@ dirs = "6"
 dialoguer = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-std"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-std", "signal"] }
 self_update = { version = "0.42", features = ["archive-tar", "compression-flate2", "signatures"] }
 semver = "1.0"
 zipsign-api = { version = "0.2", default-features = false, features = ["verify-tar", "unsign-tar", "sign-tar"] }
@@ -58,6 +58,7 @@ tempfile = "3.25"  # isolated temp dirs for StateManager tests
 ed25519-dalek = "2.2"
 base64 = "0.22"   # test helpers: encode verifying key as b64
 mockall = "0.13"
+proptest = "1.5"  # property-based testing for ID generation and validation
 
 [[test]]
 name = "integration"

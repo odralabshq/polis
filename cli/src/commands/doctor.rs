@@ -135,9 +135,18 @@ pub trait HealthProbe {
 }
 
 /// Production implementation that queries the real system.
-pub struct SystemProbe;
+pub struct SystemProbe<'a, M: crate::multipass::Multipass> {
+    mp: &'a M,
+}
 
-impl HealthProbe for SystemProbe {
+impl<'a, M: crate::multipass::Multipass> SystemProbe<'a, M> {
+    /// Create a new system probe with the given multipass implementation.
+    pub fn new(mp: &'a M) -> Self {
+        Self { mp }
+    }
+}
+
+impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
     async fn check_prerequisites(&self) -> Result<PrerequisiteChecks> {
         tokio::task::spawn_blocking(probe_prerequisites)
             .await
@@ -168,9 +177,9 @@ impl HealthProbe for SystemProbe {
             (certificates_valid, certificates_expire_days),
         ) = tokio::join!(
             check_process_isolation(),
-            check_gate_health(),
-            check_malware_db(),
-            check_certificates(),
+            check_gate_health(self.mp),
+            check_malware_db(self.mp),
+            check_certificates(self.mp),
         );
         Ok(SecurityChecks {
             process_isolation,
@@ -190,8 +199,12 @@ impl HealthProbe for SystemProbe {
 /// # Errors
 ///
 /// Returns an error if health checks cannot be executed or output fails.
-pub async fn run(ctx: &OutputContext, json: bool) -> Result<()> {
-    run_with(ctx, json, &SystemProbe).await
+pub async fn run(
+    ctx: &OutputContext,
+    json: bool,
+    mp: &impl crate::multipass::Multipass,
+) -> Result<()> {
+    run_with(ctx, json, &SystemProbe::new(mp)).await
 }
 
 /// Run doctor with a custom health probe (for testing).
@@ -625,12 +638,9 @@ async fn check_process_isolation() -> bool {
 }
 
 /// Check if the gate container is running inside the multipass VM.
-async fn check_gate_health() -> bool {
-    let output = tokio::process::Command::new("multipass")
-        .args([
-            "exec", "polis", "--", "docker", "compose", "ps", "--format", "json", "gate",
-        ])
-        .output()
+async fn check_gate_health(mp: &impl crate::multipass::Multipass) -> bool {
+    let output = mp
+        .exec(&["docker", "compose", "ps", "--format", "json", "gate"])
         .await;
 
     let Ok(output) = output else { return false };
@@ -651,18 +661,9 @@ async fn check_gate_health() -> bool {
 }
 
 /// Check `ClamAV` database freshness inside the multipass VM.
-async fn check_malware_db() -> (bool, u64) {
-    let output = tokio::process::Command::new("multipass")
-        .args([
-            "exec",
-            "polis",
-            "--",
-            "stat",
-            "-c",
-            "%Y",
-            "/var/lib/clamav/daily.cvd",
-        ])
-        .output()
+async fn check_malware_db(mp: &impl crate::multipass::Multipass) -> (bool, u64) {
+    let output = mp
+        .exec(&["stat", "-c", "%Y", "/var/lib/clamav/daily.cvd"])
         .await;
 
     let Ok(output) = output else {
@@ -688,12 +689,9 @@ async fn check_malware_db() -> (bool, u64) {
 }
 
 /// Check CA certificate expiry inside the multipass VM.
-async fn check_certificates() -> (bool, i64) {
-    let output = tokio::process::Command::new("multipass")
-        .args([
-            "exec",
-            "polis",
-            "--",
+async fn check_certificates(mp: &impl crate::multipass::Multipass) -> (bool, i64) {
+    let output = mp
+        .exec(&[
             "openssl",
             "x509",
             "-enddate",
@@ -701,7 +699,6 @@ async fn check_certificates() -> (bool, i64) {
             "-in",
             "/etc/polis/certs/ca/ca.crt",
         ])
-        .output()
         .await;
 
     let Ok(output) = output else {

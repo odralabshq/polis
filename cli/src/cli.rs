@@ -86,32 +86,23 @@ impl Cli {
             command,
         } = self;
         let no_color = no_color || std::env::var("NO_COLOR").is_ok();
+        let mp = crate::multipass::MultipassCli;
 
         match command {
-            Command::Start(args) => {
-                let mp = crate::multipass::MultipassCli;
-                commands::start::run(&args, &mp, quiet)
-            }
+            Command::Start(args) => commands::start::run(&args, &mp, quiet).await,
 
-            Command::Stop => {
-                let mp = crate::multipass::MultipassCli;
-                commands::stop::run(&mp, quiet)
-            }
+            Command::Stop => commands::stop::run(&mp, quiet).await,
 
-            Command::Delete(args) => {
-                let mp = crate::multipass::MultipassCli;
-                commands::delete::run(&args, &mp, quiet)
-            }
+            Command::Delete(args) => commands::delete::run(&args, &mp, quiet).await,
 
             Command::Status => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                let mp = crate::multipass::MultipassCli;
                 commands::status::run(&ctx, json, &mp).await
             }
 
             Command::Connect(args) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::connect::run(&ctx, args).await
+                commands::connect::run(&ctx, args, &mp).await
             }
 
             Command::Config(cmd) => {
@@ -121,21 +112,21 @@ impl Cli {
 
             Command::Update(args) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                let mp = crate::multipass::MultipassCli;
                 commands::update::run(&args, &ctx, &commands::update::GithubUpdateChecker, &mp)
                     .await
             }
 
             Command::Doctor => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::doctor::run(&ctx, json).await
+                commands::doctor::run(&ctx, json, &mp).await
             }
 
             Command::Version => commands::version::run(json),
 
             // --- Internal commands ---
-            Command::SshProxy => commands::internal::ssh_proxy().await,
-            Command::ExtractHostKey => commands::internal::extract_host_key().await,
+            #[allow(clippy::large_futures)]
+            Command::SshProxy => commands::internal::ssh_proxy(&mp).await,
+            Command::ExtractHostKey => commands::internal::extract_host_key(&mp).await,
             Command::Provision => {
                 anyhow::bail!("Provision command is internal only")
             }

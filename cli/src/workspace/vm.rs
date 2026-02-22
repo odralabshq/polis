@@ -5,13 +5,11 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::multipass::Multipass;
+use crate::workspace::COMPOSE_PATH;
 
 const VM_CPUS: &str = "2";
 const VM_MEMORY: &str = "8G";
 const VM_DISK: &str = "40G";
-
-/// Path to `docker-compose.yml` inside the VM.
-const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
 
 /// VM state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,8 +21,11 @@ pub enum VmState {
 }
 
 /// Check if VM exists.
-pub fn exists(mp: &impl Multipass) -> bool {
-    mp.vm_info().map(|o| o.status.success()).unwrap_or(false)
+pub async fn exists(mp: &impl Multipass) -> bool {
+    mp.vm_info()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Get current VM state.
@@ -32,8 +33,8 @@ pub fn exists(mp: &impl Multipass) -> bool {
 /// # Errors
 ///
 /// Returns an error if the multipass output cannot be parsed.
-pub fn state(mp: &impl Multipass) -> Result<VmState> {
-    let output = match mp.vm_info() {
+pub async fn state(mp: &impl Multipass) -> Result<VmState> {
+    let output = match mp.vm_info().await {
         Ok(o) if o.status.success() => o,
         _ => return Ok(VmState::NotFound),
     };
@@ -58,8 +59,8 @@ pub fn state(mp: &impl Multipass) -> Result<VmState> {
 ///
 /// Returns an error if the VM state cannot be determined.
 #[allow(dead_code)] // API for future use
-pub fn is_running(mp: &impl Multipass) -> Result<bool> {
-    Ok(state(mp)? == VmState::Running)
+pub async fn is_running(mp: &impl Multipass) -> Result<bool> {
+    Ok(state(mp).await? == VmState::Running)
 }
 
 /// Create VM from image.
@@ -68,8 +69,8 @@ pub fn is_running(mp: &impl Multipass) -> Result<bool> {
 ///
 /// Returns an error if prerequisites are not met, the image path cannot be
 /// canonicalized, or the multipass launch fails.
-pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()> {
-    check_prerequisites(mp)?;
+pub async fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()> {
+    check_prerequisites(mp).await?;
 
     if !quiet {
         println!("✓ {}", inception_line("L0", "sequence started."));
@@ -82,6 +83,7 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
     });
     let output = mp
         .launch(&image_url, VM_CPUS, VM_MEMORY, VM_DISK)
+        .await
         .context("launching workspace")?;
     if let Some(pb) = pb {
         if output.status.success() {
@@ -105,8 +107,8 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
         anyhow::bail!("Failed to create workspace.\n\nRun 'polis doctor' to diagnose.");
     }
 
-    configure_credentials(mp);
-    start_services_with_progress(mp, quiet);
+    configure_credentials(mp).await;
+    start_services_with_progress(mp, quiet).await;
     pin_host_key();
     Ok(())
 }
@@ -131,8 +133,8 @@ fn inception_line(level: &str, msg: &str) -> String {
 /// # Errors
 ///
 /// Returns an error if the multipass start command fails.
-pub fn start(mp: &impl Multipass) -> Result<()> {
-    let output = mp.start().context("starting workspace")?;
+pub async fn start(mp: &impl Multipass) -> Result<()> {
+    let output = mp.start().await.context("starting workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("Failed to start workspace: {stderr}");
@@ -145,12 +147,11 @@ pub fn start(mp: &impl Multipass) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the multipass stop command fails.
-pub fn stop(mp: &impl Multipass) -> Result<()> {
-    let _ = mp.exec(&["docker", "compose", "-f", COMPOSE_PATH, "stop"]);
-    let output = std::process::Command::new("multipass")
-        .args(["stop", "polis"])
-        .output()
-        .context("stopping workspace")?;
+pub async fn stop(mp: &impl Multipass) -> Result<()> {
+    let _ = mp
+        .exec(&["docker", "compose", "-f", COMPOSE_PATH, "stop"])
+        .await;
+    let output = mp.stop().await.context("stopping workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("Failed to stop workspace: {stderr}");
@@ -159,13 +160,9 @@ pub fn stop(mp: &impl Multipass) -> Result<()> {
 }
 
 /// Delete VM.
-pub fn delete(_mp: &impl Multipass) {
-    let _ = std::process::Command::new("multipass")
-        .args(["delete", "polis"])
-        .output();
-    let _ = std::process::Command::new("multipass")
-        .args(["purge"])
-        .output();
+pub async fn delete(mp: &impl Multipass) {
+    let _ = mp.delete().await;
+    let _ = mp.purge().await;
 }
 
 /// Restart a stopped VM with inception progress messages.
@@ -173,7 +170,7 @@ pub fn delete(_mp: &impl Multipass) {
 /// # Errors
 ///
 /// Returns an error if the multipass start command fails.
-pub fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
     if !quiet {
         println!("✓ {}", inception_line("L0", "sequence started."));
     }
@@ -181,7 +178,7 @@ pub fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
     let pb = (!quiet).then(|| {
         crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
     });
-    start(mp)?;
+    start(mp).await?;
     if let Some(pb) = pb {
         crate::output::progress::finish_ok(
             &pb,
@@ -189,7 +186,7 @@ pub fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
         );
     }
 
-    start_services_with_progress(mp, quiet);
+    start_services_with_progress(mp, quiet).await;
     Ok(())
 }
 
@@ -197,8 +194,8 @@ pub fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
 
 const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
 
-fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
-    let output = mp.version().map_err(|_| {
+async fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
+    let output = mp.version().await.map_err(|_| {
         anyhow::anyhow!(
             "Workspace runtime not available.\n\nRun 'polis doctor' to diagnose and fix."
         )
@@ -216,22 +213,22 @@ fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
     Ok(())
 }
 
-fn configure_credentials(mp: &impl Multipass) {
+async fn configure_credentials(mp: &impl Multipass) {
     let ca_cert = std::path::PathBuf::from("certs/ca/ca.pem");
     if ca_cert.exists() {
-        let _ = mp.transfer(&ca_cert.to_string_lossy(), "/tmp/ca.pem");
+        let _ = mp.transfer(&ca_cert.to_string_lossy(), "/tmp/ca.pem").await;
     }
 }
 
-fn start_services(mp: &impl Multipass) {
-    let _ = mp.exec(&["sudo", "systemctl", "start", "polis"]);
+async fn start_services(mp: &impl Multipass) {
+    let _ = mp.exec(&["sudo", "systemctl", "start", "polis"]).await;
 }
 
-fn start_services_with_progress(mp: &impl Multipass, quiet: bool) {
+async fn start_services_with_progress(mp: &impl Multipass, quiet: bool) {
     let pb = (!quiet).then(|| {
         crate::output::progress::spinner(&inception_line("L2", "agent isolation starting..."))
     });
-    start_services(mp);
+    start_services(mp).await;
     if let Some(pb) = pb {
         crate::output::progress::finish_ok(
             &pb,
@@ -277,67 +274,84 @@ mod tests {
         }
     }
 
-    struct MockVm(Output);
-    impl Multipass for MockVm {
-        fn vm_info(&self) -> Result<Output> {
+    /// Mock multipass with configurable `vm_info()` output for state detection.
+    struct MultipassVmInfoStub(Output);
+    impl Multipass for MultipassVmInfoStub {
+        async fn vm_info(&self) -> Result<Output> {
             Ok(Output {
                 status: self.0.status,
                 stdout: self.0.stdout.clone(),
                 stderr: self.0.stderr.clone(),
             })
         }
-        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+        async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
             unimplemented!()
         }
-        fn start(&self) -> Result<Output> {
+        async fn start(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+        async fn stop(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn exec(&self, _: &[&str]) -> Result<Output> {
+        async fn delete(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn version(&self) -> Result<Output> {
+        async fn purge(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn exec(&self, _: &[&str]) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+            unimplemented!()
+        }
+        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+            unimplemented!()
+        }
+        async fn version(&self) -> Result<Output> {
             unimplemented!()
         }
     }
 
-    #[test]
-    fn state_not_found_when_vm_info_fails() {
-        let mp = MockVm(fail());
-        assert_eq!(state(&mp).expect("state"), VmState::NotFound);
+    #[tokio::test]
+    async fn state_not_found_when_vm_info_fails() {
+        let mp = MultipassVmInfoStub(fail());
+        assert_eq!(state(&mp).await.expect("state"), VmState::NotFound);
     }
 
-    #[test]
-    fn state_running() {
-        let mp = MockVm(ok(br#"{"info":{"polis":{"state":"Running"}}}"#));
-        assert_eq!(state(&mp).expect("state"), VmState::Running);
+    #[tokio::test]
+    async fn state_running() {
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Running"}}}"#));
+        assert_eq!(state(&mp).await.expect("state"), VmState::Running);
     }
 
-    #[test]
-    fn state_stopped() {
-        let mp = MockVm(ok(br#"{"info":{"polis":{"state":"Stopped"}}}"#));
-        assert_eq!(state(&mp).expect("state"), VmState::Stopped);
+    #[tokio::test]
+    async fn state_stopped() {
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Stopped"}}}"#));
+        assert_eq!(state(&mp).await.expect("state"), VmState::Stopped);
     }
 
-    #[test]
-    fn exists_true_when_vm_info_succeeds() {
-        let mp = MockVm(ok(b"{}"));
-        assert!(exists(&mp));
+    #[tokio::test]
+    async fn exists_true_when_vm_info_succeeds() {
+        let mp = MultipassVmInfoStub(ok(b"{}"));
+        assert!(exists(&mp).await);
     }
 
-    #[test]
-    fn exists_false_when_vm_info_fails() {
-        let mp = MockVm(fail());
-        assert!(!exists(&mp));
+    #[tokio::test]
+    async fn exists_false_when_vm_info_fails() {
+        let mp = MultipassVmInfoStub(fail());
+        assert!(!exists(&mp).await);
     }
 
-    struct MockRestart {
+    /// Mock multipass that tracks `start()` and `exec()` calls for restart tests.
+    struct MultipassRestartSpy {
         start_called: std::cell::Cell<bool>,
         exec_called: std::cell::Cell<bool>,
     }
-    impl MockRestart {
+    impl MultipassRestartSpy {
         fn new() -> Self {
             Self {
                 start_called: std::cell::Cell::new(false),
@@ -345,33 +359,48 @@ mod tests {
             }
         }
     }
-    impl Multipass for MockRestart {
-        fn vm_info(&self) -> Result<Output> {
+    impl Multipass for MultipassRestartSpy {
+        async fn vm_info(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+        async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
             unimplemented!()
         }
-        fn start(&self) -> Result<Output> {
+        async fn start(&self) -> Result<Output> {
             self.start_called.set(true);
             Ok(ok(b""))
         }
-        fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+        async fn stop(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn exec(&self, _: &[&str]) -> Result<Output> {
+        async fn delete(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn purge(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn exec(&self, _: &[&str]) -> Result<Output> {
             self.exec_called.set(true);
             Ok(ok(b""))
         }
-        fn version(&self) -> Result<Output> {
+        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+            unimplemented!()
+        }
+        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+            unimplemented!()
+        }
+        async fn version(&self) -> Result<Output> {
             unimplemented!()
         }
     }
 
-    #[test]
-    fn restart_calls_start_and_services() {
-        let mp = MockRestart::new();
-        let result = restart(&mp, true);
+    #[tokio::test]
+    async fn restart_calls_start_and_services() {
+        let mp = MultipassRestartSpy::new();
+        let result = restart(&mp, true).await;
         assert!(result.is_ok());
         assert!(mp.start_called.get(), "start() should be called");
         assert!(

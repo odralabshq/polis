@@ -176,7 +176,12 @@ fn save_config(path: &Path, config: &PolisConfig) -> Result<()> {
     Ok(())
 }
 
-fn validate_config_key(key: &str) -> Result<()> {
+/// Validates a configuration key against the whitelist.
+///
+/// # Errors
+///
+/// Returns an error if the key is not in the allowed list.
+pub fn validate_config_key(key: &str) -> Result<()> {
     const VALID: &[&str] = &["security.level"];
     if !VALID.contains(&key) {
         anyhow::bail!(
@@ -187,7 +192,12 @@ fn validate_config_key(key: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_config_value(key: &str, value: &str) -> Result<()> {
+/// Validates a configuration value for the given key.
+///
+/// # Errors
+///
+/// Returns an error if the value is not valid for the key.
+pub fn validate_config_value(key: &str, value: &str) -> Result<()> {
     if key == "security.level" {
         const VALID: &[&str] = &["balanced", "strict"];
         if !VALID.contains(&value) {
