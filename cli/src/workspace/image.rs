@@ -463,3 +463,41 @@ pub fn resolve_latest_image_url() -> Result<ResolvedRelease> {
     }
     anyhow::bail!("No workspace image found in recent releases.\n\nUse: polis start --image <url>")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_metadata_absent_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(load_metadata(dir.path()).expect("load").is_none());
+    }
+
+    #[test]
+    fn load_metadata_valid_json_returns_some() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let meta = ImageMetadata {
+            version: "v1.0.0".into(),
+            sha256: "abc123".into(),
+            arch: "amd64".into(),
+            downloaded_at: chrono::Utc::now(),
+            source: "https://example.com/polis.qcow2".into(),
+        };
+        std::fs::write(
+            dir.path().join("image.json"),
+            serde_json::to_string(&meta).expect("json"),
+        )
+        .expect("write");
+        let loaded = load_metadata(dir.path()).expect("load").expect("some");
+        assert_eq!(loaded.version, "v1.0.0");
+        assert_eq!(loaded.sha256, "abc123");
+    }
+
+    #[test]
+    fn load_metadata_malformed_json_returns_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("image.json"), b"not json").expect("write");
+        assert!(load_metadata(dir.path()).is_err());
+    }
+}

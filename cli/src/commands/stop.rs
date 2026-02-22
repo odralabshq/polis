@@ -10,8 +10,8 @@ use crate::workspace::vm;
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be stopped.
-pub fn run(mp: &impl Multipass, quiet: bool) -> Result<()> {
-    let state = vm::state(mp)?;
+pub async fn run(mp: &impl Multipass, quiet: bool) -> Result<()> {
+    let state = vm::state(mp).await?;
 
     match state {
         vm::VmState::NotFound => {
@@ -34,7 +34,7 @@ pub fn run(mp: &impl Multipass, quiet: bool) -> Result<()> {
             if !quiet {
                 println!("Stopping workspace...");
             }
-            vm::stop(mp)?;
+            vm::stop(mp).await?;
             if !quiet {
                 println!();
                 println!("Workspace stopped. Your data is preserved.");

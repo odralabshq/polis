@@ -80,6 +80,8 @@ if [[ ! -f /etc/ssh/ssh_host_ed25519_key ]]; then
     echo "[workspace] Generating SSH host keys..."
     ssh-keygen -A
 fi
+# Unlock polis account for pubkey auth (shadow '!' blocks auth even with PubkeyAuthentication yes)
+usermod -p '*' polis 2>/dev/null || true
 echo "[workspace] Starting SSH daemon..."
 systemctl enable ssh
 systemctl start ssh

@@ -19,9 +19,29 @@ pub struct WorkspaceState {
     /// Image SHA256 used to create workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_sha256: Option<String>,
+    /// Custom image source (path or URL) used to create workspace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_source: Option<String>,
     /// Currently active agent name, or None for control-plane-only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_agent: Option<String>,
+}
+
+/// SEC-004: Validates workspace ID format.
+///
+/// # Errors
+///
+/// Returns an error if the ID doesn't match expected format.
+fn validate_workspace_id(id: &str) -> Result<()> {
+    anyhow::ensure!(
+        id.starts_with("polis-") && id.len() == 22,
+        "invalid workspace ID format: {id}"
+    );
+    anyhow::ensure!(
+        id[6..].chars().all(|c| c.is_ascii_hexdigit()),
+        "workspace ID contains invalid characters: {id}"
+    );
+    Ok(())
 }
 
 /// State file manager.
@@ -54,8 +74,8 @@ impl StateManager {
     ///
     /// # Errors
     ///
-    /// Returns an error if the file exists but cannot be read or parsed.
-    #[allow(dead_code)] // Used in tests and future features
+    /// Returns an error if the file exists but cannot be read or parsed,
+    /// or if the workspace ID fails validation.
     pub fn load(&self) -> Result<Option<WorkspaceState>> {
         if !self.path.exists() {
             return Ok(None);
@@ -64,10 +84,14 @@ impl StateManager {
             .with_context(|| format!("reading state file {}", self.path.display()))?;
         let state: WorkspaceState = serde_json::from_str(&content)
             .with_context(|| format!("parsing state file {}", self.path.display()))?;
+        // SEC-004: Validate workspace ID from external source
+        validate_workspace_id(&state.workspace_id)?;
         Ok(Some(state))
     }
 
-    /// Save state to disk with mode 600.
+    /// Save state to disk with mode 600 using atomic write.
+    ///
+    /// REL-001: Uses temp-file-then-rename pattern to prevent corruption.
     ///
     /// # Errors
     ///
@@ -78,14 +102,22 @@ impl StateManager {
                 .with_context(|| format!("creating directory {}", parent.display()))?;
         }
         let content = serde_json::to_string_pretty(state).context("serializing state")?;
-        std::fs::write(&self.path, &content)
-            .with_context(|| format!("writing state file {}", self.path.display()))?;
+
+        // REL-001: Atomic write via temp file then rename
+        let temp_path = self.path.with_extension("json.tmp");
+        std::fs::write(&temp_path, &content)
+            .with_context(|| format!("writing temp file {}", temp_path.display()))?;
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))
-                .with_context(|| format!("setting permissions on {}", self.path.display()))?;
+            std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("setting permissions on {}", temp_path.display()))?;
         }
+
+        std::fs::rename(&temp_path, &self.path)
+            .with_context(|| format!("finalizing state file {}", self.path.display()))?;
+
         Ok(())
     }
 
@@ -108,6 +140,9 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Valid 22-character workspace ID for tests (polis- + 16 hex chars).
+    const TEST_WORKSPACE_ID: &str = "polis-0123456789abcdef";
+
     fn mgr(dir: &TempDir) -> StateManager {
         StateManager::with_path(dir.path().join("state.json"))
     }
@@ -115,12 +150,12 @@ mod tests {
     #[test]
     fn test_workspace_state_deserialize_new_format() {
         let json = r#"{
-            "workspace_id": "polis-abc123",
+            "workspace_id": "polis-0123456789abcdef",
             "created_at": "2026-02-17T14:30:00Z",
             "image_sha256": "abc123"
         }"#;
         let state: WorkspaceState = serde_json::from_str(json).expect("deserialize");
-        assert_eq!(state.workspace_id, "polis-abc123");
+        assert_eq!(state.workspace_id, TEST_WORKSPACE_ID);
         assert_eq!(state.image_sha256.as_deref(), Some("abc123"));
     }
 
@@ -130,12 +165,12 @@ mod tests {
         let json = r#"{
             "stage": "agent_ready",
             "agent": "claude-dev",
-            "workspace_id": "polis-abc123",
+            "workspace_id": "polis-fedcba9876543210",
             "started_at": "2026-02-17T14:30:00Z",
             "image_sha256": "abc123"
         }"#;
         let state: WorkspaceState = serde_json::from_str(json).expect("deserialize");
-        assert_eq!(state.workspace_id, "polis-abc123");
+        assert_eq!(state.workspace_id, "polis-fedcba9876543210");
         // started_at should be aliased to created_at
         assert!(state.created_at.to_rfc3339().contains("2026-02-17"));
     }
@@ -151,9 +186,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let m = mgr(&dir);
         let state = WorkspaceState {
-            workspace_id: "polis-test".to_string(),
+            workspace_id: TEST_WORKSPACE_ID.to_string(),
             created_at: Utc::now(),
             image_sha256: Some("abc123".to_string()),
+            image_source: None,
             active_agent: None,
         };
         m.save(&state).expect("save");
@@ -166,9 +202,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let m = mgr(&dir);
         let state = WorkspaceState {
-            workspace_id: "polis-test".to_string(),
+            workspace_id: TEST_WORKSPACE_ID.to_string(),
             created_at: Utc::now(),
             image_sha256: None,
+            image_source: None,
             active_agent: None,
         };
         m.save(&state).expect("save");
@@ -189,6 +226,7 @@ mod tests {
             workspace_id: "polis-test".to_string(),
             created_at: Utc::now(),
             image_sha256: None,
+            image_source: None,
             active_agent: None,
         };
         let json = serde_json::to_string(&state).expect("serialize");
@@ -201,6 +239,7 @@ mod tests {
             workspace_id: "polis-test".to_string(),
             created_at: Utc::now(),
             image_sha256: None,
+            image_source: None,
             active_agent: Some("openclaw".to_string()),
         };
         let json = serde_json::to_string(&state).expect("serialize");
@@ -223,9 +262,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let nested = dir.path().join("a").join("b").join("state.json");
         let state = WorkspaceState {
-            workspace_id: "polis-test".to_string(),
+            workspace_id: TEST_WORKSPACE_ID.to_string(),
             created_at: Utc::now(),
             image_sha256: None,
+            image_source: None,
             active_agent: None,
         };
         StateManager::with_path(nested.clone())
@@ -241,9 +281,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let m = mgr(&dir);
         let state = WorkspaceState {
-            workspace_id: "polis-test".to_string(),
+            workspace_id: TEST_WORKSPACE_ID.to_string(),
             created_at: Utc::now(),
             image_sha256: None,
+            image_source: None,
             active_agent: None,
         };
         m.save(&state).expect("save");
@@ -251,5 +292,28 @@ mod tests {
             .expect("metadata")
             .permissions();
         assert_eq!(perms.mode() & 0o777, 0o600, "state file must be mode 600");
+    }
+
+    #[test]
+    fn test_validate_workspace_id_valid_format() {
+        assert!(validate_workspace_id(TEST_WORKSPACE_ID).is_ok());
+        assert!(validate_workspace_id("polis-aaaaaaaaaaaaaaaa").is_ok());
+        assert!(validate_workspace_id("polis-AAAAAAAAAAAAAAAA").is_ok());
+    }
+
+    #[test]
+    fn test_validate_workspace_id_rejects_short_id() {
+        assert!(validate_workspace_id("polis-abc123").is_err());
+        assert!(validate_workspace_id("polis-test").is_err());
+    }
+
+    #[test]
+    fn test_validate_workspace_id_rejects_wrong_prefix() {
+        assert!(validate_workspace_id("other-0123456789abcdef").is_err());
+    }
+
+    #[test]
+    fn test_validate_workspace_id_rejects_non_hex_chars() {
+        assert!(validate_workspace_id("polis-ghijklmnopqrstuv").is_err());
     }
 }

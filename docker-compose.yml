@@ -301,6 +301,7 @@ services:
       dockerfile: services/workspace/Dockerfile
     image: ghcr.io/odralabshq/polis-workspace-oss:${POLIS_WORKSPACE_VERSION:-latest}
     container_name: polis-workspace
+    hostname: workspace
     runtime: sysbox-runc
     sysctls:
       - net.ipv4.conf.all.rp_filter=0
