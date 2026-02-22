@@ -206,7 +206,7 @@ gen_compose() {
         echo "    env_file:"
         echo "      - .env"
         echo "    volumes:"
-        echo "      - ./agents/${NAME}/:/tmp/agents/${NAME}/:ro"
+        echo "      - ./agents/${NAME}/:/opt/agents/${NAME}/:ro"
         echo "      - ./agents/${NAME}/.generated/${NAME}.service:/etc/systemd/system/${NAME}.service:ro"
         echo "      - ./agents/${NAME}/.generated/${NAME}.service.sha256:/etc/systemd/system/${NAME}.service.sha256:ro"
         printf '%s' "${volumes_mounts_yaml}"
@@ -293,7 +293,7 @@ gen_systemd() {
         fi
         echo ""
         if [[ -n "${SPEC_INIT}" ]]; then
-            echo "ExecStartPre=/bin/bash /tmp/agents/${NAME}/${SPEC_INIT}"
+            echo "ExecStartPre=/bin/bash /opt/agents/${NAME}/${SPEC_INIT}"
         fi
         echo "ExecStart=${RUNTIME_CMD}"
         echo ""

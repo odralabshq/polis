@@ -61,15 +61,15 @@ mkdir -p /home/polis/.openclaw/{workspace,agents,sessions}
 chown -R polis:polis /app /home/polis/.openclaw
 
 # Copy scripts from agent bundle
-cp /tmp/agents/openclaw/scripts/health.sh /usr/local/bin/openclaw-health.sh
-cp /tmp/agents/openclaw/scripts/init.sh /usr/local/bin/openclaw-init.sh
+cp /opt/agents/openclaw/scripts/health.sh /usr/local/bin/openclaw-health.sh
+cp /opt/agents/openclaw/scripts/init.sh /usr/local/bin/openclaw-init.sh
 chmod 755 /usr/local/bin/openclaw-health.sh /usr/local/bin/openclaw-init.sh
 
 # Install SOUL.md (HITL security workflow instructions for the agent)
 # Skip if already bind-mounted by compose override
 mkdir -p /usr/local/share/openclaw/scripts
 if [[ ! -f /usr/local/share/openclaw/SOUL.md ]]; then
-    cp /tmp/agents/openclaw/config/SOUL.md /usr/local/share/openclaw/SOUL.md
+    cp /opt/agents/openclaw/config/SOUL.md /usr/local/share/openclaw/SOUL.md
     chmod 644 /usr/local/share/openclaw/SOUL.md
 fi
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # agents/<name>/install.sh
 # Runtime install script. Runs inside the container as root on first boot
-# via systemd ExecStartPre=+/tmp/agents/<name>/install.sh
+# via systemd ExecStartPre=+/opt/agents/<name>/install.sh
 set -euo pipefail
 
 MARKER="/var/lib/<name>-installed"
