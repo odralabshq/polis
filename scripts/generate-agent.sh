@@ -195,6 +195,10 @@ gen_compose() {
 
     local healthcheck_test="systemctl is-active polis-init.service && systemctl is-active ${NAME}.service && ${HEALTH_CMD} && ip route | grep -q default"
 
+    # Socat proxy runs as a VM-level systemd service (see gen_proxy below).
+    # No container-level proxy needed.
+    local socat_services_yaml=""
+
     {
         echo "# Generated from ${MANIFEST} - DO NOT EDIT"
         echo "services:"
@@ -227,6 +231,10 @@ gen_compose() {
                 echo "        reservations:"
                 echo "          memory: ${MEM_RESERVATION}"
             fi
+        fi
+        if [[ -n "${socat_services_yaml}" ]]; then
+            echo ""
+            printf '%s' "${socat_services_yaml}"
         fi
         if [[ -n "${vol_section_yaml}" ]]; then
             echo ""
@@ -370,6 +378,41 @@ gen_env() {
 }
 
 # ---------------------------------------------------------------------------
+# Generate VM-level socat proxy units (one per port)
+# These run on the VM host (not in a container) to create real TCP listeners
+# that Hyper-V's virtual switch can route to.
+# ---------------------------------------------------------------------------
+
+gen_proxy() {
+    local port_count
+    port_count=$(yq '.spec.ports | length' "${MANIFEST}")
+    for ((i=0; i<port_count; i++)); do
+        local container_port host_env default_port
+        container_port=$(yq ".spec.ports[${i}].container" "${MANIFEST}")
+        host_env=$(yq ".spec.ports[${i}].hostEnv" "${MANIFEST}")
+        default_port=$(yq ".spec.ports[${i}].default" "${MANIFEST}")
+        local out="${OUT_DIR}/${NAME}-proxy-${container_port}.service"
+        {
+            echo "# Generated from ${MANIFEST} - DO NOT EDIT"
+            echo "# Install on the VM host: cp ${out} /etc/systemd/system/"
+            echo "[Unit]"
+            echo "Description=Polis socat proxy for ${NAME} port ${container_port}"
+            echo "After=docker.service"
+            echo "Requires=docker.service"
+            echo ""
+            echo "[Service]"
+            echo "Type=simple"
+            echo "Restart=always"
+            echo "RestartSec=3"
+            echo "ExecStart=/bin/sh -c 'IP=\$(docker inspect polis-workspace --format \"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}\"); exec /usr/bin/socat TCP-LISTEN:\${${host_env}:-${default_port}},fork,reuseaddr TCP:\$IP:${container_port}'"
+            echo ""
+            echo "[Install]"
+            echo "WantedBy=multi-user.target"
+        } > "${out}"
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -382,3 +425,4 @@ gen_compose
 gen_systemd
 gen_hash
 gen_env
+gen_proxy

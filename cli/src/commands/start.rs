@@ -233,6 +233,42 @@ pub async fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> 
         }
         anyhow::bail!("Error: Agent artifact generation failed for '{agent_name}'.\n{detail}");
     }
+
+    // Install VM-level socat proxy units (needed for Hyper-V port forwarding)
+    install_proxy_units(mp, agent_name).await?;
+
+    Ok(())
+}
+
+/// Install generated socat proxy systemd units on the VM host and start them.
+async fn install_proxy_units(mp: &impl Multipass, agent_name: &str) -> Result<()> {
+    let generated_dir = format!("{VM_POLIS_ROOT}/agents/{agent_name}/.generated");
+    // Find all proxy unit files
+    let ls_out = mp
+        .exec(&[
+            "bash", "-c",
+            &format!("ls {generated_dir}/{agent_name}-proxy-*.service 2>/dev/null || true"),
+        ])
+        .await?;
+    let units = String::from_utf8_lossy(&ls_out.stdout);
+    for unit_path in units.lines().filter(|l| !l.is_empty()) {
+        let unit_name = unit_path.split('/').last().unwrap_or("");
+        // Copy to systemd directory and enable+start
+        let out = mp
+            .exec(&[
+                "bash", "-c",
+                &format!(
+                    "sudo cp {unit_path} /etc/systemd/system/{unit_name} && \
+                     sudo systemctl daemon-reload && \
+                     sudo systemctl enable --now {unit_name}"
+                ),
+            ])
+            .await?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            anyhow::bail!("Failed to install proxy unit {unit_name}: {err}");
+        }
+    }
     Ok(())
 }
 
