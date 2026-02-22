@@ -2,8 +2,6 @@
 //!
 //! Displays workspace state, agent health, security status, and metrics.
 
-#![allow(dead_code)] // Helper functions used only in tests
-
 use anyhow::Result;
 use polis_common::types::{
     AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
@@ -12,9 +10,7 @@ use polis_common::types::{
 
 use crate::multipass::Multipass;
 use crate::output::OutputContext;
-
-/// Path to `docker-compose.yml` inside the VM.
-const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
+use crate::workspace::COMPOSE_PATH;
 
 /// Run the status command.
 ///
@@ -305,17 +301,20 @@ pub fn agent_health_display(health: AgentHealth) -> &'static str {
     }
 }
 
+#[allow(dead_code)] // Used by tests and future features
 #[must_use]
 pub fn format_agent_line(name: &str, health: AgentHealth) -> String {
     format!("{name} ({})", agent_health_display(health))
 }
 
+#[allow(dead_code)] // Used by tests and future features
 #[must_use]
 pub fn format_events_warning(count: u32) -> String {
     let noun = if count == 1 { "event" } else { "events" };
     format!("{count} security {noun}\nRun: polis logs --security")
 }
 
+#[allow(dead_code)] // Used by tests
 #[must_use]
 pub fn workspace_unknown() -> WorkspaceStatus {
     WorkspaceStatus {

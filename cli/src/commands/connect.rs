@@ -106,11 +106,29 @@ pub fn resolve_ide(name: &str) -> Result<(&'static str, &'static [&'static str])
     }
 }
 
+/// Validates that a public key has a safe format for use in shell commands.
+///
+/// # Errors
+///
+/// Returns an error if the key format is invalid or contains unsafe characters.
+fn validate_pubkey(key: &str) -> Result<()> {
+    anyhow::ensure!(
+        key.starts_with("ssh-ed25519 ") || key.starts_with("ssh-rsa "),
+        "invalid public key format"
+    );
+    anyhow::ensure!(
+        key.chars()
+            .all(|c| c.is_ascii_alphanumeric() || " +/=@.-\n".contains(c)),
+        "public key contains invalid characters"
+    );
+    Ok(())
+}
+
 /// Installs `pubkey` into `~/.ssh/authorized_keys` of the `polis` user inside
 /// the workspace container. Idempotent.
 async fn install_pubkey(pubkey: &str) -> Result<()> {
-    // Detect backend the same way _ssh-proxy does.
     use crate::commands::internal::{Backend, BackendProber};
+    use tokio::io::AsyncWriteExt;
 
     struct Prober;
     impl BackendProber for Prober {
@@ -124,17 +142,49 @@ async fn install_pubkey(pubkey: &str) -> Result<()> {
         }
     }
 
+    // SEC-001: Validate pubkey format before use to prevent shell injection
+    validate_pubkey(pubkey)?;
+
     let backend = crate::commands::internal::detect_backend(&Prober).await?;
 
-    let script = format!(
-        "mkdir -p /home/polis/.ssh && chmod 700 /home/polis/.ssh && \
-         grep -qxF '{pubkey}' /home/polis/.ssh/authorized_keys 2>/dev/null || \
-         echo '{pubkey}' >> /home/polis/.ssh/authorized_keys && \
+    // SEC-001: Use stdin to pass pubkey instead of shell interpolation
+    let setup_script =
+        "mkdir -p /home/polis/.ssh && chmod 700 /home/polis/.ssh && chown polis:polis /home/polis/.ssh";
+    let install_script = "cat >> /home/polis/.ssh/authorized_keys && \
          chmod 600 /home/polis/.ssh/authorized_keys && \
-         chown -R polis:polis /home/polis/.ssh"
-    );
+         chown polis:polis /home/polis/.ssh/authorized_keys";
 
-    let status = match backend {
+    // First ensure .ssh directory exists
+    let setup_status = match backend {
+        Backend::Multipass => {
+            tokio::process::Command::new("multipass")
+                .args([
+                    "exec",
+                    "polis",
+                    "--",
+                    "docker",
+                    "exec",
+                    "polis-workspace",
+                    "bash",
+                    "-c",
+                    setup_script,
+                ])
+                .status()
+                .await
+                .context("multipass exec failed")?
+        }
+        Backend::Docker => {
+            tokio::process::Command::new("docker")
+                .args(["exec", "polis-workspace", "bash", "-c", setup_script])
+                .status()
+                .await
+                .context("docker exec failed")?
+        }
+    };
+    anyhow::ensure!(setup_status.success(), "failed to setup .ssh directory");
+
+    // Install pubkey via stdin (no shell interpolation)
+    let mut child = match backend {
         Backend::Multipass => tokio::process::Command::new("multipass")
             .args([
                 "exec",
@@ -142,21 +192,36 @@ async fn install_pubkey(pubkey: &str) -> Result<()> {
                 "--",
                 "docker",
                 "exec",
+                "-i",
                 "polis-workspace",
                 "bash",
                 "-c",
-                &script,
+                install_script,
             ])
-            .status()
-            .await
+            .stdin(std::process::Stdio::piped())
+            .spawn()
             .context("multipass exec failed")?,
         Backend::Docker => tokio::process::Command::new("docker")
-            .args(["exec", "polis-workspace", "bash", "-c", &script])
-            .status()
-            .await
+            .args(["exec", "-i", "polis-workspace", "bash", "-c", install_script])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
             .context("docker exec failed")?,
     };
 
+    if let Some(mut stdin) = child.stdin.take() {
+        // Add newline if not present
+        let key_line = if pubkey.ends_with('\n') {
+            pubkey.to_string()
+        } else {
+            format!("{pubkey}\n")
+        };
+        stdin
+            .write_all(key_line.as_bytes())
+            .await
+            .context("writing pubkey to stdin")?;
+    }
+
+    let status = child.wait().await.context("waiting for install command")?;
     anyhow::ensure!(
         status.success(),
         "failed to install public key in workspace"

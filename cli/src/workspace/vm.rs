@@ -5,13 +5,11 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::multipass::Multipass;
+use crate::workspace::COMPOSE_PATH;
 
 const VM_CPUS: &str = "2";
 const VM_MEMORY: &str = "8G";
 const VM_DISK: &str = "40G";
-
-/// Path to `docker-compose.yml` inside the VM.
-const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
 
 /// VM state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,10 +145,8 @@ pub fn start(mp: &impl Multipass) -> Result<()> {
 /// Returns an error if the multipass stop command fails.
 pub fn stop(mp: &impl Multipass) -> Result<()> {
     let _ = mp.exec(&["docker", "compose", "-f", COMPOSE_PATH, "stop"]);
-    let output = std::process::Command::new("multipass")
-        .args(["stop", "polis"])
-        .output()
-        .context("stopping workspace")?;
+    // PERF-002: Use trait method instead of direct Command
+    let output = mp.stop().context("stopping workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("Failed to stop workspace: {stderr}");
@@ -159,13 +155,11 @@ pub fn stop(mp: &impl Multipass) -> Result<()> {
 }
 
 /// Delete VM.
-pub fn delete(_mp: &impl Multipass) {
-    let _ = std::process::Command::new("multipass")
-        .args(["delete", "polis"])
-        .output();
-    let _ = std::process::Command::new("multipass")
-        .args(["purge"])
-        .output();
+///
+/// PERF-002: Uses trait methods for testability.
+pub fn delete(mp: &impl Multipass) {
+    let _ = mp.delete();
+    let _ = mp.purge();
 }
 
 /// Restart a stopped VM with inception progress messages.

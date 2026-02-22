@@ -139,6 +139,7 @@ fn generate_workspace_id() -> String {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
 
+    // CORR-001: Add multiple entropy sources to prevent duplicates
     let mut hasher = RandomState::new().build_hasher();
     hasher.write_u128(
         std::time::SystemTime::now()
@@ -146,6 +147,10 @@ fn generate_workspace_id() -> String {
             .map(|d| d.as_nanos())
             .unwrap_or(0),
     );
+    // Add process ID for additional entropy
+    hasher.write_u32(std::process::id());
+    // RandomState already provides randomness, but hash again for good measure
+    hasher.write_u64(RandomState::new().build_hasher().finish());
     format!("polis-{:016x}", hasher.finish())
 }
 

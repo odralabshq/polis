@@ -256,12 +256,10 @@ fn extract_tar_content(signed_bytes: &[u8]) -> Result<Vec<u8>> {
 // ── Container update flow (issue 08) ─────────────────────────────────────────
 
 use crate::multipass::Multipass;
+use crate::workspace::COMPOSE_PATH;
 
 /// GHCR registry prefix for Polis container images.
 const GHCR_PREFIX: &str = "ghcr.io/odralabshq";
-
-/// Path to `docker-compose.yml` inside the VM.
-const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
 
 /// Path to the `.env` file that pins container image versions inside the VM.
 const ENV_PATH: &str = "/opt/polis/.env";
@@ -415,8 +413,19 @@ fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Re
 ///
 /// # Errors
 ///
-/// Returns an error if the shell command fails.
+/// Returns an error if validation fails or the shell command fails.
 fn set_env_var(key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
+    // SEC-002/SEC-003: Validate inputs before shell interpolation
+    anyhow::ensure!(
+        key.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        "env key contains invalid characters: {key}"
+    );
+    if !value.is_empty() {
+        validate_version_tag(value)
+            .with_context(|| format!("invalid version tag for {key}: {value}"))?;
+    }
+
     let cmd = if value.is_empty() {
         format!(
             "grep -v '^{key}=' {ENV_PATH} 2>/dev/null > {ENV_PATH}.tmp && mv {ENV_PATH}.tmp {ENV_PATH} || true"

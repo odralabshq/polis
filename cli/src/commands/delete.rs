@@ -35,6 +35,9 @@ fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Resu
         return Ok(());
     }
 
+    // REL-003: Collect errors instead of failing fast
+    let mut errors = Vec::new();
+
     // Stop and delete VM
     if vm::exists(mp) {
         if !quiet {
@@ -44,8 +47,13 @@ fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Resu
     }
 
     // Clear state file
-    let state_mgr = StateManager::new()?;
-    state_mgr.clear()?;
+    if let Err(e) = StateManager::new().and_then(|m| m.clear()) {
+        errors.push(format!("failed to clear state: {e}"));
+    }
+
+    if !errors.is_empty() {
+        anyhow::bail!("delete completed with errors:\n  {}", errors.join("\n  "));
+    }
 
     if !quiet {
         println!();
@@ -120,11 +128,12 @@ fn delete_all(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()>
 // --- Helpers ---
 
 fn confirm(prompt: &str) -> Result<bool> {
-    use std::io::{BufRead, Write};
+    use std::io::{BufRead, Read, Write};
     print!("{prompt} [y/N]: ");
     std::io::stdout().flush()?;
     let mut line = String::new();
-    let n = std::io::stdin().lock().read_line(&mut line)?;
+    // CORR-002: Limit input to 16 bytes to prevent memory exhaustion
+    let n = std::io::stdin().lock().take(16).read_line(&mut line)?;
     anyhow::ensure!(n > 0, "no input provided");
     Ok(line.trim().eq_ignore_ascii_case("y"))
 }

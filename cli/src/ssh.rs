@@ -106,6 +106,7 @@ impl KnownHostsManager {
     }
 
     /// Returns `true` if the `known_hosts` file exists.
+    #[allow(dead_code)] // Used by tests
     #[must_use]
     pub fn exists(&self) -> bool {
         self.path.exists()

@@ -33,6 +33,33 @@ pub trait Multipass {
     /// Returns an error if the command cannot be spawned.
     fn start(&self) -> Result<Output>;
 
+    /// Run `multipass stop polis`.
+    ///
+    /// PERF-002: Added to trait for testability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command cannot be spawned.
+    fn stop(&self) -> Result<Output>;
+
+    /// Run `multipass delete polis`.
+    ///
+    /// PERF-002: Added to trait for testability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command cannot be spawned.
+    fn delete(&self) -> Result<Output>;
+
+    /// Run `multipass purge`.
+    ///
+    /// PERF-002: Added to trait for testability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command cannot be spawned.
+    fn purge(&self) -> Result<Output>;
+
     /// Run `multipass transfer <local_path> polis:<remote_path>`.
     ///
     /// # Errors
@@ -81,6 +108,27 @@ impl Multipass for MultipassCli {
             .args(["start", VM_NAME])
             .output()
             .context("failed to run multipass start")
+    }
+
+    fn stop(&self) -> Result<Output> {
+        Command::new("multipass")
+            .args(["stop", VM_NAME])
+            .output()
+            .context("failed to run multipass stop")
+    }
+
+    fn delete(&self) -> Result<Output> {
+        Command::new("multipass")
+            .args(["delete", VM_NAME])
+            .output()
+            .context("failed to run multipass delete")
+    }
+
+    fn purge(&self) -> Result<Output> {
+        Command::new("multipass")
+            .arg("purge")
+            .output()
+            .context("failed to run multipass purge")
     }
 
     fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output> {

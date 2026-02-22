@@ -5,9 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 
 use crate::multipass::Multipass;
-
-/// Path to `docker-compose.yml` inside the VM.
-const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
+use crate::workspace::COMPOSE_PATH;
 
 /// Health status.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,9 +15,22 @@ pub enum HealthStatus {
     Unknown,
 }
 
+/// REL-004: Get health check timeout from environment or use default.
+fn get_health_timeout() -> (u32, Duration) {
+    let timeout_secs: u64 = std::env::var("POLIS_HEALTH_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    let delay = Duration::from_secs(2);
+    #[allow(clippy::cast_possible_truncation)]
+    let max_attempts = (timeout_secs / 2) as u32;
+    (max_attempts.max(1), delay)
+}
+
 /// Wait for workspace to become healthy.
 ///
-/// Polls every 2 seconds for up to 60 seconds.
+/// Polls every 2 seconds. Timeout configurable via `POLIS_HEALTH_TIMEOUT` env var
+/// (default: 60 seconds).
 ///
 /// # Errors
 ///
@@ -40,8 +51,7 @@ pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
     let pb =
         (!quiet).then(|| crate::output::progress::spinner(&fmt("agent isolation complete...")));
 
-    let max_attempts = 30;
-    let delay = Duration::from_secs(2);
+    let (max_attempts, delay) = get_health_timeout();
 
     for attempt in 1..=max_attempts {
         match check(mp) {

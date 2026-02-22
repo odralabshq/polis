@@ -24,6 +24,23 @@ pub struct WorkspaceState {
     pub image_source: Option<String>,
 }
 
+/// SEC-004: Validates workspace ID format.
+///
+/// # Errors
+///
+/// Returns an error if the ID doesn't match expected format.
+fn validate_workspace_id(id: &str) -> Result<()> {
+    anyhow::ensure!(
+        id.starts_with("polis-") && id.len() == 22,
+        "invalid workspace ID format: {id}"
+    );
+    anyhow::ensure!(
+        id[6..].chars().all(|c| c.is_ascii_hexdigit()),
+        "workspace ID contains invalid characters: {id}"
+    );
+    Ok(())
+}
+
 /// State file manager.
 pub struct StateManager {
     path: PathBuf,
@@ -54,8 +71,8 @@ impl StateManager {
     ///
     /// # Errors
     ///
-    /// Returns an error if the file exists but cannot be read or parsed.
-    #[allow(dead_code)] // Used in tests and future features
+    /// Returns an error if the file exists but cannot be read or parsed,
+    /// or if the workspace ID fails validation.
     pub fn load(&self) -> Result<Option<WorkspaceState>> {
         if !self.path.exists() {
             return Ok(None);
@@ -64,10 +81,14 @@ impl StateManager {
             .with_context(|| format!("reading state file {}", self.path.display()))?;
         let state: WorkspaceState = serde_json::from_str(&content)
             .with_context(|| format!("parsing state file {}", self.path.display()))?;
+        // SEC-004: Validate workspace ID from external source
+        validate_workspace_id(&state.workspace_id)?;
         Ok(Some(state))
     }
 
-    /// Save state to disk with mode 600.
+    /// Save state to disk with mode 600 using atomic write.
+    ///
+    /// REL-001: Uses temp-file-then-rename pattern to prevent corruption.
     ///
     /// # Errors
     ///
@@ -78,14 +99,22 @@ impl StateManager {
                 .with_context(|| format!("creating directory {}", parent.display()))?;
         }
         let content = serde_json::to_string_pretty(state).context("serializing state")?;
-        std::fs::write(&self.path, &content)
-            .with_context(|| format!("writing state file {}", self.path.display()))?;
+
+        // REL-001: Atomic write via temp file then rename
+        let temp_path = self.path.with_extension("json.tmp");
+        std::fs::write(&temp_path, &content)
+            .with_context(|| format!("writing temp file {}", temp_path.display()))?;
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))
-                .with_context(|| format!("setting permissions on {}", self.path.display()))?;
+            std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("setting permissions on {}", temp_path.display()))?;
         }
+
+        std::fs::rename(&temp_path, &self.path)
+            .with_context(|| format!("finalizing state file {}", self.path.display()))?;
+
         Ok(())
     }
 
