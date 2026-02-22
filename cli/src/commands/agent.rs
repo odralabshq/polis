@@ -4,10 +4,10 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::Deserialize;
 
-use crate::multipass::Multipass;
+use crate::multipass::{Multipass, VM_NAME};
 use crate::output::OutputContext;
 use crate::state::StateManager;
-use crate::workspace::vm;
+use crate::workspace::{vm, CONTAINER_NAME};
 
 const VM_ROOT: &str = "/opt/polis";
 
@@ -23,6 +23,12 @@ pub enum AgentCommand {
     Restart,
     /// Re-generate artifacts and recreate workspace
     Update,
+    /// Open an interactive shell in the workspace container
+    Shell,
+    /// Run a command in the workspace container
+    Exec(ExecArgs),
+    /// Run an agent-specific command (defined in agents/<name>/commands.sh)
+    Cmd(CmdArgs),
 }
 
 #[derive(Args)]
@@ -36,6 +42,20 @@ pub struct AddArgs {
 pub struct RemoveArgs {
     /// Agent name to remove
     pub name: String,
+}
+
+#[derive(Args)]
+pub struct ExecArgs {
+    /// Command and arguments to run in the workspace container
+    #[arg(trailing_var_arg = true, required = true)]
+    pub command: Vec<String>,
+}
+
+#[derive(Args)]
+pub struct CmdArgs {
+    /// Agent-specific subcommand (e.g. token, devices, onboard)
+    #[arg(trailing_var_arg = true, required = true)]
+    pub args: Vec<String>,
 }
 
 /// Minimal agent manifest shape — only the fields we need.
@@ -67,6 +87,9 @@ pub async fn run(
         AgentCommand::List => list(mp, ctx, json).await,
         AgentCommand::Restart => restart(mp, ctx).await,
         AgentCommand::Update => update(mp, ctx).await,
+        AgentCommand::Shell => shell(mp).await,
+        AgentCommand::Exec(args) => exec_cmd(mp, &args).await,
+        AgentCommand::Cmd(args) => agent_cmd(mp, &args).await,
     }
 }
 
@@ -358,6 +381,75 @@ async fn update(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
 
     if !ctx.quiet {
         println!("Agent '{name}' updated and workspace recreated.");
+    }
+    Ok(())
+}
+
+/// Require the VM to be running; return an error otherwise.
+async fn require_running(mp: &impl Multipass) -> Result<()> {
+    anyhow::ensure!(
+        vm::state(mp).await? == vm::VmState::Running,
+        "Workspace is not running. Start it first: polis start --agent <name>"
+    );
+    Ok(())
+}
+
+/// Return the active agent name from state, or error.
+fn require_active_agent() -> Result<String> {
+    StateManager::new()?
+        .load()?
+        .and_then(|s| s.active_agent)
+        .ok_or_else(|| anyhow::anyhow!("No active agent. Start one: polis start --agent <name>"))
+}
+
+async fn shell(mp: &impl Multipass) -> Result<()> {
+    require_running(mp).await?;
+    let status = std::process::Command::new("multipass")
+        .args(["exec", VM_NAME, "--", "docker", "exec", "-it", CONTAINER_NAME, "bash"])
+        .status()
+        .context("failed to spawn multipass")?;
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+async fn exec_cmd(mp: &impl Multipass, args: &ExecArgs) -> Result<()> {
+    require_running(mp).await?;
+    let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--", "docker", "exec", CONTAINER_NAME];
+    let refs: Vec<&str> = args.command.iter().map(String::as_str).collect();
+    cmd_args.extend(&refs);
+    let status = std::process::Command::new("multipass")
+        .args(&cmd_args)
+        .status()
+        .context("failed to spawn multipass")?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
+async fn agent_cmd(mp: &impl Multipass, args: &CmdArgs) -> Result<()> {
+    require_running(mp).await?;
+    let name = require_active_agent()?;
+    let commands_sh = format!("{VM_ROOT}/agents/{name}/commands.sh");
+
+    // Verify commands.sh exists
+    let check = mp.exec(&["test", "-f", &commands_sh]).await?;
+    anyhow::ensure!(
+        check.status.success(),
+        "Agent '{name}' has no commands.sh"
+    );
+
+    let mut cmd_args: Vec<&str> = vec![
+        "exec", VM_NAME, "--",
+        "bash", &commands_sh, CONTAINER_NAME,
+    ];
+    let refs: Vec<&str> = args.args.iter().map(String::as_str).collect();
+    cmd_args.extend(&refs);
+    let status = std::process::Command::new("multipass")
+        .args(&cmd_args)
+        .status()
+        .context("failed to spawn multipass")?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
     }
     Ok(())
 }

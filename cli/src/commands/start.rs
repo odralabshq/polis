@@ -159,6 +159,9 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
         println!();
         if let Some(name) = &args.agent {
             println!("Workspace ready. Agent: {name}");
+            println!();
+            println!("Agent shell:    polis agent shell");
+            println!("Agent commands: polis agent cmd help");
         } else {
             println!("Workspace ready.");
         }
