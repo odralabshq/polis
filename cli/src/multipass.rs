@@ -196,10 +196,10 @@ impl Multipass for MultipassCli {
             .context("failed to spawn multipass exec")?;
 
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(input)
-                .await
-                .context("failed to write to multipass stdin")?;
+            let input = input.to_vec();
+            tokio::spawn(async move {
+                let _ = stdin.write_all(&input).await;
+            });
         }
 
         child

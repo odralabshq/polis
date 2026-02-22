@@ -28,7 +28,6 @@ async fn main() {
         }
         _ = tokio::signal::ctrl_c() => {
             eprintln!("\nInterrupted");
-            std::process::exit(130); // 128 + SIGINT(2)
         }
     }
 }

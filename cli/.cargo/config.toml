@@ -1,0 +1,3 @@
+[test]
+# config_command tests mutate POLIS_CONFIG env var and require single-threaded execution
+test-threads = 1
