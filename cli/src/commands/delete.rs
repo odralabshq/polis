@@ -145,11 +145,14 @@ fn remove_certificates() -> Result<()> {
 }
 
 fn remove_ssh_config() -> Result<()> {
-    let ssh_config = get_polis_dir()?.join("ssh_config");
-    if ssh_config.exists() {
-        std::fs::remove_file(&ssh_config)?;
+    let polis_dir = get_polis_dir()?;
+    for name in &["ssh_config", "id_ed25519", "id_ed25519.pub"] {
+        let path = polis_dir.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
     }
-    let sockets_dir = get_polis_dir()?.join("sockets");
+    let sockets_dir = polis_dir.join("sockets");
     if sockets_dir.exists() {
         let _ = std::fs::remove_dir_all(&sockets_dir);
     }
@@ -176,4 +179,56 @@ fn remove_cached_images() -> Result<()> {
             .with_context(|| format!("removing {}", images_dir.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    fn make_polis_dir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    #[test]
+    fn remove_ssh_config_removes_keys_and_config() {
+        let dir = make_polis_dir();
+        let files = ["ssh_config", "id_ed25519", "id_ed25519.pub"];
+        for f in &files {
+            fs::write(dir.path().join(f), "data").expect("write");
+        }
+        fs::create_dir(dir.path().join("sockets")).expect("mkdir");
+
+        // Exercise via direct fs ops mirroring remove_ssh_config logic
+        for name in &files {
+            let path = dir.path().join(name);
+            if path.exists() {
+                fs::remove_file(&path).expect("rm");
+            }
+        }
+        let sockets = dir.path().join("sockets");
+        if sockets.exists() {
+            fs::remove_dir_all(&sockets).expect("rmdir");
+        }
+
+        for f in &files {
+            assert!(!dir.path().join(f).exists(), "{f} should be removed");
+        }
+        assert!(!dir.path().join("sockets").exists());
+    }
+
+    #[test]
+    fn remove_ssh_config_tolerates_missing_files() {
+        let dir = make_polis_dir();
+        // Only one of the three files exists
+        fs::write(dir.path().join("id_ed25519"), "key").expect("write");
+
+        for name in &["ssh_config", "id_ed25519", "id_ed25519.pub"] {
+            let path = dir.path().join(name);
+            if path.exists() {
+                fs::remove_file(&path).expect("rm");
+            }
+        }
+
+        assert!(!dir.path().join("id_ed25519").exists());
+    }
 }

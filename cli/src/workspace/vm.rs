@@ -106,18 +106,7 @@ pub fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()>
     }
 
     configure_credentials(mp);
-
-    let pb = (!quiet).then(|| {
-        crate::output::progress::spinner(&inception_line("L2", "agent isolation starting..."))
-    });
-    start_services(mp);
-    if let Some(pb) = pb {
-        crate::output::progress::finish_ok(
-            &pb,
-            &inception_line("L2", "agent isolation starting..."),
-        );
-    }
-
+    start_services_with_progress(mp, quiet);
     pin_host_key();
     Ok(())
 }
@@ -179,23 +168,29 @@ pub fn delete(_mp: &impl Multipass) {
         .output();
 }
 
-/// Ensure VM is running (create if needed, start if stopped).
+/// Restart a stopped VM with inception progress messages.
 ///
 /// # Errors
 ///
-/// Returns an error if the VM state cannot be determined, creation fails, or
-/// starting a stopped VM fails.
-pub fn ensure_running(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Result<()> {
-    match state(mp)? {
-        VmState::Running => Ok(()),
-        VmState::Stopped | VmState::Starting => {
-            if !quiet {
-                println!("Starting workspace...");
-            }
-            start(mp)
-        }
-        VmState::NotFound => create(mp, image_path, quiet),
+/// Returns an error if the multipass start command fails.
+pub fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
+    if !quiet {
+        println!("✓ {}", inception_line("L0", "sequence started."));
     }
+
+    let pb = (!quiet).then(|| {
+        crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
+    });
+    start(mp)?;
+    if let Some(pb) = pb {
+        crate::output::progress::finish_ok(
+            &pb,
+            &inception_line("L1", "workspace isolation starting..."),
+        );
+    }
+
+    start_services_with_progress(mp, quiet);
+    Ok(())
 }
 
 // ── Private helpers ──────────────────────────────────────────────────────────
@@ -232,6 +227,19 @@ fn start_services(mp: &impl Multipass) {
     let _ = mp.exec(&["sudo", "systemctl", "start", "polis"]);
 }
 
+fn start_services_with_progress(mp: &impl Multipass, quiet: bool) {
+    let pb = (!quiet).then(|| {
+        crate::output::progress::spinner(&inception_line("L2", "agent isolation starting..."))
+    });
+    start_services(mp);
+    if let Some(pb) = pb {
+        crate::output::progress::finish_ok(
+            &pb,
+            &inception_line("L2", "agent isolation starting..."),
+        );
+    }
+}
+
 fn pin_host_key() {
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("polis"));
     if let Ok(output) = std::process::Command::new(exe)
@@ -241,5 +249,134 @@ fn pin_host_key() {
         && let Ok(host_key) = String::from_utf8(output.stdout)
     {
         let _ = crate::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+
+    use anyhow::Result;
+
+    use super::*;
+    use crate::multipass::Multipass;
+
+    fn ok(stdout: &[u8]) -> Output {
+        Output {
+            status: ExitStatus::from_raw(0),
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+    fn fail() -> Output {
+        Output {
+            status: ExitStatus::from_raw(1 << 8),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
+
+    struct MockVm(Output);
+    impl Multipass for MockVm {
+        fn vm_info(&self) -> Result<Output> {
+            Ok(Output {
+                status: self.0.status,
+                stdout: self.0.stdout.clone(),
+                stderr: self.0.stderr.clone(),
+            })
+        }
+        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        fn start(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        fn exec(&self, _: &[&str]) -> Result<Output> {
+            unimplemented!()
+        }
+        fn version(&self) -> Result<Output> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn state_not_found_when_vm_info_fails() {
+        let mp = MockVm(fail());
+        assert_eq!(state(&mp).expect("state"), VmState::NotFound);
+    }
+
+    #[test]
+    fn state_running() {
+        let mp = MockVm(ok(br#"{"info":{"polis":{"state":"Running"}}}"#));
+        assert_eq!(state(&mp).expect("state"), VmState::Running);
+    }
+
+    #[test]
+    fn state_stopped() {
+        let mp = MockVm(ok(br#"{"info":{"polis":{"state":"Stopped"}}}"#));
+        assert_eq!(state(&mp).expect("state"), VmState::Stopped);
+    }
+
+    #[test]
+    fn exists_true_when_vm_info_succeeds() {
+        let mp = MockVm(ok(b"{}"));
+        assert!(exists(&mp));
+    }
+
+    #[test]
+    fn exists_false_when_vm_info_fails() {
+        let mp = MockVm(fail());
+        assert!(!exists(&mp));
+    }
+
+    struct MockRestart {
+        start_called: std::cell::Cell<bool>,
+        exec_called: std::cell::Cell<bool>,
+    }
+    impl MockRestart {
+        fn new() -> Self {
+            Self {
+                start_called: std::cell::Cell::new(false),
+                exec_called: std::cell::Cell::new(false),
+            }
+        }
+    }
+    impl Multipass for MockRestart {
+        fn vm_info(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        fn start(&self) -> Result<Output> {
+            self.start_called.set(true);
+            Ok(ok(b""))
+        }
+        fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        fn exec(&self, _: &[&str]) -> Result<Output> {
+            self.exec_called.set(true);
+            Ok(ok(b""))
+        }
+        fn version(&self) -> Result<Output> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn restart_calls_start_and_services() {
+        let mp = MockRestart::new();
+        let result = restart(&mp, true);
+        assert!(result.is_ok());
+        assert!(mp.start_called.get(), "start() should be called");
+        assert!(
+            mp.exec_called.get(),
+            "exec() should be called for systemctl"
+        );
     }
 }

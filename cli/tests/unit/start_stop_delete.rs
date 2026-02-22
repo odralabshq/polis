@@ -1,4 +1,4 @@
-//! Integration tests for `polis start`, `polis stop`, and `polis delete [--all]`.
+//! Unit tests for `polis start`, `polis stop`, and `polis delete [--all]`.
 //!
 //! Tests use mocked Multipass to avoid slow real calls.
 
@@ -18,25 +18,25 @@ struct MockNotFound;
 impl Multipass for MockNotFound {
     fn vm_info(&self) -> Result<Output> {
         Ok(Output {
-            status: ExitStatus::from_raw(1 << 8), // exit code 1
+            status: ExitStatus::from_raw(1 << 8),
             stdout: Vec::new(),
             stderr: b"instance \"polis\" does not exist".to_vec(),
         })
     }
     fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("launch not expected in this test")
     }
     fn start(&self) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("start not expected in this test")
     }
     fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("transfer not expected in this test")
     }
     fn exec(&self, _: &[&str]) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("exec not expected in this test")
     }
     fn version(&self) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("version not expected in this test")
     }
 }
 
@@ -52,19 +52,19 @@ impl Multipass for MockStopped {
         })
     }
     fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("launch not expected in this test")
     }
     fn start(&self) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("start not expected in this test")
     }
     fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("transfer not expected in this test")
     }
     fn exec(&self, _: &[&str]) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("exec not expected in this test")
     }
     fn version(&self) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("version not expected in this test")
     }
 }
 
@@ -97,7 +97,6 @@ fn test_delete_no_workspace_succeeds() {
         all: false,
         yes: true,
     };
-    // With no workspace, delete should succeed (nothing to delete)
     let result = delete::run(&args, &mp, true);
     assert!(result.is_ok());
 }

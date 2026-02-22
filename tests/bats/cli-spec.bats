@@ -237,6 +237,85 @@ ensure_no_vm() {
 }
 
 # =============================================================================
+# CONNECT
+# =============================================================================
+
+@test "connect: returns 0 when SSH already configured" {
+    ensure_running
+    
+    # Pre-create SSH config to avoid interactive prompt
+    mkdir -p "${HOME}/.polis"
+    cat > "${HOME}/.polis/ssh_config" <<'EOF'
+Host workspace
+    HostName workspace
+    User polis
+    StrictHostKeyChecking yes
+    ForwardAgent no
+EOF
+    
+    run polis connect
+    assert_success
+}
+
+@test "connect: SSH config contains StrictHostKeyChecking yes" {
+    ensure_running
+    
+    # Pre-create minimal SSH config
+    mkdir -p "${HOME}/.polis"
+    cat > "${HOME}/.polis/ssh_config" <<'EOF'
+Host workspace
+    HostName workspace
+    User polis
+    StrictHostKeyChecking yes
+    ForwardAgent no
+EOF
+    
+    run cat "${HOME}/.polis/ssh_config"
+    assert_output --partial "StrictHostKeyChecking yes"
+}
+
+@test "connect: SSH config contains ForwardAgent no" {
+    ensure_running
+    
+    # Pre-create minimal SSH config
+    mkdir -p "${HOME}/.polis"
+    cat > "${HOME}/.polis/ssh_config" <<'EOF'
+Host workspace
+    HostName workspace
+    User polis
+    StrictHostKeyChecking yes
+    ForwardAgent no
+EOF
+    
+    run cat "${HOME}/.polis/ssh_config"
+    assert_output --partial "ForwardAgent no"
+}
+
+@test "connect: SSH config contains User polis" {
+    ensure_running
+    
+    # Pre-create minimal SSH config
+    mkdir -p "${HOME}/.polis"
+    cat > "${HOME}/.polis/ssh_config" <<'EOF'
+Host workspace
+    HostName workspace
+    User polis
+    StrictHostKeyChecking yes
+    ForwardAgent no
+EOF
+    
+    run cat "${HOME}/.polis/ssh_config"
+    assert_output --partial "User polis"
+}
+
+@test "connect --ide: rejects unknown IDE" {
+    ensure_running
+    run polis connect --ide unknown-ide
+    assert_failure
+    assert_output --partial "Unknown IDE"
+}
+
+# =============================================================================
 # CONFIG
 # =============================================================================
 

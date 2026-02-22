@@ -1430,6 +1430,12 @@ int dlp_process(ci_request_t *req)
 
         /* Store error page for streaming via dlp_io */
         data->error_page = ci_membuf_new_sized(body_len + 1);
+        if (!data->error_page) {
+            ci_debug_printf(0, "polis_dlp: CRITICAL: Failed to allocate "
+                               "error page buffer\n");
+            data->eof = 1;
+            return CI_MOD_ERROR;
+        }
         ci_membuf_write(data->error_page, body_buf, body_len, 1);
 
         /* Create HTTP response with body (has_reshdr=1, has_body=1) */

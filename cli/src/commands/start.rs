@@ -26,23 +26,7 @@ pub struct StartArgs {
 pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     let state_mgr = StateManager::new()?;
 
-    // Determine image source
-    let source = match &args.image {
-        Some(s) if s.starts_with("http://") || s.starts_with("https://") => {
-            image::ImageSource::HttpUrl(s.clone())
-        }
-        Some(s) => {
-            let path = PathBuf::from(s);
-            anyhow::ensure!(path.exists(), "Image file not found: {}", path.display());
-            image::ImageSource::LocalFile(path)
-        }
-        None => image::ImageSource::Default,
-    };
-
-    // Ensure image is available
-    let image_path = image::ensure_available(source, quiet)?;
-
-    // Check current VM state
+    // Check current VM state first
     let vm_state = vm::state(mp)?;
 
     if vm_state == vm::VmState::Running {
@@ -58,21 +42,61 @@ pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Ensure VM is running
-    vm::ensure_running(mp, &image_path, quiet)?;
-
-    // Save state if this is a new workspace
+    // Only resolve image if VM needs to be created
     if vm_state == vm::VmState::NotFound {
+        // Determine image source: CLI flag > persisted source > default
+        let source = match &args.image {
+            Some(s) if s.starts_with("http://") || s.starts_with("https://") => {
+                image::ImageSource::HttpUrl(s.clone())
+            }
+            Some(s) => {
+                let path = PathBuf::from(s);
+                anyhow::ensure!(path.exists(), "Image file not found: {}", path.display());
+                image::ImageSource::LocalFile(path)
+            }
+            None => {
+                // Check if we have a persisted custom image source
+                if let Some(state) = state_mgr.load()? {
+                    if let Some(ref custom_source) = state.image_source {
+                        if custom_source.starts_with("http://")
+                            || custom_source.starts_with("https://")
+                        {
+                            image::ImageSource::HttpUrl(custom_source.clone())
+                        } else {
+                            let path = PathBuf::from(custom_source);
+                            if path.exists() {
+                                image::ImageSource::LocalFile(path)
+                            } else {
+                                image::ImageSource::Default
+                            }
+                        }
+                    } else {
+                        image::ImageSource::Default
+                    }
+                } else {
+                    image::ImageSource::Default
+                }
+            }
+        };
+
+        let image_path = image::ensure_available(source, quiet)?;
+        vm::create(mp, &image_path, quiet)?;
+
         let sha256 = image::load_metadata(&image::images_dir()?)
             .ok()
             .flatten()
             .map(|m| m.sha256);
+        let custom_source = args.image.clone();
         let state = WorkspaceState {
             workspace_id: generate_workspace_id(),
             created_at: Utc::now(),
             image_sha256: sha256,
+            image_source: custom_source,
         };
         state_mgr.save(&state)?;
+    } else {
+        // VM exists but stopped - just start it
+        vm::restart(mp, quiet)?;
     }
 
     // Wait for healthy
@@ -123,4 +147,62 @@ fn generate_workspace_id() -> String {
             .unwrap_or(0),
     );
     format!("polis-{:016x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_id_format() {
+        let id = generate_workspace_id();
+        assert!(
+            id.starts_with("polis-"),
+            "expected 'polis-' prefix, got: {id}"
+        );
+        // "polis-" (6) + 16 hex chars
+        assert_eq!(id.len(), 22, "expected 22 chars, got: {id}");
+        assert!(id[6..].chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn workspace_id_unique() {
+        let a = generate_workspace_id();
+        let b = generate_workspace_id();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_state_persists_custom_image_source() {
+        let state = WorkspaceState {
+            workspace_id: "test".to_string(),
+            created_at: Utc::now(),
+            image_sha256: None,
+            image_source: Some("/custom/image.qcow2".to_string()),
+        };
+        assert_eq!(state.image_source, Some("/custom/image.qcow2".to_string()));
+    }
+
+    #[test]
+    fn test_state_serializes_with_image_source() {
+        let state = WorkspaceState {
+            workspace_id: "test".to_string(),
+            created_at: Utc::now(),
+            image_sha256: None,
+            image_source: Some("https://example.com/image.qcow2".to_string()),
+        };
+        let json = serde_json::to_string(&state).expect("serialize");
+        assert!(json.contains("image_source"));
+        assert!(json.contains("https://example.com/image.qcow2"));
+    }
+
+    #[test]
+    fn test_state_deserializes_without_image_source() {
+        // Old state files without image_source should still load
+        let json =
+            r#"{"workspace_id":"test","created_at":"2024-01-01T00:00:00Z","image_sha256":null}"#;
+        let state: WorkspaceState = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(state.workspace_id, "test");
+        assert_eq!(state.image_source, None);
+    }
 }

@@ -1,4 +1,4 @@
-//! Integration tests for `polis status` command (issue 06).
+//! Unit tests for `polis status` command (issue 06).
 //!
 //! Tests use mocked Multipass to avoid slow real VM checks.
 
@@ -24,13 +24,13 @@ impl Multipass for MockNotFound {
         })
     }
     fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("launch not expected in this test")
     }
     fn start(&self) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("start not expected in this test")
     }
     fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("transfer not expected in this test")
     }
     fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(Output {
@@ -40,7 +40,7 @@ impl Multipass for MockNotFound {
         })
     }
     fn version(&self) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("version not expected in this test")
     }
 }
 
@@ -56,13 +56,13 @@ impl Multipass for MockStopped {
         })
     }
     fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("launch not expected in this test")
     }
     fn start(&self) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("start not expected in this test")
     }
     fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("transfer not expected in this test")
     }
     fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(Output {
@@ -72,7 +72,7 @@ impl Multipass for MockStopped {
         })
     }
     fn version(&self) -> Result<Output> {
-        unimplemented!()
+        anyhow::bail!("version not expected in this test")
     }
 }
 
