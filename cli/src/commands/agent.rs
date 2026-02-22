@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::multipass::{Multipass, VM_NAME};
 use crate::output::OutputContext;
 use crate::state::StateManager;
-use crate::workspace::{vm, CONTAINER_NAME};
+use crate::workspace::{CONTAINER_NAME, vm};
 
 const VM_ROOT: &str = "/opt/polis";
 
@@ -98,7 +98,11 @@ async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result
     let folder = std::path::Path::new(&args.path);
     anyhow::ensure!(folder.exists(), "Path not found: {}", args.path);
     let manifest_path = folder.join("agent.yaml");
-    anyhow::ensure!(manifest_path.exists(), "No agent.yaml found in: {}", args.path);
+    anyhow::ensure!(
+        manifest_path.exists(),
+        "No agent.yaml found in: {}",
+        args.path
+    );
 
     // Parse agent name from manifest using serde_yaml (no yq dependency)
     let manifest_content = std::fs::read_to_string(&manifest_path)
@@ -409,15 +413,31 @@ async fn shell(mp: &impl Multipass) -> Result<()> {
     // Read runtime.user from agent manifest inside the VM
     let user_out = mp
         .exec(&[
-            "bash", "-c",
+            "bash",
+            "-c",
             &format!("yq '.spec.runtime.user // \"root\"' {VM_ROOT}/agents/{name}/agent.yaml"),
         ])
         .await?;
     let user = String::from_utf8_lossy(&user_out.stdout).trim().to_string();
-    let user = if user.is_empty() || !user_out.status.success() { "root" } else { &user };
+    let user = if user.is_empty() || !user_out.status.success() {
+        "root"
+    } else {
+        &user
+    };
 
     let status = std::process::Command::new("multipass")
-        .args(["exec", VM_NAME, "--", "docker", "exec", "-it", "-u", user, CONTAINER_NAME, "bash"])
+        .args([
+            "exec",
+            VM_NAME,
+            "--",
+            "docker",
+            "exec",
+            "-it",
+            "-u",
+            user,
+            CONTAINER_NAME,
+            "bash",
+        ])
         .status()
         .context("failed to spawn multipass")?;
     std::process::exit(status.code().unwrap_or(1));
@@ -445,15 +465,9 @@ async fn agent_cmd(mp: &impl Multipass, args: &CmdArgs) -> Result<()> {
 
     // Verify commands.sh exists
     let check = mp.exec(&["test", "-f", &commands_sh]).await?;
-    anyhow::ensure!(
-        check.status.success(),
-        "Agent '{name}' has no commands.sh"
-    );
+    anyhow::ensure!(check.status.success(), "Agent '{name}' has no commands.sh");
 
-    let mut cmd_args: Vec<&str> = vec![
-        "exec", VM_NAME, "--",
-        "bash", &commands_sh, CONTAINER_NAME,
-    ];
+    let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--", "bash", &commands_sh, CONTAINER_NAME];
     let refs: Vec<&str> = args.args.iter().map(String::as_str).collect();
     cmd_args.extend(&refs);
     let status = std::process::Command::new("multipass")

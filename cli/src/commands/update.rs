@@ -1113,6 +1113,13 @@ mod tests {
         async fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: transfer not expected")
         }
+        async fn transfer_recursive(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: transfer_recursive not expected")
+        }
         async fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: exec not expected")
         }

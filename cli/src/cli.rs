@@ -129,7 +129,8 @@ impl Cli {
 
             Command::Agent(cmd) => {
                 let mp = crate::multipass::MultipassCli;
-                commands::agent::run(cmd, &mp, quiet, json)
+                let ctx = crate::output::OutputContext::new(no_color, quiet);
+                commands::agent::run(cmd, &mp, &ctx, json).await
             }
 
             // --- Internal commands ---

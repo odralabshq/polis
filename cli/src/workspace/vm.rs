@@ -19,6 +19,19 @@ pub enum VmState {
     Running,
 }
 
+/// Get the first IPv4 address of the VM, if running.
+pub async fn ip(mp: &impl Multipass) -> Option<String> {
+    let output = mp.vm_info().await.ok()?;
+    let info: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    info.get("info")?
+        .get("polis")?
+        .get("ipv4")?
+        .as_array()?
+        .first()?
+        .as_str()
+        .map(String::from)
+}
+
 /// Check if VM exists.
 pub async fn exists(mp: &impl Multipass) -> bool {
     mp.vm_info()
@@ -152,7 +165,8 @@ pub async fn stop(mp: &impl Multipass) -> Result<()> {
     // `docker compose stop` which only knows about services in its file.
     let _ = mp
         .exec(&[
-            "bash", "-c",
+            "bash",
+            "-c",
             "docker ps -q --filter name=polis- | xargs -r docker stop",
         ])
         .await;

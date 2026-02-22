@@ -2,12 +2,11 @@
 
 #![allow(clippy::expect_used)]
 
-use std::os::unix::process::ExitStatusExt;
-use std::process::{ExitStatus, Output};
+use std::process::Output;
 
 use anyhow::Result;
 use polis_cli::commands::delete;
-use polis_cli::commands::{stop, DeleteArgs};
+use polis_cli::commands::{DeleteArgs, stop};
 use polis_cli::multipass::Multipass;
 
 use crate::helpers::{VmNotFound, VmRunning, VmStopped, ok_output};
@@ -84,21 +83,30 @@ async fn test_stop_running_workspace_succeeds() {
 
 #[tokio::test]
 async fn test_delete_no_workspace_succeeds() {
-    let args = DeleteArgs { all: false, yes: true };
+    let args = DeleteArgs {
+        all: false,
+        yes: true,
+    };
     let result = delete::run(&args, &VmNotFound, true).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_delete_all_no_workspace_succeeds() {
-    let args = DeleteArgs { all: true, yes: true };
+    let args = DeleteArgs {
+        all: true,
+        yes: true,
+    };
     let result = delete::run(&args, &VmNotFound, true).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_delete_running_workspace_succeeds() {
-    let args = DeleteArgs { all: false, yes: true };
+    let args = DeleteArgs {
+        all: false,
+        yes: true,
+    };
     let result = delete::run(&args, &VmRunning, true).await;
     assert!(result.is_ok());
 }

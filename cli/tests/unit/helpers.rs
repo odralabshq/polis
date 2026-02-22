@@ -75,9 +75,7 @@ pub struct VmStopped;
 
 impl Multipass for VmStopped {
     async fn vm_info(&self) -> Result<Output> {
-        Ok(ok_output(
-            br#"{"info":{"polis":{"state":"Stopped"}}}"#,
-        ))
+        Ok(ok_output(br#"{"info":{"polis":{"state":"Stopped"}}}"#))
     }
     async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("launch not expected in this test")
@@ -119,9 +117,7 @@ pub struct VmRunning;
 
 impl Multipass for VmRunning {
     async fn vm_info(&self) -> Result<Output> {
-        Ok(ok_output(
-            br#"{"info":{"polis":{"state":"Running"}}}"#,
-        ))
+        Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
     async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("launch not expected in this test")

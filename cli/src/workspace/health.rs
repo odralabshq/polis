@@ -177,6 +177,9 @@ mod tests {
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
             unimplemented!()
         }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
         async fn version(&self) -> Result<Output> {
             unimplemented!()
         }

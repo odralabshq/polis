@@ -6,10 +6,10 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{ExitStatus, Output};
 
 use anyhow::Result;
-use polis_cli::commands::start::{StartArgs, validate_agent, generate_agent_artifacts, start_compose};
+use polis_cli::commands::start::{generate_agent_artifacts, start_compose, validate_agent};
 use polis_cli::multipass::Multipass;
 
-use crate::helpers::{ok_output, err_output};
+use crate::helpers::{err_output, ok_output};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -23,24 +23,36 @@ impl Multipass for VmRunningExecOk {
     async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
-    async fn start(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn stop(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn delete(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn purge(&self) -> Result<Output> { Ok(ok_output(b"")) }
+    async fn start(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn stop(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn delete(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn purge(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
-    async fn exec(&self, _: &[&str]) -> Result<Output> { Ok(ok_output(b"")) }
+    async fn exec(&self, _: &[&str]) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
         anyhow::bail!("not expected")
     }
-    async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected")
+    }
 }
 
 /// VM is running; exec always returns failure.
@@ -53,10 +65,18 @@ impl Multipass for VmRunningExecFail {
     async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
-    async fn start(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn stop(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn delete(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn purge(&self) -> Result<Output> { Ok(ok_output(b"")) }
+    async fn start(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn stop(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn delete(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn purge(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
@@ -72,7 +92,9 @@ impl Multipass for VmRunningExecFail {
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
         anyhow::bail!("not expected")
     }
-    async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected")
+    }
 }
 
 /// exec returns exit code 2 (missing yq).
@@ -85,10 +107,18 @@ impl Multipass for VmRunningExecExitTwo {
     async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
-    async fn start(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn stop(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn delete(&self) -> Result<Output> { Ok(ok_output(b"")) }
-    async fn purge(&self) -> Result<Output> { Ok(ok_output(b"")) }
+    async fn start(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn stop(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn delete(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn purge(&self) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
@@ -108,7 +138,9 @@ impl Multipass for VmRunningExecExitTwo {
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
         anyhow::bail!("not expected")
     }
-    async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected")
+    }
 }
 
 // ============================================================================
@@ -125,7 +157,7 @@ async fn test_validate_agent_manifest_exists_returns_ok() {
 async fn test_validate_agent_manifest_missing_returns_error() {
     let result: anyhow::Result<()> = validate_agent(&VmRunningExecFail, "nonexistent").await;
     assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
+    let msg = result.expect_err("expected error").to_string();
     assert!(msg.contains("Unknown agent"), "got: {msg}");
 }
 
@@ -143,15 +175,19 @@ async fn test_generate_agent_artifacts_success() {
 async fn test_generate_agent_artifacts_failure_returns_error() {
     let result: anyhow::Result<()> = generate_agent_artifacts(&VmRunningExecFail, "openclaw").await;
     assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("artifact generation failed") || msg.contains("Agent artifact"), "got: {msg}");
+    let msg = result.expect_err("expected error").to_string();
+    assert!(
+        msg.contains("artifact generation failed") || msg.contains("Agent artifact"),
+        "got: {msg}"
+    );
 }
 
 #[tokio::test]
 async fn test_generate_agent_artifacts_exit_2_mentions_yq() {
-    let result: anyhow::Result<()> = generate_agent_artifacts(&VmRunningExecExitTwo, "openclaw").await;
+    let result: anyhow::Result<()> =
+        generate_agent_artifacts(&VmRunningExecExitTwo, "openclaw").await;
     assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
+    let msg = result.expect_err("expected error").to_string();
     assert!(msg.contains("yq"), "expected yq mention, got: {msg}");
 }
 
@@ -175,6 +211,9 @@ async fn test_start_compose_with_agent_succeeds() {
 async fn test_start_compose_failure_returns_error() {
     let result: anyhow::Result<()> = start_compose(&VmRunningExecFail, None).await;
     assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("Failed to start platform") || msg.contains("platform"), "got: {msg}");
+    let msg = result.expect_err("expected error").to_string();
+    assert!(
+        msg.contains("Failed to start platform") || msg.contains("platform"),
+        "got: {msg}"
+    );
 }

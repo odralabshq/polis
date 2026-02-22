@@ -30,6 +30,7 @@ pub struct StartArgs {
 /// # Errors
 ///
 /// Returns an error if image acquisition, VM creation, or health check fails.
+#[allow(clippy::too_many_lines)]
 pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     let state_mgr = StateManager::new()?;
 
@@ -146,7 +147,7 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
             image_source: None,
             active_agent: None,
         });
-        state.active_agent = args.agent.clone();
+        state.active_agent.clone_from(&args.agent);
         state_mgr.save(&state)?;
     }
 
@@ -174,6 +175,10 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
 }
 
 /// Validate that the agent directory and manifest exist inside the VM.
+///
+/// # Errors
+///
+/// Returns an error if the agent manifest is missing or the VM is unreachable.
 pub async fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()> {
     let manifest_path = format!("{VM_POLIS_ROOT}/agents/{agent_name}/agent.yaml");
     let output = mp
@@ -210,6 +215,10 @@ pub async fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()>
 }
 
 /// Call scripts/generate-agent.sh inside the VM.
+///
+/// # Errors
+///
+/// Returns an error if artifact generation fails or the VM is unreachable.
 pub async fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> Result<()> {
     let script = format!("{VM_POLIS_ROOT}/scripts/generate-agent.sh");
     let agents_dir = format!("{VM_POLIS_ROOT}/agents");
@@ -237,6 +246,10 @@ pub async fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> 
 }
 
 /// Start docker compose inside the VM, optionally with an agent overlay.
+///
+/// # Errors
+///
+/// Returns an error if docker compose fails or the VM is unreachable.
 pub async fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Result<()> {
     let base = format!("{VM_POLIS_ROOT}/docker-compose.yml");
     let mut args: Vec<String> = vec!["docker".into(), "compose".into(), "-f".into(), base];

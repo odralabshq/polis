@@ -2,15 +2,14 @@
 
 #![allow(clippy::expect_used)]
 
-use std::os::unix::process::ExitStatusExt;
-use std::process::{ExitStatus, Output};
+use std::process::Output;
 
 use anyhow::Result;
 use polis_cli::commands::agent::{self, AddArgs, AgentCommand, RemoveArgs};
 use polis_cli::multipass::Multipass;
 use polis_cli::output::OutputContext;
 
-use crate::helpers::{ok_output, err_output};
+use crate::helpers::{err_output, ok_output};
 
 fn quiet() -> OutputContext {
     OutputContext::new(true, true)
@@ -27,10 +26,18 @@ impl Multipass for ExecStub {
     async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected in this test")
     }
-    async fn start(&self) -> Result<Output> { anyhow::bail!("not expected in this test") }
-    async fn stop(&self) -> Result<Output> { anyhow::bail!("not expected in this test") }
-    async fn delete(&self) -> Result<Output> { anyhow::bail!("not expected in this test") }
-    async fn purge(&self) -> Result<Output> { anyhow::bail!("not expected in this test") }
+    async fn start(&self) -> Result<Output> {
+        anyhow::bail!("not expected in this test")
+    }
+    async fn stop(&self) -> Result<Output> {
+        anyhow::bail!("not expected in this test")
+    }
+    async fn delete(&self) -> Result<Output> {
+        anyhow::bail!("not expected in this test")
+    }
+    async fn purge(&self) -> Result<Output> {
+        anyhow::bail!("not expected in this test")
+    }
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected in this test")
     }
@@ -54,7 +61,9 @@ impl Multipass for ExecStub {
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
         anyhow::bail!("not expected in this test")
     }
-    async fn version(&self) -> Result<Output> { anyhow::bail!("not expected in this test") }
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected in this test")
+    }
 }
 
 // ============================================================================
@@ -86,7 +95,10 @@ async fn test_restart_no_active_agent_returns_error() {
     let result = agent::run(AgentCommand::Restart, &mp, &quiet(), false).await;
     assert!(result.is_err());
     assert!(
-        result.unwrap_err().to_string().contains("No active agent"),
+        result
+            .expect_err("expected error")
+            .to_string()
+            .contains("No active agent"),
         "error should mention no active agent"
     );
 }
@@ -100,7 +112,9 @@ async fn test_remove_agent_not_installed_returns_error() {
     // exec returns failure → "test -d" fails → agent not installed
     let mp = ExecStub(err_output(1, b""));
     let result = agent::run(
-        AgentCommand::Remove(RemoveArgs { name: "nonexistent".to_string() }),
+        AgentCommand::Remove(RemoveArgs {
+            name: "nonexistent".to_string(),
+        }),
         &mp,
         &quiet(),
         false,
@@ -108,7 +122,10 @@ async fn test_remove_agent_not_installed_returns_error() {
     .await;
     assert!(result.is_err());
     assert!(
-        result.unwrap_err().to_string().contains("not installed"),
+        result
+            .expect_err("expected error")
+            .to_string()
+            .contains("not installed"),
         "error should mention not installed"
     );
 }
@@ -121,15 +138,20 @@ async fn test_remove_agent_not_installed_returns_error() {
 async fn test_add_path_not_found_returns_error() {
     let mp = ExecStub(ok_output(b""));
     let result = agent::run(
-        AgentCommand::Add(AddArgs { path: "/nonexistent/path".to_string() }),
+        AgentCommand::Add(AddArgs {
+            path: "/nonexistent/path".to_string(),
+        }),
         &mp,
         &quiet(),
         false,
     )
     .await;
     assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("Path not found") || msg.contains("not found"), "got: {msg}");
+    let msg = result.expect_err("expected error").to_string();
+    assert!(
+        msg.contains("Path not found") || msg.contains("not found"),
+        "got: {msg}"
+    );
 }
 
 #[tokio::test]
@@ -137,14 +159,16 @@ async fn test_add_missing_agent_yaml_returns_error() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let mp = ExecStub(ok_output(b""));
     let result = agent::run(
-        AgentCommand::Add(AddArgs { path: dir.path().to_string_lossy().into_owned() }),
+        AgentCommand::Add(AddArgs {
+            path: dir.path().to_string_lossy().into_owned(),
+        }),
         &mp,
         &quiet(),
         false,
     )
     .await;
     assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
+    let msg = result.expect_err("expected error").to_string();
     assert!(msg.contains("agent.yaml"), "got: {msg}");
 }
 
@@ -154,15 +178,20 @@ async fn test_add_malformed_agent_yaml_returns_error() {
     std::fs::write(dir.path().join("agent.yaml"), b"{ not: valid: yaml: [[[").expect("write");
     let mp = ExecStub(ok_output(b""));
     let result = agent::run(
-        AgentCommand::Add(AddArgs { path: dir.path().to_string_lossy().into_owned() }),
+        AgentCommand::Add(AddArgs {
+            path: dir.path().to_string_lossy().into_owned(),
+        }),
         &mp,
         &quiet(),
         false,
     )
     .await;
     assert!(result.is_err());
-    let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("parse") || msg.contains("agent.yaml"), "got: {msg}");
+    let msg = result.expect_err("expected error").to_string();
+    assert!(
+        msg.contains("parse") || msg.contains("agent.yaml"),
+        "got: {msg}"
+    );
 }
 
 // ============================================================================
@@ -175,7 +204,10 @@ async fn test_update_no_active_agent_returns_error() {
     let result = agent::run(AgentCommand::Update, &mp, &quiet(), false).await;
     assert!(result.is_err());
     assert!(
-        result.unwrap_err().to_string().contains("No active agent"),
+        result
+            .expect_err("expected error")
+            .to_string()
+            .contains("No active agent"),
         "error should mention no active agent"
     );
 }
