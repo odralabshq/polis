@@ -35,7 +35,7 @@ fn get_health_timeout() -> (u32, Duration) {
 /// # Errors
 ///
 /// Returns an error if the workspace does not become healthy within timeout.
-pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
     use owo_colors::{OwoColorize, Stream::Stdout, Style};
     // Logo gradient stop 4 (46,53,147) — L3
     let tag_style = Style::new().truecolor(46, 53, 147);
@@ -54,7 +54,7 @@ pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
     let (max_attempts, delay) = get_health_timeout();
 
     for attempt in 1..=max_attempts {
-        match check(mp) {
+        match check(mp).await {
             HealthStatus::Healthy => {
                 if let Some(pb) = pb {
                     crate::output::progress::finish_ok(&pb, &fmt("agent containment active."));
@@ -69,7 +69,7 @@ pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
                     "Workspace did not start properly.\n\nReason: {reason}\nDiagnose: polis doctor\nView logs: polis logs"
                 );
             }
-            _ => std::thread::sleep(delay),
+            _ => tokio::time::sleep(delay).await,
         }
     }
 
@@ -82,7 +82,7 @@ pub fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
 }
 
 /// Check current health status.
-pub fn check(mp: &impl Multipass) -> HealthStatus {
+pub async fn check(mp: &impl Multipass) -> HealthStatus {
     let Ok(output) = mp.exec(&[
         "docker",
         "compose",
@@ -92,7 +92,7 @@ pub fn check(mp: &impl Multipass) -> HealthStatus {
         "--format",
         "json",
         "workspace",
-    ]) else {
+    ]).await else {
         return HealthStatus::Unknown;
     };
 
@@ -150,24 +150,34 @@ mod tests {
         }
     }
 
-    struct MockMp(Result<Output>);
-    impl Multipass for MockMp {
-        fn vm_info(&self) -> Result<Output> {
+    /// Mock multipass with configurable `exec()` output for health checks.
+    struct MultipassExecStub(Result<Output>);
+    impl Multipass for MultipassExecStub {
+        async fn vm_info(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+        async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
             unimplemented!()
         }
-        fn start(&self) -> Result<Output> {
+        async fn start(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+        async fn stop(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn version(&self) -> Result<Output> {
+        async fn delete(&self) -> Result<Output> {
             unimplemented!()
         }
-        fn exec(&self, _: &[&str]) -> Result<Output> {
+        async fn purge(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn version(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn exec(&self, _: &[&str]) -> Result<Output> {
             match &self.0 {
                 Ok(o) => Ok(Output {
                     status: o.status,
@@ -177,39 +187,45 @@ mod tests {
                 Err(e) => Err(anyhow::anyhow!("{e}")),
             }
         }
+        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+            unimplemented!()
+        }
+        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+            unimplemented!()
+        }
     }
 
-    #[test]
-    fn check_healthy() {
-        let mp = MockMp(Ok(mock_output(
+    #[tokio::test]
+    async fn check_healthy() {
+        let mp = MultipassExecStub(Ok(mock_output(
             br#"{"State":"running","Health":"healthy"}"#,
         )));
-        assert_eq!(check(&mp), HealthStatus::Healthy);
+        assert_eq!(check(&mp).await, HealthStatus::Healthy);
     }
 
-    #[test]
-    fn check_running_not_healthy() {
-        let mp = MockMp(Ok(mock_output(
+    #[tokio::test]
+    async fn check_running_not_healthy() {
+        let mp = MultipassExecStub(Ok(mock_output(
             br#"{"State":"running","Health":"starting"}"#,
         )));
-        assert!(matches!(check(&mp), HealthStatus::Unhealthy { .. }));
+        assert!(matches!(check(&mp).await, HealthStatus::Unhealthy { .. }));
     }
 
-    #[test]
-    fn check_not_running() {
-        let mp = MockMp(Ok(mock_output(br#"{"State":"exited","Health":""}"#)));
-        assert!(matches!(check(&mp), HealthStatus::Unhealthy { .. }));
+    #[tokio::test]
+    async fn check_not_running() {
+        let mp = MultipassExecStub(Ok(mock_output(br#"{"State":"exited","Health":""}"#)));
+        assert!(matches!(check(&mp).await, HealthStatus::Unhealthy { .. }));
     }
 
-    #[test]
-    fn check_exec_fails_returns_unknown() {
-        let mp = MockMp(Err(anyhow::anyhow!("exec failed")));
-        assert_eq!(check(&mp), HealthStatus::Unknown);
+    #[tokio::test]
+    async fn check_exec_fails_returns_unknown() {
+        let mp = MultipassExecStub(Err(anyhow::anyhow!("exec failed")));
+        assert_eq!(check(&mp).await, HealthStatus::Unknown);
     }
 
-    #[test]
-    fn check_bad_json_returns_unknown() {
-        let mp = MockMp(Ok(mock_output(b"not json")));
-        assert_eq!(check(&mp), HealthStatus::Unknown);
+    #[tokio::test]
+    async fn check_bad_json_returns_unknown() {
+        let mp = MultipassExecStub(Ok(mock_output(b"not json")));
+        assert_eq!(check(&mp).await, HealthStatus::Unknown);
     }
 }

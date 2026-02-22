@@ -58,6 +58,7 @@ tempfile = "3.25"  # isolated temp dirs for StateManager tests
 ed25519-dalek = "2.2"
 base64 = "0.22"   # test helpers: encode verifying key as b64
 mockall = "0.13"
+proptest = "1.5"  # property-based testing for ID generation and validation
 
 [[test]]
 name = "integration"

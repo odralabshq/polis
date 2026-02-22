@@ -5,5 +5,6 @@
 mod container_update;
 mod doctor_command;
 mod output;
+mod property_tests;
 mod start_stop_delete;
 mod status_command;

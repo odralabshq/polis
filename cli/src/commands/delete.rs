@@ -14,15 +14,15 @@ use crate::workspace::{image, vm};
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be removed.
-pub fn run(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn run(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     if args.all {
-        delete_all(args, mp, quiet)
+        delete_all(args, mp, quiet).await
     } else {
-        delete_workspace(args, mp, quiet)
+        delete_workspace(args, mp, quiet).await
     }
 }
 
-fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+async fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     if !quiet {
         println!();
         println!("This will remove your workspace.");
@@ -39,11 +39,11 @@ fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Resu
     let mut errors = Vec::new();
 
     // Stop and delete VM
-    if vm::exists(mp) {
+    if vm::exists(mp).await {
         if !quiet {
             println!("Removing workspace...");
         }
-        vm::delete(mp);
+        vm::delete(mp).await;
     }
 
     // Clear state file
@@ -65,7 +65,7 @@ fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Resu
     Ok(())
 }
 
-fn delete_all(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+async fn delete_all(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     if !quiet {
         println!();
         println!("This will permanently remove:");
@@ -82,11 +82,11 @@ fn delete_all(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()>
     }
 
     // Stop and delete VM
-    if vm::exists(mp) {
+    if vm::exists(mp).await {
         if !quiet {
             println!("Removing workspace...");
         }
-        vm::delete(mp);
+        vm::delete(mp).await;
     }
 
     // Clear state file

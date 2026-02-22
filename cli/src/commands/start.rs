@@ -23,11 +23,11 @@ pub struct StartArgs {
 /// # Errors
 ///
 /// Returns an error if image acquisition, VM creation, or health check fails.
-pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     let state_mgr = StateManager::new()?;
 
     // Check current VM state first
-    let vm_state = vm::state(mp)?;
+    let vm_state = vm::state(mp).await?;
 
     if vm_state == vm::VmState::Running {
         if !quiet {
@@ -80,7 +80,7 @@ pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
         };
 
         let image_path = image::ensure_available(source, quiet)?;
-        vm::create(mp, &image_path, quiet)?;
+        vm::create(mp, &image_path, quiet).await?;
 
         let sha256 = image::load_metadata(&image::images_dir()?)
             .ok()
@@ -96,11 +96,11 @@ pub fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
         state_mgr.save(&state)?;
     } else {
         // VM exists but stopped - just start it
-        vm::restart(mp, quiet)?;
+        vm::restart(mp, quiet).await?;
     }
 
     // Wait for healthy
-    health::wait_ready(mp, quiet)?;
+    health::wait_ready(mp, quiet).await?;
 
     // Print success
     if !quiet {
@@ -135,7 +135,14 @@ fn print_guarantees() {
     );
 }
 
-fn generate_workspace_id() -> String {
+/// Generates a unique workspace ID in format `polis-{16 hex chars}`.
+///
+/// Uses multiple entropy sources:
+/// - System time (nanoseconds)
+/// - Process ID
+/// - `RandomState` hasher (OS entropy)
+#[must_use]
+pub fn generate_workspace_id() -> String {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
 

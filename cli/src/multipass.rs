@@ -1,6 +1,6 @@
 //! Multipass CLI abstraction — enables test doubles for all `multipass` commands.
 
-use std::process::{Command, Output};
+use std::process::Output;
 
 use anyhow::{Context, Result};
 
@@ -10,147 +10,205 @@ pub const VM_NAME: &str = "polis";
 /// Abstraction over the multipass CLI, enabling test doubles.
 ///
 /// All methods target the `polis` VM. The production implementation
-/// delegates to the `multipass` binary via [`std::process::Command`].
+/// delegates to the `multipass` binary via [`tokio::process::Command`].
+#[allow(async_fn_in_trait)]
 pub trait Multipass {
     /// Run `multipass info polis --format json`.
     ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn vm_info(&self) -> Result<Output>;
+    async fn vm_info(&self) -> Result<Output>;
 
     /// Run `multipass launch` with the given VM parameters.
     ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str) -> Result<Output>;
+    async fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str) -> Result<Output>;
 
     /// Run `multipass start polis`.
     ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn start(&self) -> Result<Output>;
+    async fn start(&self) -> Result<Output>;
 
     /// Run `multipass stop polis`.
     ///
-    /// PERF-002: Added to trait for testability.
-    ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn stop(&self) -> Result<Output>;
+    async fn stop(&self) -> Result<Output>;
 
     /// Run `multipass delete polis`.
     ///
-    /// PERF-002: Added to trait for testability.
-    ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn delete(&self) -> Result<Output>;
+    async fn delete(&self) -> Result<Output>;
 
     /// Run `multipass purge`.
     ///
-    /// PERF-002: Added to trait for testability.
-    ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn purge(&self) -> Result<Output>;
+    async fn purge(&self) -> Result<Output>;
 
     /// Run `multipass transfer <local_path> polis:<remote_path>`.
     ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output>;
+    async fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output>;
 
     /// Run `multipass exec polis -- <args>`.
     ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    fn exec(&self, args: &[&str]) -> Result<Output>;
+    async fn exec(&self, args: &[&str]) -> Result<Output>;
+
+    /// Run `multipass exec polis -- <args>` with stdin piped from `input`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command cannot be spawned or stdin write fails.
+    async fn exec_with_stdin(&self, args: &[&str], input: &[u8]) -> Result<Output>;
+
+    /// Spawn `multipass exec polis -- <args>` with piped stdin/stdout for STDIO bridging.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command cannot be spawned.
+    fn exec_spawn(&self, args: &[&str]) -> Result<tokio::process::Child>;
 
     /// Run `multipass version`.
     ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned (i.e. multipass not on PATH).
-    fn version(&self) -> Result<Output>;
+    async fn version(&self) -> Result<Output>;
 }
 
 /// Production implementation — shells out to the `multipass` binary.
 pub struct MultipassCli;
 
 impl Multipass for MultipassCli {
-    fn vm_info(&self) -> Result<Output> {
-        Command::new("multipass")
+    async fn vm_info(&self) -> Result<Output> {
+        tokio::process::Command::new("multipass")
             .args(["info", VM_NAME, "--format", "json"])
             .output()
+            .await
             .context("failed to run multipass info")
     }
 
-    fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str) -> Result<Output> {
-        Command::new("multipass")
+    async fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str) -> Result<Output> {
+        tokio::process::Command::new("multipass")
             .args([
                 "launch", image_url, "--name", VM_NAME, "--cpus", cpus, "--memory", memory,
                 "--disk", disk,
             ])
             .output()
+            .await
             .context("failed to run multipass launch")
     }
 
-    fn start(&self) -> Result<Output> {
-        Command::new("multipass")
+    async fn start(&self) -> Result<Output> {
+        tokio::process::Command::new("multipass")
             .args(["start", VM_NAME])
             .output()
+            .await
             .context("failed to run multipass start")
     }
 
-    fn stop(&self) -> Result<Output> {
-        Command::new("multipass")
+    async fn stop(&self) -> Result<Output> {
+        tokio::process::Command::new("multipass")
             .args(["stop", VM_NAME])
             .output()
+            .await
             .context("failed to run multipass stop")
     }
 
-    fn delete(&self) -> Result<Output> {
-        Command::new("multipass")
+    async fn delete(&self) -> Result<Output> {
+        tokio::process::Command::new("multipass")
             .args(["delete", VM_NAME])
             .output()
+            .await
             .context("failed to run multipass delete")
     }
 
-    fn purge(&self) -> Result<Output> {
-        Command::new("multipass")
+    async fn purge(&self) -> Result<Output> {
+        tokio::process::Command::new("multipass")
             .arg("purge")
             .output()
+            .await
             .context("failed to run multipass purge")
     }
 
-    fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output> {
-        Command::new("multipass")
+    async fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output> {
+        tokio::process::Command::new("multipass")
             .args(["transfer", local_path, &format!("{VM_NAME}:{remote_path}")])
             .output()
+            .await
             .context("failed to run multipass transfer")
     }
 
-    fn exec(&self, args: &[&str]) -> Result<Output> {
+    async fn exec(&self, args: &[&str]) -> Result<Output> {
         let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--"];
         cmd_args.extend_from_slice(args);
-        Command::new("multipass")
+        tokio::process::Command::new("multipass")
             .args(&cmd_args)
             .output()
+            .await
             .context("failed to run multipass exec")
     }
 
-    fn version(&self) -> Result<Output> {
-        Command::new("multipass")
+    async fn exec_with_stdin(&self, args: &[&str], input: &[u8]) -> Result<Output> {
+        use tokio::io::AsyncWriteExt;
+
+        let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--"];
+        cmd_args.extend_from_slice(args);
+
+        let mut child = tokio::process::Command::new("multipass")
+            .args(&cmd_args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("failed to spawn multipass exec")?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(input)
+                .await
+                .context("failed to write to multipass stdin")?;
+        }
+
+        child
+            .wait_with_output()
+            .await
+            .context("failed to wait for multipass exec")
+    }
+
+    fn exec_spawn(&self, args: &[&str]) -> Result<tokio::process::Child> {
+        let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--"];
+        cmd_args.extend_from_slice(args);
+
+        tokio::process::Command::new("multipass")
+            .args(&cmd_args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .context("failed to spawn multipass exec")
+    }
+
+    async fn version(&self) -> Result<Output> {
+        tokio::process::Command::new("multipass")
             .arg("version")
             .output()
+            .await
             .context("failed to run multipass version")
     }
 }

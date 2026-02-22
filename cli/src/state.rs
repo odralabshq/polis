@@ -137,6 +137,9 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Valid 22-character workspace ID for tests (polis- + 16 hex chars).
+    const TEST_WORKSPACE_ID: &str = "polis-0123456789abcdef";
+
     fn mgr(dir: &TempDir) -> StateManager {
         StateManager::with_path(dir.path().join("state.json"))
     }
@@ -144,12 +147,12 @@ mod tests {
     #[test]
     fn test_workspace_state_deserialize_new_format() {
         let json = r#"{
-            "workspace_id": "polis-abc123",
+            "workspace_id": "polis-0123456789abcdef",
             "created_at": "2026-02-17T14:30:00Z",
             "image_sha256": "abc123"
         }"#;
         let state: WorkspaceState = serde_json::from_str(json).expect("deserialize");
-        assert_eq!(state.workspace_id, "polis-abc123");
+        assert_eq!(state.workspace_id, TEST_WORKSPACE_ID);
         assert_eq!(state.image_sha256.as_deref(), Some("abc123"));
     }
 
@@ -159,12 +162,12 @@ mod tests {
         let json = r#"{
             "stage": "agent_ready",
             "agent": "claude-dev",
-            "workspace_id": "polis-abc123",
+            "workspace_id": "polis-fedcba9876543210",
             "started_at": "2026-02-17T14:30:00Z",
             "image_sha256": "abc123"
         }"#;
         let state: WorkspaceState = serde_json::from_str(json).expect("deserialize");
-        assert_eq!(state.workspace_id, "polis-abc123");
+        assert_eq!(state.workspace_id, "polis-fedcba9876543210");
         // started_at should be aliased to created_at
         assert!(state.created_at.to_rfc3339().contains("2026-02-17"));
     }
@@ -180,7 +183,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let m = mgr(&dir);
         let state = WorkspaceState {
-            workspace_id: "polis-test".to_string(),
+            workspace_id: TEST_WORKSPACE_ID.to_string(),
             created_at: Utc::now(),
             image_sha256: Some("abc123".to_string()),
             image_source: None,
@@ -195,7 +198,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let m = mgr(&dir);
         let state = WorkspaceState {
-            workspace_id: "polis-test".to_string(),
+            workspace_id: TEST_WORKSPACE_ID.to_string(),
             created_at: Utc::now(),
             image_sha256: None,
             image_source: None,
@@ -219,7 +222,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let nested = dir.path().join("a").join("b").join("state.json");
         let state = WorkspaceState {
-            workspace_id: "polis-test".to_string(),
+            workspace_id: TEST_WORKSPACE_ID.to_string(),
             created_at: Utc::now(),
             image_sha256: None,
             image_source: None,
@@ -237,7 +240,7 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let m = mgr(&dir);
         let state = WorkspaceState {
-            workspace_id: "polis-test".to_string(),
+            workspace_id: TEST_WORKSPACE_ID.to_string(),
             created_at: Utc::now(),
             image_sha256: None,
             image_source: None,
@@ -247,5 +250,28 @@ mod tests {
             .expect("metadata")
             .permissions();
         assert_eq!(perms.mode() & 0o777, 0o600, "state file must be mode 600");
+    }
+
+    #[test]
+    fn test_validate_workspace_id_valid_format() {
+        assert!(validate_workspace_id(TEST_WORKSPACE_ID).is_ok());
+        assert!(validate_workspace_id("polis-aaaaaaaaaaaaaaaa").is_ok());
+        assert!(validate_workspace_id("polis-AAAAAAAAAAAAAAAA").is_ok());
+    }
+
+    #[test]
+    fn test_validate_workspace_id_rejects_short_id() {
+        assert!(validate_workspace_id("polis-abc123").is_err());
+        assert!(validate_workspace_id("polis-test").is_err());
+    }
+
+    #[test]
+    fn test_validate_workspace_id_rejects_wrong_prefix() {
+        assert!(validate_workspace_id("other-0123456789abcdef").is_err());
+    }
+
+    #[test]
+    fn test_validate_workspace_id_rejects_non_hex_chars() {
+        assert!(validate_workspace_id("polis-ghijklmnopqrstuv").is_err());
     }
 }

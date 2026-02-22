@@ -5,6 +5,7 @@ use clap::Args;
 
 use crate::output::OutputContext;
 use crate::ssh::{SshConfigManager, ensure_identity_key};
+use crate::workspace::CONTAINER_NAME;
 
 /// Arguments for the connect command.
 #[derive(Args)]
@@ -23,7 +24,7 @@ pub struct ConnectArgs {
 ///
 /// Returns an error if SSH config setup fails, permissions are unsafe, or the
 /// IDE cannot be launched.
-pub async fn run(ctx: &OutputContext, args: ConnectArgs) -> Result<()> {
+pub async fn run(ctx: &OutputContext, args: ConnectArgs, mp: &impl crate::multipass::Multipass) -> Result<()> {
     // Validate IDE name early — fail fast before any interactive prompts.
     if let Some(ref ide) = args.ide {
         resolve_ide(ide)?;
@@ -43,10 +44,10 @@ pub async fn run(ctx: &OutputContext, args: ConnectArgs) -> Result<()> {
 
     // Ensure a passphrase-free identity key exists and is installed in the workspace.
     let pubkey = ensure_identity_key()?;
-    install_pubkey(&pubkey).await?;
+    install_pubkey(&pubkey, mp).await?;
 
     // Pin the workspace host key so StrictHostKeyChecking can verify it.
-    pin_host_key().await;
+    pin_host_key(mp).await;
 
     if let Some(ref ide) = args.ide {
         open_ide(ide).await
@@ -126,26 +127,9 @@ fn validate_pubkey(key: &str) -> Result<()> {
 
 /// Installs `pubkey` into `~/.ssh/authorized_keys` of the `polis` user inside
 /// the workspace container. Idempotent.
-async fn install_pubkey(pubkey: &str) -> Result<()> {
-    use crate::commands::internal::{Backend, BackendProber};
-    use tokio::io::AsyncWriteExt;
-
-    struct Prober;
-    impl BackendProber for Prober {
-        async fn multipass_exists(&self) -> bool {
-            tokio::process::Command::new("multipass")
-                .args(["info", "polis", "--format", "json"])
-                .output()
-                .await
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        }
-    }
-
+async fn install_pubkey(pubkey: &str, mp: &impl crate::multipass::Multipass) -> Result<()> {
     // SEC-001: Validate pubkey format before use to prevent shell injection
     validate_pubkey(pubkey)?;
-
-    let backend = crate::commands::internal::detect_backend(&Prober).await?;
 
     // SEC-001: Use stdin to pass pubkey instead of shell interpolation
     let setup_script =
@@ -155,75 +139,36 @@ async fn install_pubkey(pubkey: &str) -> Result<()> {
          chown polis:polis /home/polis/.ssh/authorized_keys";
 
     // First ensure .ssh directory exists
-    let setup_status = match backend {
-        Backend::Multipass => {
-            tokio::process::Command::new("multipass")
-                .args([
-                    "exec",
-                    "polis",
-                    "--",
-                    "docker",
-                    "exec",
-                    "polis-workspace",
-                    "bash",
-                    "-c",
-                    setup_script,
-                ])
-                .status()
-                .await
-                .context("multipass exec failed")?
-        }
-        Backend::Docker => {
-            tokio::process::Command::new("docker")
-                .args(["exec", "polis-workspace", "bash", "-c", setup_script])
-                .status()
-                .await
-                .context("docker exec failed")?
-        }
+    let setup_output = mp.exec(&[
+        "docker",
+        "exec",
+        CONTAINER_NAME,
+        "bash",
+        "-c",
+        setup_script,
+    ]).await.context("multipass exec failed")?;
+    anyhow::ensure!(setup_output.status.success(), "failed to setup .ssh directory");
+
+    // Add newline if not present
+    let key_line = if pubkey.ends_with('\n') {
+        pubkey.as_bytes().to_vec()
+    } else {
+        format!("{pubkey}\n").into_bytes()
     };
-    anyhow::ensure!(setup_status.success(), "failed to setup .ssh directory");
 
     // Install pubkey via stdin (no shell interpolation)
-    let mut child = match backend {
-        Backend::Multipass => tokio::process::Command::new("multipass")
-            .args([
-                "exec",
-                "polis",
-                "--",
-                "docker",
-                "exec",
-                "-i",
-                "polis-workspace",
-                "bash",
-                "-c",
-                install_script,
-            ])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .context("multipass exec failed")?,
-        Backend::Docker => tokio::process::Command::new("docker")
-            .args(["exec", "-i", "polis-workspace", "bash", "-c", install_script])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .context("docker exec failed")?,
-    };
+    let output = mp.exec_with_stdin(&[
+        "docker",
+        "exec",
+        "-i",
+        CONTAINER_NAME,
+        "bash",
+        "-c",
+        install_script,
+    ], &key_line).await.context("multipass exec failed")?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        // Add newline if not present
-        let key_line = if pubkey.ends_with('\n') {
-            pubkey.to_string()
-        } else {
-            format!("{pubkey}\n")
-        };
-        stdin
-            .write_all(key_line.as_bytes())
-            .await
-            .context("writing pubkey to stdin")?;
-    }
-
-    let status = child.wait().await.context("waiting for install command")?;
     anyhow::ensure!(
-        status.success(),
+        output.status.success(),
         "failed to install public key in workspace"
     );
     Ok(())
@@ -240,50 +185,14 @@ fn write_host_key(mgr: &crate::ssh::KnownHostsManager, raw_key: &str) -> Result<
 }
 
 /// Extracts the workspace SSH host key and writes it to `~/.polis/known_hosts`.
-async fn pin_host_key() {
-    use crate::commands::internal::{Backend, BackendProber};
-
-    struct Prober;
-    impl BackendProber for Prober {
-        async fn multipass_exists(&self) -> bool {
-            tokio::process::Command::new("multipass")
-                .args(["info", "polis", "--format", "json"])
-                .output()
-                .await
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        }
-    }
-
-    let Ok(backend) = crate::commands::internal::detect_backend(&Prober).await else {
-        return;
-    };
-
-    let args: &[&str] = match backend {
-        Backend::Multipass => &[
-            "exec",
-            "polis",
-            "--",
-            "docker",
-            "exec",
-            "polis-workspace",
-            "cat",
-            "/etc/ssh/ssh_host_ed25519_key.pub",
-        ],
-        Backend::Docker => &[
-            "exec",
-            "polis-workspace",
-            "cat",
-            "/etc/ssh/ssh_host_ed25519_key.pub",
-        ],
-    };
-
-    let cmd = match backend {
-        Backend::Multipass => "multipass",
-        Backend::Docker => "docker",
-    };
-
-    let Ok(output) = tokio::process::Command::new(cmd).args(args).output().await else {
+async fn pin_host_key(mp: &impl crate::multipass::Multipass) {
+    let Ok(output) = mp.exec(&[
+        "docker",
+        "exec",
+        CONTAINER_NAME,
+        "cat",
+        "/etc/ssh/ssh_host_ed25519_key.pub",
+    ]).await else {
         return;
     };
 

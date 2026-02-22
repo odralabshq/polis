@@ -17,9 +17,8 @@ use crate::workspace::COMPOSE_PATH;
 /// # Errors
 ///
 /// Returns an error if JSON serialization fails.
-#[allow(clippy::unused_async)] // async contract with cli.rs
 pub async fn run(ctx: &OutputContext, json: bool, mp: &impl Multipass) -> Result<()> {
-    let output = gather_status(mp);
+    let output = gather_status(mp).await;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -31,12 +30,12 @@ pub async fn run(ctx: &OutputContext, json: bool, mp: &impl Multipass) -> Result
 }
 
 /// Gather all status information.
-fn gather_status(mp: &impl Multipass) -> StatusOutput {
-    let workspace = get_workspace_status(mp);
+async fn gather_status(mp: &impl Multipass) -> StatusOutput {
+    let workspace = get_workspace_status(mp).await;
     let is_running = workspace.status == WorkspaceState::Running;
 
     let (security, agent) = if is_running {
-        (get_security_status(mp), get_agent_status(mp))
+        (get_security_status(mp).await, get_agent_status(mp).await)
     } else {
         (
             SecurityStatus {
@@ -60,8 +59,8 @@ fn gather_status(mp: &impl Multipass) -> StatusOutput {
 }
 
 /// Check workspace status via multipass.
-fn get_workspace_status(mp: &impl Multipass) -> WorkspaceStatus {
-    let Some(vm_state) = check_multipass_status(mp) else {
+async fn get_workspace_status(mp: &impl Multipass) -> WorkspaceStatus {
+    let Some(vm_state) = check_multipass_status(mp).await else {
         return workspace_unknown();
     };
 
@@ -74,7 +73,7 @@ fn get_workspace_status(mp: &impl Multipass) -> WorkspaceStatus {
     }
 
     // VM is running - check if polis-workspace container is running
-    let container_running = check_workspace_container(mp);
+    let container_running = check_workspace_container(mp).await;
 
     WorkspaceStatus {
         status: if container_running {
@@ -87,8 +86,8 @@ fn get_workspace_status(mp: &impl Multipass) -> WorkspaceStatus {
 }
 
 /// Check multipass VM state.
-fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
-    let output = mp.vm_info().ok()?;
+async fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
+    let output = mp.vm_info().await.ok()?;
 
     if !output.status.success() {
         return None;
@@ -107,7 +106,7 @@ fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
 }
 
 /// Check if polis-workspace container is running inside VM.
-fn check_workspace_container(mp: &impl Multipass) -> bool {
+async fn check_workspace_container(mp: &impl Multipass) -> bool {
     let output = mp.exec(&[
         "docker",
         "compose",
@@ -117,7 +116,7 @@ fn check_workspace_container(mp: &impl Multipass) -> bool {
         "--format",
         "json",
         "workspace",
-    ]);
+    ]).await;
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -136,7 +135,7 @@ fn check_workspace_container(mp: &impl Multipass) -> bool {
 }
 
 /// Check security services inside multipass VM.
-fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
+async fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
     let output = mp.exec(&[
         "docker",
         "compose",
@@ -145,7 +144,7 @@ fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
         "ps",
         "--format",
         "json",
-    ]);
+    ]).await;
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -187,7 +186,7 @@ fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
 }
 
 /// Check agent status inside multipass VM.
-fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
+async fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
     let output = mp
         .exec(&[
             "docker",
@@ -199,6 +198,7 @@ fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
             "json",
             "workspace",
         ])
+        .await
         .ok()?;
 
     if !output.status.success() {
