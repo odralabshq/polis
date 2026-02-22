@@ -314,6 +314,9 @@ mod tests {
         async fn version(&self) -> Result<Output> {
             unimplemented!()
         }
+        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]
@@ -393,6 +396,9 @@ mod tests {
             unimplemented!()
         }
         async fn version(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             unimplemented!()
         }
     }

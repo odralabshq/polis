@@ -136,7 +136,7 @@ proptest! {
     /// Arbitrary values for security.level (not in whitelist) are rejected.
     #[test]
     fn prop_arbitrary_security_values_rejected(value in "[a-z]{1,20}") {
-        if value != "balanced" && value != "strict" {
+        if value != "balanced" && value != "strict" && value != "relaxed" {
             prop_assert!(
                 validate_config_value("security.level", &value).is_err(),
                 "accepted invalid value: {value}"
@@ -157,6 +157,6 @@ fn test_config_key_whitelist() {
 fn test_config_value_whitelist() {
     assert!(validate_config_value("security.level", "balanced").is_ok());
     assert!(validate_config_value("security.level", "strict").is_ok());
-    assert!(validate_config_value("security.level", "relaxed").is_err());
+    assert!(validate_config_value("security.level", "relaxed").is_ok());
     assert!(validate_config_value("security.level", "").is_err());
 }

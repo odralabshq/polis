@@ -7,6 +7,7 @@ use clap::Subcommand;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 
+use crate::multipass::Multipass;
 use crate::output::OutputContext;
 
 // ── Subcommand enum ──────────────────────────────────────────────────────────
@@ -64,10 +65,10 @@ fn default_security_level() -> String {
 ///
 /// Returns an error if the config file cannot be read or written, or if
 /// the key or value fails validation.
-pub fn run(ctx: &OutputContext, cmd: ConfigCommand, json: bool) -> Result<()> {
+pub async fn run(ctx: &OutputContext, cmd: ConfigCommand, json: bool, mp: &impl Multipass) -> Result<()> {
     match cmd {
         ConfigCommand::Show => show_config(ctx, json),
-        ConfigCommand::Set { key, value } => set_config(ctx, &key, &value),
+        ConfigCommand::Set { key, value } => set_config(ctx, &key, &value, mp).await,
     }
 }
 
@@ -105,7 +106,10 @@ fn show_config(ctx: &OutputContext, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn set_config(ctx: &OutputContext, key: &str, value: &str) -> Result<()> {
+/// Path to the mcp-admin password on the VM filesystem.
+const VM_MCP_ADMIN_PASS: &str = "/opt/polis/secrets/valkey_mcp_admin_password.txt";
+
+async fn set_config(ctx: &OutputContext, key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
     validate_config_key(key)?;
     validate_config_value(key, value)?;
 
@@ -126,8 +130,74 @@ fn set_config(ctx: &OutputContext, key: &str, value: &str) -> Result<()> {
         key,
         value
     );
+
+    if key == "security.level" {
+        propagate_security_level(ctx, value, mp).await;
+    }
+
     println!();
     Ok(())
+}
+
+/// Best-effort propagation of `security.level` to Valkey via the state container.
+///
+/// Reads the mcp-admin password from the VM filesystem, then passes all arguments
+/// individually to `docker exec` — no shell interpolation (CODER.md §9).
+///
+/// Warns on failure instead of returning an error — the local config is already saved.
+async fn propagate_security_level(ctx: &OutputContext, level: &str, mp: &impl Multipass) {
+    // Fast check: skip if VM is not running (vm_info returns immediately)
+    if crate::workspace::vm::state(mp).await.ok()
+        != Some(crate::workspace::vm::VmState::Running)
+    {
+        return;
+    }
+    let pass = match mp.exec(&["cat", VM_MCP_ADMIN_PASS]).await {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        _ => {
+            eprintln!(
+                "  {} Could not propagate to workspace (is it running?)",
+                "⚠".style(ctx.styles.warning),
+            );
+            return;
+        }
+    };
+
+    match mp
+        .exec(&[
+            "docker", "exec", "polis-state", "valkey-cli", "--tls",
+            "--cert", "/etc/valkey/tls/client.crt",
+            "--key", "/etc/valkey/tls/client.key",
+            "--cacert", "/etc/valkey/tls/ca.crt",
+            "--user", "mcp-admin",
+            "-a", &pass,
+            "SET", "polis:config:security_level", level,
+        ])
+        .await
+    {
+        Ok(output) if output.status.success() => {
+            println!(
+                "  {} Security level active in workspace",
+                "✓".style(ctx.styles.success),
+            );
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!(
+                "  {} Could not propagate to workspace (is it running?): {}",
+                "⚠".style(ctx.styles.warning),
+                stderr.trim()
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "  {} Could not propagate to workspace (is it running?): {e}",
+                "⚠".style(ctx.styles.warning),
+            );
+        }
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -199,7 +269,7 @@ pub fn validate_config_key(key: &str) -> Result<()> {
 /// Returns an error if the value is not valid for the key.
 pub fn validate_config_value(key: &str, value: &str) -> Result<()> {
     if key == "security.level" {
-        const VALID: &[&str] = &["balanced", "strict"];
+        const VALID: &[&str] = &["relaxed", "balanced", "strict"];
         if !VALID.contains(&value) {
             anyhow::bail!(
                 "Invalid value for security.level: {value}\n\nValid values: {}",
@@ -304,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_validate_config_value_relaxed_returns_error() {
-        assert!(validate_config_value("security.level", "relaxed").is_err());
+        assert!(validate_config_value("security.level", "relaxed").is_ok());
     }
 
     #[test]

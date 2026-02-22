@@ -84,6 +84,16 @@ pub trait Multipass {
     /// Returns an error if the command cannot be spawned.
     fn exec_spawn(&self, args: &[&str]) -> Result<tokio::process::Child>;
 
+    /// Run `multipass exec polis -- <args>` with inherited stdio.
+    ///
+    /// Stdin, stdout, and stderr are passed through transparently,
+    /// enabling interactive use and real-time output streaming.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command cannot be spawned.
+    async fn exec_status(&self, args: &[&str]) -> Result<std::process::ExitStatus>;
+
     /// Run `multipass version`.
     ///
     /// # Errors
@@ -217,5 +227,18 @@ impl Multipass for MultipassCli {
             .output()
             .await
             .context("failed to run multipass version")
+    }
+
+    async fn exec_status(&self, args: &[&str]) -> Result<std::process::ExitStatus> {
+        let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--"];
+        cmd_args.extend_from_slice(args);
+        tokio::process::Command::new("multipass")
+            .args(&cmd_args)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .context("failed to run multipass exec")
     }
 }

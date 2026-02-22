@@ -116,13 +116,13 @@ fn test_config_set_security_level_strict_succeeds() {
 }
 
 #[test]
-fn test_config_set_security_level_relaxed_returns_error() {
+fn test_config_set_security_level_relaxed_succeeds() {
     let (_dir, path) = temp_config_path();
     polis()
         .args(["config", "set", "security.level", "relaxed"])
         .env("POLIS_CONFIG", &path)
         .assert()
-        .failure();
+        .success();
 }
 
 // ---------------------------------------------------------------------------

@@ -196,6 +196,9 @@ mod tests {
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
             unimplemented!()
         }
+        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]

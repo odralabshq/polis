@@ -7,12 +7,10 @@
 
 set -euo pipefail
 
-# Configuration
 VERSION="${POLIS_VERSION:-latest}"
 INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
-IMAGE_URL=""
 CURL_PROTO="=https"
 
 # Colors
@@ -46,12 +44,11 @@ print_logo() {
     return 0
 }
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
-log_ok() { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
+log_info()  { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
+log_ok()    { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
-# Check architecture
 check_arch() {
     local arch
     arch=$(uname -m)
@@ -66,19 +63,14 @@ check_arch() {
     return 0
 }
 
-# Minimum required Multipass version
 MULTIPASS_MIN_VERSION="1.16.0"
-# Latest known release (used when auto-installing)
 MULTIPASS_VERSION="${MULTIPASS_VERSION:-1.16.1}"
 
-# Compare semver strings: returns 0 if $1 >= $2
 semver_gte() {
-    local v1="$1" v2="$2"
-    printf '%s\n%s\n' "${v2}" "${v1}" | sort -V -C
+    printf '%s\n%s\n' "$2" "$1" | sort -V -C
     return 0
 }
 
-# Install Multipass on Linux via snap
 install_multipass_linux() {
     local arch
     arch=$(check_arch)
@@ -90,32 +82,27 @@ install_multipass_linux() {
     if ! command -v snap &>/dev/null; then
         log_error "snapd is required to install Multipass on Linux."
         echo "  Install snapd: https://snapcraft.io/docs/installing-snapd"
-        echo "  Then re-run this installer."
         exit 1
     fi
     local snap_file="/tmp/multipass_${MULTIPASS_VERSION}_amd64.snap"
-    local url="https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass_${MULTIPASS_VERSION}_amd64.snap"
-    log_info "Downloading Multipass ${MULTIPASS_VERSION} for Linux..."
-    curl -fsSL --proto "${CURL_PROTO}" "${url}" -o "${snap_file}"
-    log_info "Installing Multipass snap..."
+    curl -fsSL --proto "${CURL_PROTO}" \
+        "https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass_${MULTIPASS_VERSION}_amd64.snap" \
+        -o "${snap_file}"
     sudo snap install "${snap_file}" --dangerous
     rm -f "${snap_file}"
     return 0
 }
 
-# Install Multipass on macOS via .pkg
 install_multipass_macos() {
     local pkg_file="/tmp/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg"
-    local url="https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg"
-    log_info "Downloading Multipass ${MULTIPASS_VERSION} for macOS..."
-    curl -fsSL --proto "${CURL_PROTO}" "${url}" -o "${pkg_file}"
-    log_info "Installing Multipass (requires sudo)..."
+    curl -fsSL --proto "${CURL_PROTO}" \
+        "https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg" \
+        -o "${pkg_file}"
     sudo installer -pkg "${pkg_file}" -target /
     rm -f "${pkg_file}"
     return 0
 }
 
-# Check for Multipass: auto-install if missing, verify version >= minimum
 check_multipass() {
     local os
     os=$(uname -s)
@@ -133,7 +120,6 @@ check_multipass() {
         esac
     fi
 
-    # Version check
     local version_line installed_version
     version_line=$(multipass version 2>/dev/null | head -1 || true)
     installed_version=$(echo "${version_line}" | awk '{print $2}')
@@ -151,27 +137,19 @@ check_multipass() {
         log_ok "Multipass ${installed_version} OK"
     fi
 
-    # Linux post-install config
     if [[ "${os}" == "Linux" ]]; then
-        configure_multipass_linux
+        local socket="/var/snap/multipass/common/multipass_socket"
+        if [[ -S "${socket}" ]] && ! [[ -r "${socket}" && -w "${socket}" ]]; then
+            local socket_group
+            socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
+            log_warn "Your user cannot access the multipass socket."
+            echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
+            echo "  Then log out and back in, or run: newgrp ${socket_group}"
+        fi
     fi
     return 0
 }
 
-# Post-install Linux config: socket group check
-configure_multipass_linux() {
-    local socket="/var/snap/multipass/common/multipass_socket"
-    if [[ -S "${socket}" ]] && ! [[ -r "${socket}" && -w "${socket}" ]]; then
-        local socket_group
-        socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
-        log_warn "Your user cannot access the multipass socket."
-        echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
-        echo "  Then log out and back in, or run: newgrp ${socket_group}"
-    fi
-    return 0
-}
-
-# Resolve version tag
 resolve_version() {
     if [[ "${VERSION}" == "latest" ]]; then
         local response http_code body
@@ -183,7 +161,7 @@ resolve_version() {
 
         if [[ "${http_code}" == "403" ]]; then
             log_error "GitHub API rate limit exceeded (60 requests/hour unauthenticated)"
-            echo "  Set GITHUB_TOKEN or use: install.sh --version v0.3.0"
+            echo "  Set GITHUB_TOKEN or use: POLIS_VERSION=v0.3.0 install.sh"
             exit 1
         fi
 
@@ -202,8 +180,7 @@ resolve_version() {
     return 0
 }
 
-# Download and verify with SHA256
-download_and_verify() {
+download_cli() {
     local arch base_url bin_dir binary_name checksum_file expected actual
     arch=$(check_arch)
     base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
@@ -217,7 +194,7 @@ download_and_verify() {
     curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}" -o "${bin_dir}/polis"
     curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
 
-    log_info "Verifying SHA256 checksum..."
+    log_info "Verifying CLI SHA256..."
     expected=$(cut -d' ' -f1 < "${checksum_file}")
     actual=$(sha256sum "${bin_dir}/polis" | cut -d' ' -f1)
     rm -f "${checksum_file}"
@@ -229,12 +206,11 @@ download_and_verify() {
         rm -f "${bin_dir}/polis"
         exit 1
     fi
-    log_ok "SHA256 verified: ${expected}"
+    log_ok "CLI SHA256 verified: ${expected}"
     chmod +x "${bin_dir}/polis"
     return 0
 }
 
-# Optional attestation verification
 verify_attestation() {
     if command -v gh &>/dev/null; then
         log_info "Verifying GitHub attestation..."
@@ -247,33 +223,10 @@ verify_attestation() {
     return 0
 }
 
-# Non-fatal image init step
-init_image() {
-    local bin="${INSTALL_DIR}/bin/polis"
-    if [[ ! -x "${bin}" ]]; then
-        log_warn "Image download failed. Run 'polis init' to retry."
-        return 0
-    fi
-    if [[ -n "${IMAGE_URL}" ]]; then
-        "${bin}" init --image "${IMAGE_URL}" || {
-            log_warn "Image download failed. Run 'polis init' to retry."
-            return 0
-        }
-    else
-        "${bin}" init || {
-            log_warn "Image download failed. Run 'polis init' to retry."
-            return 0
-        }
-    fi
-    return 0
-}
-
-# Create symlink
 create_symlink() {
     mkdir -p "$HOME/.local/bin"
     ln -sf "${INSTALL_DIR}/bin/polis" "$HOME/.local/bin/polis"
-    log_ok "Created symlink: ~/.local/bin/polis"
-
+    log_ok "Symlinked: ~/.local/bin/polis"
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
         log_warn "\$HOME/.local/bin is not in your PATH"
         echo ""
@@ -286,17 +239,74 @@ create_symlink() {
     return 0
 }
 
-# Main
+download_image() {
+    local arch base_url image_name dest expected actual
+    arch=$(check_arch)
+    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
+    image_name="polis-${VERSION}-${arch}.qcow2"
+    dest="${INSTALL_DIR}/images/${image_name}"
+
+    mkdir -p "${INSTALL_DIR}/images"
+
+    log_info "Downloading VM image..."
+    curl -fL --proto "${CURL_PROTO}" --progress-bar \
+        "${base_url}/${image_name}" -o "${dest}"
+
+    log_info "Verifying image SHA256..."
+    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${image_name}.sha256" | awk '{print $1}')
+    actual=$(sha256sum "${dest}" | awk '{print $1}')
+    if [[ "${expected}" != "${actual}" ]]; then
+        log_error "Image SHA256 mismatch!"
+        echo "  Expected: ${expected}" >&2
+        echo "  Actual:   ${actual}" >&2
+        rm -f "${dest}"
+        exit 1
+    fi
+    log_ok "Image SHA256 verified: ${expected}"
+
+    echo "${dest}"
+    return 0
+}
+
+run_init() {
+    local image_path="$1"
+    local bin="${INSTALL_DIR}/bin/polis"
+
+    # Clean up any existing workspace for a fresh install
+    if multipass info polis &>/dev/null 2>&1; then
+        log_warn "An existing polis VM was found."
+        read -r -p "Remove it and start fresh? [y/N] " confirm
+        if [[ "${confirm,,}" != "y" ]]; then
+            log_info "Keeping existing VM. Skipping image init."
+            return 0
+        fi
+        log_info "Removing existing polis VM..."
+        multipass delete polis && multipass purge
+    fi
+    rm -f "${INSTALL_DIR}/state.json"
+
+    log_info "Running: polis start --image ${image_path}"
+    "${bin}" start --image "${image_path}" || {
+        log_warn "polis start failed. Run manually:"
+        echo "  polis start --image ${image_path}"
+        return 0
+    }
+    return 0
+}
+
 main() {
     print_logo
 
     check_arch >/dev/null
     check_multipass
     resolve_version
-    download_and_verify
+    download_cli
     verify_attestation
     create_symlink
-    init_image
+
+    local image_path
+    image_path=$(download_image)
+    run_init "${image_path}"
 
     echo ""
     log_ok "Polis installed successfully!"
@@ -307,23 +317,5 @@ main() {
     echo ""
     return 0
 }
-
-# Parse flags
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --image)
-            [[ $# -ge 2 ]] || { log_error "--image requires a value"; exit 1; }
-            IMAGE_URL="$2"; shift 2 ;;
-        --image=*)
-            IMAGE_URL="${1#*=}"; shift ;;
-        --version)
-            [[ $# -ge 2 ]] || { log_error "--version requires a value"; exit 1; }
-            VERSION="$2"; shift 2 ;;
-        --version=*)
-            VERSION="${1#*=}"; shift ;;
-        *)
-            log_error "Unknown flag: $1"; exit 1 ;;
-    esac
-done
 
 main

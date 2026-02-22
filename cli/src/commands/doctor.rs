@@ -170,13 +170,27 @@ impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
     }
 
     async fn check_security(&self) -> Result<SecurityChecks> {
+        let vm_running = crate::workspace::vm::state(self.mp).await.ok()
+            == Some(crate::workspace::vm::VmState::Running);
+
+        let process_isolation = check_process_isolation().await;
+
+        if !vm_running {
+            return Ok(SecurityChecks {
+                process_isolation,
+                traffic_inspection: false,
+                malware_db_current: false,
+                malware_db_age_hours: 0,
+                certificates_valid: false,
+                certificates_expire_days: 0,
+            });
+        }
+
         let (
-            process_isolation,
             traffic_inspection,
             (malware_db_current, malware_db_age_hours),
             (certificates_valid, certificates_expire_days),
         ) = tokio::join!(
-            check_process_isolation(),
             check_gate_health(self.mp),
             check_malware_db(self.mp),
             check_certificates(self.mp),
@@ -202,9 +216,10 @@ impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
 pub async fn run(
     ctx: &OutputContext,
     json: bool,
+    verbose: bool,
     mp: &impl crate::multipass::Multipass,
 ) -> Result<()> {
-    run_with(ctx, json, &SystemProbe::new(mp)).await
+    run_with(ctx, json, verbose, &SystemProbe::new(mp)).await
 }
 
 /// Run doctor with a custom health probe (for testing).
@@ -212,7 +227,12 @@ pub async fn run(
 /// # Errors
 ///
 /// Returns an error if health checks cannot be executed or output fails.
-pub async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe) -> Result<()> {
+pub async fn run_with(
+    ctx: &OutputContext,
+    json: bool,
+    verbose: bool,
+    probe: &impl HealthProbe,
+) -> Result<()> {
     let (prerequisites, workspace, network, security) = tokio::try_join!(
         probe.check_prerequisites(),
         probe.check_workspace(),
@@ -288,11 +308,18 @@ pub async fn run_with(ctx: &OutputContext, json: bool, probe: &impl HealthProbe)
     if issues.is_empty() {
         println!("  {} Everything looks good!", "✓".style(ctx.styles.success));
     } else {
+        let hint = if verbose { "" } else { " Run with --verbose for details." };
         println!(
-            "  {} Found {} issues. Run with --verbose for details.",
+            "  {} Found {} issues.{hint}",
             "✗".style(ctx.styles.error),
             issues.len(),
         );
+        if verbose {
+            println!();
+            for issue in &issues {
+                println!("    {} {issue}", "✗".style(ctx.styles.error));
+            }
+        }
     }
     println!();
 
@@ -464,6 +491,12 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
     }
     if !checks.security.traffic_inspection {
         issues.push("Traffic inspection not responding".to_string());
+    }
+    if !checks.security.malware_db_current {
+        issues.push(format!(
+            "Malware scanner database stale (updated: {}h ago)",
+            checks.security.malware_db_age_hours
+        ));
     }
     if checks.security.certificates_expire_days <= 0 {
         issues.push("Certificates expired".to_string());
@@ -640,7 +673,16 @@ async fn check_process_isolation() -> bool {
 /// Check if the gate container is running inside the multipass VM.
 async fn check_gate_health(mp: &impl crate::multipass::Multipass) -> bool {
     let output = mp
-        .exec(&["docker", "compose", "ps", "--format", "json", "gate"])
+        .exec(&[
+            "docker",
+            "compose",
+            "-f",
+            crate::workspace::COMPOSE_PATH,
+            "ps",
+            "--format",
+            "json",
+            "gate",
+        ])
         .await;
 
     let Ok(output) = output else { return false };
@@ -662,8 +704,16 @@ async fn check_gate_health(mp: &impl crate::multipass::Multipass) -> bool {
 
 /// Check `ClamAV` database freshness inside the multipass VM.
 async fn check_malware_db(mp: &impl crate::multipass::Multipass) -> (bool, u64) {
+    // Find the newest DB file (daily.cvd or daily.cld) in the scanner container.
     let output = mp
-        .exec(&["stat", "-c", "%Y", "/var/lib/clamav/daily.cvd"])
+        .exec(&[
+            "docker",
+            "exec",
+            "polis-scanner",
+            "sh",
+            "-c",
+            "stat -c %Y /var/lib/clamav/daily.cld /var/lib/clamav/daily.cvd 2>/dev/null | sort -rn | head -1",
+        ])
         .await;
 
     let Ok(output) = output else {
@@ -697,7 +747,7 @@ async fn check_certificates(mp: &impl crate::multipass::Multipass) -> (bool, i64
             "-enddate",
             "-noout",
             "-in",
-            "/etc/polis/certs/ca/ca.crt",
+            "/opt/polis/certs/ca/ca.pem",
         ])
         .await;
 

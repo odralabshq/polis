@@ -64,7 +64,8 @@ lint-shell:
 test: test-rust test-c test-unit
 
 test-rust:
-    cargo test --workspace --manifest-path cli/Cargo.toml
+    cargo test --workspace --manifest-path cli/Cargo.toml --test unit -- --test-threads=1
+    cargo test --workspace --manifest-path cli/Cargo.toml --test integration
     cargo test --workspace --manifest-path services/toolbox/Cargo.toml
     cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 

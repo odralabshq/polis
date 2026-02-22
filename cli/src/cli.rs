@@ -53,7 +53,14 @@ pub enum Command {
     Config(commands::config::ConfigCommand),
 
     /// Diagnose issues
-    Doctor,
+    Doctor {
+        /// Show remediation details for each issue
+        #[arg(long)]
+        verbose: bool,
+    },
+
+    /// Run a command in the workspace
+    Exec(commands::exec::ExecArgs),
 
     /// Update Polis
     Update(commands::update::UpdateArgs),
@@ -93,7 +100,10 @@ impl Cli {
 
             Command::Stop => commands::stop::run(&mp, quiet).await,
 
-            Command::Delete(args) => commands::delete::run(&args, &mp, quiet).await,
+            Command::Delete(args) => {
+                let state_mgr = crate::state::StateManager::new()?;
+                commands::delete::run(&args, &mp, &state_mgr, quiet).await
+            }
 
             Command::Status => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
@@ -107,7 +117,7 @@ impl Cli {
 
             Command::Config(cmd) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::config::run(&ctx, cmd, json)
+                commands::config::run(&ctx, cmd, json, &mp).await
             }
 
             Command::Update(args) => {
@@ -116,10 +126,12 @@ impl Cli {
                     .await
             }
 
-            Command::Doctor => {
+            Command::Doctor { verbose } => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::doctor::run(&ctx, json, &mp).await
+                commands::doctor::run(&ctx, json, verbose, &mp).await
             }
+
+            Command::Exec(args) => commands::exec::run(&args, &mp).await,
 
             Command::Version => commands::version::run(json),
 

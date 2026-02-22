@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     ca-certificates \
     curl \
+    git \
     kmod \
     procps \
     passwd \
@@ -19,6 +20,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /run/sshd /var/empty \
     && chmod 755 /var/empty
+
+# Development toolchains: Python, Node.js
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    make \
+    cmake \
+    python3 \
+    python3-pip \
+    python3-venv \
+    nodejs \
+    npm \
+    jq \
+    vim \
+    wget \
+    zip \
+    unzip \
+    ripgrep \
+    fd-find \
+    tree \
+    less \
+    diffutils \
+    patch \
+    htop \
+    && mkdir -p /usr/local/bin && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+    && rm -rf /var/lib/apt/lists/*
 
 # Configure NSS for user/group resolution (required for sshd privilege separation)
 # Configure sshd: disable PAM (minimal image lacks common-auth), key-only auth
@@ -45,6 +73,12 @@ RUN printf '%s\n' \
     && usermod -s /usr/sbin/nologin root \
     && ln -sf /etc/systemd/system/polis-init.service /etc/systemd/system/multi-user.target.wants/polis-init.service \
     && mkdir -p /usr/local/share/ca-certificates
+
+# Rust via rustup (installed as polis user, not root)
+USER polis
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+USER root
+ENV PATH="/home/polis/.cargo/bin:${PATH}"
 
 COPY --chmod=755 services/workspace/scripts/init.sh /usr/local/bin/init.sh
 
