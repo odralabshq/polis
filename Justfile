@@ -280,13 +280,6 @@ setup-toolbox:
     sudo chown 65532:65532 ./certs/toolbox/toolbox.key
     echo "✓ Toolbox certs ready"
 
-# Deprecated — use: polis start --agent=openclaw
-setup-agents:
-    #!/usr/bin/env bash
-    echo ""
-    echo "⚠️  'just setup-agents' is deprecated."
-    echo "    Use: polis start --agent=openclaw"
-    echo ""
 
 # ── Dev VM ──────────────────────────────────────────────────────────
 dev-create:

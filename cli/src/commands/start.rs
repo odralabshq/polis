@@ -129,8 +129,25 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
         };
         state_mgr.save(&state)?;
     } else {
-        // VM exists but stopped - just start it
+        // VM exists but stopped - start it, then handle agent if requested
         vm::restart(mp, quiet).await?;
+
+        if let Some(agent_name) = &args.agent {
+            validate_agent(mp, agent_name).await?;
+            generate_agent_artifacts(mp, agent_name).await?;
+            start_compose(mp, args.agent.as_deref()).await?;
+        }
+
+        // Update state with active agent
+        let mut state = state_mgr.load()?.unwrap_or_else(|| WorkspaceState {
+            workspace_id: generate_workspace_id(),
+            created_at: Utc::now(),
+            image_sha256: None,
+            image_source: None,
+            active_agent: None,
+        });
+        state.active_agent = args.agent.clone();
+        state_mgr.save(&state)?;
     }
 
     // Wait for healthy

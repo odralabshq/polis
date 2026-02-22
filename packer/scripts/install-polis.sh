@@ -14,9 +14,11 @@ cd /opt/polis
 tar -xzf /tmp/polis-config.tar.gz
 rm /tmp/polis-config.tar.gz
 
-# Install netcat for SSH proxy
+# Install netcat for SSH proxy and yq for agent manifest parsing
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends netcat-openbsd
+sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+sudo chmod +x /usr/local/bin/yq
 
 # Create systemd service for polis
 sudo tee /etc/systemd/system/polis.service > /dev/null << 'EOF'
