@@ -77,7 +77,7 @@ PROXY="--proxy http://10.10.1.10:8080"
 @test "e2e: large response (1KB) handled" {
     local size
     size=$(docker exec "$CTR_WORKSPACE" \
-        curl -sf --connect-timeout 15 $PROXY "http://${HTTPBIN_HOST}/bytes/1024" | wc -c)
+        bash -c "curl -sf --connect-timeout 15 $PROXY 'http://${HTTPBIN_HOST}/bytes/1024' | wc -c")
     [[ "$size" -ge 1000 ]] || fail "Expected ≥1000 bytes, got $size"
 }
 
