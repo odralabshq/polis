@@ -22,6 +22,9 @@ pub struct WorkspaceState {
     /// Custom image source (path or URL) used to create workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_source: Option<String>,
+    /// Currently active agent name, or None for control-plane-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_agent: Option<String>,
 }
 
 /// SEC-004: Validates workspace ID format.
@@ -187,6 +190,7 @@ mod tests {
             created_at: Utc::now(),
             image_sha256: Some("abc123".to_string()),
             image_source: None,
+            active_agent: None,
         };
         m.save(&state).expect("save");
         let loaded = m.load().expect("load").expect("state present");
@@ -202,10 +206,46 @@ mod tests {
             created_at: Utc::now(),
             image_sha256: None,
             image_source: None,
+            active_agent: None,
         };
         m.save(&state).expect("save");
         m.clear().expect("clear");
         assert!(m.load().expect("load").is_none());
+    }
+
+    #[test]
+    fn test_workspace_state_active_agent_defaults_to_none() {
+        let json = r#"{"workspace_id":"polis-abc","created_at":"2026-02-17T14:30:00Z"}"#;
+        let state: WorkspaceState = serde_json::from_str(json).expect("deserialize");
+        assert!(state.active_agent.is_none());
+    }
+
+    #[test]
+    fn test_workspace_state_active_agent_omitted_when_none() {
+        let state = WorkspaceState {
+            workspace_id: "polis-test".to_string(),
+            created_at: Utc::now(),
+            image_sha256: None,
+            image_source: None,
+            active_agent: None,
+        };
+        let json = serde_json::to_string(&state).expect("serialize");
+        assert!(!json.contains("active_agent"));
+    }
+
+    #[test]
+    fn test_workspace_state_active_agent_roundtrip() {
+        let state = WorkspaceState {
+            workspace_id: "polis-test".to_string(),
+            created_at: Utc::now(),
+            image_sha256: None,
+            image_source: None,
+            active_agent: Some("openclaw".to_string()),
+        };
+        let json = serde_json::to_string(&state).expect("serialize");
+        assert!(json.contains("active_agent"));
+        let loaded: WorkspaceState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(loaded.active_agent.as_deref(), Some("openclaw"));
     }
 
     #[test]
@@ -226,6 +266,7 @@ mod tests {
             created_at: Utc::now(),
             image_sha256: None,
             image_source: None,
+            active_agent: None,
         };
         StateManager::with_path(nested.clone())
             .save(&state)
@@ -244,6 +285,7 @@ mod tests {
             created_at: Utc::now(),
             image_sha256: None,
             image_source: None,
+            active_agent: None,
         };
         m.save(&state).expect("save");
         let perms = std::fs::metadata(dir.path().join("state.json"))

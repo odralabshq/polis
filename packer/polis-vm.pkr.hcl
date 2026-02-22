@@ -58,6 +58,12 @@ variable "config_tar" {
   default     = ".build/polis-config.tar.gz"
 }
 
+variable "agents_tar" {
+  type        = string
+  description = "Path to polis-agents.tar.gz bundle"
+  default     = ""
+}
+
 variable "arch" {
   type    = string
   default = "amd64"
@@ -194,6 +200,17 @@ build {
   # Install Polis orchestration (compose, certs, systemd service)
   provisioner "shell" {
     script = "scripts/install-polis.sh"
+  }
+
+  # Upload agents tarball (if provided)
+  provisioner "file" {
+    source      = var.agents_tar
+    destination = "/tmp/polis-agents.tar.gz"
+  }
+
+  # Install pre-generated agent artifacts
+  provisioner "shell" {
+    script = "scripts/install-agents.sh"
   }
 
   # Validate VM image with Goss tests before finalizing

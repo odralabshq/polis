@@ -1,11 +1,9 @@
 //! Integration tests for `polis update` (issue 16).
 //!
-//! RED phase: tests 2 and 3 fail until the engineer implements `update::run()`.
-//! Test 1 passes today (the subcommand is already registered in cli.rs).
-//!
-//! Testability requirement: `run()` must accept `impl UpdateChecker` so the
-//! unit tests in update.rs can inject a fake. The Senior Rust Engineer must
-//! extract the `UpdateChecker` trait before the unit tests compile.
+//! These tests verify the update command's CLI contract.
+//! The command performs network calls to GitHub; in CI the network may be
+//! unavailable or rate-limited, so tests assert on error message quality
+//! rather than successful update outcomes.
 
 #![allow(clippy::expect_used)]
 
@@ -13,7 +11,9 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("polis"));
+    cmd.env("NO_COLOR", "1");
+    cmd
 }
 
 #[test]

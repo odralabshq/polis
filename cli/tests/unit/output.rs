@@ -2,6 +2,8 @@
 //!
 //! Tests for spec 03-output-styling.md
 
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use owo_colors::OwoColorize;
 use polis_cli::output::{OutputContext, Styles, progress};
 
@@ -65,7 +67,7 @@ fn test_output_context_not_quiet_by_default() {
 #[test]
 fn test_output_context_show_progress_false_when_quiet() {
     let ctx = OutputContext::new(false, true);
-    assert!(!ctx.show_progress() || !ctx.quiet);
+    assert!(!ctx.show_progress());
 }
 
 #[test]

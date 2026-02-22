@@ -3,9 +3,12 @@
 #![allow(clippy::expect_used)]
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 
 fn polis() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("polis"))
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("polis"));
+    cmd.env("NO_COLOR", "1");
+    cmd
 }
 
 #[test]
@@ -18,5 +21,6 @@ fn test_connect_unknown_ide_exits_with_error() {
     polis()
         .args(["connect", "--ide", "emacs"])
         .assert()
-        .failure();
+        .failure()
+        .stderr(predicate::str::contains("emacs").or(predicate::str::contains("invalid")));
 }
