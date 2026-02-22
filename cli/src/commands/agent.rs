@@ -404,8 +404,20 @@ fn require_active_agent() -> Result<String> {
 
 async fn shell(mp: &impl Multipass) -> Result<()> {
     require_running(mp).await?;
+    let name = require_active_agent()?;
+
+    // Read runtime.user from agent manifest inside the VM
+    let user_out = mp
+        .exec(&[
+            "bash", "-c",
+            &format!("yq '.spec.runtime.user // \"root\"' {VM_ROOT}/agents/{name}/agent.yaml"),
+        ])
+        .await?;
+    let user = String::from_utf8_lossy(&user_out.stdout).trim().to_string();
+    let user = if user.is_empty() || !user_out.status.success() { "root" } else { &user };
+
     let status = std::process::Command::new("multipass")
-        .args(["exec", VM_NAME, "--", "docker", "exec", "-it", CONTAINER_NAME, "bash"])
+        .args(["exec", VM_NAME, "--", "docker", "exec", "-it", "-u", user, CONTAINER_NAME, "bash"])
         .status()
         .context("failed to spawn multipass")?;
     std::process::exit(status.code().unwrap_or(1));
