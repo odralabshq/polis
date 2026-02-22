@@ -336,7 +336,10 @@ fn container_to_service_key(container_name: &str) -> &str {
 ///
 /// Returns an error if the `multipass exec` call fails unexpectedly.
 async fn get_deployed_version(image_name: &str, mp: &impl Multipass) -> Result<Option<String>> {
-    let output = mp.exec(&["cat", ENV_PATH]).await.context("failed to read .env")?;
+    let output = mp
+        .exec(&["cat", ENV_PATH])
+        .await
+        .context("failed to read .env")?;
 
     if !output.status.success() {
         return Ok(None);
@@ -378,7 +381,10 @@ async fn pull_container_image(image_ref: &str, mp: &impl Multipass) -> Result<bo
 /// # Errors
 ///
 /// Returns an error if the `multipass exec` call fails unexpectedly.
-async fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass) -> Result<RollbackInfo> {
+async fn capture_rollback_info(
+    updates: &[ContainerUpdate],
+    mp: &impl Multipass,
+) -> Result<RollbackInfo> {
     let output = mp
         .exec(&["cat", ENV_PATH])
         .await
@@ -419,8 +425,7 @@ async fn capture_rollback_info(updates: &[ContainerUpdate], mp: &impl Multipass)
 async fn set_env_var(key: &str, value: &str, mp: &impl Multipass) -> Result<()> {
     // SEC-002/SEC-003: Validate inputs before shell interpolation
     anyhow::ensure!(
-        key.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
         "env key contains invalid characters: {key}"
     );
     if !value.is_empty() {
@@ -473,7 +478,10 @@ async fn restart_services(service_keys: &[&str], mp: &impl Multipass) -> Result<
 
 /// Check whether the workspace VM is running.
 async fn is_vm_running(mp: &impl Multipass) -> bool {
-    mp.vm_info().await.map(|o| o.status.success()).unwrap_or(false)
+    mp.vm_info()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Compute the list of container updates by comparing the manifest against deployed versions.
@@ -601,7 +609,8 @@ async fn apply_updates_with_rollback(
             set_env_var(&image_name_to_env_var(&u.image_name), &u.target_version, mp).await?;
         }
         restart_services(&service_keys, mp).await
-    }.await;
+    }
+    .await;
 
     if let Err(e) = apply_result {
         eprintln!("  Restart failed. Rolling back...");
@@ -610,7 +619,8 @@ async fn apply_updates_with_rollback(
                 set_env_var(env_var, old_val, mp).await?;
             }
             restart_services(&service_keys, mp).await
-        }.await;
+        }
+        .await;
 
         match rollback_result {
             Ok(()) => anyhow::bail!("Update rolled back: {e}"),
@@ -1106,7 +1116,11 @@ mod tests {
         async fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: exec not expected")
         }
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> anyhow::Result<std::process::Output> {
+        async fn exec_with_stdin(
+            &self,
+            _: &[&str],
+            _: &[u8],
+        ) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: exec_with_stdin not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> anyhow::Result<tokio::process::Child> {
@@ -1498,13 +1512,21 @@ mod tests {
     async fn test_compute_container_updates_injection_tag_returns_error() {
         // V-004: shell metacharacter in tag
         let manifest = manifest_with_containers(&[("polis-gate-oss", "v0.3.0|rm -rf /")]);
-        assert!(compute_container_updates(&manifest, &MultipassUnreachableStub).await.is_err());
+        assert!(
+            compute_container_updates(&manifest, &MultipassUnreachableStub)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn test_compute_container_updates_no_v_prefix_returns_error() {
         let manifest = manifest_with_containers(&[("polis-gate-oss", "0.3.0")]);
-        assert!(compute_container_updates(&manifest, &MultipassUnreachableStub).await.is_err());
+        assert!(
+            compute_container_updates(&manifest, &MultipassUnreachableStub)
+                .await
+                .is_err()
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -24,7 +24,11 @@ pub struct ConnectArgs {
 ///
 /// Returns an error if SSH config setup fails, permissions are unsafe, or the
 /// IDE cannot be launched.
-pub async fn run(ctx: &OutputContext, args: ConnectArgs, mp: &impl crate::multipass::Multipass) -> Result<()> {
+pub async fn run(
+    ctx: &OutputContext,
+    args: ConnectArgs,
+    mp: &impl crate::multipass::Multipass,
+) -> Result<()> {
     // Validate IDE name early — fail fast before any interactive prompts.
     if let Some(ref ide) = args.ide {
         resolve_ide(ide)?;
@@ -132,22 +136,20 @@ async fn install_pubkey(pubkey: &str, mp: &impl crate::multipass::Multipass) -> 
     validate_pubkey(pubkey)?;
 
     // SEC-001: Use stdin to pass pubkey instead of shell interpolation
-    let setup_script =
-        "mkdir -p /home/polis/.ssh && chmod 700 /home/polis/.ssh && chown polis:polis /home/polis/.ssh";
+    let setup_script = "mkdir -p /home/polis/.ssh && chmod 700 /home/polis/.ssh && chown polis:polis /home/polis/.ssh";
     let install_script = "cat >> /home/polis/.ssh/authorized_keys && \
          chmod 600 /home/polis/.ssh/authorized_keys && \
          chown polis:polis /home/polis/.ssh/authorized_keys";
 
     // First ensure .ssh directory exists
-    let setup_output = mp.exec(&[
-        "docker",
-        "exec",
-        CONTAINER_NAME,
-        "bash",
-        "-c",
-        setup_script,
-    ]).await.context("multipass exec failed")?;
-    anyhow::ensure!(setup_output.status.success(), "failed to setup .ssh directory");
+    let setup_output = mp
+        .exec(&["docker", "exec", CONTAINER_NAME, "bash", "-c", setup_script])
+        .await
+        .context("multipass exec failed")?;
+    anyhow::ensure!(
+        setup_output.status.success(),
+        "failed to setup .ssh directory"
+    );
 
     // Add newline if not present
     let key_line = if pubkey.ends_with('\n') {
@@ -157,15 +159,21 @@ async fn install_pubkey(pubkey: &str, mp: &impl crate::multipass::Multipass) -> 
     };
 
     // Install pubkey via stdin (no shell interpolation)
-    let output = mp.exec_with_stdin(&[
-        "docker",
-        "exec",
-        "-i",
-        CONTAINER_NAME,
-        "bash",
-        "-c",
-        install_script,
-    ], &key_line).await.context("multipass exec failed")?;
+    let output = mp
+        .exec_with_stdin(
+            &[
+                "docker",
+                "exec",
+                "-i",
+                CONTAINER_NAME,
+                "bash",
+                "-c",
+                install_script,
+            ],
+            &key_line,
+        )
+        .await
+        .context("multipass exec failed")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -186,13 +194,16 @@ fn write_host_key(mgr: &crate::ssh::KnownHostsManager, raw_key: &str) -> Result<
 
 /// Extracts the workspace SSH host key and writes it to `~/.polis/known_hosts`.
 async fn pin_host_key(mp: &impl crate::multipass::Multipass) {
-    let Ok(output) = mp.exec(&[
-        "docker",
-        "exec",
-        CONTAINER_NAME,
-        "cat",
-        "/etc/ssh/ssh_host_ed25519_key.pub",
-    ]).await else {
+    let Ok(output) = mp
+        .exec(&[
+            "docker",
+            "exec",
+            CONTAINER_NAME,
+            "cat",
+            "/etc/ssh/ssh_host_ed25519_key.pub",
+        ])
+        .await
+    else {
         return;
     };
 

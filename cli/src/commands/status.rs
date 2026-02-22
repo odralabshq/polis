@@ -107,16 +107,18 @@ async fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
 
 /// Check if polis-workspace container is running inside VM.
 async fn check_workspace_container(mp: &impl Multipass) -> bool {
-    let output = mp.exec(&[
-        "docker",
-        "compose",
-        "-f",
-        COMPOSE_PATH,
-        "ps",
-        "--format",
-        "json",
-        "workspace",
-    ]).await;
+    let output = mp
+        .exec(&[
+            "docker",
+            "compose",
+            "-f",
+            COMPOSE_PATH,
+            "ps",
+            "--format",
+            "json",
+            "workspace",
+        ])
+        .await;
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -136,15 +138,17 @@ async fn check_workspace_container(mp: &impl Multipass) -> bool {
 
 /// Check security services inside multipass VM.
 async fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
-    let output = mp.exec(&[
-        "docker",
-        "compose",
-        "-f",
-        COMPOSE_PATH,
-        "ps",
-        "--format",
-        "json",
-    ]).await;
+    let output = mp
+        .exec(&[
+            "docker",
+            "compose",
+            "-f",
+            COMPOSE_PATH,
+            "ps",
+            "--format",
+            "json",
+        ])
+        .await;
 
     let output = match output {
         Ok(o) if o.status.success() => o,

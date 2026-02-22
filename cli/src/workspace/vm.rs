@@ -22,7 +22,10 @@ pub enum VmState {
 
 /// Check if VM exists.
 pub async fn exists(mp: &impl Multipass) -> bool {
-    mp.vm_info().await.map(|o| o.status.success()).unwrap_or(false)
+    mp.vm_info()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Get current VM state.
@@ -145,7 +148,9 @@ pub async fn start(mp: &impl Multipass) -> Result<()> {
 ///
 /// Returns an error if the multipass stop command fails.
 pub async fn stop(mp: &impl Multipass) -> Result<()> {
-    let _ = mp.exec(&["docker", "compose", "-f", COMPOSE_PATH, "stop"]).await;
+    let _ = mp
+        .exec(&["docker", "compose", "-f", COMPOSE_PATH, "stop"])
+        .await;
     let output = mp.stop().await.context("stopping workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

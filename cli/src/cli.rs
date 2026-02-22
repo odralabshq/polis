@@ -89,17 +89,11 @@ impl Cli {
         let mp = crate::multipass::MultipassCli;
 
         match command {
-            Command::Start(args) => {
-                commands::start::run(&args, &mp, quiet).await
-            }
+            Command::Start(args) => commands::start::run(&args, &mp, quiet).await,
 
-            Command::Stop => {
-                commands::stop::run(&mp, quiet).await
-            }
+            Command::Stop => commands::stop::run(&mp, quiet).await,
 
-            Command::Delete(args) => {
-                commands::delete::run(&args, &mp, quiet).await
-            }
+            Command::Delete(args) => commands::delete::run(&args, &mp, quiet).await,
 
             Command::Status => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);

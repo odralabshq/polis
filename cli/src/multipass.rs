@@ -25,7 +25,8 @@ pub trait Multipass {
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    async fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str) -> Result<Output>;
+    async fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str)
+    -> Result<Output>;
 
     /// Run `multipass start polis`.
     ///
@@ -103,7 +104,13 @@ impl Multipass for MultipassCli {
             .context("failed to run multipass info")
     }
 
-    async fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str) -> Result<Output> {
+    async fn launch(
+        &self,
+        image_url: &str,
+        cpus: &str,
+        memory: &str,
+        disk: &str,
+    ) -> Result<Output> {
         tokio::process::Command::new("multipass")
             .args([
                 "launch", image_url, "--name", VM_NAME, "--cpus", cpus, "--memory", memory,

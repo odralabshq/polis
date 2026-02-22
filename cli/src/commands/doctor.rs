@@ -199,7 +199,11 @@ impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
 /// # Errors
 ///
 /// Returns an error if health checks cannot be executed or output fails.
-pub async fn run(ctx: &OutputContext, json: bool, mp: &impl crate::multipass::Multipass) -> Result<()> {
+pub async fn run(
+    ctx: &OutputContext,
+    json: bool,
+    mp: &impl crate::multipass::Multipass,
+) -> Result<()> {
     run_with(ctx, json, &SystemProbe::new(mp)).await
 }
 
@@ -635,9 +639,9 @@ async fn check_process_isolation() -> bool {
 
 /// Check if the gate container is running inside the multipass VM.
 async fn check_gate_health(mp: &impl crate::multipass::Multipass) -> bool {
-    let output = mp.exec(&[
-        "docker", "compose", "ps", "--format", "json", "gate",
-    ]).await;
+    let output = mp
+        .exec(&["docker", "compose", "ps", "--format", "json", "gate"])
+        .await;
 
     let Ok(output) = output else { return false };
     if !output.status.success() {
@@ -658,12 +662,9 @@ async fn check_gate_health(mp: &impl crate::multipass::Multipass) -> bool {
 
 /// Check `ClamAV` database freshness inside the multipass VM.
 async fn check_malware_db(mp: &impl crate::multipass::Multipass) -> (bool, u64) {
-    let output = mp.exec(&[
-        "stat",
-        "-c",
-        "%Y",
-        "/var/lib/clamav/daily.cvd",
-    ]).await;
+    let output = mp
+        .exec(&["stat", "-c", "%Y", "/var/lib/clamav/daily.cvd"])
+        .await;
 
     let Ok(output) = output else {
         return (false, 0);
@@ -689,14 +690,16 @@ async fn check_malware_db(mp: &impl crate::multipass::Multipass) -> (bool, u64) 
 
 /// Check CA certificate expiry inside the multipass VM.
 async fn check_certificates(mp: &impl crate::multipass::Multipass) -> (bool, i64) {
-    let output = mp.exec(&[
-        "openssl",
-        "x509",
-        "-enddate",
-        "-noout",
-        "-in",
-        "/etc/polis/certs/ca/ca.crt",
-    ]).await;
+    let output = mp
+        .exec(&[
+            "openssl",
+            "x509",
+            "-enddate",
+            "-noout",
+            "-in",
+            "/etc/polis/certs/ca/ca.crt",
+        ])
+        .await;
 
     let Ok(output) = output else {
         return (false, 0);

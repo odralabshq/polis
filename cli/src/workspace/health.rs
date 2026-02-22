@@ -83,16 +83,19 @@ pub async fn wait_ready(mp: &impl Multipass, quiet: bool) -> Result<()> {
 
 /// Check current health status.
 pub async fn check(mp: &impl Multipass) -> HealthStatus {
-    let Ok(output) = mp.exec(&[
-        "docker",
-        "compose",
-        "-f",
-        COMPOSE_PATH,
-        "ps",
-        "--format",
-        "json",
-        "workspace",
-    ]).await else {
+    let Ok(output) = mp
+        .exec(&[
+            "docker",
+            "compose",
+            "-f",
+            COMPOSE_PATH,
+            "ps",
+            "--format",
+            "json",
+            "workspace",
+        ])
+        .await
+    else {
         return HealthStatus::Unknown;
     };
 

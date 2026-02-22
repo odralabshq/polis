@@ -69,14 +69,16 @@ async fn bridge_stdio(child: &mut tokio::process::Child) -> Result<()> {
 /// Returns an error if multipass cannot be spawned or STDIO bridging fails.
 #[allow(clippy::large_futures)]
 pub async fn ssh_proxy(mp: &impl crate::multipass::Multipass) -> Result<()> {
-    let mut child = mp.exec_spawn(&[
-        "docker",
-        "exec",
-        "-i",
-        CONTAINER_NAME,
-        "/usr/sbin/sshd",
-        "-i",
-    ]).context("failed to spawn multipass")?;
+    let mut child = mp
+        .exec_spawn(&[
+            "docker",
+            "exec",
+            "-i",
+            CONTAINER_NAME,
+            "/usr/sbin/sshd",
+            "-i",
+        ])
+        .context("failed to spawn multipass")?;
     bridge_stdio(&mut child).await
 }
 
@@ -95,13 +97,16 @@ pub async fn ssh_proxy(mp: &impl crate::multipass::Multipass) -> Result<()> {
 /// Returns an error if the host key cannot be extracted.
 #[allow(clippy::large_futures)]
 pub async fn extract_host_key(mp: &impl crate::multipass::Multipass) -> Result<()> {
-    let output = mp.exec(&[
-        "docker",
-        "exec",
-        CONTAINER_NAME,
-        "cat",
-        "/etc/ssh/ssh_host_ed25519_key.pub",
-    ]).await.context("failed to run multipass")?;
+    let output = mp
+        .exec(&[
+            "docker",
+            "exec",
+            CONTAINER_NAME,
+            "cat",
+            "/etc/ssh/ssh_host_ed25519_key.pub",
+        ])
+        .await
+        .context("failed to run multipass")?;
     anyhow::ensure!(output.status.success(), "multipass exec failed");
     let key = String::from_utf8(output.stdout)
         .context("host key output is not valid UTF-8")?

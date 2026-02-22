@@ -104,7 +104,13 @@ fn test_version_tag_rejects_injection_attempts() {
 
 #[test]
 fn test_version_tag_accepts_known_good() {
-    let valid = ["v0.3.0", "v1.0.0", "v1.0.0-rc.1", "v2.0.0-beta.3", "v10.20.30"];
+    let valid = [
+        "v0.3.0",
+        "v1.0.0",
+        "v1.0.0-rc.1",
+        "v2.0.0-beta.3",
+        "v10.20.30",
+    ];
     for tag in valid {
         assert!(
             validate_version_tag(tag).is_ok(),
