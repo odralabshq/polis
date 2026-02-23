@@ -1,4 +1,4 @@
-﻿# =============================================================================
+# =============================================================================
 # Polis Installer for Windows
 # =============================================================================
 # One-line install: irm https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.ps1 | iex
@@ -168,8 +168,10 @@ function Get-Image {
     # Checksum always fetched from GitHub (separate origin from binary)
     Write-Info "Verifying image SHA256..."
     $checksums = Invoke-WebRequest -Uri "$ghBase/checksums.sha256" -UseBasicParsing
-    # Normalize: checksums.sha256 may have ./ prefix on filenames
-    $checksumLines = $checksums.Content -replace '\r', '' -split "`n" | ForEach-Object { $_ -replace '\s+\.\/', ' ' }
+    # Normalize: checksums.sha256 may have ./ prefix on filenames (e.g. "hash  ./filename")
+    $rawContent = $checksums.Content -replace '\r', ''
+    $rawContent = $rawContent -replace '  \./', '  '
+    $checksumLines = $rawContent -split "`n"
     $expected  = (($checksumLines | Where-Object { $_ -match [regex]::Escape($imageName) }) -replace '\s.*', '') | Select-Object -First 1
     if (-not $expected) {
         Write-Warn "Could not find checksum for $imageName - skipping verification"
