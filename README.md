@@ -229,6 +229,20 @@ polis run
 
 ## 🔧 Troubleshooting
 
+**Slow image download:**
+
+The VM image is ~1.7GB. Install `aria2` for 3-5x faster parallel downloads:
+
+```bash
+# macOS
+brew install aria2
+
+# Linux
+sudo apt install aria2
+```
+
+The installer uses it automatically if available.
+
 **Multipass not found:**
 
 ```bash
