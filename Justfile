@@ -140,6 +140,12 @@ build-vm arch="amd64" headless="true": _export-images _bundle-config _build-agen
         -var "arch={{arch}}" \
         -var "headless={{headless}}" \
         polis-vm.pkr.hcl
+    # Additional compression pass
+    for img in output/*.qcow2; do
+        echo "==> Compressing ${img}..."
+        qemu-img convert -c -O qcow2 "${img}" "${img}.tmp"
+        mv "${img}.tmp" "${img}"
+    done
     just --justfile "${ROOT}/Justfile" --working-directory "${ROOT}" _sign-vm {{arch}}
 
 # Internal: build agent artifacts for VM image

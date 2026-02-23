@@ -136,7 +136,7 @@ jobs:
             "manifest_version": 1,
             "vm_image": {
               "version": "${VERSION}",
-              "asset": "polis-${VERSION}-amd64.qcow2.zst"
+              "asset": "polis-${VERSION}-amd64.qcow2"
             },
             "containers": {
               "polis-resolver-oss": "${VERSION}",
@@ -241,27 +241,10 @@ jobs:
             -var "arch=amd64" \
             polis-vm.pkr.hcl
 
-      - name: Compress VM image
-        run: |
-          cd packer/output
-          for qcow2 in *.qcow2; do
-            # Re-compress qcow2 with maximum compression, then zstd
-            qemu-img convert -c -O qcow2 "${qcow2}" "${qcow2}.compressed"
-            rm "${qcow2}"
-            mv "${qcow2}.compressed" "${qcow2}"
-            zstd -T0 -19 --rm "${qcow2}" -o "${qcow2}.zst"
-            # Split into 1.9GB parts if over 2GB (GitHub limit)
-            size=$(stat -c%s "${qcow2}.zst")
-            if [ "$size" -gt 2000000000 ]; then
-              split -b 1900M -d --additional-suffix=.part "${qcow2}.zst" "${qcow2}.zst."
-              rm "${qcow2}.zst"
-            fi
-          done
-
       - name: Generate checksum
         run: |
           cd packer/output
-          sha256sum ./*.qcow2.zst* > checksums.sha256
+          sha256sum ./*.qcow2 > checksums.sha256
 
       - name: Sign VM image checksum
         env:
@@ -282,14 +265,14 @@ jobs:
       - name: Attest VM provenance
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
         with:
-          subject-path: packer/output/*.qcow2.zst*
+          subject-path: packer/output/*.qcow2
 
       - name: Upload VM artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: vm-image
           path: |
-            packer/output/*.qcow2.zst*
+            packer/output/*.qcow2
             packer/output/checksums.sha256
             packer/output/checksums.sha256.sig
           retention-days: 1
@@ -379,7 +362,7 @@ jobs:
           prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: |
-            vm/*.qcow2.zst*
+            vm/*.qcow2
             vm/checksums.sha256
             vm/checksums.sha256.sig
             cli-bin/polis-linux-amd64

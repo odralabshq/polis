@@ -35,7 +35,7 @@ file:
     contents: null
   /opt/polis/scripts/setup-certs.sh:
     exists: true
-    mode: "0755"
+    mode: "0775"
     contents: null
   /opt/polis/services/gate/config/g3proxy.yaml:
     exists: true
