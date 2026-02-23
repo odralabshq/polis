@@ -167,7 +167,8 @@ function Invoke-PolisInit {
     param([string]$ImagePath)
     $polis = Join-Path $InstallDir "bin\polis.exe"
 
-    if (& multipass info polis 2>$null; $LASTEXITCODE -eq 0) {
+    $null = & multipass info polis 2>$null
+    if ($LASTEXITCODE -eq 0) {
         Write-Warn "An existing polis VM was found."
         $confirm = Read-Host "Remove it and start fresh? [y/N]"
         if ($confirm -eq 'y') {
