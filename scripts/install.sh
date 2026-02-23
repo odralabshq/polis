@@ -221,7 +221,7 @@ download_image() {
     mkdir -p "${INSTALL_DIR}/images"
 
     log_info "Downloading VM image from CDN..." >&2
-    curl -fL --http2 --retry 3 --retry-delay 2 --continue-at - --progress-bar \
+    curl -fL --http2 --retry 3 --retry-delay 2 --progress-bar \
         "${CDN_BASE_URL}/${VERSION}/${image_name}" -o "${dest}" >&2
 
     # Download signed sidecar for CLI integrity verification
