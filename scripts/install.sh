@@ -225,7 +225,7 @@ download_image() {
     mkdir -p "${INSTALL_DIR}/images"
 
     log_info "Downloading VM image..." >&2
-    curl -fL --http2 --progress-bar \
+    curl -fL --http2 --retry 3 --retry-delay 2 --continue-at - --progress-bar \
         "${base_url}/${image_name}" -o "${dest}" >&2
 
     log_info "Verifying image SHA256..." >&2
