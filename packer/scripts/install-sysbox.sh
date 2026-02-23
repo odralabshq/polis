@@ -14,8 +14,8 @@ DEB_URL="https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}
 
 echo "==> Installing Sysbox ${SYSBOX_VERSION} (${ARCH})..."
 
-# Download Sysbox .deb
-curl -fsSL -o "/tmp/${DEB_NAME}" "${DEB_URL}"
+# Download Sysbox .deb (HTTPS + SHA256 verified below)
+curl -fsSL -o "/tmp/${DEB_NAME}" "${DEB_URL}"  # NOSONAR - URL is HTTPS, checksum verified
 
 # Verify SHA256
 ACTUAL_SHA256=$(sha256sum "/tmp/${DEB_NAME}" | awk '{print $1}')
