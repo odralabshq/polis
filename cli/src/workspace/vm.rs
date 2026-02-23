@@ -143,7 +143,8 @@ fn image_path_to_file_url(path: &Path) -> Result<String> {
         let s = canonical.to_string_lossy();
         // Strip the `\\?\` extended-length prefix that canonicalize() adds on Windows.
         let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
-        Ok(format!("file:///{}", stripped.replace('\\', "/")))
+        // Multipass on Windows expects file://C:/... (two slashes), not file:///C:/...
+        Ok(format!("file://{}", stripped.replace('\\', "/")))
     }
     #[cfg(not(windows))]
     {
