@@ -302,7 +302,7 @@ jobs:
   # Build CLI binaries (Linux, Windows, macOS)
   # =========================================================
   cli:
-    name: Build CLI (${{ matrix.os }})
+    name: Build CLI (${{ matrix.artifact }})
     needs: validate
     strategy:
       matrix:
@@ -313,9 +313,12 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: polis-windows-amd64.exe
-          - os: macos-latest
+          - os: macos-13
             target: x86_64-apple-darwin
             artifact: polis-macos-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: polis-macos-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -427,6 +430,8 @@ jobs:
             cli-bin/polis-windows-amd64.exe.sha256
             cli-bin/polis-macos-amd64
             cli-bin/polis-macos-amd64.sha256
+            cli-bin/polis-macos-arm64
+            cli-bin/polis-macos-arm64.sha256
             scripts/install.sh
             versions.json
             versions.json.sig
