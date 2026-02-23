@@ -341,7 +341,7 @@ jobs:
             echo "Tag $TAG already exists on remote, skipping"
           else
             git tag -a "$TAG" -m "Release ${{ needs.validate.outputs.version }}"
-            git push origin "$TAG"
+            git push origin "$TAG" || echo "::warning::Tag push blocked by repository rules — release action will create the tag"
           fi
 
       - name: Download VM artifact
