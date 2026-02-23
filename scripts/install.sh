@@ -202,13 +202,7 @@ create_symlink() {
     ln -sf "${INSTALL_DIR}/bin/polis" "$HOME/.local/bin/polis"
     log_ok "Symlinked: ~/.local/bin/polis"
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-        log_warn "\$HOME/.local/bin is not in your PATH"
-        echo ""
-        echo "Add it by running:"
-        # shellcheck disable=SC2016
-        echo '  export PATH="$HOME/.local/bin:$PATH"'
-        echo ""
-        echo "To make it permanent, add to your shell rc file (~/.bashrc or ~/.zshrc)"
+        log_warn "\$HOME/.local/bin is not in PATH — add it to your shell rc"
     fi
     return 0
 }
@@ -270,7 +264,6 @@ main() {
     local image_path
     image_path=$(download_image)
 
-    # Clean up any existing workspace for a fresh install
     if multipass info polis &>/dev/null 2>&1; then
         log_warn "An existing polis VM was found."
         read -r -p "Remove it and start fresh? [y/N] " confirm
@@ -288,7 +281,6 @@ main() {
     echo ""
     log_ok "Polis installed successfully!"
     echo ""
-    return 0
 }
 
 main
