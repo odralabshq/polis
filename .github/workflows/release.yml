@@ -220,18 +220,19 @@ jobs:
 
       - name: Build VM image
         run: |
+          cd packer
           packer build \
             -var "polis_version=${{ needs.validate.outputs.version }}" \
-            -var "images_tar=${PWD}/.build/polis-images.tar" \
-            -var "config_tar=${PWD}/.build/polis-config.tar.gz" \
+            -var "images_tar=${PWD}/../.build/polis-images.tar" \
+            -var "config_tar=${PWD}/../.build/polis-config.tar.gz" \
             -var "sysbox_version=${SYSBOX_VERSION}" \
             -var "sysbox_sha256_amd64=${SYSBOX_SHA256_AMD64}" \
             -var "arch=amd64" \
-            packer/polis-vm.pkr.hcl
+            polis-vm.pkr.hcl
 
       - name: Generate checksum
         run: |
-          cd output
+          cd packer/output
           sha256sum ./*.qcow2 > checksums.sha256
 
       - name: Sign VM image checksum
@@ -240,7 +241,7 @@ jobs:
         run: |
           cargo install zipsign --version 0.2.1 --locked
           echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
-          for qcow2 in output/*.qcow2; do
+          for qcow2 in packer/output/*.qcow2; do
             checksum=$(sha256sum "${qcow2}" | cut -d' ' -f1)
             sidecar="${qcow2}.sha256"
             tmpdir=$(mktemp -d)
@@ -256,16 +257,16 @@ jobs:
       - name: Attest VM provenance
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
         with:
-          subject-path: output/*.qcow2
+          subject-path: packer/output/*.qcow2
 
       - name: Upload VM artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: vm-image
           path: |
-            output/*.qcow2
-            output/*.qcow2.sha256
-            output/checksums.sha256
+            packer/output/*.qcow2
+            packer/output/*.qcow2.sha256
+            packer/output/checksums.sha256
           retention-days: 1
 
   # =========================================================
