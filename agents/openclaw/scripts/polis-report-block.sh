@@ -9,7 +9,7 @@ DEST="${3:?Missing destination}"
 PATTERN="${4:-}"
 
 ARGS="{\"request_id\":\"${REQ_ID}\",\"reason\":\"${REASON}\",\"destination\":\"${DEST}\""
-[ -n "$PATTERN" ] && ARGS="${ARGS},\"pattern\":\"${PATTERN}\""
+[[ -n "$PATTERN" ]] && ARGS="${ARGS},\"pattern\":\"${PATTERN}\""
 ARGS="${ARGS}}"
 
 exec "$SCRIPT_DIR/polis-toolbox-call.sh" report_block "$ARGS"

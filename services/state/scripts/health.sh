@@ -42,7 +42,7 @@ if ! echo "${VALKEY_PORT}" | grep -qE '^[0-9]+$'; then
     echo "CRITICAL: Invalid VALKEY_PORT '${VALKEY_PORT}' (not numeric)"
     exit 1
 fi
-if [ "${VALKEY_PORT}" -lt 1 ] || [ "${VALKEY_PORT}" -gt 65535 ]; then
+if [[ "${VALKEY_PORT}" -lt 1 || "${VALKEY_PORT}" -gt 65535 ]]; then
     echo "CRITICAL: Invalid VALKEY_PORT '${VALKEY_PORT}' (out of range 1-65535)"
     exit 1
 fi
@@ -53,12 +53,12 @@ fi
 # (not visible in ps aux output)
 # =============================================================================
 
-if [ ! -f "${VALKEY_PASSWORD_FILE}" ]; then
+if [[ ! -f "${VALKEY_PASSWORD_FILE}" ]]; then
     echo "CRITICAL: Password file not found: ${VALKEY_PASSWORD_FILE}"
     exit 1
 fi
 
-REDISCLI_AUTH="$(cat "${VALKEY_PASSWORD_FILE}" | tr -d '[:space:]')"
+REDISCLI_AUTH="$(tr -d '[:space:]' < "${VALKEY_PASSWORD_FILE}")"
 export REDISCLI_AUTH
 
 # =============================================================================
@@ -82,7 +82,7 @@ CLI_ARGS=(
 
 PING_RESULT="$(valkey-cli "${CLI_ARGS[@]}" ping 2>&1)" || true
 
-if [ "${PING_RESULT}" != "PONG" ]; then
+if [[ "${PING_RESULT}" != "PONG" ]]; then
     echo "CRITICAL: Valkey not responding (expected PONG, got '${PING_RESULT}')"
     exit 1
 fi
@@ -105,11 +105,11 @@ MAXMEMORY="$(echo "${MEMORY_INFO}" \
     | tr -d '[:space:]')"
 
 # Only check memory pressure if maxmemory is configured (non-zero)
-if [ -n "${MAXMEMORY}" ] && [ "${MAXMEMORY}" -gt 0 ] 2>/dev/null; then
-    if [ -n "${USED_MEMORY}" ]; then
+if [[ -n "${MAXMEMORY}" && "${MAXMEMORY}" -gt 0 ]] 2>/dev/null; then
+    if [[ -n "${USED_MEMORY}" ]]; then
         # Calculate percentage: (used * 100) / max
         MEMORY_PERCENT=$(( (USED_MEMORY * 100) / MAXMEMORY ))
-        if [ "${MEMORY_PERCENT}" -ge "${MEMORY_WARN_PERCENT}" ]; then
+        if [[ "${MEMORY_PERCENT}" -ge "${MEMORY_WARN_PERCENT}" ]]; then
             echo "WARNING: Memory usage at ${MEMORY_PERCENT}% (threshold: ${MEMORY_WARN_PERCENT}%)"
             exit 1
         fi
@@ -128,7 +128,7 @@ AOF_ENABLED="$(echo "${PERSIST_INFO}" \
     | cut -d: -f2 \
     | tr -d '[:space:]')"
 
-if [ "${AOF_ENABLED}" != "1" ]; then
+if [[ "${AOF_ENABLED}" != "1" ]]; then
     echo "CRITICAL: AOF persistence disabled"
     exit 1
 fi
