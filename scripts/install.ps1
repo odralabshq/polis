@@ -80,8 +80,10 @@ function Assert-Multipass {
     $verLine = (& multipass version 2>$null | Select-Object -First 1) -replace '\s+', ' '
     $verStr  = ($verLine -split ' ')[1]
     if ($verStr) {
+        # Strip platform suffixes like +win, +mac so [version] can parse it
+        $verClean = $verStr -replace '\+.*', ''
         try {
-            $installed = [version]$verStr
+            $installed = [version]$verClean
             if ($installed -lt $MultipassMin) {
                 Write-Err "Multipass $verStr is too old (need >= $MultipassMin)."
                 Write-Host "  Update: https://multipass.run/install"
@@ -166,7 +168,9 @@ function Get-Image {
     # Checksum always fetched from GitHub (separate origin from binary)
     Write-Info "Verifying image SHA256..."
     $checksums = Invoke-WebRequest -Uri "$ghBase/checksums.sha256" -UseBasicParsing
-    $expected  = (($checksums.Content -split "`n" | Where-Object { $_ -match [regex]::Escape($imageName) }) -replace '\s.*', '') | Select-Object -First 1
+    # Normalize: checksums.sha256 may have ./ prefix on filenames
+    $checksumLines = $checksums.Content -replace '\r', '' -split "`n" | ForEach-Object { $_ -replace '\s+\.\/', ' ' }
+    $expected  = (($checksumLines | Where-Object { $_ -match [regex]::Escape($imageName) }) -replace '\s.*', '') | Select-Object -First 1
     if (-not $expected) {
         Write-Warn "Could not find checksum for $imageName - skipping verification"
     } else {
@@ -217,6 +221,8 @@ function Invoke-PolisInit {
 
 function Invoke-PolisInstall {
     $ErrorActionPreference = "Stop"
+    # Suppress progress bars — makes Invoke-WebRequest 10-50x faster on PS 5.x
+    $ProgressPreference = "SilentlyContinue"
 
     Write-Host ""
     Write-Host "+===============================================================+"
