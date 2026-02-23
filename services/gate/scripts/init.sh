@@ -14,17 +14,18 @@ validate_certificates() {
     local ca_cert="/etc/g3proxy/ssl/ca.pem"
     
     if [[ ! -f "$ca_cert" ]]; then
-        echo "[gateway] ERROR: CA certificate not found: $ca_cert"
+        echo "[gateway] ERROR: CA certificate not found: $ca_cert" >&2
         exit 1
     fi
     
     # Validate certificate is not expired
     if ! openssl x509 -checkend 86400 -noout -in "$ca_cert" 2>/dev/null; then
-        echo "[gateway] ERROR: CA certificate expires within 24 hours"
+        echo "[gateway] ERROR: CA certificate expires within 24 hours" >&2
         exit 1
     fi
     
     echo "[gateway] Certificate validation passed"
+    return 0
 }
 
 # Run validation first

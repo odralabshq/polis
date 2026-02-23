@@ -12,7 +12,7 @@ if [[ -f "${AGENTS_TAR}" ]]; then
     rm -f "${AGENTS_TAR}"
     echo "==> Agents installed:"
     for d in agents/*/; do
-        [ -d "$d" ] || continue
+        [[ -d "$d" ]] || continue
         name=$(basename "$d")
         echo "    - ${name}"
     done

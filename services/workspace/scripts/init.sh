@@ -93,7 +93,7 @@ echo "[workspace] Resolving gate IP..."
 GATE_IP=$(getent hosts gate | awk '{print $1}')
 
 if [[ -z "$GATE_IP" ]]; then
-    echo "[workspace] ERROR: Could not resolve 'gate' service"
+    echo "[workspace] ERROR: Could not resolve 'gate' service" >&2
     exit 1
 fi
 
@@ -103,11 +103,11 @@ echo "[workspace] Configuring default route via gate (${GATE_IP})..."
 ip route del default 2>/dev/null || true
 
 # Add default route through gate
-if ip route add default via $GATE_IP; then
+if ip route add default via "$GATE_IP"; then
     echo "[workspace] Default route configured successfully"
     ip route show
 else
-    echo "[workspace] ERROR: Failed to configure default route"
+    echo "[workspace] ERROR: Failed to configure default route" >&2
     exit 1
 fi
 
@@ -116,13 +116,13 @@ fi
 #   1. Pre-installed (image-based): scripts already at /usr/local/bin, install.sh is a no-op
 #   2. Mounted (legacy/fallback): agents bind-mounted at /opt/agents/*/
 for agent_dir in /opt/agents/*/; do
-    [ -d "$agent_dir" ] || continue
+    [[ -d "$agent_dir" ]] || continue
     name=$(basename "$agent_dir")
     echo "[workspace] Bootstrapping agent: ${name}"
 
     # Run install.sh in a subshell so failures don't kill workspace init.
     # Pre-installed images have /var/lib/openclaw-installed marker — install.sh exits immediately.
-    if [ -x "${agent_dir}/install.sh" ]; then
+    if [[ -x "${agent_dir}/install.sh" ]]; then
         if ! ("${agent_dir}/install.sh"); then
             echo "[workspace] WARNING: ${name}/install.sh failed — agent may not work"
             continue
@@ -135,7 +135,7 @@ for agent_dir in /opt/agents/*/; do
     # directly without searching the filesystem (find / returns exit 1
     # due to permission-denied directories, confusing the agent).
     for script in "${agent_dir}"/scripts/polis-*.sh; do
-        [ -f "$script" ] || continue
+        [[ -f "$script" ]] || continue
         base=$(basename "$script" .sh)
         ln -sf "$script" "/usr/local/bin/${base}"
     done
@@ -144,11 +144,11 @@ done
 # For pre-installed agents (image-based), scripts are already at /usr/local/share/<agent>/scripts/.
 # Symlink them into PATH if not already present (handles the case where /opt/agents is not mounted).
 for scripts_dir in /usr/local/share/*/scripts/; do
-    [ -d "$scripts_dir" ] || continue
+    [[ -d "$scripts_dir" ]] || continue
     for script in "${scripts_dir}"/polis-*.sh; do
-        [ -f "$script" ] || continue
+        [[ -f "$script" ]] || continue
         base=$(basename "$script" .sh)
-        [ -L "/usr/local/bin/${base}" ] && continue  # already symlinked from mount
+        [[ -L "/usr/local/bin/${base}" ]] && continue  # already symlinked from mount
         ln -sf "$script" "/usr/local/bin/${base}"
     done
 done
@@ -160,18 +160,18 @@ protect_sensitive_paths
 # install.sh already ran above (before routing), so we only handle .service files here.
 agent_services=()
 for agent_dir in /opt/agents/*/; do
-    [ -d "$agent_dir" ] || continue
+    [[ -d "$agent_dir" ]] || continue
     name=$(basename "$agent_dir")
 
     # Collect services to enable (generated .service file is mounted by compose override)
     svc="/etc/systemd/system/${name}.service"
-    if [ -f "$svc" ]; then
+    if [[ -f "$svc" ]]; then
         # Verify .service file integrity (hash generated at polis init time)
         hash_file="/etc/systemd/system/${name}.service.sha256"
-        if [ -f "$hash_file" ]; then
+        if [[ -f "$hash_file" ]]; then
             expected=$(cat "$hash_file")
             actual=$(sha256sum "$svc" | cut -d' ' -f1)
-            if [ "$expected" != "$actual" ]; then
+            if [[ "$expected" != "$actual" ]]; then
                 echo "[workspace] CRITICAL: ${name}.service integrity check failed. Skipping."
                 continue
             fi
@@ -186,7 +186,7 @@ done
 # Requires=polis-init.service, so they wait for this script to finish.
 # Using "enable --now" (which blocks until the service is active) would
 # deadlock: init waits for agent → agent waits for init.
-if [ ${#agent_services[@]} -gt 0 ]; then
+if [[ ${#agent_services[@]} -gt 0 ]]; then
     systemctl daemon-reload
     for svc in "${agent_services[@]}"; do
         systemctl enable "$svc" || \

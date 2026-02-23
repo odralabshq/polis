@@ -30,148 +30,168 @@ pub struct StartArgs {
 /// # Errors
 ///
 /// Returns an error if image acquisition, VM creation, or health check fails.
-#[allow(clippy::too_many_lines)]
 pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     let state_mgr = StateManager::new()?;
-
-    // Check current VM state first
     let vm_state = vm::state(mp).await?;
 
-    if vm_state == vm::VmState::Running {
-        // Conflict detection: check if requested agent matches active agent
-        let current_agent = state_mgr.load()?.and_then(|s| s.active_agent);
-        if current_agent == args.agent {
-            if !quiet {
-                println!();
-                println!("Workspace is running.");
-                if let Some(name) = &args.agent {
-                    println!("Agent: {name}");
-                }
-                println!();
-                print_guarantees();
-                println!();
-                println!("Connect: polis connect");
-                println!("Status:  polis status");
-            }
-            return Ok(());
-        }
-        // Different agent (or switching between agent/no-agent)
-        let current_desc = current_agent
-            .as_deref()
-            .map_or_else(|| "no agent".to_string(), |n| format!("agent '{n}'"));
-        let requested_desc = args
-            .agent
-            .as_deref()
-            .map_or_else(|| "no agent".to_string(), |n| format!("--agent {n}"));
-        anyhow::bail!(
-            "Workspace is running with {current_desc}. Stop first:\n  polis stop\n  polis start {requested_desc}"
-        );
+    match vm_state {
+        vm::VmState::Running => return handle_running_vm(&state_mgr, args, quiet),
+        vm::VmState::NotFound => create_and_start_vm(&state_mgr, args, mp, quiet).await?,
+        _ => restart_vm(&state_mgr, args, mp, quiet).await?,
     }
 
-    // Only resolve image if VM needs to be created
-    if vm_state == vm::VmState::NotFound {
-        // Determine image source: CLI flag > persisted source > default
-        let source = match &args.image {
-            Some(s) if s.starts_with("http://") || s.starts_with("https://") => {
-                image::ImageSource::HttpUrl(s.clone())
-            }
-            Some(s) => {
-                let path = PathBuf::from(s);
-                anyhow::ensure!(path.exists(), "Image file not found: {}", path.display());
-                image::ImageSource::LocalFile(path)
-            }
-            None => {
-                // Check if we have a persisted custom image source
-                if let Some(state) = state_mgr.load()? {
-                    if let Some(ref custom_source) = state.image_source {
-                        if custom_source.starts_with("http://")
-                            || custom_source.starts_with("https://")
-                        {
-                            image::ImageSource::HttpUrl(custom_source.clone())
-                        } else {
-                            let path = PathBuf::from(custom_source);
-                            if path.exists() {
-                                image::ImageSource::LocalFile(path)
-                            } else {
-                                image::ImageSource::Default
-                            }
-                        }
-                    } else {
-                        image::ImageSource::Default
-                    }
-                } else {
-                    image::ImageSource::Default
-                }
-            }
-        };
-
-        let image_path = image::ensure_available(source, quiet)?;
-        vm::create(mp, &image_path, quiet).await?;
-
-        // If agent requested: validate it exists and generate artifacts
-        if let Some(agent_name) = &args.agent {
-            validate_agent(mp, agent_name).await?;
-            generate_agent_artifacts(mp, agent_name).await?;
-        }
-
-        // Start platform (with or without agent overlay)
-        start_compose(mp, args.agent.as_deref()).await?;
-        let sha256 = image::load_metadata(&image::images_dir()?)
-            .ok()
-            .flatten()
-            .map(|m| m.sha256);
-        let custom_source = args.image.clone();
-        let state = WorkspaceState {
-            workspace_id: generate_workspace_id(),
-            created_at: Utc::now(),
-            image_sha256: sha256,
-            image_source: custom_source,
-            active_agent: args.agent.clone(),
-        };
-        state_mgr.save(&state)?;
-    } else {
-        // VM exists but stopped - start it, then handle agent if requested
-        vm::restart(mp, quiet).await?;
-
-        if let Some(agent_name) = &args.agent {
-            validate_agent(mp, agent_name).await?;
-            generate_agent_artifacts(mp, agent_name).await?;
-            start_compose(mp, args.agent.as_deref()).await?;
-        }
-
-        // Update state with active agent
-        let mut state = state_mgr.load()?.unwrap_or_else(|| WorkspaceState {
-            workspace_id: generate_workspace_id(),
-            created_at: Utc::now(),
-            image_sha256: None,
-            image_source: None,
-            active_agent: None,
-        });
-        state.active_agent.clone_from(&args.agent);
-        state_mgr.save(&state)?;
-    }
-
-    // Wait for healthy
     health::wait_ready(mp, quiet).await?;
+    print_success_message(args.agent.as_deref(), quiet);
+    Ok(())
+}
 
-    if !quiet {
-        println!();
-        print_guarantees();
-        println!();
-        if let Some(name) = &args.agent {
-            println!("Workspace ready. Agent: {name}");
-            println!();
-            println!("Agent shell:    polis agent shell");
-            println!("Agent commands: polis agent cmd help");
-        } else {
-            println!("Workspace ready.");
-        }
-        println!();
-        println!("Connect: polis connect");
-        println!("Status:  polis status");
+/// Handle the case where the VM is already running.
+fn handle_running_vm(state_mgr: &StateManager, args: &StartArgs, quiet: bool) -> Result<()> {
+    let current_agent = state_mgr.load()?.and_then(|s| s.active_agent);
+    if current_agent == args.agent {
+        print_already_running_message(args.agent.as_deref(), quiet);
+        return Ok(());
+    }
+    let current_desc = agent_description(current_agent.as_deref());
+    let requested_desc = args
+        .agent
+        .as_deref()
+        .map_or_else(|| "no agent".to_string(), |n| format!("--agent {n}"));
+    anyhow::bail!(
+        "Workspace is running with {current_desc}. Stop first:\n  polis stop\n  polis start {requested_desc}"
+    );
+}
+
+/// Create a new VM and start the workspace.
+async fn create_and_start_vm(
+    state_mgr: &StateManager,
+    args: &StartArgs,
+    mp: &impl Multipass,
+    quiet: bool,
+) -> Result<()> {
+    let source = resolve_image_source(args.image.as_deref(), state_mgr)?;
+    let image_path = image::ensure_available(source, quiet)?;
+    vm::create(mp, &image_path, quiet).await?;
+
+    setup_agent_if_requested(mp, args.agent.as_deref()).await?;
+    start_compose(mp, args.agent.as_deref()).await?;
+
+    let sha256 = image::load_metadata(&image::images_dir()?)
+        .ok()
+        .flatten()
+        .map(|m| m.sha256);
+    let state = WorkspaceState {
+        workspace_id: generate_workspace_id(),
+        created_at: Utc::now(),
+        image_sha256: sha256,
+        image_source: args.image.clone(),
+        active_agent: args.agent.clone(),
+    };
+    state_mgr.save(&state)
+}
+
+/// Restart a stopped VM.
+async fn restart_vm(
+    state_mgr: &StateManager,
+    args: &StartArgs,
+    mp: &impl Multipass,
+    quiet: bool,
+) -> Result<()> {
+    vm::restart(mp, quiet).await?;
+
+    if args.agent.is_some() {
+        setup_agent_if_requested(mp, args.agent.as_deref()).await?;
+        start_compose(mp, args.agent.as_deref()).await?;
     }
 
+    let mut state = state_mgr.load()?.unwrap_or_else(|| WorkspaceState {
+        workspace_id: generate_workspace_id(),
+        created_at: Utc::now(),
+        image_sha256: None,
+        image_source: None,
+        active_agent: None,
+    });
+    state.active_agent.clone_from(&args.agent);
+    state_mgr.save(&state)
+}
+
+/// Resolve image source from CLI arg or persisted state.
+fn resolve_image_source(
+    cli_image: Option<&str>,
+    state_mgr: &StateManager,
+) -> Result<image::ImageSource> {
+    if let Some(s) = cli_image {
+        return parse_image_source(s);
+    }
+    let persisted = state_mgr
+        .load()?
+        .and_then(|s| s.image_source)
+        .map(|s| parse_image_source(&s))
+        .transpose()?
+        .unwrap_or(image::ImageSource::Default);
+    Ok(persisted)
+}
+
+/// Parse a string into an `ImageSource`.
+fn parse_image_source(s: &str) -> Result<image::ImageSource> {
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return Ok(image::ImageSource::HttpUrl(s.to_string()));
+    }
+    let path = PathBuf::from(s);
+    anyhow::ensure!(path.exists(), "Image file not found: {}", path.display());
+    Ok(image::ImageSource::LocalFile(path))
+}
+
+/// Validate and generate artifacts for an agent if one is requested.
+async fn setup_agent_if_requested(mp: &impl Multipass, agent: Option<&str>) -> Result<()> {
+    if let Some(name) = agent {
+        validate_agent(mp, name).await?;
+        generate_agent_artifacts(mp, name).await?;
+    }
     Ok(())
+}
+
+/// Format agent description for error messages.
+fn agent_description(agent: Option<&str>) -> String {
+    agent.map_or_else(|| "no agent".to_string(), |n| format!("agent '{n}'"))
+}
+
+/// Print message when workspace is already running with matching config.
+fn print_already_running_message(agent: Option<&str>, quiet: bool) {
+    if quiet {
+        return;
+    }
+    println!();
+    println!("Workspace is running.");
+    if let Some(name) = agent {
+        println!("Agent: {name}");
+    }
+    println!();
+    print_guarantees();
+    println!();
+    println!("Connect: polis connect");
+    println!("Status:  polis status");
+}
+
+/// Print success message after workspace is ready.
+fn print_success_message(agent: Option<&str>, quiet: bool) {
+    if quiet {
+        return;
+    }
+    println!();
+    print_guarantees();
+    println!();
+    if let Some(name) = agent {
+        println!("Workspace ready. Agent: {name}");
+        println!();
+        println!("Agent shell:    polis agent shell");
+        println!("Agent commands: polis agent cmd help");
+    } else {
+        println!("Workspace ready.");
+    }
+    println!();
+    println!("Connect: polis connect");
+    println!("Status:  polis status");
 }
 
 /// Validate that the agent directory and manifest exist inside the VM.

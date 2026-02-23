@@ -15,8 +15,8 @@ EXTERNAL_SUBNET="10.20.1.0/24"
 
 # Detect internal interface (bridge connected to workspace)
 INTERNAL_IF=$(ip -4 route show "$INTERNAL_SUBNET" | awk '{print $3}' | head -n 1)
-if [ -z "$INTERNAL_IF" ]; then
-    echo "[gate-init] ERROR: Could not detect internal interface for $INTERNAL_SUBNET"
+if [[ -z "$INTERNAL_IF" ]]; then
+    echo "[gate-init] ERROR: Could not detect internal interface for $INTERNAL_SUBNET" >&2
     exit 1
 fi
 echo "[gate-init] Detected internal interface: $INTERNAL_IF"

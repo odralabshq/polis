@@ -1,0 +1,10 @@
+# OSV Scanner ignore list
+# Vulnerabilities with no upstream fix available
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0119"
+reason = "number_prefix: no fix available upstream (transitive dep via indicatif)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0134"
+reason = "rustls-pemfile: no fix available upstream"

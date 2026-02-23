@@ -1,9 +1,6 @@
 name: CI
 
-permissions:
-  contents: read
-  security-events: write
-  actions: read
+permissions: {}  # Explicit empty - each job declares its own
 
 on:
   push:
@@ -27,6 +24,8 @@ jobs:
   # ── Stage 1a: Lint Rust ───────────────────────────────────────────
   lint-rust:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -53,6 +52,8 @@ jobs:
   # ── Stage 1b: Lint C ──────────────────────────────────────────────
   lint-c:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -69,6 +70,8 @@ jobs:
   # ── Stage 1c: Lint Shell ──────────────────────────────────────────
   lint-shell:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -80,6 +83,8 @@ jobs:
   # ── Stage 2a: Test Rust ───────────────────────────────────────────
   test-rust:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -104,6 +109,8 @@ jobs:
   # ── Stage 2b: Test Rust Proptests ─────────────────────────────────
   test-rust-proptests:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -122,6 +129,8 @@ jobs:
   # ── Stage 2c: Test C ──────────────────────────────────────────────
   test-c:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -139,6 +148,9 @@ jobs:
   build-containers:
     runs-on: ubuntu-24.04
     needs: [test-rust, test-c]
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -191,6 +203,8 @@ jobs:
   unit-tests:
     runs-on: ubuntu-24.04
     needs: [test-rust, test-c]
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -211,6 +225,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build-containers
     permissions:
+      contents: read
       security-events: write
     strategy:
       matrix:
@@ -256,6 +271,8 @@ jobs:
   integration-tests:
     runs-on: ubuntu-24.04
     needs: [build-containers, unit-tests]
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -303,6 +320,8 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-24.04
     needs: integration-tests
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -415,6 +434,8 @@ jobs:
   # ── Security: SonarCloud ──────────────────────────────────────────
   security-sonarcloud:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

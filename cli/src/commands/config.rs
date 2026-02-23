@@ -151,8 +151,8 @@ async fn set_config(
 
 /// Best-effort propagation of `security.level` to Valkey via the state container.
 ///
-/// Reads the mcp-admin password from the VM filesystem, then passes all arguments
-/// individually to `docker exec` — no shell interpolation (CODER.md §9).
+/// Reads the mcp-admin password from the VM filesystem, then passes it via
+/// `REDISCLI_AUTH` env var to avoid command-line exposure (visible in ps/proc).
 ///
 /// Warns on failure instead of returning an error — the local config is already saved.
 async fn propagate_security_level(ctx: &OutputContext, level: &str, mp: &impl Multipass) {
@@ -173,10 +173,15 @@ async fn propagate_security_level(ctx: &OutputContext, level: &str, mp: &impl Mu
         }
     };
 
+    // Pass password via REDISCLI_AUTH env var instead of -a flag to avoid
+    // exposing it in process list (ps aux, /proc/*/cmdline)
+    let env_arg = format!("REDISCLI_AUTH={pass}");
     match mp
         .exec(&[
             "docker",
             "exec",
+            "-e",
+            &env_arg,
             "polis-state",
             "valkey-cli",
             "--tls",
@@ -188,8 +193,6 @@ async fn propagate_security_level(ctx: &OutputContext, level: &str, mp: &impl Mu
             "/etc/valkey/tls/ca.crt",
             "--user",
             "mcp-admin",
-            "-a",
-            &pass,
             "SET",
             "polis:config:security_level",
             level,
