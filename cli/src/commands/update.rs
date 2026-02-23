@@ -540,37 +540,41 @@ pub async fn update_containers(
         return Ok(());
     }
 
-    // Display update table
+    display_update_table(&updates);
+
+    if !confirm_updates(updates.len())? {
+        return Ok(());
+    }
+
+    let rollback = capture_rollback_info(&updates, mp).await?;
+
+    if !pull_all_images(&updates, ctx, mp).await? {
+        return Ok(());
+    }
+
+    apply_updates_with_rollback(&updates, &rollback, ctx, mp).await
+}
+
+/// Display the update table showing current vs available versions.
+fn display_update_table(updates: &[ContainerUpdate]) {
     println!("  {:<24} {:<12} Available", "Container", "Current");
     println!("  {}", "─".repeat(52));
-    for u in &updates {
+    for u in updates {
         println!(
             "  {:<24} {:<12} {}",
             u.image_name, u.current_version, u.target_version
         );
     }
     println!();
+}
 
-    let confirmed = Confirm::new()
-        .with_prompt(format!("Update {} container(s)?", updates.len()))
+/// Prompt user to confirm updates.
+fn confirm_updates(count: usize) -> Result<bool> {
+    Confirm::new()
+        .with_prompt(format!("Update {count} container(s)?"))
         .default(true)
         .interact()
-        .context("reading confirmation")?;
-
-    if !confirmed {
-        return Ok(());
-    }
-
-    // Capture rollback info before any changes
-    let rollback = capture_rollback_info(&updates, mp).await?;
-
-    // Pull all images first (F-002 atomicity — no compose changes until all pulls succeed)
-    if !pull_all_images(&updates, ctx, mp).await? {
-        return Ok(());
-    }
-
-    // Update compose tags, restart, and rollback on failure
-    apply_updates_with_rollback(&updates, &rollback, ctx, mp).await
+        .context("reading confirmation")
 }
 
 /// Pull all container images. Returns `false` if any pull fails (no changes made).

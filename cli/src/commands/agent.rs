@@ -112,46 +112,69 @@ pub async fn run(
 }
 
 async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
-    // Validate local path
-    let folder = std::path::Path::new(&args.path);
-    anyhow::ensure!(folder.exists(), "Path not found: {}", args.path);
+    let name = validate_agent_folder(&args.path)?;
+    require_vm_running(mp).await?;
+    ensure_agent_not_exists(mp, &name).await?;
+    transfer_agent_to_vm(mp, ctx, &args.path, &name).await?;
+    generate_artifacts_with_cleanup(mp, ctx, &name).await?;
+
+    if !ctx.quiet {
+        println!("Agent '{name}' installed. Start with: polis start --agent {name}");
+    }
+    Ok(())
+}
+
+/// Validate agent folder and return the agent name from manifest.
+fn validate_agent_folder(path: &str) -> Result<String> {
+    let folder = std::path::Path::new(path);
+    anyhow::ensure!(folder.exists(), "Path not found: {path}");
+
     let manifest_path = folder.join("agent.yaml");
-    anyhow::ensure!(
-        manifest_path.exists(),
-        "No agent.yaml found in: {}",
-        args.path
-    );
+    anyhow::ensure!(manifest_path.exists(), "No agent.yaml found in: {path}");
 
-    // Parse agent name from manifest using serde_yaml (no yq dependency)
-    let manifest_content = std::fs::read_to_string(&manifest_path)
+    let content = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("reading {}", manifest_path.display()))?;
-    let manifest: AgentManifest = serde_yaml::from_str(&manifest_content)
+    let manifest: AgentManifest = serde_yaml::from_str(&content)
         .context("failed to parse agent.yaml: missing or invalid metadata.name")?;
-    let name = manifest.metadata.name;
-    anyhow::ensure!(!name.is_empty(), "metadata.name is empty in agent.yaml");
-    validate_agent_name(&name)?;
 
-    // VM must be running
+    anyhow::ensure!(!manifest.metadata.name.is_empty(), "metadata.name is empty in agent.yaml");
+    validate_agent_name(&manifest.metadata.name)?;
+    Ok(manifest.metadata.name)
+}
+
+/// Ensure VM is running.
+async fn require_vm_running(mp: &impl Multipass) -> Result<()> {
     anyhow::ensure!(
         vm::state(mp).await? == vm::VmState::Running,
         "VM is not running. Start it first: polis start"
     );
+    Ok(())
+}
 
-    // Check agent doesn't already exist
+/// Ensure agent doesn't already exist.
+async fn ensure_agent_not_exists(mp: &impl Multipass, name: &str) -> Result<()> {
     let target_dir = format!("{VM_ROOT}/agents/{name}");
     let exists = mp.exec(&["test", "-d", &target_dir]).await?;
     anyhow::ensure!(
         !exists.status.success(),
         "Agent '{name}' already installed. Remove it first: polis agent remove {name}"
     );
+    Ok(())
+}
 
-    // Transfer folder to VM using the Multipass trait
+/// Transfer agent folder to VM.
+async fn transfer_agent_to_vm(
+    mp: &impl Multipass,
+    ctx: &OutputContext,
+    path: &str,
+    name: &str,
+) -> Result<()> {
     if !ctx.quiet {
         println!("Copying agent '{name}' to VM...");
     }
     let dest = format!("{VM_ROOT}/agents/{name}");
     let out = mp
-        .transfer_recursive(&args.path, &dest)
+        .transfer_recursive(path, &dest)
         .await
         .context("multipass transfer")?;
     anyhow::ensure!(
@@ -159,30 +182,36 @@ async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result
         "Failed to transfer agent folder: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    Ok(())
+}
 
-    // Generate artifacts
+/// Generate artifacts, cleaning up on failure.
+async fn generate_artifacts_with_cleanup(
+    mp: &impl Multipass,
+    ctx: &OutputContext,
+    name: &str,
+) -> Result<()> {
     if !ctx.quiet {
         println!("Generating artifacts...");
     }
     let script = format!("{VM_ROOT}/scripts/generate-agent.sh");
     let all_agents = format!("{VM_ROOT}/agents");
     let gen_out = mp
-        .exec(&["bash", &script, &name, &all_agents])
+        .exec(&["bash", &script, name, &all_agents])
         .await
         .context("generate-agent.sh")?;
-    if !gen_out.status.success() {
-        // Cleanup on failure
-        let _ = mp.exec(&["rm", "-rf", &target_dir]).await;
-        let stderr = String::from_utf8_lossy(&gen_out.stderr);
-        let stdout = String::from_utf8_lossy(&gen_out.stdout);
-        let detail = if stderr.is_empty() { stdout } else { stderr };
-        anyhow::bail!("Artifact generation failed:\n{detail}");
+
+    if gen_out.status.success() {
+        return Ok(());
     }
 
-    if !ctx.quiet {
-        println!("Agent '{name}' installed. Start with: polis start --agent {name}");
-    }
-    Ok(())
+    // Cleanup on failure
+    let target_dir = format!("{VM_ROOT}/agents/{name}");
+    let _ = mp.exec(&["rm", "-rf", &target_dir]).await;
+    let stderr = String::from_utf8_lossy(&gen_out.stderr);
+    let stdout = String::from_utf8_lossy(&gen_out.stdout);
+    let detail = if stderr.is_empty() { stdout } else { stderr };
+    anyhow::bail!("Artifact generation failed:\n{detail}");
 }
 
 async fn remove(args: &RemoveArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
