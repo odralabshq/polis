@@ -148,8 +148,8 @@ function Get-Image {
 
     New-Item -ItemType Directory -Force -Path $ImageDir | Out-Null
 
-    # Try CDN first, fall back to GitHub
-    $cdnUrl     = "${CdnBaseUrl}/${Version}/${imageName}"
+    # Try CDN first, fall back to GitHub (S3 keys use v-prefixed version)
+    $cdnUrl     = "${CdnBaseUrl}/v${Version}/${imageName}"
     $ghUrl      = "${ghBase}/${imageName}"
     $downloaded = $false
 

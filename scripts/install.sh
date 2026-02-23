@@ -222,7 +222,7 @@ download_image() {
 
     log_info "Downloading VM image from CDN..." >&2
     if ! curl -fL --http2 --retry 3 --retry-delay 2 --progress-bar \
-        "${CDN_BASE_URL}/${VERSION}/${image_name}" -o "${dest}" >&2; then
+        "${CDN_BASE_URL}/v${VERSION}/${image_name}" -o "${dest}" >&2; then
         log_warn "CDN unavailable, falling back to GitHub..." >&2
         curl -fL --retry 3 --retry-delay 2 --progress-bar \
             "${gh_base_url}/${image_name}" -o "${dest}" >&2
