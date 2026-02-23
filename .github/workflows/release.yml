@@ -136,7 +136,7 @@ jobs:
             "manifest_version": 1,
             "vm_image": {
               "version": "${VERSION}",
-              "asset": "polis-${VERSION}-amd64.qcow2"
+              "asset": "polis-${VERSION}-amd64.qcow2.zst"
             },
             "containers": {
               "polis-resolver-oss": "${VERSION}",
@@ -241,10 +241,17 @@ jobs:
             -var "arch=amd64" \
             polis-vm.pkr.hcl
 
+      - name: Compress VM image
+        run: |
+          cd packer/output
+          for qcow2 in *.qcow2; do
+            zstd -T0 -19 --rm "${qcow2}" -o "${qcow2}.zst"
+          done
+
       - name: Generate checksum
         run: |
           cd packer/output
-          sha256sum ./*.qcow2 > checksums.sha256
+          sha256sum ./*.qcow2.zst > checksums.sha256
 
       - name: Sign VM image checksum
         env:
@@ -252,11 +259,11 @@ jobs:
         run: |
           cargo install zipsign --version 0.2.1 --locked
           echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
-          for qcow2 in packer/output/*.qcow2; do
-            checksum=$(sha256sum "${qcow2}" | cut -d' ' -f1)
-            sidecar="${qcow2}.sha256"
+          for zst in packer/output/*.qcow2.zst; do
+            checksum=$(sha256sum "${zst}" | cut -d' ' -f1)
+            sidecar="${zst}.sha256"
             tmpdir=$(mktemp -d)
-            echo "${checksum}  $(basename "${qcow2}")" > "${tmpdir}/checksum.txt"
+            echo "${checksum}  $(basename "${zst}")" > "${tmpdir}/checksum.txt"
             tar -czf "${tmpdir}/checksum.tar.gz" -C "${tmpdir}" checksum.txt
             zipsign sign tar --context "" "${tmpdir}/checksum.tar.gz" /tmp/polis-release.key \
               -o "${sidecar}" -f
@@ -268,15 +275,15 @@ jobs:
       - name: Attest VM provenance
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
         with:
-          subject-path: packer/output/*.qcow2
+          subject-path: packer/output/*.qcow2.zst
 
       - name: Upload VM artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: vm-image
           path: |
-            packer/output/*.qcow2
-            packer/output/*.qcow2.sha256
+            packer/output/*.qcow2.zst
+            packer/output/*.qcow2.zst.sha256
             packer/output/checksums.sha256
           retention-days: 1
 
@@ -365,8 +372,8 @@ jobs:
           prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: |
-            vm/*.qcow2
-            vm/*.qcow2.sha256
+            vm/*.qcow2.zst
+            vm/*.qcow2.zst.sha256
             vm/checksums.sha256
             cli-bin/polis-linux-amd64
             cli-bin/polis-linux-amd64.sha256
