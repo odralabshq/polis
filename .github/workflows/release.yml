@@ -323,9 +323,6 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: polis-macos-amd64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: polis-macos-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
