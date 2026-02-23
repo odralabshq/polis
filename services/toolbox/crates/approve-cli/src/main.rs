@@ -83,7 +83,10 @@ fn parse_auto_approve_action(s: &str) -> Result<AutoApproveAction> {
     }
 }
 
-async fn handle_approve(con: &mut redis::aio::MultiplexedConnection, request_id: &str) -> Result<()> {
+async fn handle_approve(
+    con: &mut redis::aio::MultiplexedConnection,
+    request_id: &str,
+) -> Result<()> {
     polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
 
     let blocked_key = polis_common::blocked_key(request_id);
@@ -110,14 +113,22 @@ async fn handle_approve(con: &mut redis::aio::MultiplexedConnection, request_id:
     });
 
     let _: () = con
-        .zadd(polis_common::keys::EVENT_LOG, audit_entry.to_string(), now as f64)
+        .zadd(
+            polis_common::keys::EVENT_LOG,
+            audit_entry.to_string(),
+            now as f64,
+        )
         .await
         .context("failed to ZADD audit log entry")?;
 
     redis::pipe()
         .atomic()
         .del(&blocked_key)
-        .set_ex(&approved_key, "approved", polis_common::ttl::APPROVED_REQUEST_SECS)
+        .set_ex(
+            &approved_key,
+            "approved",
+            polis_common::ttl::APPROVED_REQUEST_SECS,
+        )
         .query_async::<Vec<redis::Value>>(con)
         .await
         .context("failed to atomically DEL blocked + SETEX approved")?;
@@ -152,11 +163,18 @@ async fn handle_deny(con: &mut redis::aio::MultiplexedConnection, request_id: &s
     });
 
     let _: () = con
-        .zadd(polis_common::keys::EVENT_LOG, audit_entry.to_string(), now as f64)
+        .zadd(
+            polis_common::keys::EVENT_LOG,
+            audit_entry.to_string(),
+            now as f64,
+        )
         .await
         .context("failed to ZADD audit log entry")?;
 
-    let _: () = con.del(&blocked_key).await.context("failed to DEL blocked key")?;
+    let _: () = con
+        .del(&blocked_key)
+        .await
+        .context("failed to DEL blocked key")?;
 
     println!("denied {}", request_id);
     Ok(())
@@ -179,7 +197,11 @@ async fn handle_list_pending(con: &mut redis::aio::MultiplexedConnection) -> Res
             .context("failed to SCAN blocked keys")?;
 
         for key in &batch {
-            if let Some(data) = con.get::<_, Option<String>>(key).await.context("failed to GET blocked request")? {
+            if let Some(data) = con
+                .get::<_, Option<String>>(key)
+                .await
+                .context("failed to GET blocked request")?
+            {
                 println!("{}: {}", key, data);
                 found += 1;
             }
@@ -232,11 +254,17 @@ async fn main() -> Result<()> {
             println!("security level set to {}", level_str);
             Ok(())
         }
-        Commands::AutoApprove { ref pattern, ref action } => {
+        Commands::AutoApprove {
+            ref pattern,
+            ref action,
+        } => {
             let _action = parse_auto_approve_action(action)?;
             let action_str = action.to_lowercase();
             let key = polis_common::auto_approve_key(pattern);
-            let _: () = con.set(&key, &action_str).await.context("failed to SET auto-approve rule")?;
+            let _: () = con
+                .set(&key, &action_str)
+                .await
+                .context("failed to SET auto-approve rule")?;
             println!("auto-approve rule set: {} → {}", pattern, action_str);
             Ok(())
         }
