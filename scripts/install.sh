@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-VERSION="${POLIS_VERSION:-0.3.0-preview-2}"
+VERSION="${POLIS_VERSION:-0.3.0-preview-3}"
 INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
@@ -219,13 +219,13 @@ download_image() {
     base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
 
     # Discover the actual image filename from versions.json
-    image_name="polis-v0.3.0-preview-1-amd64.qcow2"
+    image_name=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/versions.json" | python3 -c "import sys,json; print(json.load(sys.stdin)['vm_image']['asset'])")
 
     dest="${INSTALL_DIR}/images/${image_name}"
     mkdir -p "${INSTALL_DIR}/images"
 
     log_info "Downloading VM image..." >&2
-    curl -fL --proto "${CURL_PROTO}" --progress-bar \
+    curl -fL --http2 --progress-bar \
         "${base_url}/${image_name}" -o "${dest}" >&2
 
     log_info "Verifying image SHA256..." >&2
