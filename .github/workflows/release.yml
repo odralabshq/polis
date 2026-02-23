@@ -320,7 +320,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: polis-windows-amd64.exe
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: polis-macos-amd64
           - os: macos-latest
