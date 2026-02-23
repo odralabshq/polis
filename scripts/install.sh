@@ -209,7 +209,7 @@ create_symlink() {
 }
 
 download_image() {
-    local arch gh_base_url image_name dest expected actual
+    local arch gh_base_url image_name dest sidecar expected actual
     arch=$(check_arch)
     gh_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
 
@@ -217,11 +217,15 @@ download_image() {
     image_name=$(curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/versions.json" | python3 -c "import sys,json; print(json.load(sys.stdin)['vm_image']['asset'])")
 
     dest="${INSTALL_DIR}/images/${image_name}"
+    sidecar="${dest}.sha256"
     mkdir -p "${INSTALL_DIR}/images"
 
     log_info "Downloading VM image from CDN..." >&2
     curl -fL --http2 --retry 3 --retry-delay 2 --continue-at - --progress-bar \
         "${CDN_BASE_URL}/${VERSION}/${image_name}" -o "${dest}" >&2
+
+    # Download signed sidecar for CLI integrity verification
+    curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/${image_name}.sha256" -o "${sidecar}" >&2
 
     # Checksum from GitHub (tamper-evident, separate origin from binary)
     log_info "Verifying image SHA256..." >&2
@@ -231,7 +235,7 @@ download_image() {
         log_error "Image SHA256 mismatch!" >&2
         echo "  Expected: ${expected}" >&2
         echo "  Actual:   ${actual}" >&2
-        rm -f "${dest}"
+        rm -f "${dest}" "${sidecar}"
         exit 1
     fi
     log_ok "Image SHA256 verified: ${expected}" >&2

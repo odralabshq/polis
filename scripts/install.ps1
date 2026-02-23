@@ -140,11 +140,15 @@ function Get-Image {
     $versions  = Invoke-RestMethod -Uri "$base/versions.json" -UseBasicParsing
     $imageName = $versions.vm_image.asset
     $dest      = Join-Path $ImageDir $imageName
+    $sidecar   = "$dest.sha256"
 
     New-Item -ItemType Directory -Force -Path $ImageDir | Out-Null
 
     Write-Info "Downloading VM image..."
     Invoke-WebRequest -Uri "$base/$imageName" -OutFile $dest -UseBasicParsing
+
+    # Download signed sidecar for CLI integrity verification
+    Invoke-WebRequest -Uri "$base/$imageName.sha256" -OutFile $sidecar -UseBasicParsing
 
     Write-Info "Verifying image SHA256..."
     $checksums = Invoke-WebRequest -Uri "$base/checksums.sha256" -UseBasicParsing
@@ -158,6 +162,7 @@ function Get-Image {
             Write-Host "  Expected: $expected"
             Write-Host "  Actual:   $actual"
             Remove-Item $dest -Force -ErrorAction SilentlyContinue
+            Remove-Item $sidecar -Force -ErrorAction SilentlyContinue
             exit 1
         }
         Write-Ok "Image SHA256 verified: $expected"
