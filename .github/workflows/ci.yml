@@ -250,7 +250,7 @@ jobs:
         run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
       - name: Scan ${{ matrix.image }} with Trivy
-        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
+        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # v0.34.1
         with:
           image-ref: 'ghcr.io/odralabshq/${{ matrix.image }}:latest'
           format: 'sarif'
@@ -260,7 +260,7 @@ jobs:
           skip-setup-trivy: false
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
         with:
           sarif_file: 'trivy-${{ matrix.image }}.sarif'
           category: 'trivy-${{ matrix.image }}'
@@ -385,7 +385,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload Semgrep SARIF
-        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
         with:
           sarif_file: semgrep.sarif
           category: semgrep-sast
@@ -403,7 +403,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkov IaC scan
-        uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
+        uses: bridgecrewio/checkov-action@9607a27d5a5dc7cbdac83c426af4cda3a085454d # v12.3085.0
         with:
           directory: .
           framework: dockerfile github_actions yaml
@@ -411,7 +411,7 @@ jobs:
           soft_fail: true
 
       - name: Upload Checkov SARIF
-        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        uses: github/codeql-action/upload-sarif@9e907b5e64f6b83e7804b09294d44122997950d6 # v4.32.3
         with:
           sarif_file: results.sarif
           category: checkov-iac
@@ -424,7 +424,7 @@ jobs:
       security-events: write
       contents: read
       actions: read
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@8ae4be80636b94886b3c271caad730985ce0611c # v2.3.3
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@a30b4c310bacb7c0635e316e0720e23f0b791cf8 # v2.3.3
     with:
       scan-args: |-
         --include-git-root
