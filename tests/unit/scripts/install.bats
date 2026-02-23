@@ -77,7 +77,7 @@ _run_script() {
     chmod +x "$TEST_DIR/bin/polis"
     multipass() { return 1; }
     run run_init "/tmp/test.qcow2"
-    assert_success
+    assert_failure
     assert_output --partial "polis start failed"
 }
 
@@ -85,71 +85,31 @@ _run_script() {
     _source_functions
     multipass() { return 1; }
     run run_init "/tmp/test.qcow2"
-    assert_success
+    assert_failure
     assert_output --partial "polis start failed"
 }
 
-# ── resolve_version() ─────────────────────────────────────────────────────
+# ── VERSION handling ──────────────────────────────────────────────────────
+# VERSION is now hardcoded in install.sh (no resolve_version function).
+# These tests verify the VERSION variable is set correctly.
 
-@test "resolve_version: HTTP 403 exits 1 with rate limit message" {
-    _source_functions
-    curl() { printf '{"message":"rate limited"}\n403'; }
-    VERSION="latest"
-    run resolve_version
-    assert_failure
-    assert_output --partial "GitHub API rate limit exceeded"
-    assert_output --partial "POLIS_VERSION"
-}
-
-@test "resolve_version: empty tag_name exits 1" {
-    _source_functions
-    curl() { printf '{"tag_name":""}\n200'; }
-    VERSION="latest"
-    run resolve_version
-    assert_failure
-    assert_output --partial "Failed to resolve latest version"
-}
-
-@test "resolve_version: null tag_name exits 1" {
-    _source_functions
-    curl() { printf '{"tag_name":null}\n200'; }
-    VERSION="latest"
-    run resolve_version
-    assert_failure
-    assert_output --partial "Failed to resolve latest version"
-}
-
-@test "resolve_version: valid response resolves version with jq" {
-    command -v jq >/dev/null 2>&1 || skip "jq not installed"
-    _source_functions
-    curl() { printf '{"tag_name":"v1.2.3"}\n200'; }
-    VERSION="latest"
-    run resolve_version
+@test "install: VERSION variable is set" {
+    run grep -E "^VERSION=" "$INSTALL_SH"
     assert_success
-    assert_output --partial "v1.2.3"
-}
-
-@test "resolve_version: pinned version skips API call and logs version" {
-    _source_functions
-    curl() { fail "curl must not be called for a pinned version"; }
-    VERSION="v0.3.0"
-    run resolve_version
-    assert_success
-    assert_output --partial "v0.3.0"
 }
 
 # ── main() success message ────────────────────────────────────────────────
 
-@test "install: success message shows polis start" {
+@test "install: success message shows Polis installed successfully" {
     export POLIS_VERSION="v0.1.0"
     run _run_script
     assert_success
-    assert_output --partial "polis start"
+    assert_output --partial "Polis installed successfully"
 }
 
-@test "install: success message shows polis start claude" {
+@test "install: no Get started hints in output" {
     export POLIS_VERSION="v0.1.0"
     run _run_script
     assert_success
-    assert_output --partial "polis start claude"
+    refute_output --partial "Get started"
 }
