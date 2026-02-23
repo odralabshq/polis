@@ -1,0 +1,37 @@
+# container-structure-test for polis-workspace
+# Validates Sysbox-compatible workspace with systemd
+
+schemaVersion: '2.0.0'
+
+# workspace runs as root (sysbox-runc, systemd requires root)
+metadataTest:
+  workdir: "/"
+
+fileExistenceTests:
+  - name: 'init script'
+    path: '/usr/local/bin/init.sh'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
+
+  - name: 'systemd'
+    path: '/lib/systemd/systemd'
+    shouldExist: true
+
+  - name: 'curl for egress'
+    path: '/usr/bin/curl'
+    shouldExist: true
+
+  - name: 'CA certificates directory'
+    path: '/usr/local/share/ca-certificates'
+    shouldExist: true
+
+commandTests:
+  - name: 'curl available'
+    command: 'which'
+    args: ['curl']
+    exitCode: 0
+
+  - name: 'systemd available'
+    command: 'test'
+    args: ['-x', '/lib/systemd/systemd']
+    exitCode: 0

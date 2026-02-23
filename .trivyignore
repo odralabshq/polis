@@ -1,0 +1,4 @@
+# CVE-2026-0861: glibc integer overflow in memalign
+# Waiting for DHI upstream patch - affects dhi.io/debian-base:trixie
+# Tracked: https://avd.aquasec.com/nvd/cve-2026-0861
+CVE-2026-0861

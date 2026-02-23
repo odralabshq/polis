@@ -1,0 +1,9 @@
+. {
+    health :8080
+    log
+    blocklist /etc/coredns/blocklist.txt
+    template ANY AAAA {
+        rcode NOERROR
+    }
+    forward . 8.8.8.8 8.8.4.4
+}

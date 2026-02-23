@@ -1,0 +1,25 @@
+[package]
+name = "polis-hitl-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+polis-common = { path = "../../../../lib/crates/polis-common" }
+rmcp = { version = "0.16", features = ["server", "macros", "transport-streamable-http-server"] }
+schemars = "1.2"
+tokio = { version = "1.49", features = ["full"] }
+fred = { version = "10.1", features = ["enable-rustls", "i-all"] }
+rustls = "0.23"
+rustls-pemfile = "2"
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+percent-encoding = "2.3"
+envy = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+axum = "0.8"
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+tokio-rustls = "0.26"

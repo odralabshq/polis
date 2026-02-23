@@ -1,0 +1,37 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_AARCH64"],
+  "syscalls": [
+    {
+      "names": [
+        "accept", "accept4", "access", "arch_prctl", "bind", "brk",
+        "capget", "capset", "chdir", "clock_getres", "clock_gettime",
+        "clock_nanosleep", "clone", "clone3", "close", "connect", "dup", "dup2", "dup3",
+        "epoll_create", "epoll_create1", "epoll_ctl", "epoll_pwait",
+        "epoll_wait", "eventfd", "eventfd2", "execve", "exit", "exit_group",
+        "faccessat", "faccessat2", "fcntl", "fsmount", "fsopen", "fspick",
+        "fstat", "fstatfs", "fsync",
+        "futex", "getcwd", "getdents", "getdents64", "getegid", "geteuid",
+        "getgid", "getgroups", "getpeername", "getpid", "getppid",
+        "getrandom", "getresgid", "getresuid", "getrlimit", "getrusage",
+        "getsockname", "getsockopt", "gettid", "gettimeofday", "getuid",
+        "ioctl", "kill", "listen", "lseek", "lstat", "madvise", "membarrier",
+        "mincore", "mmap", "mprotect", "mremap", "munmap", "nanosleep",
+        "newfstatat", "open", "openat", "pipe", "pipe2", "poll", "ppoll",
+        "prctl", "pread64", "prlimit64", "read", "readlink", "readlinkat",
+        "readv", "recvfrom", "recvmmsg", "recvmsg", "restart_syscall",
+        "rt_sigaction", "rt_sigpending", "rt_sigprocmask", "rt_sigreturn",
+        "rt_sigsuspend", "rt_sigtimedwait", "sched_getaffinity",
+        "sched_yield", "seccomp", "select", "sendmmsg", "sendmsg", "sendto",
+        "set_robust_list", "set_tid_address", "setgid", "setgroups",
+        "setresgid", "setresuid", "setuid", "setsockopt", "shutdown",
+        "sigaltstack", "socket", "socketpair", "stat", "statfs", "statx",
+        "sysinfo", "tgkill", "time", "timer_create", "timer_delete",
+        "timer_gettime", "timer_settime", "timerfd_create", "timerfd_gettime",
+        "timerfd_settime", "tkill", "uname", "wait4", "write", "writev"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "comment": "CoreDNS Go runtime syscalls - no mount/unshare/execve/fork/ptrace"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+# container-structure-test for polis-resolver
+# Validates CoreDNS with blocklist filtering
+
+schemaVersion: '2.0.0'
+
+metadataTest:
+  user: "65532"
+
+fileExistenceTests:
+  - name: 'coredns binary'
+    path: '/usr/bin/coredns'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
+
+commandTests:
+  - name: 'coredns version'
+    command: '/usr/bin/coredns'
+    args: ['-version']
+    exitCode: 0
+    expectedOutput: ['CoreDNS']

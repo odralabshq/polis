@@ -1,103 +1,453 @@
 name: CI
 
+permissions: {}  # Explicit empty - each job declares its own
+
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+
+env:
+  SYSBOX_VERSION: "0.6.7"
+  SYSBOX_SHA256: "b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
+  POLIS_IMAGES: >-
+    ghcr.io/odralabshq/polis-resolver-oss:latest
+    ghcr.io/odralabshq/polis-gate-oss:latest
+    ghcr.io/odralabshq/polis-certgen-oss:latest
+    ghcr.io/odralabshq/polis-sentinel-oss:latest
+    ghcr.io/odralabshq/polis-scanner-oss:latest
+    ghcr.io/odralabshq/polis-workspace-oss:latest
+    ghcr.io/odralabshq/polis-toolbox-oss:latest
 
 jobs:
-  test:
+  # ── Stage 1a: Lint Rust ───────────────────────────────────────────
+  lint-rust:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Check formatting
+        run: |
+          cargo fmt --all --manifest-path cli/Cargo.toml -- --check
+          cargo fmt --all --manifest-path services/toolbox/Cargo.toml -- --check
+
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
+          cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
+
+  # ── Stage 1b: Lint C ──────────────────────────────────────────────
+  lint-c:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: cppcheck
+        run: |
+          find services/sentinel/modules -name '*.c' -print0 | \
+            xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
+
+  # ── Stage 1c: Lint Shell ──────────────────────────────────────────
+  lint-shell:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh packer/scripts/*.sh
+
+  # ── Stage 2a: Test Rust ───────────────────────────────────────────
+  test-rust:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Test CLI (skip proptests)
+        run: cargo test --workspace --manifest-path cli/Cargo.toml -- --skip proptests
+
+      - name: Test Toolbox
+        run: cargo test --workspace --manifest-path services/toolbox/Cargo.toml
+
+      - name: Test polis-common
+        run: cargo test --manifest-path lib/crates/polis-common/Cargo.toml
+
+  # ── Stage 2b: Test Rust Proptests ─────────────────────────────────
+  test-rust-proptests:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Test CLI proptests
+        run: cargo test --workspace --manifest-path cli/Cargo.toml -- proptests
+
+  # ── Stage 2c: Test C ──────────────────────────────────────────────
+  test-c:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Compile and run C tests
+        run: |
+          for src in tests/native/sentinel/test_*.c; do
+            bin="${src%.c}"
+            gcc -Wall -Werror -o "$bin" "$src"
+            "$bin"
+          done
+
+  # ── Stage 3a: Build containers ────────────────────────────────────
+  build-containers:
+    runs-on: ubuntu-24.04
+    needs: [test-rust, test-c]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Login to DHI registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.12.0
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
-          platforms: linux/amd64
+          driver-opts: |
+            image=moby/buildkit:v0.19.0@sha256:14aa1b4dd92ea0a4cd03a54d0c6079046ea98cd0c0ae6176bdd7036ba370cbbe
+            network=host
 
-      - name: Cleanup existing Docker containers
-        run: docker rm $(docker ps -a -q) -f || true
-
-      - name: Install sysbox
-        run: |
-          wget https://downloads.nestybox.com/sysbox/releases/v0.6.7/sysbox-ce_0.6.7-0.linux_amd64.deb
-          sudo apt-get install -y jq ./sysbox-ce_0.6.7-0.linux_amd64.deb
-          
-          # Configure Docker to use sysbox runtime
-          sudo mkdir -p /etc/docker
-          echo '{"runtimes":{"sysbox-runc":{"path":"/usr/bin/sysbox-runc"}}}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-          
-          # Verify sysbox is available
-          docker info | grep -i sysbox
-
-      - name: Set script permissions
-        run: |
-          chmod +x ./tools/polis.sh
-          chmod +x ./tools/*.sh
-          chmod +x ./tests/run-tests.sh
-          chmod +x ./scripts/*.sh
-          chmod +x ./agents/openclaw/install.sh
-          chmod +x ./agents/openclaw/scripts/*.sh
-
-      - name: Setup CA certificates
-        run: ./tools/polis.sh setup-ca
-
-      - name: Setup Valkey TLS certificates
-        run: |
-          ./scripts/generate-valkey-certs.sh ./certs/valkey
-          # Multiple containers (valkey uid:999, icap c-icap, mcp-agent polis)
-          # mount the same cert directory. Make all files world-readable so
-          # every container user can access them.
-          chmod 644 ./certs/valkey/*
-
-      - name: Setup Valkey secrets
+      - name: Build images (compose + buildx GHA cache)
         run: |
           touch .env
-          ./scripts/generate-valkey-secrets.sh ./secrets .
-          # Ensure ACL file is readable by Docker daemon for secret injection
-          chmod 644 ./secrets/valkey_users.acl
+          docker buildx bake \
+            --set '*.cache-from=type=gha' \
+            --set '*.cache-to=type=gha,mode=max' \
+            --load \
+            -f docker-compose.yml
 
-      - name: Build containers
-        run: ./tools/polis.sh build
+      - name: Save and compress images
+        run: |
+          docker save ${{ env.POLIS_IMAGES }} | zstd -T0 -3 -o polis-images.tar.zst
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: polis-images
+          path: polis-images.tar.zst
+          retention-days: 1
+          compression-level: 0
+
+  # ── Stage 3b: BATS unit tests ─────────────────────────────────────
+  unit-tests:
+    runs-on: ubuntu-24.04
+    needs: [test-rust, test-c]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Generate secrets for ACL structure tests
+        run: |
+          chmod +x ./services/state/scripts/generate-secrets.sh
+          touch .env
+          ./services/state/scripts/generate-secrets.sh ./secrets .
+
+      - name: Run unit tests
+        run: ./tests/run-tests.sh unit
+
+  # ── Stage 3c: Scan images (Trivy) ─────────────────────────────────
+  scan-images:
+    runs-on: ubuntu-24.04
+    needs: build-containers
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      matrix:
+        image:
+          - polis-gate-oss
+          - polis-sentinel-oss
+          - polis-workspace-oss
+          - polis-scanner-oss
+          - polis-resolver-oss
+          - polis-toolbox-oss
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download image artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
+
+      - name: Scan ${{ matrix.image }} with Trivy
+        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
+        with:
+          image-ref: 'ghcr.io/odralabshq/${{ matrix.image }}:latest'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.image }}.sarif'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+          skip-setup-trivy: false
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        with:
+          sarif_file: 'trivy-${{ matrix.image }}.sarif'
+          category: 'trivy-${{ matrix.image }}'
+        if: always()
+        continue-on-error: true
+
+  # ── Stage 4: Integration tests ────────────────────────────────────
+  integration-tests:
+    runs-on: ubuntu-24.04
+    needs: [build-containers, unit-tests]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Login to DHI registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Install sysbox
+        run: source ./scripts/ci-helpers.sh && install_sysbox
+
+      - name: Download image artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
+
+      - name: Install just
+        run: curl --proto '=https' -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+      - name: Setup certificates and secrets
+        run: source ./scripts/ci-helpers.sh && setup_certs_and_secrets
 
       - name: Start containers
-        run: ./tools/polis.sh up
+        run: just up
 
       - name: Wait for healthy
-        run: |
-          for i in {1..60}; do
-            HEALTHY=$(docker ps --filter "health=healthy" --format "{{.Names}}" | sort)
-            echo "Healthy containers: $HEALTHY"
-            if echo "$HEALTHY" | grep -q "polis-gateway" && \
-               echo "$HEALTHY" | grep -q "polis-icap" && \
-               echo "$HEALTHY" | grep -q "polis-v2-valkey" && \
-               echo "$HEALTHY" | grep -q "polis-mcp-agent" && \
-               echo "$HEALTHY" | grep -q "polis-workspace"; then
-              echo "All containers healthy"
-              exit 0
-            fi
-            echo "Waiting for containers... ($i/60)"
-            sleep 5
-          done
-          echo "Timeout waiting for containers"
-          docker ps -a
-          docker logs polis-v2-valkey 2>&1 | tail -30 || true
-          docker logs polis-icap 2>&1 | tail -30 || true
-          docker logs polis-mcp-agent 2>&1 | tail -30 || true
-          exit 1
+        run: source ./scripts/ci-helpers.sh && wait_for_healthy
 
-      - name: Run tests
-        run: ./tests/run-tests.sh --tap all
+      - name: Run integration tests
+        run: ./tests/run-tests.sh --ci integration
 
       - name: Show logs on failure
         if: failure()
+        run: source ./scripts/ci-helpers.sh && show_logs_on_failure
+
+  # ── Stage 5: E2E tests ─────────────────────────────────────────────
+  e2e-tests:
+    runs-on: ubuntu-24.04
+    needs: integration-tests
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Login to DHI registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Install sysbox
+        run: source ./scripts/ci-helpers.sh && install_sysbox
+
+      - name: Download image artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
+
+      - name: Install just
+        run: curl --proto '=https' -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+      - name: Setup certificates and secrets
+        run: source ./scripts/ci-helpers.sh && setup_certs_and_secrets
+
+      - name: Start containers
         run: |
-          echo "=== Gateway ===" && docker logs polis-gateway 2>&1 | tail -50 || true
-          echo "=== ICAP ===" && docker logs polis-icap 2>&1 | tail -50 || true
-          echo "=== Valkey ===" && docker logs polis-v2-valkey 2>&1 | tail -50 || true
-          echo "=== MCP-Agent ===" && docker logs polis-mcp-agent 2>&1 | tail -50 || true
-          echo "=== Workspace ===" && docker logs polis-workspace 2>&1 | tail -50 || true
-          echo "=== Container Status ===" && docker ps -a
+          just up
+          docker compose --profile test up -d httpbin
+
+      - name: Wait for healthy
+        run: source ./scripts/ci-helpers.sh && wait_for_healthy
+
+      - name: Run E2E tests
+        run: ./tests/run-tests.sh --ci e2e
+
+      - name: Show logs on failure
+        if: failure()
+        run: source ./scripts/ci-helpers.sh && show_logs_on_failure
+
+  # ── Security: Semgrep SAST ─────────────────────────────────────────
+  security-semgrep:
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+      contents: read
+    container:
+      image: semgrep/semgrep:1.152.0
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Semgrep scan
+        run: semgrep scan --config auto --sarif -o semgrep.sarif
+        continue-on-error: true
+
+      - name: Upload Semgrep SARIF
+        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep-sast
+        if: always()
+
+  # ── Security: Checkov IaC ──────────────────────────────────────────
+  security-checkov:
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkov IaC scan
+        uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
+        with:
+          directory: .
+          framework: dockerfile github_actions yaml
+          output_format: sarif
+          soft_fail: true
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        with:
+          sarif_file: results.sarif
+          category: checkov-iac
+        if: always()
+
+  # ── Security: OSV Scanner (Rust/C dependency CVEs) ───────────────
+  security-osv:
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@8ae4be80636b94886b3c271caad730985ce0611c # v2.3.3
+    with:
+      scan-args: |-
+        --include-git-root
+        -r
+        ./
+
+  # ── Security: SonarCloud ──────────────────────────────────────────
+  security-sonarcloud:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7.0.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} # nosemgrep: generic.secrets.security.detected-sonarqube-docs-api-key.detected-sonarqube-docs-api-key NOSONAR
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          args: >
+            -Dsonar.projectKey=odralabshq_polis
+            -Dsonar.organization=odralabshq
+            -Dsonar.qualitygate.wait=true

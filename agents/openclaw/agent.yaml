@@ -1,0 +1,76 @@
+apiVersion: polis.dev/v1
+kind: AgentPlugin
+
+metadata:
+  name: openclaw
+  displayName: "OpenClaw"
+  version: "1.0.0"
+  description: "AI coding agent with Control UI"
+  author: "openclaw"
+  license: "MIT"
+  provider: "Anthropic"
+  capabilities:
+    - code-generation
+    - code-review
+    - refactoring
+
+spec:
+  packaging: script
+  install: install.sh
+
+  runtime:
+    command: "/usr/bin/node dist/index.js gateway --allow-unconfigured --bind lan --port 18789"
+    workdir: /app
+    user: polis
+    envFile: /home/polis/.openclaw/.env
+    env:
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+
+  init: scripts/init.sh
+
+  health:
+    command: "curl -sf http://127.0.0.1:18789/health"
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    startPeriod: 120s
+
+  security:
+    protectSystem: strict
+    protectHome: read-only
+    readWritePaths:
+      - /home/polis/.openclaw
+    noNewPrivileges: true
+    privateTmp: true
+    memoryMax: 2G
+    cpuQuota: "100%"
+
+  ports:
+    - container: 18789
+      hostEnv: OPENCLAW_HOST_PORT
+      default: 18789
+
+  resources:
+    memoryLimit: 6G
+    memoryReservation: 1G
+
+  requirements:
+    envOneOf:
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENROUTER_API_KEY
+    envOptional:
+      - BRAVE_SEARCH_API_KEY
+
+  persistence:
+    - name: data
+      containerPath: /home/polis/.openclaw
+
+  capabilities:
+    network: true
+    filesystem:
+      - /home/polis/.openclaw/workspace
+    mcp: true
+    dockerInDocker: false
+
+  commands: commands.sh

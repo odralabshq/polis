@@ -29,20 +29,29 @@ curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list
 apt-get update && apt-get install -y --no-install-recommends nodejs
-corepack enable
 
-# Pre-install pnpm so corepack doesn't need network access at runtime
-corepack prepare pnpm@latest --activate
+# Disable corepack — we install pnpm via npm instead (more reliable through TPROXY)
+corepack disable 2>/dev/null || true
+
+# Force Node.js to trust the full OS CA bundle (includes Polis CA)
+export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
+# Install pnpm globally via npm (more reliable than corepack through TPROXY).
+# Corepack's fetch() can get 403 from the ICAP pipeline during bootstrap.
+npm install -g pnpm@latest  # NOSONAR - controlled sandbox environment, protected by Polis security stack (DLP, ICAP, malware scanning)
 rm -rf /var/lib/apt/lists/*
 
-# Install Bun
-curl -fsSL https://bun.sh/install | bash
+# Install Bun (optional — not required for the build, but some plugins may use it)
+export HOME="${HOME:-/root}"
+curl -fsSL https://bun.sh/install | bash || echo "[openclaw-install] WARNING: Bun install failed (non-fatal)"
 export PATH="/root/.bun/bin:${PATH}"
 
 # Clone and build OpenClaw
 cd /app || { mkdir -p /app && cd /app; }
-git clone --depth 1 https://github.com/openclaw/openclaw.git .
-pnpm install --frozen-lockfile
+if [[ ! -f package.json ]]; then
+    git clone --depth 1 https://github.com/openclaw/openclaw.git .
+fi
+pnpm install --frozen-lockfile --network-concurrency=4  # NOSONAR - controlled sandbox environment, protected by Polis security stack
 OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build
 OPENCLAW_PREFER_PNPM=1 pnpm ui:build
 
@@ -54,14 +63,17 @@ mkdir -p /home/polis/.openclaw/{workspace,agents,sessions}
 chown -R polis:polis /app /home/polis/.openclaw
 
 # Copy scripts from agent bundle
-cp /tmp/agents/openclaw/scripts/health.sh /usr/local/bin/openclaw-health.sh
-cp /tmp/agents/openclaw/scripts/init.sh /usr/local/bin/openclaw-init.sh
+cp /opt/agents/openclaw/scripts/health.sh /usr/local/bin/openclaw-health.sh
+cp /opt/agents/openclaw/scripts/init.sh /usr/local/bin/openclaw-init.sh
 chmod 755 /usr/local/bin/openclaw-health.sh /usr/local/bin/openclaw-init.sh
 
 # Install SOUL.md (HITL security workflow instructions for the agent)
-mkdir -p /usr/local/share/openclaw
-cp /tmp/agents/openclaw/config/SOUL.md /usr/local/share/openclaw/SOUL.md
-chmod 644 /usr/local/share/openclaw/SOUL.md
+# Skip if already bind-mounted by compose override
+mkdir -p /usr/local/share/openclaw/scripts
+if [[ ! -f /usr/local/share/openclaw/SOUL.md ]]; then
+    cp /opt/agents/openclaw/config/SOUL.md /usr/local/share/openclaw/SOUL.md
+    chmod 644 /usr/local/share/openclaw/SOUL.md
+fi
 
 # Create openclaw CLI wrapper
 printf '#!/bin/bash\nexec /usr/bin/node /app/dist/index.js "$@"\n' > /usr/local/bin/openclaw

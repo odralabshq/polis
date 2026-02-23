@@ -1,0 +1,67 @@
+#!/bin/bash
+# bundle-polis-config.sh — Create tarball of Polis config for VM image
+# Run from polis repo root before packer build
+set -euo pipefail
+
+BUNDLE_DIR=$(mktemp -d)
+trap 'rm -rf "$BUNDLE_DIR"' EXIT
+
+echo "==> Bundling Polis configuration..."
+
+# POLIS_IMAGE_VERSION must be set by the caller (Justfile or CI)
+if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
+    echo "ERROR: POLIS_IMAGE_VERSION is not set" >&2
+    exit 1
+fi
+
+# Copy docker-compose.yml
+# Strip @sha256:... digest suffixes from image references (docker load doesn't preserve digests)
+sed 's/@sha256:[a-f0-9]\{64\}//g' docker-compose.yml > "$BUNDLE_DIR/docker-compose.yml"
+
+# Write .env with pinned versions for all polis-*-oss services
+cat > "$BUNDLE_DIR/.env" << EOF
+POLIS_RESOLVER_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_CERTGEN_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_GATE_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_SENTINEL_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_SCANNER_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_WORKSPACE_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_HOST_INIT_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_STATE_VERSION=${POLIS_IMAGE_VERSION}
+POLIS_TOOLBOX_VERSION=${POLIS_IMAGE_VERSION}
+EOF
+
+# Copy service configs
+mkdir -p "$BUNDLE_DIR/services"
+for svc in resolver certgen gate sentinel scanner state toolbox workspace; do
+    if [[ -d "services/$svc/config" ]]; then
+        mkdir -p "$BUNDLE_DIR/services/$svc"
+        cp -r "services/$svc/config" "$BUNDLE_DIR/services/$svc/"
+    fi
+    if [[ -d "services/$svc/scripts" ]]; then
+        mkdir -p "$BUNDLE_DIR/services/$svc"
+        cp -r "services/$svc/scripts" "$BUNDLE_DIR/services/$svc/"
+    fi
+done
+
+# Copy setup scripts
+mkdir -p "$BUNDLE_DIR/scripts"
+cp packer/scripts/setup-certs.sh "$BUNDLE_DIR/scripts/"
+cp scripts/generate-agent.sh "$BUNDLE_DIR/scripts/"
+chmod +x "$BUNDLE_DIR/scripts/setup-certs.sh"
+chmod +x "$BUNDLE_DIR/scripts/generate-agent.sh"
+
+# Copy config
+mkdir -p "$BUNDLE_DIR/config"
+cp config/polis.yaml "$BUNDLE_DIR/config/"
+
+# Create placeholder directories
+mkdir -p "$BUNDLE_DIR/certs/ca" "$BUNDLE_DIR/certs/valkey" "$BUNDLE_DIR/certs/toolbox"
+mkdir -p "$BUNDLE_DIR/secrets"
+
+# Create tarball
+OUTPUT=".build/polis-config.tar.gz"
+mkdir -p .build
+tar -czf "$OUTPUT" -C "$BUNDLE_DIR" .
+
+echo "==> Bundle created: $OUTPUT ($(du -h "$OUTPUT" | cut -f1))"

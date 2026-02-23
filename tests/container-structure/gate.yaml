@@ -1,0 +1,36 @@
+# container-structure-test for polis-gate
+# Validates g3proxy transparent proxy image
+
+schemaVersion: '2.0.0'
+
+metadataTest:
+  user: "0"
+  workdir: "/"
+
+fileExistenceTests:
+  - name: 'g3proxy binary'
+    path: '/usr/bin/g3proxy'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
+
+  - name: 'init script'
+    path: '/usr/local/bin/init.sh'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
+
+  - name: 'setup-network script'
+    path: '/usr/local/bin/setup-network.sh'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
+
+commandTests:
+  - name: 'g3proxy version'
+    command: '/usr/bin/g3proxy'
+    args: ['--version']
+    exitCode: 0
+    expectedOutput: ['g3proxy']
+
+  - name: 'nft available'
+    command: 'which'
+    args: ['nft']
+    exitCode: 0

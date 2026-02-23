@@ -19,7 +19,7 @@ log_step() { echo -e "${CYAN}[STEP]${NC} $*"; }
 
 case "$SUBCMD" in
     token)
-        token=$(docker exec "$CONTAINER" cat /home/polis/.openclaw/gateway-token.txt 2>/dev/null)
+        token=$(docker exec "$CONTAINER" cat /home/polis/.openclaw/gateway-token.txt 2>/dev/null || true)
         if [[ -z "$token" ]]; then
             echo "ERROR: Gateway token not found. OpenClaw may not be initialized yet." >&2
             exit 1

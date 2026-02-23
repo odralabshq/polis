@@ -1,7 +1,0 @@
-[workspace]
-members = [
-    "crates/polis-mcp-common",
-    "crates/polis-mcp-agent",
-    "crates/polis-approve-cli",
-]
-resolver = "2"
