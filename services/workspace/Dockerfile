@@ -79,10 +79,16 @@ USER polis
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
 SHELL ["/bin/sh", "-c"]
+
+# Switch back to root for systemd entrypoint (/sbin/init requires PID 1 as root).
+# Security context: this container runs under Sysbox runtime with user-namespace
+# isolation — root inside the container is NOT root on the host.
 # hadolint ignore=DL3002
 USER root
 ENV PATH="/home/polis/.cargo/bin:${PATH}"
 
 COPY --chmod=755 services/workspace/scripts/init.sh /usr/local/bin/init.sh
 
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
+# checkov:skip=CKV_DOCKER_3: systemd entrypoint requires root; Sysbox provides user-namespace isolation
 ENTRYPOINT ["/sbin/init"]
