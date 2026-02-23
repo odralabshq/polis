@@ -225,7 +225,7 @@ download_image() {
         "${CDN_BASE_URL}/${VERSION}/${image_name}" -o "${dest}" >&2
 
     # Download signed sidecar for CLI integrity verification
-    curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/${image_name}.sha256" -o "${sidecar}" >&2
+    curl -fsSL "${gh_base_url}/${image_name}.sha256" -o "${sidecar}" >&2
 
     # Checksum from GitHub (tamper-evident, separate origin from binary)
     log_info "Verifying image SHA256..." >&2
