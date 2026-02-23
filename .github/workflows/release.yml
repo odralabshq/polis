@@ -245,6 +245,10 @@ jobs:
         run: |
           cd packer/output
           for qcow2 in *.qcow2; do
+            # Re-compress qcow2 with maximum compression, then zstd
+            qemu-img convert -c -O qcow2 "${qcow2}" "${qcow2}.compressed"
+            rm "${qcow2}"
+            mv "${qcow2}.compressed" "${qcow2}"
             zstd -T0 -19 --rm "${qcow2}" -o "${qcow2}.zst"
           done
 
