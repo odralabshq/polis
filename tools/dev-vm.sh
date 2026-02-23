@@ -60,6 +60,7 @@ for arg in "$@"; do
         --cpus=*)   VM_CPUS="${arg#*=}" ;;
         --memory=*) VM_MEMORY="${arg#*=}" ;;
         --disk=*)   VM_DISK="${arg#*=}" ;;
+        *)          ;; # Ignore unknown options (handled by command dispatch)
     esac
 done
 

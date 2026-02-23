@@ -1,4 +1,4 @@
-#!/sbin/tini /bin/sh
+#!/sbin/tini /bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Copyright (C) 2021 Olliver Schinagl <oliver@schinagl.nl>
@@ -8,9 +8,9 @@
 # needing to learn about --entrypoint
 # https://github.com/docker-library/official-images#consistency
 
-set -eu
+set -euo pipefail
 
-if [ ! -d "/run/clamav" ]; then
+if [[ ! -d "/run/clamav" ]]; then
 	install -d -g "scanner" -m 775 -o "scanner" "/run/clamav"
 fi
 
@@ -36,14 +36,14 @@ env | grep "^FRESHCLAM_CONF_" | while IFS="=" read -r KEY VALUE; do
 done
 
 # run command if it is not starting with a "-" and is an executable in PATH
-if [ "${#}" -gt 0 ] && \
-   [ "${1#-}" = "${1}" ] && \
+if [[ "${#}" -gt 0 ]] && \
+   [[ "${1#-}" = "${1}" ]] && \
    command -v "${1}" > "/dev/null" 2>&1; then
 	# Ensure healthcheck always passes
 	CLAMAV_NO_CLAMD="true" exec "${@}"
 else
-	if [ "${#}" -ge 1 ] && \
-	   [ "${1#-}" != "${1}" ]; then
+	if [[ "${#}" -ge 1 ]] && \
+	   [[ "${1#-}" != "${1}" ]]; then
 		# If an argument starts with "-" pass it to clamd specifically
 		exec clamd "${@}"
 	fi
@@ -54,7 +54,7 @@ else
 	ln -f -s "/run/lock" "/var/lock"
 
 	# Ensure we have some virus data, otherwise clamd refuses to start
-	if [ ! -f "/var/lib/clamav/main.cvd" ]; then
+	if [[ ! -f "/var/lib/clamav/main.cvd" ]]; then
 		echo "Updating initial database"
 		# Set "TestDatabases no" and remove "NotifyClamd" for initial download
 		sed -e 's|^\(TestDatabases \)|\#\1|' \
@@ -65,7 +65,7 @@ else
 		rm /tmp/freshclam_initial.conf
 	fi
 
-	if [ "${CLAMAV_NO_FRESHCLAMD:-false}" != "true" ]; then
+	if [[ "${CLAMAV_NO_FRESHCLAMD:-false}" != "true" ]]; then
 		echo "Starting Freshclamd"
 		freshclam \
 		          --checks="${FRESHCLAM_CHECKS:-1}" \
@@ -76,17 +76,17 @@ else
 			  &
 	fi
 
-	if [ "${CLAMAV_NO_CLAMD:-false}" != "true" ]; then
+	if [[ "${CLAMAV_NO_CLAMD:-false}" != "true" ]]; then
 		echo "Starting ClamAV"
-		if [ -S "/run/clamav/clamd.sock" ]; then
+		if [[ -S "/run/clamav/clamd.sock" ]]; then
 			unlink "/run/clamav/clamd.sock"
 		fi
-		if [ -S "/tmp/clamd.sock" ]; then
+		if [[ -S "/tmp/clamd.sock" ]]; then
 			unlink "/tmp/clamd.sock"
 		fi
 		clamd --foreground &
-		while [ ! -S "/run/clamav/clamd.sock" ] && [ ! -S "/tmp/clamd.sock" ]; do
-			if [ "${_timeout:=0}" -gt "${CLAMD_STARTUP_TIMEOUT:=1800}" ]; then
+		while [[ ! -S "/run/clamav/clamd.sock" ]] && [[ ! -S "/tmp/clamd.sock" ]]; do
+			if [[ "${_timeout:=0}" -gt "${CLAMD_STARTUP_TIMEOUT:=1800}" ]]; then
 				echo
 				echo "Failed to start clamd"
 				exit 1
@@ -98,7 +98,7 @@ else
 		echo "socket found, clamd started."
 	fi
 
-	if [ "${CLAMAV_NO_MILTERD:-true}" != "true" ]; then
+	if [[ "${CLAMAV_NO_MILTERD:-true}" != "true" ]]; then
 		echo "Starting clamav milterd"
 		clamav-milter &
 	fi

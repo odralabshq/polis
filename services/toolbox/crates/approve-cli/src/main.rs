@@ -83,6 +83,120 @@ fn parse_auto_approve_action(s: &str) -> Result<AutoApproveAction> {
     }
 }
 
+async fn handle_approve(con: &mut redis::aio::MultiplexedConnection, request_id: &str) -> Result<()> {
+    polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
+
+    let blocked_key = polis_common::blocked_key(request_id);
+    let approved_key = polis_common::approved_key(request_id);
+
+    let blocked_data: Option<String> = con
+        .get(&blocked_key)
+        .await
+        .context("failed to GET blocked request")?;
+
+    let blocked_data = blocked_data
+        .ok_or_else(|| anyhow::anyhow!("no blocked request found for {}", request_id))?;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock error")?
+        .as_secs();
+
+    let audit_entry = serde_json::json!({
+        "event_type": "approved_via_cli",
+        "request_id": request_id,
+        "timestamp": now,
+        "blocked_request": blocked_data,
+    });
+
+    let _: () = con
+        .zadd(polis_common::keys::EVENT_LOG, audit_entry.to_string(), now as f64)
+        .await
+        .context("failed to ZADD audit log entry")?;
+
+    redis::pipe()
+        .atomic()
+        .del(&blocked_key)
+        .set_ex(&approved_key, "approved", polis_common::ttl::APPROVED_REQUEST_SECS)
+        .query_async::<Vec<redis::Value>>(con)
+        .await
+        .context("failed to atomically DEL blocked + SETEX approved")?;
+
+    println!("approved {}", request_id);
+    Ok(())
+}
+
+async fn handle_deny(con: &mut redis::aio::MultiplexedConnection, request_id: &str) -> Result<()> {
+    polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
+
+    let blocked_key = polis_common::blocked_key(request_id);
+
+    let blocked_data: Option<String> = con
+        .get(&blocked_key)
+        .await
+        .context("failed to GET blocked request")?;
+
+    let blocked_data = blocked_data
+        .ok_or_else(|| anyhow::anyhow!("no blocked request found for {}", request_id))?;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock error")?
+        .as_secs();
+
+    let audit_entry = serde_json::json!({
+        "event_type": "denied_via_cli",
+        "request_id": request_id,
+        "timestamp": now,
+        "blocked_request": blocked_data,
+    });
+
+    let _: () = con
+        .zadd(polis_common::keys::EVENT_LOG, audit_entry.to_string(), now as f64)
+        .await
+        .context("failed to ZADD audit log entry")?;
+
+    let _: () = con.del(&blocked_key).await.context("failed to DEL blocked key")?;
+
+    println!("denied {}", request_id);
+    Ok(())
+}
+
+async fn handle_list_pending(con: &mut redis::aio::MultiplexedConnection) -> Result<()> {
+    let match_pattern = format!("{}:*", polis_common::keys::BLOCKED);
+    let mut cursor: u64 = 0;
+    let mut found = 0u64;
+
+    loop {
+        let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(&match_pattern)
+            .arg("COUNT")
+            .arg(100)
+            .query_async(con)
+            .await
+            .context("failed to SCAN blocked keys")?;
+
+        for key in &batch {
+            if let Some(data) = con.get::<_, Option<String>>(key).await.context("failed to GET blocked request")? {
+                println!("{}: {}", key, data);
+                found += 1;
+            }
+        }
+
+        cursor = next_cursor;
+        if cursor == 0 {
+            break;
+        }
+    }
+
+    if found == 0 {
+        println!("no pending requests");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut cli = Cli::parse();
@@ -105,180 +219,24 @@ async fn main() -> Result<()> {
         .context("failed to connect to Valkey")?;
 
     match cli.command {
-        Commands::Approve { ref request_id } => {
-            polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
-
-            let blocked_key = polis_common::blocked_key(request_id);
-            let approved_key = polis_common::approved_key(request_id);
-
-            // Check blocked request exists and GET data for audit preservation (Req 5.4)
-            let blocked_data: Option<String> = con
-                .get(&blocked_key)
-                .await
-                .context("failed to GET blocked request")?;
-
-            let blocked_data = match blocked_data {
-                Some(data) => data,
-                None => bail!("no blocked request found for {}", request_id),
-            };
-
-            // ZADD audit log FIRST — before destructive operations.
-            // This ensures audit data is persisted even if the process
-            // crashes between ZADD and DEL (Finding 1 fix).
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .context("system clock error")?
-                .as_secs();
-
-            let audit_entry = serde_json::json!({
-                "event_type": "approved_via_cli",
-                "request_id": request_id,
-                "timestamp": now,
-                "blocked_request": blocked_data,
-            });
-
-            let _: () = con
-                .zadd(
-                    polis_common::keys::EVENT_LOG,
-                    audit_entry.to_string(),
-                    now as f64,
-                )
-                .await
-                .context("failed to ZADD audit log entry")?;
-
-            // Use pipeline (MULTI/EXEC) for atomic DEL + SETEX (Finding 4 fix).
-            // Prevents partial state where blocked is deleted but approved is not set.
-            redis::pipe()
-                .atomic()
-                .del(&blocked_key)
-                .set_ex(
-                    &approved_key,
-                    "approved",
-                    polis_common::ttl::APPROVED_REQUEST_SECS,
-                )
-                .query_async::<Vec<redis::Value>>(&mut con)
-                .await
-                .context("failed to atomically DEL blocked + SETEX approved")?;
-
-            println!("approved {}", request_id);
-            Ok(())
-        }
-        Commands::Deny { ref request_id } => {
-            polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
-
-            let blocked_key = polis_common::blocked_key(request_id);
-
-            // Check blocked request exists and GET data for audit preservation (Req 5.4)
-            let blocked_data: Option<String> = con
-                .get(&blocked_key)
-                .await
-                .context("failed to GET blocked request")?;
-
-            let blocked_data = match blocked_data {
-                Some(data) => data,
-                None => bail!("no blocked request found for {}", request_id),
-            };
-
-            // ZADD audit log FIRST — before destructive DEL (Finding 1 fix).
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .context("system clock error")?
-                .as_secs();
-
-            let audit_entry = serde_json::json!({
-                "event_type": "denied_via_cli",
-                "request_id": request_id,
-                "timestamp": now,
-                "blocked_request": blocked_data,
-            });
-
-            let _: () = con
-                .zadd(
-                    polis_common::keys::EVENT_LOG,
-                    audit_entry.to_string(),
-                    now as f64,
-                )
-                .await
-                .context("failed to ZADD audit log entry")?;
-
-            // DEL blocked key (deny does not create an approved key)
-            let _: () = con
-                .del(&blocked_key)
-                .await
-                .context("failed to DEL blocked key")?;
-
-            println!("denied {}", request_id);
-            Ok(())
-        }
-        Commands::ListPending => {
-            // SCAN for polis:blocked:* keys using cursor-based iteration.
-            let match_pattern = format!("{}:*", polis_common::keys::BLOCKED);
-            let mut cursor: u64 = 0;
-            let mut found = 0u64;
-
-            loop {
-                // SCAN cursor MATCH pattern COUNT 100
-                let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
-                    .arg(cursor)
-                    .arg("MATCH")
-                    .arg(&match_pattern)
-                    .arg("COUNT")
-                    .arg(100)
-                    .query_async(&mut con)
-                    .await
-                    .context("failed to SCAN blocked keys")?;
-
-                for key in &batch {
-                    let value: Option<String> = con
-                        .get(key)
-                        .await
-                        .context("failed to GET blocked request")?;
-
-                    if let Some(data) = value {
-                        println!("{}: {}", key, data);
-                        found += 1;
-                    }
-                }
-
-                cursor = next_cursor;
-                if cursor == 0 {
-                    break;
-                }
-            }
-
-            if found == 0 {
-                println!("no pending requests");
-            }
-            Ok(())
-        }
+        Commands::Approve { ref request_id } => handle_approve(&mut con, request_id).await,
+        Commands::Deny { ref request_id } => handle_deny(&mut con, request_id).await,
+        Commands::ListPending => handle_list_pending(&mut con).await,
         Commands::SetSecurityLevel { ref level } => {
             let _level = parse_security_level(level)?;
-
-            // Store the validated, lowercase level string in Valkey.
             let level_str = level.to_lowercase();
             let _: () = con
                 .set(polis_common::keys::SECURITY_LEVEL, &level_str)
                 .await
                 .context("failed to SET security level")?;
-
             println!("security level set to {}", level_str);
             Ok(())
         }
-        Commands::AutoApprove {
-            ref pattern,
-            ref action,
-        } => {
+        Commands::AutoApprove { ref pattern, ref action } => {
             let _action = parse_auto_approve_action(action)?;
-
-            // Store the validated, lowercase action string in Valkey
-            // at the key polis:config:auto_approve:{pattern}.
             let action_str = action.to_lowercase();
             let key = polis_common::auto_approve_key(pattern);
-            let _: () = con
-                .set(&key, &action_str)
-                .await
-                .context("failed to SET auto-approve rule")?;
-
+            let _: () = con.set(&key, &action_str).await.context("failed to SET auto-approve rule")?;
             println!("auto-approve rule set: {} → {}", pattern, action_str);
             Ok(())
         }
