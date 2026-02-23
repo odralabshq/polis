@@ -225,8 +225,14 @@ download_image() {
     mkdir -p "${INSTALL_DIR}/images"
 
     log_info "Downloading VM image..."
-    curl -fL --proto "${CURL_PROTO}" --progress-bar \
-        "${base_url}/${image_name}" -o "${dest}"
+    if command -v aria2c &>/dev/null; then
+        aria2c -x16 -s16 -k1M --file-allocation=none \
+            -d "${INSTALL_DIR}/images" -o "${image_name}" \
+            "${base_url}/${image_name}"
+    else
+        curl -fL --proto "${CURL_PROTO}" --progress-bar \
+            "${base_url}/${image_name}" -o "${dest}"
+    fi
 
     log_info "Verifying image SHA256..."
     expected=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/checksums.sha256" | grep "${image_name}" | awk '{print $1}')
