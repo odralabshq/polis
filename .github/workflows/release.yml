@@ -162,7 +162,7 @@ jobs:
           EOF
           echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
           tar -czf versions.json.tar.gz versions.json
-          zipsign sign tar versions.json.tar.gz /tmp/polis-release.key -o versions.json -f
+          zipsign sign tar versions.json.tar.gz /tmp/polis-release.key -o versions.json.sig -f
           rm /tmp/polis-release.key versions.json.tar.gz
 
       - name: Push images to GHCR (optional)
@@ -188,7 +188,9 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: versions-json
-          path: versions.json
+          path: |
+            versions.json
+            versions.json.sig
           retention-days: 1
 
       - name: Upload images tarball
@@ -385,5 +387,6 @@ jobs:
             cli-bin/polis-linux-amd64.sha256
             scripts/install.sh
             versions.json
+            versions.json.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
