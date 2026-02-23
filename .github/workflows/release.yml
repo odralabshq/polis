@@ -299,12 +299,24 @@ jobs:
           retention-days: 1
 
   # =========================================================
-  # Build CLI binary
+  # Build CLI binaries (Linux, Windows, macOS)
   # =========================================================
   cli:
-    name: Build CLI
+    name: Build CLI (${{ matrix.os }})
     needs: validate
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: polis-linux-amd64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: polis-windows-amd64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: polis-macos-amd64
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -313,28 +325,44 @@ jobs:
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Build CLI
         run: |
           cd cli
-          cargo build --release
-          cp target/release/polis ../polis-linux-amd64
+          cargo build --release --target ${{ matrix.target }}
+        shell: bash
 
-      - name: Generate checksum
-        run: sha256sum polis-linux-amd64 > polis-linux-amd64.sha256
+      - name: Copy binary (Unix)
+        if: runner.os != 'Windows'
+        run: cp cli/target/${{ matrix.target }}/release/polis ${{ matrix.artifact }}
+
+      - name: Copy binary (Windows)
+        if: runner.os == 'Windows'
+        run: cp cli/target/${{ matrix.target }}/release/polis.exe ${{ matrix.artifact }}
+        shell: bash
+
+      - name: Generate checksum (Unix)
+        if: runner.os != 'Windows'
+        run: sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+
+      - name: Generate checksum (Windows)
+        if: runner.os == 'Windows'
+        run: (Get-FileHash ${{ matrix.artifact }} -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.artifact }}" | Out-File -Encoding ascii ${{ matrix.artifact }}.sha256
+        shell: pwsh
 
       - name: Attest CLI provenance
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
         with:
-          subject-path: polis-linux-amd64
+          subject-path: ${{ matrix.artifact }}
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: cli-binary
+          name: cli-${{ matrix.target }}
           path: |
-            polis-linux-amd64
-            polis-linux-amd64.sha256
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
           retention-days: 1
 
   # =========================================================
@@ -367,11 +395,12 @@ jobs:
           name: vm-image
           path: ./vm
 
-      - name: Download CLI artifact
+      - name: Download CLI artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: cli-binary
+          pattern: cli-*
           path: ./cli-bin
+          merge-multiple: true
 
       - name: Download versions.json artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -394,6 +423,10 @@ jobs:
             vm/checksums.sha256.sig
             cli-bin/polis-linux-amd64
             cli-bin/polis-linux-amd64.sha256
+            cli-bin/polis-windows-amd64.exe
+            cli-bin/polis-windows-amd64.exe.sha256
+            cli-bin/polis-macos-amd64
+            cli-bin/polis-macos-amd64.sha256
             scripts/install.sh
             versions.json
             versions.json.sig
