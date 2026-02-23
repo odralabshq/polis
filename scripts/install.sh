@@ -219,10 +219,16 @@ download_image() {
     base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
 
     # Discover the actual image filename from versions.json
-    image_name=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/versions.json" | \
-        grep -o '"asset": *"[^"]*"' | cut -d'"' -f4)
+    image_name=$(curl -fsSL -L --proto "${CURL_PROTO}" "${base_url}/versions.json" | \
+        grep -o '"asset"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4)
     if [[ -z "${image_name}" ]]; then
-        log_error "Could not determine image filename from versions.json"
+        # Fall back: list release assets via GitHub API
+        image_name=$(curl -fsSL --proto "${CURL_PROTO}" \
+            "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${VERSION}" | \
+            grep -o '"name"[[:space:]]*:[[:space:]]*"polis-[^"]*\.qcow2"' | head -1 | cut -d'"' -f4)
+    fi
+    if [[ -z "${image_name}" ]]; then
+        log_error "Could not determine image filename"
         exit 1
     fi
 
