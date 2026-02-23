@@ -148,7 +148,7 @@ function Get-Image {
 
     Write-Info "Verifying image SHA256..."
     $checksums = Invoke-WebRequest -Uri "$base/checksums.sha256" -UseBasicParsing
-    $expected  = ($checksums.Content -split "`n" | Where-Object { $_ -match $imageName }) -replace '\s.*', ''
+    $expected  = (($checksums.Content -split "`n" | Where-Object { $_ -match $imageName }) -replace '\s.*', '') | Select-Object -First 1
     $actual    = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
     if ($actual -ne $expected.ToLower()) {
         Write-Err "Image SHA256 mismatch!"
