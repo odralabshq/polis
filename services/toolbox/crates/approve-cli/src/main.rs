@@ -112,7 +112,11 @@ async fn fetch_and_audit(
         "blocked_request": blocked_data,
     });
     let _: () = con
-        .zadd(polis_common::keys::EVENT_LOG, audit_entry.to_string(), now as f64)
+        .zadd(
+            polis_common::keys::EVENT_LOG,
+            audit_entry.to_string(),
+            now as f64,
+        )
         .await
         .context("failed to ZADD audit log entry")?;
 
@@ -129,7 +133,11 @@ async fn handle_approve(
     redis::pipe()
         .atomic()
         .del(&blocked_key)
-        .set_ex(&approved_key, "approved", polis_common::ttl::APPROVED_REQUEST_SECS)
+        .set_ex(
+            &approved_key,
+            "approved",
+            polis_common::ttl::APPROVED_REQUEST_SECS,
+        )
         .query_async::<Vec<redis::Value>>(con)
         .await
         .context("failed to atomically DEL blocked + SETEX approved")?;
@@ -141,7 +149,10 @@ async fn handle_approve(
 async fn handle_deny(con: &mut redis::aio::MultiplexedConnection, request_id: &str) -> Result<()> {
     let (blocked_key, _, _) = fetch_and_audit(con, request_id, "denied_via_cli").await?;
 
-    let _: () = con.del(&blocked_key).await.context("failed to DEL blocked key")?;
+    let _: () = con
+        .del(&blocked_key)
+        .await
+        .context("failed to DEL blocked key")?;
 
     println!("denied {}", request_id);
     Ok(())
