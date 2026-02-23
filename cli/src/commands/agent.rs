@@ -15,8 +15,11 @@ const VM_ROOT: &str = "/opt/polis";
 
 /// Same rule enforced by `generate-agent.sh`; checked here before any
 /// path interpolation to prevent path-traversal (CWE-22).
-static AGENT_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$").expect("valid regex"));
+static AGENT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // Safety: this is a compile-time constant pattern — cannot fail.
+    #[allow(clippy::expect_used)]
+    Regex::new(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$").expect("valid regex")
+});
 
 fn validate_agent_name(name: &str) -> Result<()> {
     anyhow::ensure!(
