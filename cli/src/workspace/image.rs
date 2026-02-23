@@ -41,19 +41,26 @@ pub struct ImageMetadata {
 
 /// Returns the image cache directory.
 ///
-/// Linux: `~/polis/images/` (snap `AppArmor` requires non-hidden)
-/// macOS/Windows: `~/.polis/images/`
+/// Linux: `~/polis/images/` (snap AppArmor requires non-hidden)
+/// Windows: `C:\ProgramData\Polis\images\` (must be accessible to multipassd SYSTEM service)
+/// macOS: `~/.polis/images/`
 ///
 /// # Errors
 ///
 /// Returns an error if the home directory cannot be determined.
 pub fn images_dir() -> Result<PathBuf> {
-    let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
     #[cfg(target_os = "linux")]
-    return Ok(home.join("polis").join("images"));
-    #[cfg(not(target_os = "linux"))]
-    Ok(home.join(".polis").join("images"))
+    return Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join("polis")
+        .join("images"));
+    #[cfg(target_os = "windows")]
+    return Ok(PathBuf::from(r"C:\ProgramData\Polis\images"));
+    #[cfg(target_os = "macos")]
+    Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join(".polis")
+        .join("images"))
 }
 
 /// Check if a valid image exists in cache.
