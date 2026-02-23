@@ -93,11 +93,14 @@ reset_test_state() {
 
 run_with_network_skip() {
     local label="$1"; shift
-    run "$@"
+    # Wrap command in timeout to prevent SIGINT from propagating to BATS
+    # timeout returns 124 on timeout, preserving original exit code otherwise
+    run timeout --signal=KILL 30s "$@"
     if [[ "$status" -ne 0 ]]; then
-        # 130 = SIGINT: process killed (e.g. BATS timeout while proxy blocks/holds request)
-        if [[ "$status" -eq 130 ]]; then
-            skip "${label} timed out (proxy may be blocking) — network-dependent test"
+        # 124 = timeout command exceeded time limit
+        # 137 = killed by SIGKILL (128 + 9)
+        if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+            skip "${label} timed out — network-dependent test"
         fi
         # 28 = curl CURLE_OPERATION_TIMEDOUT (--max-time exceeded)
         # output "000" = no HTTP response received (curl -w "%{http_code}" with -s flag)
