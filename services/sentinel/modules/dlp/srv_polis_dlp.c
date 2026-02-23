@@ -116,6 +116,32 @@ static const char OTT_CHARSET[] =
 #define OTT_CHARSET_LEN 62  /* sizeof(OTT_CHARSET) - 1 */
 
 /*
+ * escape_json_string - Copy src into dst, escaping '"' and '\' for JSON.
+ * Control characters (< 0x20) are dropped. Output is always null-terminated.
+ *
+ * @param src       Input string (e.g. HTTP Host header value)
+ * @param dst       Output buffer
+ * @param dst_size  Size of output buffer (must be >= 1)
+ */
+static void escape_json_string(const char *src, char *dst, size_t dst_size)
+{
+    size_t j = 0;
+    size_t i;
+    for (i = 0; src[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c < 0x20) continue;                  /* drop control chars */
+        if (c == '"' || c == '\\') {
+            if (j + 2 >= dst_size) break;        /* no room for escape + char */
+            dst[j++] = '\\';
+        } else {
+            if (j + 1 >= dst_size) break;
+        }
+        dst[j++] = src[i];
+    }
+    dst[j] = '\0';
+}
+
+/*
  * generate_ott - Generate a One-Time Token using /dev/urandom.
  *
  * Writes "ott-" followed by 8 alphanumeric characters into buf,
@@ -1398,11 +1424,13 @@ int dlp_process(ci_request_t *req)
             gmtime_r(&now, &utc_tm);
             strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%SZ", &utc_tm);
 
+            char escaped_host[256];
+            escape_json_string(data->host, escaped_host, sizeof(escaped_host));
             snprintf(json_buf, sizeof(json_buf),
                 "{\"request_id\":\"%s\",\"reason\":\"credential_detected\","
                 "\"destination\":\"%s\",\"pattern\":\"%s\","
                 "\"blocked_at\":\"%s\",\"status\":\"pending\"}",
-                data->request_id, data->host, data->matched_pattern,
+                data->request_id, escaped_host, data->matched_pattern,
                 ts_buf);
 
             pthread_mutex_lock(&gov_valkey_mutex);
@@ -1591,13 +1619,15 @@ int dlp_process(ci_request_t *req)
                                         time_t now = time(NULL);
                                         time_t armed_after = now + time_gate_secs;
                                         char json_payload[512];
+                                        char escaped_host[256];
+                                        escape_json_string(data->host, escaped_host, sizeof(escaped_host));
                                         snprintf(json_payload, sizeof(json_payload),
                                                 "{\"ott_code\":\"%s\","
                                                 "\"request_id\":\"%s\","
                                                 "\"armed_after\":%ld,"
                                                 "\"origin_host\":\"%s\"}",
                                                 ott_code, request_id,
-                                                (long)armed_after, data->host);
+                                                (long)armed_after, escaped_host);
                                         
                                         /* Store with SET NX EX */
                                         redisReply *set_reply = redisCommand(

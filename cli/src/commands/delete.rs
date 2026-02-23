@@ -14,15 +14,25 @@ use crate::workspace::{image, vm};
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be removed.
-pub async fn run(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn run(
+    args: &DeleteArgs,
+    mp: &impl Multipass,
+    state_mgr: &StateManager,
+    quiet: bool,
+) -> Result<()> {
     if args.all {
-        delete_all(args, mp, quiet).await
+        delete_all(args, mp, state_mgr, quiet).await
     } else {
-        delete_workspace(args, mp, quiet).await
+        delete_workspace(args, mp, state_mgr, quiet).await
     }
 }
 
-async fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+async fn delete_workspace(
+    args: &DeleteArgs,
+    mp: &impl Multipass,
+    state_mgr: &StateManager,
+    quiet: bool,
+) -> Result<()> {
     if !quiet {
         println!();
         println!("This will remove your workspace.");
@@ -47,7 +57,7 @@ async fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -
     }
 
     // Clear state file
-    if let Err(e) = StateManager::new().and_then(|m| m.clear()) {
+    if let Err(e) = state_mgr.clear() {
         errors.push(format!("failed to clear state: {e}"));
     }
 
@@ -65,7 +75,12 @@ async fn delete_workspace(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -
     Ok(())
 }
 
-async fn delete_all(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+async fn delete_all(
+    args: &DeleteArgs,
+    mp: &impl Multipass,
+    state_mgr: &StateManager,
+    quiet: bool,
+) -> Result<()> {
     if !quiet {
         println!();
         println!("This will permanently remove:");
@@ -90,7 +105,6 @@ async fn delete_all(args: &DeleteArgs, mp: &impl Multipass, quiet: bool) -> Resu
     }
 
     // Clear state file
-    let state_mgr = StateManager::new()?;
     state_mgr.clear()?;
 
     // Remove certificates

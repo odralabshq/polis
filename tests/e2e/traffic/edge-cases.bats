@@ -6,7 +6,12 @@ setup_file() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
-    require_container "$CTR_WORKSPACE"
+    require_container "$CTR_WORKSPACE" "$CTR_GATE" "$CTR_HTTPBIN"
+    # Wait for httpbin to accept connections via gate
+    for _i in $(seq 1 10); do
+        docker exec "$CTR_GATE" nc -z 10.20.1.100 8080 2>/dev/null && break
+        sleep 1
+    done
     approve_host "$HTTPBIN_HOST" 600
     approve_host "httpbin.org" 600
 }

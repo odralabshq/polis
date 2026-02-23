@@ -64,7 +64,8 @@ lint-shell:
 test: test-rust test-c test-unit
 
 test-rust:
-    cargo test --workspace --manifest-path cli/Cargo.toml
+    cargo test --workspace --manifest-path cli/Cargo.toml --test unit -- --test-threads=1
+    cargo test --workspace --manifest-path cli/Cargo.toml --test integration
     cargo test --workspace --manifest-path services/toolbox/Cargo.toml
     cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 
@@ -258,7 +259,10 @@ setup-ca:
     openssl genrsa -out "$CA_KEY" 4096 2>/dev/null
     openssl req -new -x509 -days 3650 -key "$CA_KEY" -out "$CA_PEM" \
         -subj "/C=US/ST=Local/L=Local/O=Polis/OU=Gateway/CN=Polis CA" 2>/dev/null
-    chmod 644 "$CA_KEY" "$CA_PEM"
+    chmod 600 "$CA_KEY"
+    chmod 644 "$CA_PEM"
+    sudo chown "$(id -u):65532" "$CA_KEY"
+    chmod 640 "$CA_KEY"
     echo "✓ CA generated"
 
 setup-valkey:

@@ -32,5 +32,6 @@ COPY --from=builder /g3fcgen /usr/bin/g3fcgen
 COPY --chmod=755 services/gate/scripts/init.sh /usr/local/bin/init.sh
 COPY --chmod=755 services/gate/scripts/setup-network.sh /usr/local/bin/setup-network.sh
 
-USER 65532
+# hadolint ignore=DL3002
+USER 0
 ENTRYPOINT ["/usr/local/bin/init.sh"]

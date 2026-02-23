@@ -61,14 +61,14 @@ impl HealthProbe for MockHealthyProbe {
 #[tokio::test]
 async fn test_doctor_json_outputs_valid_json() {
     let ctx = OutputContext::new(true, true);
-    let result = doctor::run_with(&ctx, true, &MockHealthyProbe).await;
+    let result = doctor::run_with(&ctx, true, false, &MockHealthyProbe).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_doctor_healthy_system_returns_ok() {
     let ctx = OutputContext::new(true, true);
-    let result = doctor::run_with(&ctx, false, &MockHealthyProbe).await;
+    let result = doctor::run_with(&ctx, false, false, &MockHealthyProbe).await;
     assert!(result.is_ok());
 }
 
@@ -122,13 +122,13 @@ impl HealthProbe for MockUnhealthyProbe {
 #[tokio::test]
 async fn test_doctor_unhealthy_system_returns_ok() {
     let ctx = OutputContext::new(true, true);
-    let result = doctor::run_with(&ctx, false, &MockUnhealthyProbe).await;
+    let result = doctor::run_with(&ctx, false, false, &MockUnhealthyProbe).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_doctor_unhealthy_json_returns_ok() {
     let ctx = OutputContext::new(true, true);
-    let result = doctor::run_with(&ctx, true, &MockUnhealthyProbe).await;
+    let result = doctor::run_with(&ctx, true, false, &MockUnhealthyProbe).await;
     assert!(result.is_ok());
 }

@@ -64,6 +64,9 @@ impl Multipass for ExecStub {
     async fn version(&self) -> Result<Output> {
         anyhow::bail!("not expected in this test")
     }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+        anyhow::bail!("not expected in this test")
+    }
 }
 
 // ============================================================================

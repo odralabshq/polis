@@ -191,21 +191,26 @@ cmd_pull() {
         log_info "Latest release: ${tag}"
     fi
 
-    local url="https://github.com/${repo}/releases/download/${version}/polis-${version}-${arch}.qcow2"
-    log_step "Downloading VM image to ${dest}..."
-    curl -fL --proto '=https' --progress-bar -o "${dest}" "${url}"
+    local zst_dest="${dest}.zst"
+    local url="https://github.com/${repo}/releases/download/${version}/polis-${version}-${arch}.qcow2.zst"
+    log_step "Downloading VM image to ${zst_dest}..."
+    curl -fL --proto '=https' --progress-bar -o "${zst_dest}" "${url}"
 
     # Verify checksum
     local sha_url="${url}.sha256"
     local expected
     expected=$(curl -fsSL --proto '=https' "${sha_url}" | awk '{print $1}')
     local actual
-    actual=$(sha256sum "${dest}" | awk '{print $1}')
+    actual=$(sha256sum "${zst_dest}" | awk '{print $1}')
     if [[ "${expected}" != "${actual}" ]]; then
         log_error "SHA256 mismatch! expected=${expected} actual=${actual}"
-        rm -f "${dest}"
+        rm -f "${zst_dest}"
         exit 1
     fi
+
+    # Decompress
+    log_step "Decompressing..."
+    zstd -d --rm "${zst_dest}" -o "${dest}"
 
     log_success "VM image ready: ${dest}"
     echo "${dest}"

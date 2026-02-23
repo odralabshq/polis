@@ -118,6 +118,7 @@ source "qemu" "polis" {
   output_directory = "output"
   vm_name          = "polis-${var.polis_version}-${var.arch}.qcow2"
   format           = "qcow2"
+  disk_compression = true
   disk_size        = "20G"
   memory           = 4096
   cpus             = 2
@@ -233,6 +234,9 @@ build {
   # Cleanup
   provisioner "shell" {
     inline = [
+      "sudo dd if=/dev/zero of=/EMPTY bs=1M 2>/dev/null || true",
+      "sudo rm -f /EMPTY",
+      "sudo sync",
       "sudo apt-get clean",
       "sudo rm -rf /var/lib/apt/lists/*",
       "sudo cloud-init clean --logs",

@@ -205,14 +205,12 @@ fn test_unknown_command_exits_with_error() {
 // --- Subcommand argument tests ---
 
 #[test]
-#[ignore = "requires VM image"]
-fn test_start_accepts_image_argument() {
-    let dir = tempfile::TempDir::new().expect("tempdir");
+fn test_start_image_flag_is_accepted() {
+    // --image is a valid flag; outcome depends on VM state
     polis()
-        .args(["start", "--image", "/tmp/test.qcow2"])
-        .env("HOME", dir.path())
+        .args(["start", "--image", "/nonexistent.qcow2"])
         .assert()
-        .failure(); // Will fail because image doesn't exist, but arg is accepted
+        .stderr(predicate::str::contains("unrecognized").not());
 }
 
 #[test]

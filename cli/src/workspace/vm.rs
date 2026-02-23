@@ -20,6 +20,7 @@ pub enum VmState {
 }
 
 /// Get the first IPv4 address of the VM, if running.
+#[allow(dead_code)]
 pub async fn ip(mp: &impl Multipass) -> Option<String> {
     let output = mp.vm_info().await.ok()?;
     let info: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
@@ -337,6 +338,9 @@ mod tests {
         async fn version(&self) -> Result<Output> {
             unimplemented!()
         }
+        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]
@@ -419,6 +423,9 @@ mod tests {
             unimplemented!()
         }
         async fn version(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             unimplemented!()
         }
     }

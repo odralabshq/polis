@@ -1,6 +1,9 @@
-//! Shared test helpers: mock Multipass implementations and output constructors.
+//! Shared mock infrastructure for unit tests.
+//!
+//! Provides canned [`Multipass`] implementations and output helpers so each
+//! test file doesn't have to re-define the same boilerplate.
 
-#![allow(dead_code)]
+#![allow(clippy::expect_used)]
 
 use std::os::unix::process::ExitStatusExt;
 use std::process::{ExitStatus, Output};
@@ -8,8 +11,9 @@ use std::process::{ExitStatus, Output};
 use anyhow::Result;
 use polis_cli::multipass::Multipass;
 
-// ── Output constructors ──────────────────────────────────────────────────────
+// ── Output helpers ────────────────────────────────────────────────────────────
 
+#[must_use]
 pub fn ok_output(stdout: &[u8]) -> Output {
     Output {
         status: ExitStatus::from_raw(0),
@@ -18,147 +22,153 @@ pub fn ok_output(stdout: &[u8]) -> Output {
     }
 }
 
-pub fn err_output(code: i32, stderr: &[u8]) -> Output {
+#[must_use]
+pub fn err_output(stderr: &[u8]) -> Output {
     Output {
-        status: ExitStatus::from_raw(code << 8),
+        status: ExitStatus::from_raw(1 << 8),
         stdout: Vec::new(),
         stderr: stderr.to_vec(),
     }
 }
 
-// ── Shared mock implementations ──────────────────────────────────────────────
+fn unexpected<T>() -> Result<T> {
+    anyhow::bail!("not expected in this test")
+}
 
-/// VM does not exist (multipass info exits 1).
-pub struct VmNotFound;
+// ── Mock: VM not found ────────────────────────────────────────────────────────
 
-impl Multipass for VmNotFound {
+pub struct MultipassVmNotFound;
+
+impl Multipass for MultipassVmNotFound {
     async fn vm_info(&self) -> Result<Output> {
-        Ok(err_output(1, b"instance \"polis\" does not exist"))
-    }
-    async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("launch not expected in this test")
-    }
-    async fn start(&self) -> Result<Output> {
-        anyhow::bail!("start not expected in this test")
-    }
-    async fn stop(&self) -> Result<Output> {
-        anyhow::bail!("stop not expected in this test")
-    }
-    async fn delete(&self) -> Result<Output> {
-        Ok(ok_output(b""))
-    }
-    async fn purge(&self) -> Result<Output> {
-        Ok(ok_output(b""))
-    }
-    async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("transfer not expected in this test")
-    }
-    async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("transfer_recursive not expected in this test")
+        Ok(err_output(b"instance \"polis\" does not exist"))
     }
     async fn exec(&self, _: &[&str]) -> Result<Output> {
-        Ok(err_output(1, b""))
+        Ok(err_output(b""))
+    }
+    async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+        unexpected()
+    }
+    async fn start(&self) -> Result<Output> {
+        unexpected()
+    }
+    async fn stop(&self) -> Result<Output> {
+        unexpected()
+    }
+    async fn delete(&self) -> Result<Output> {
+        unexpected()
+    }
+    async fn purge(&self) -> Result<Output> {
+        unexpected()
+    }
+    async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+        unexpected()
+    }
+    async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+        unexpected()
     }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-        anyhow::bail!("exec_with_stdin not expected in this test")
+        unexpected()
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        anyhow::bail!("exec_spawn not expected in this test")
+        unexpected()
     }
     async fn version(&self) -> Result<Output> {
-        anyhow::bail!("version not expected in this test")
+        unexpected()
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-        anyhow::bail!("exec_status not expected in this test")
+        unexpected()
     }
 }
 
-/// VM exists and is stopped.
-pub struct VmStopped;
+// ── Mock: VM stopped ─────────────────────────────────────────────────────────
 
-impl Multipass for VmStopped {
+pub struct MultipassVmStopped;
+
+impl Multipass for MultipassVmStopped {
     async fn vm_info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Stopped"}}}"#))
     }
+    async fn exec(&self, _: &[&str]) -> Result<Output> {
+        Ok(err_output(b""))
+    }
     async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("launch not expected in this test")
+        unexpected()
     }
     async fn start(&self) -> Result<Output> {
-        anyhow::bail!("start not expected in this test")
+        unexpected()
     }
     async fn stop(&self) -> Result<Output> {
-        anyhow::bail!("stop not expected in this test")
+        unexpected()
     }
     async fn delete(&self) -> Result<Output> {
-        Ok(ok_output(b""))
+        unexpected()
     }
     async fn purge(&self) -> Result<Output> {
-        Ok(ok_output(b""))
+        unexpected()
     }
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("transfer not expected in this test")
+        unexpected()
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("transfer_recursive not expected in this test")
-    }
-    async fn exec(&self, _: &[&str]) -> Result<Output> {
-        Ok(err_output(1, b""))
+        unexpected()
     }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-        anyhow::bail!("exec_with_stdin not expected in this test")
+        unexpected()
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        anyhow::bail!("exec_spawn not expected in this test")
+        unexpected()
     }
     async fn version(&self) -> Result<Output> {
-        anyhow::bail!("version not expected in this test")
+        unexpected()
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-        anyhow::bail!("exec_status not expected in this test")
+        unexpected()
     }
 }
 
-/// VM exists and is running.
-pub struct VmRunning;
+// ── Mock: VM running ─────────────────────────────────────────────────────────
 
-impl Multipass for VmRunning {
+pub struct MultipassVmRunning;
+
+impl Multipass for MultipassVmRunning {
     async fn vm_info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
-    }
-    async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("launch not expected in this test")
-    }
-    async fn start(&self) -> Result<Output> {
-        Ok(ok_output(b""))
-    }
-    async fn stop(&self) -> Result<Output> {
-        Ok(ok_output(b""))
-    }
-    async fn delete(&self) -> Result<Output> {
-        Ok(ok_output(b""))
-    }
-    async fn purge(&self) -> Result<Output> {
-        Ok(ok_output(b""))
-    }
-    async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("transfer not expected in this test")
-    }
-    async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("transfer_recursive not expected in this test")
     }
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(ok_output(b""))
     }
+    async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+        unexpected()
+    }
+    async fn start(&self) -> Result<Output> {
+        unexpected()
+    }
+    async fn stop(&self) -> Result<Output> {
+        unexpected()
+    }
+    async fn delete(&self) -> Result<Output> {
+        unexpected()
+    }
+    async fn purge(&self) -> Result<Output> {
+        unexpected()
+    }
+    async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+        unexpected()
+    }
+    async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+        unexpected()
+    }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-        anyhow::bail!("exec_with_stdin not expected in this test")
+        unexpected()
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        anyhow::bail!("exec_spawn not expected in this test")
+        unexpected()
     }
     async fn version(&self) -> Result<Output> {
-        anyhow::bail!("version not expected in this test")
+        unexpected()
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-        anyhow::bail!("exec_status not expected in this test")
+        unexpected()
     }
 }

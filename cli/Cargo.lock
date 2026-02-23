@@ -1288,6 +1288,7 @@ dependencies = [
  "polis-common",
  "predicates",
  "proptest",
+ "regex",
  "self_update",
  "semver",
  "serde",

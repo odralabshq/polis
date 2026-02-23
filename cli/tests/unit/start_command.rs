@@ -53,6 +53,9 @@ impl Multipass for VmRunningExecOk {
     async fn version(&self) -> Result<Output> {
         anyhow::bail!("not expected")
     }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+        anyhow::bail!("not expected")
+    }
 }
 
 /// VM is running; exec always returns failure.
@@ -93,6 +96,9 @@ impl Multipass for VmRunningExecFail {
         anyhow::bail!("not expected")
     }
     async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected")
+    }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
         anyhow::bail!("not expected")
     }
 }
@@ -139,6 +145,9 @@ impl Multipass for VmRunningExecExitTwo {
         anyhow::bail!("not expected")
     }
     async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected")
+    }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
         anyhow::bail!("not expected")
     }
 }

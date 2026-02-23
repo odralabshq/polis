@@ -1136,6 +1136,9 @@ mod tests {
         async fn version(&self) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: version not expected")
         }
+        async fn exec_status(&self, _: &[&str]) -> anyhow::Result<std::process::ExitStatus> {
+            anyhow::bail!("stub: exec_status not expected")
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -5,6 +5,7 @@ pub mod config;
 pub mod connect;
 pub mod delete;
 pub mod doctor;
+pub mod exec;
 pub mod internal;
 pub mod start;
 pub mod status;
