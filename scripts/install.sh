@@ -243,11 +243,11 @@ run_init() {
     local bin="${INSTALL_DIR}/bin/polis"
 
     log_info "Running: polis start --image ${image_path}"
-    "${bin}" start --image "${image_path}" || {
+    if ! "${bin}" start --image "${image_path}"; then
         log_warn "polis start failed. Run manually:"
         echo "  polis start --image ${image_path}"
-        return 0
-    }
+        return 1
+    fi
     return 0
 }
 
