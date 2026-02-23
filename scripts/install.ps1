@@ -22,6 +22,29 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Invoke-Download {
+    param([string]$Uri, [string]$OutFile)
+    # Use .NET WebClient for large downloads — shows MB progress without the
+    # crippling overhead of Invoke-WebRequest's Write-Progress on PS 5.x
+    $wc = New-Object System.Net.WebClient
+    $lastPct = -1
+    $handler = {
+        param($sender, $e)
+        $pct = $e.ProgressPercentage
+        if ($pct -ne $script:lastPct -and ($pct % 5 -eq 0)) {
+            $mbDone = [math]::Round($e.BytesReceived / 1MB, 0)
+            $mbTotal = [math]::Round($e.TotalBytesToReceive / 1MB, 0)
+            Write-Host "`r[INFO]  Downloading... ${mbDone} MB / ${mbTotal} MB (${pct}%)" -NoNewline -ForegroundColor Cyan
+            $script:lastPct = $pct
+        }
+    }
+    $wc.add_DownloadProgressChanged($handler)
+    $task = $wc.DownloadFileTaskAsync($Uri, $OutFile)
+    $task.Wait()
+    $wc.Dispose()
+    Write-Host ""
+}
+
 # -- Multipass -----------------------------------------------------------------
 
 function Test-HyperV {
@@ -152,14 +175,15 @@ function Get-Image {
 
     Write-Info "Downloading VM image from CDN..."
     try {
-        Invoke-WebRequest -Uri $cdnUrl -OutFile $dest -UseBasicParsing -ErrorAction Stop
+        Invoke-Download -Uri $cdnUrl -OutFile $dest
         $downloaded = $true
     } catch {
         Write-Warn "CDN unavailable, falling back to GitHub..."
     }
 
     if (-not $downloaded) {
-        Invoke-WebRequest -Uri $ghUrl -OutFile $dest -UseBasicParsing
+        Write-Info "Downloading VM image from GitHub..."
+        Invoke-Download -Uri $ghUrl -OutFile $dest
     }
 
     # Download signed sidecar for CLI integrity verification
@@ -194,8 +218,18 @@ function Invoke-PolisInit {
     param([string]$ImagePath)
     $polis = Join-Path $InstallDir "bin\polis.exe"
 
-    $null = & multipass info polis 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    # Check if a polis VM already exists (suppress all errors — expected to fail if no VM)
+    $vmExists = $false
+    try {
+        $ErrorActionPreference = "Continue"
+        $null = & multipass info polis 2>&1
+        if ($LASTEXITCODE -eq 0) { $vmExists = $true }
+        $ErrorActionPreference = "Stop"
+    } catch {
+        $ErrorActionPreference = "Stop"
+    }
+
+    if ($vmExists) {
         Write-Warn "An existing polis VM was found."
         $confirm = Read-Host "Remove it and start fresh? [y/N]"
         if ($confirm -eq 'y') {
@@ -209,8 +243,11 @@ function Invoke-PolisInit {
     Remove-Item (Join-Path $InstallDir "state.json") -Force -ErrorAction SilentlyContinue
 
     Write-Info "Running: polis start --image $ImagePath"
+    $ErrorActionPreference = "Continue"
     & $polis start --image $ImagePath
-    if ($LASTEXITCODE -ne 0) {
+    $startExitCode = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($startExitCode -ne 0) {
         Write-Err "polis start failed. Run manually:"
         Write-Host "  polis start --image $ImagePath"
         throw "polis start failed."
