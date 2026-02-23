@@ -83,20 +83,20 @@ fn parse_auto_approve_action(s: &str) -> Result<AutoApproveAction> {
     }
 }
 
-async fn handle_approve(
+/// Fetch blocked request data and write audit log entry.
+/// Returns (blocked_key, blocked_data, timestamp) on success.
+async fn fetch_and_audit(
     con: &mut redis::aio::MultiplexedConnection,
     request_id: &str,
-) -> Result<()> {
+    event_type: &str,
+) -> Result<(String, String, u64)> {
     polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
 
     let blocked_key = polis_common::blocked_key(request_id);
-    let approved_key = polis_common::approved_key(request_id);
-
     let blocked_data: Option<String> = con
         .get(&blocked_key)
         .await
         .context("failed to GET blocked request")?;
-
     let blocked_data = blocked_data
         .ok_or_else(|| anyhow::anyhow!("no blocked request found for {}", request_id))?;
 
@@ -106,29 +106,30 @@ async fn handle_approve(
         .as_secs();
 
     let audit_entry = serde_json::json!({
-        "event_type": "approved_via_cli",
+        "event_type": event_type,
         "request_id": request_id,
         "timestamp": now,
         "blocked_request": blocked_data,
     });
-
     let _: () = con
-        .zadd(
-            polis_common::keys::EVENT_LOG,
-            audit_entry.to_string(),
-            now as f64,
-        )
+        .zadd(polis_common::keys::EVENT_LOG, audit_entry.to_string(), now as f64)
         .await
         .context("failed to ZADD audit log entry")?;
+
+    Ok((blocked_key, blocked_data, now))
+}
+
+async fn handle_approve(
+    con: &mut redis::aio::MultiplexedConnection,
+    request_id: &str,
+) -> Result<()> {
+    let (blocked_key, _, _) = fetch_and_audit(con, request_id, "approved_via_cli").await?;
+    let approved_key = polis_common::approved_key(request_id);
 
     redis::pipe()
         .atomic()
         .del(&blocked_key)
-        .set_ex(
-            &approved_key,
-            "approved",
-            polis_common::ttl::APPROVED_REQUEST_SECS,
-        )
+        .set_ex(&approved_key, "approved", polis_common::ttl::APPROVED_REQUEST_SECS)
         .query_async::<Vec<redis::Value>>(con)
         .await
         .context("failed to atomically DEL blocked + SETEX approved")?;
@@ -138,43 +139,9 @@ async fn handle_approve(
 }
 
 async fn handle_deny(con: &mut redis::aio::MultiplexedConnection, request_id: &str) -> Result<()> {
-    polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
+    let (blocked_key, _, _) = fetch_and_audit(con, request_id, "denied_via_cli").await?;
 
-    let blocked_key = polis_common::blocked_key(request_id);
-
-    let blocked_data: Option<String> = con
-        .get(&blocked_key)
-        .await
-        .context("failed to GET blocked request")?;
-
-    let blocked_data = blocked_data
-        .ok_or_else(|| anyhow::anyhow!("no blocked request found for {}", request_id))?;
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system clock error")?
-        .as_secs();
-
-    let audit_entry = serde_json::json!({
-        "event_type": "denied_via_cli",
-        "request_id": request_id,
-        "timestamp": now,
-        "blocked_request": blocked_data,
-    });
-
-    let _: () = con
-        .zadd(
-            polis_common::keys::EVENT_LOG,
-            audit_entry.to_string(),
-            now as f64,
-        )
-        .await
-        .context("failed to ZADD audit log entry")?;
-
-    let _: () = con
-        .del(&blocked_key)
-        .await
-        .context("failed to DEL blocked key")?;
+    let _: () = con.del(&blocked_key).await.context("failed to DEL blocked key")?;
 
     println!("denied {}", request_id);
     Ok(())

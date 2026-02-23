@@ -984,9 +984,11 @@ fn verify_signature(download_url: &str) -> Result<SignatureInfo> {
         .call()
         .context("failed to download release asset")?;
 
+    // Limit download to 100MB to prevent memory exhaustion from malicious servers
     let mut data = Vec::new();
     response
         .into_reader()
+        .take(100 * 1024 * 1024)
         .read_to_end(&mut data)
         .context("failed to read release asset")?;
 
