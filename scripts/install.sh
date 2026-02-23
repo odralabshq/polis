@@ -248,19 +248,6 @@ run_init() {
     local image_path="$1"
     local bin="${INSTALL_DIR}/bin/polis"
 
-    # Clean up any existing workspace for a fresh install
-    if multipass info polis &>/dev/null 2>&1; then
-        log_warn "An existing polis VM was found."
-        read -r -p "Remove it and start fresh? [y/N] " confirm
-        if [[ "${confirm,,}" != "y" ]]; then
-            log_info "Keeping existing VM. Skipping image init."
-            return 0
-        fi
-        log_info "Removing existing polis VM..."
-        multipass delete polis && multipass purge
-    fi
-    rm -f "${INSTALL_DIR}/state.json"
-
     log_info "Running: polis start --image ${image_path}"
     "${bin}" start --image "${image_path}" || {
         log_warn "polis start failed. Run manually:"
@@ -282,6 +269,20 @@ main() {
 
     local image_path
     image_path=$(download_image)
+
+    # Clean up any existing workspace for a fresh install
+    if multipass info polis &>/dev/null 2>&1; then
+        log_warn "An existing polis VM was found."
+        read -r -p "Remove it and start fresh? [y/N] " confirm
+        if [[ "${confirm,,}" == "y" ]]; then
+            log_info "Removing existing polis VM..."
+            multipass delete polis && multipass purge
+        else
+            log_info "Keeping existing VM. Skipping removal."
+        fi
+    fi
+    rm -f "${INSTALL_DIR}/state.json"
+
     run_init "${image_path}"
 
     echo ""
