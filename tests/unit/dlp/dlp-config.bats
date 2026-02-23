@@ -28,3 +28,10 @@ setup() {
     count=$(grep -c '^action\.' "$DLP_CONF")
     [[ "$count" -ge 3 ]]
 }
+
+@test "dlp-config: AWS allow rules do not contain wildcard amazonaws.com" {
+    # Regression guard for DLP bypass via attacker-controlled S3 path-style URLs.
+    # AWS-bound credentials must go through HITL approval, not a blanket wildcard.
+    run grep -E '^allow\.aws_(access|secret)' "$DLP_CONF"
+    refute_output --partial 'amazonaws.com'
+}

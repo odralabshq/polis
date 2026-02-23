@@ -2,7 +2,9 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
+use regex::Regex;
 use serde::Deserialize;
+use std::sync::LazyLock;
 
 use crate::multipass::{Multipass, VM_NAME};
 use crate::output::OutputContext;
@@ -10,6 +12,19 @@ use crate::state::StateManager;
 use crate::workspace::{CONTAINER_NAME, vm};
 
 const VM_ROOT: &str = "/opt/polis";
+
+/// Same rule enforced by `generate-agent.sh`; checked here before any
+/// path interpolation to prevent path-traversal (CWE-22).
+static AGENT_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$").expect("valid regex"));
+
+fn validate_agent_name(name: &str) -> Result<()> {
+    anyhow::ensure!(
+        AGENT_NAME_RE.is_match(name),
+        "Invalid agent name '{name}': must match ^[a-z0-9]([a-z0-9-]{{0,61}}[a-z0-9])?$"
+    );
+    Ok(())
+}
 
 #[derive(Subcommand)]
 pub enum AgentCommand {
@@ -111,6 +126,7 @@ async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result
         .context("failed to parse agent.yaml: missing or invalid metadata.name")?;
     let name = manifest.metadata.name;
     anyhow::ensure!(!name.is_empty(), "metadata.name is empty in agent.yaml");
+    validate_agent_name(&name)?;
 
     // VM must be running
     anyhow::ensure!(
@@ -168,6 +184,7 @@ async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result
 
 async fn remove(args: &RemoveArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     let name = &args.name;
+    validate_agent_name(name)?;
     let agent_dir = format!("{VM_ROOT}/agents/{name}");
 
     // Must exist
@@ -495,5 +512,34 @@ mod tests {
     fn test_agent_manifest_missing_name_returns_error() {
         let yaml = "metadata:\n  version: v1.0\n";
         assert!(serde_yaml::from_str::<AgentManifest>(yaml).is_err());
+    }
+
+    #[test]
+    fn test_valid_agent_names() {
+        for name in ["a", "a1", "my-agent", "agent-0", "0", "abc"] {
+            assert!(validate_agent_name(name).is_ok(), "should accept '{name}'");
+        }
+    }
+
+    #[test]
+    fn test_path_traversal_rejected() {
+        for name in ["../../.ssh", "../etc", "a/b", "a\\b", ".hidden"] {
+            assert!(validate_agent_name(name).is_err(), "should reject '{name}'");
+        }
+    }
+
+    #[test]
+    fn test_invalid_agent_names() {
+        for name in ["", "-start", "end-", "UPPER", "has space", "a--b-"] {
+            assert!(validate_agent_name(name).is_err(), "should reject '{name}'");
+        }
+    }
+
+    #[test]
+    fn test_max_length_boundary() {
+        let max = "a".repeat(63);
+        assert!(validate_agent_name(&max).is_ok());
+        let over = "a".repeat(64);
+        assert!(validate_agent_name(&over).is_err());
     }
 }

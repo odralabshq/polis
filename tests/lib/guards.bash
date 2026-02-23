@@ -7,7 +7,7 @@ require_container() {
         state=$(docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null || echo "missing")
         [[ "$state" == "running" ]] || skip "Container $c not running ($state)"
         local health
-        health=$(docker inspect --format '{{.State.Health.Status}}' "$c" 2>/dev/null || echo "none")
+        health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo "none")
         [[ "$health" == "none" || "$health" == "healthy" ]] || skip "Container $c not healthy ($health)"
     done
     return 0

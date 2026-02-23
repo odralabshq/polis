@@ -490,8 +490,12 @@ static int ensure_valkey_connected(void)
 
     /* Re-authenticate after reconnect */
     {
-        const char *vk_pass = getenv("VALKEY_RESPMOD_PASS");
-        if (vk_pass) {
+        char vk_pass[256];
+        FILE *pass_file = fopen("/run/secrets/valkey_respmod_password", "r");
+        if (pass_file && fgets(vk_pass, sizeof(vk_pass), pass_file)) {
+            fclose(pass_file);
+            vk_pass[strcspn(vk_pass, "\r\n")] = '\0';
+
             reply = redisCommand(valkey_ctx,
                 "AUTH governance-respmod %s", vk_pass);
             if (reply == NULL ||
@@ -504,6 +508,14 @@ static int ensure_valkey_connected(void)
                 return 0;
             }
             freeReplyObject(reply);
+        } else {
+            ci_debug_printf(1, "polis_approval: WARNING: "
+                "Cannot read /run/secrets/valkey_respmod_password "
+                "during reconnect\n");
+            if (pass_file) fclose(pass_file);
+            redisFree(valkey_ctx);
+            valkey_ctx = NULL;
+            return 0;
         }
     }
 
