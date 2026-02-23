@@ -152,47 +152,7 @@ check_multipass() {
     return 0
 }
 
-resolve_version() {
-    if [[ "${VERSION}" == "latest" ]]; then
-        local response http_code body
-        response=$(curl -sSL --proto "${CURL_PROTO}" -w "\n%{http_code}" \
-            "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
-            2>&1) || true
-        http_code=$(echo "${response}" | tail -1)
-        body=$(echo "${response}" | sed '$d')
 
-        # /releases/latest returns 404 when only pre-releases exist; fall back to most recent release
-        if [[ "${http_code}" == "404" ]]; then
-            response=$(curl -sSL --proto "${CURL_PROTO}" -w "\n%{http_code}" \
-                "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=1" \
-                2>&1) || true
-            http_code=$(echo "${response}" | tail -1)
-            body=$(echo "${response}" | sed '$d')
-            if command -v jq &>/dev/null; then
-                body=$(echo "${body}" | jq '.[0]')
-            fi
-        fi
-
-        if [[ "${http_code}" == "403" ]]; then
-            log_error "GitHub API rate limit exceeded (60 requests/hour unauthenticated)"
-            echo "  Set GITHUB_TOKEN or use: POLIS_VERSION=v0.3.0 install.sh"
-            exit 1
-        fi
-
-        if command -v jq &>/dev/null; then
-            VERSION=$(echo "${body}" | jq -r '.tag_name')
-        else
-            VERSION=$(echo "${body}" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-        fi
-
-        if [[ -z "${VERSION}" || "${VERSION}" == "null" ]]; then
-            log_error "Failed to resolve latest version"
-            exit 1
-        fi
-    fi
-    log_info "Installing Polis ${VERSION}"
-    return 0
-}
 
 download_cli() {
     local arch base_url bin_dir binary_name checksum_file expected actual
@@ -267,7 +227,7 @@ download_image() {
         "${base_url}/${image_name}" -o "${dest}"
 
     log_info "Verifying image SHA256..."
-    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${image_name}.sha256" | awk '{print $1}')
+    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/checksums.sha256" | grep "${image_name}" | awk '{print $1}')
     actual=$(sha256sum "${dest}" | awk '{print $1}')
     if [[ "${expected}" != "${actual}" ]]; then
         log_error "Image SHA256 mismatch!"
@@ -313,7 +273,7 @@ main() {
 
     check_arch >/dev/null
     check_multipass
-    resolve_version
+    log_info "Installing Polis ${VERSION}"
     download_cli
     verify_attestation
     create_symlink
