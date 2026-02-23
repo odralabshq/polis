@@ -31,6 +31,7 @@ _run_script() {
         verify_attestation()  { :; }
         create_symlink()      { :; }
         run_init()            { :; }
+        multipass()           { return 1; }  # stub: no existing VM
         main
     ' _ "$INSTALL_SH" "$@"
 }
