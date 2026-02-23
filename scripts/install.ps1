@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # Polis Installer for Windows
 # =============================================================================
 # One-line install: irm https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.ps1 | iex
@@ -9,8 +9,11 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$Version          = $env:POLIS_VERSION ?? "0.3.0-preview-6"
-$InstallDir       = $env:POLIS_HOME    ?? (Join-Path $env:USERPROFILE ".polis")
+# Ensure TLS 1.2 for GitHub downloads (PS 5.1 defaults to TLS 1.0)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$Version          = if ($env:POLIS_VERSION) { $env:POLIS_VERSION } else { "0.3.0-preview-6" }
+$InstallDir       = if ($env:POLIS_HOME)    { $env:POLIS_HOME }    else { Join-Path $env:USERPROFILE ".polis" }
 $ImageDir         = Join-Path $env:ProgramData "Polis\images"
 $RepoOwner        = "OdraLabsHQ"
 $RepoName         = "polis"
@@ -22,7 +25,7 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
-# ── Multipass ─────────────────────────────────────────────────────────────────
+# -- Multipass -----------------------------------------------------------------
 
 function Test-HyperV {
     try {
@@ -60,7 +63,7 @@ function Install-Multipass {
 
 function Assert-Multipass {
     if (-not (Get-Command multipass -ErrorAction SilentlyContinue)) {
-        Write-Info "Multipass not found — installing..."
+        Write-Info "Multipass not found - installing..."
         if (Test-HyperV) {
             Install-Multipass
         } elseif (Test-VirtualBox) {
@@ -90,12 +93,12 @@ function Assert-Multipass {
             }
             Write-Ok "Multipass $verStr OK"
         } catch {
-            Write-Warn "Could not parse Multipass version '$verStr' — proceeding anyway."
+            Write-Warn "Could not parse Multipass version '$verStr' - proceeding anyway."
         }
     }
 }
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# -- CLI -----------------------------------------------------------------------
 
 function Install-Cli {
     $binDir = Join-Path $InstallDir "bin"
@@ -133,7 +136,7 @@ function Add-ToUserPath {
     }
 }
 
-# ── Image ─────────────────────────────────────────────────────────────────────
+# -- Image ---------------------------------------------------------------------
 
 function Get-Image {
     $base      = "https://github.com/${RepoOwner}/${RepoName}/releases/download/${Version}"
@@ -154,7 +157,7 @@ function Get-Image {
     $checksums = Invoke-WebRequest -Uri "$base/checksums.sha256" -UseBasicParsing
     $expected  = (($checksums.Content -split "`n" | Where-Object { $_ -match [regex]::Escape($imageName) }) -replace '\s.*', '') | Select-Object -First 1
     if (-not $expected) {
-        Write-Warn "Could not find checksum for $imageName — skipping verification"
+        Write-Warn "Could not find checksum for $imageName - skipping verification"
     } else {
         $actual = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
         if ($actual -ne $expected.ToLower()) {
@@ -170,7 +173,7 @@ function Get-Image {
     return $dest
 }
 
-# ── Init ──────────────────────────────────────────────────────────────────────
+# -- Init ----------------------------------------------------------------------
 
 function Invoke-PolisInit {
     param([string]$ImagePath)
@@ -199,12 +202,12 @@ function Invoke-PolisInit {
     }
 }
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -- Main ----------------------------------------------------------------------
 
 Write-Host ""
-Write-Host "╔═══════════════════════════════════════════════════════════════╗"
-Write-Host "║                    Polis Installer                            ║"
-Write-Host "╚═══════════════════════════════════════════════════════════════╝"
+Write-Host "+===============================================================+"
+Write-Host "|                    Polis Installer                            |"
+Write-Host "+===============================================================+"
 Write-Host ""
 
 Assert-Multipass
