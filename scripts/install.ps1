@@ -12,8 +12,9 @@ $ErrorActionPreference = "Stop"
 # Ensure TLS 1.2 for GitHub downloads (PS 5.1 defaults to TLS 1.0)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Version          = if ($env:POLIS_VERSION) { $env:POLIS_VERSION } else { "0.3.0-preview-6" }
-$InstallDir       = if ($env:POLIS_HOME)    { $env:POLIS_HOME }    else { Join-Path $env:USERPROFILE ".polis" }
+$Version          = if ($env:POLIS_VERSION)  { $env:POLIS_VERSION }  else { "0.3.0-preview-6" }
+$InstallDir       = if ($env:POLIS_HOME)     { $env:POLIS_HOME }     else { Join-Path $env:USERPROFILE ".polis" }
+$CdnBaseUrl       = if ($env:POLIS_CDN_URL)  { $env:POLIS_CDN_URL }  else { "https://d1qggvwquwdnma.cloudfront.net" }
 $ImageDir         = Join-Path $env:ProgramData "Polis\images"
 $RepoOwner        = "OdraLabsHQ"
 $RepoName         = "polis"
@@ -139,22 +140,37 @@ function Add-ToUserPath {
 # -- Image ---------------------------------------------------------------------
 
 function Get-Image {
-    $base      = "https://github.com/${RepoOwner}/${RepoName}/releases/download/${Version}"
-    $versions  = Invoke-RestMethod -Uri "$base/versions.json" -UseBasicParsing
+    $ghBase    = "https://github.com/${RepoOwner}/${RepoName}/releases/download/${Version}"
+    $versions  = Invoke-RestMethod -Uri "$ghBase/versions.json" -UseBasicParsing
     $imageName = $versions.vm_image.asset
     $dest      = Join-Path $ImageDir $imageName
     $sidecar   = "$dest.sha256"
 
     New-Item -ItemType Directory -Force -Path $ImageDir | Out-Null
 
-    Write-Info "Downloading VM image..."
-    Invoke-WebRequest -Uri "$base/$imageName" -OutFile $dest -UseBasicParsing
+    # Try CDN first, fall back to GitHub
+    $cdnUrl     = "${CdnBaseUrl}/${Version}/${imageName}"
+    $ghUrl      = "${ghBase}/${imageName}"
+    $downloaded = $false
+
+    Write-Info "Downloading VM image from CDN..."
+    try {
+        Invoke-WebRequest -Uri $cdnUrl -OutFile $dest -UseBasicParsing -ErrorAction Stop
+        $downloaded = $true
+    } catch {
+        Write-Warn "CDN unavailable, falling back to GitHub..."
+    }
+
+    if (-not $downloaded) {
+        Invoke-WebRequest -Uri $ghUrl -OutFile $dest -UseBasicParsing
+    }
 
     # Download signed sidecar for CLI integrity verification
-    Invoke-WebRequest -Uri "$base/$imageName.sha256" -OutFile $sidecar -UseBasicParsing
+    Invoke-WebRequest -Uri "$ghBase/$imageName.sha256" -OutFile $sidecar -UseBasicParsing
 
+    # Checksum always fetched from GitHub (separate origin from binary)
     Write-Info "Verifying image SHA256..."
-    $checksums = Invoke-WebRequest -Uri "$base/checksums.sha256" -UseBasicParsing
+    $checksums = Invoke-WebRequest -Uri "$ghBase/checksums.sha256" -UseBasicParsing
     $expected  = (($checksums.Content -split "`n" | Where-Object { $_ -match [regex]::Escape($imageName) }) -replace '\s.*', '') | Select-Object -First 1
     if (-not $expected) {
         Write-Warn "Could not find checksum for $imageName - skipping verification"
