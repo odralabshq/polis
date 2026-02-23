@@ -265,15 +265,22 @@ jobs:
         run: |
           cargo install zipsign --version 0.2.1 --locked
           echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
-          # Sign checksums file (covers all parts)
+          VERSION="${{ needs.validate.outputs.version }}"
+          IMAGE="polis-${VERSION}-amd64.qcow2"
+          # Sign combined checksums file
           tmpdir=$(mktemp -d)
           cp packer/output/checksums.sha256 "${tmpdir}/"
           tar -czf "${tmpdir}/checksums.tar.gz" -C "${tmpdir}" checksums.sha256
           zipsign sign tar --context "" "${tmpdir}/checksums.tar.gz" /tmp/polis-release.key \
             -o "packer/output/checksums.sha256.sig" -f
-          rm -rf "${tmpdir}"
-          rm -f /tmp/polis-release.key
           echo "✓ Signed: checksums.sha256.sig"
+          # Generate per-image sidecar (polis-<version>-amd64.qcow2.sha256)
+          grep "${IMAGE}" packer/output/checksums.sha256 > "${tmpdir}/checksums.sha256"
+          tar -czf "${tmpdir}/sidecar.tar.gz" -C "${tmpdir}" checksums.sha256
+          zipsign sign tar --context "" "${tmpdir}/sidecar.tar.gz" /tmp/polis-release.key \
+            -o "packer/output/${IMAGE}.sha256" -f
+          echo "✓ Signed: ${IMAGE}.sha256"
+          rm -rf "${tmpdir}" /tmp/polis-release.key
 
       - name: Attest VM provenance
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
@@ -286,6 +293,7 @@ jobs:
           name: vm-image
           path: |
             packer/output/*.qcow2
+            packer/output/*.qcow2.sha256
             packer/output/checksums.sha256
             packer/output/checksums.sha256.sig
           retention-days: 1
@@ -381,6 +389,7 @@ jobs:
           generate_release_notes: true
           files: |
             vm/*.qcow2
+            vm/*.qcow2.sha256
             vm/checksums.sha256
             vm/checksums.sha256.sig
             cli-bin/polis-linux-amd64
