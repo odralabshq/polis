@@ -1268,7 +1268,9 @@ static int process_ott_approval(const char *ott_code,
     snprintf(ott_key, sizeof(ott_key),
              "polis:ott:%s", ott_code);
 
+    pthread_mutex_lock(&valkey_mutex);
     reply = redisCommand(valkey_ctx, "GET %s", ott_key);
+    pthread_mutex_unlock(&valkey_mutex);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
         ci_debug_printf(1, "sentinel_resp: "
             "Valkey GET failed for OTT '%s'%s%s\n",
@@ -1421,8 +1423,10 @@ static int process_ott_approval(const char *ott_code,
     snprintf(blocked_key, sizeof(blocked_key),
              "polis:blocked:%s", parsed_request_id);
 
+    pthread_mutex_lock(&valkey_mutex);
     reply = redisCommand(valkey_ctx,
                          "EXISTS %s", blocked_key);
+    pthread_mutex_unlock(&valkey_mutex);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
         ci_debug_printf(1, "sentinel_resp: "
             "Valkey EXISTS failed for '%s'%s%s\n",
@@ -1449,7 +1453,9 @@ static int process_ott_approval(const char *ott_code,
     /* Step 5: GET blocked request data for audit preservation    */
     /* Requirement 2.9: Preserve blocked data BEFORE deletion     */
     /* ---------------------------------------------------------- */
+    pthread_mutex_lock(&valkey_mutex);
     reply = redisCommand(valkey_ctx, "GET %s", blocked_key);
+    pthread_mutex_unlock(&valkey_mutex);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
         ci_debug_printf(1, "sentinel_resp: "
             "Valkey GET failed for '%s'%s%s\n",
@@ -1560,7 +1566,7 @@ static int process_ott_approval(const char *ott_code,
          * Build audit log entry JSON. We allocate a
          * buffer large enough for the template + blocked_data.
          */
-        log_size = 512 + strlen(blocked_data);
+        log_size = 1024 + strlen(blocked_data);
         log_entry = malloc(log_size);
         if (log_entry == NULL) {
             ci_debug_printf(0, "sentinel_resp: CRITICAL: "
@@ -1589,9 +1595,11 @@ static int process_ott_approval(const char *ott_code,
                      bd_fmt, blocked_data);
         }
 
+        pthread_mutex_lock(&valkey_mutex);
         reply = redisCommand(valkey_ctx,
             "ZADD polis:log:events %f %s",
             now_score, log_entry);
+        pthread_mutex_unlock(&valkey_mutex);
 
         if (reply == NULL ||
             reply->type == REDIS_REPLY_ERROR) {
@@ -1627,8 +1635,10 @@ static int process_ott_approval(const char *ott_code,
     /* ---------------------------------------------------------- */
 
     /* DEL the blocked key */
+    pthread_mutex_lock(&valkey_mutex);
     reply = redisCommand(valkey_ctx,
                          "DEL %s", blocked_key);
+    pthread_mutex_unlock(&valkey_mutex);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
         ci_debug_printf(1, "sentinel_resp: "
             "Valkey DEL failed for '%s'%s%s\n",
@@ -1642,9 +1652,11 @@ static int process_ott_approval(const char *ott_code,
     reply = NULL;
 
     /* SETEX the approved key with 5-minute TTL */
+    pthread_mutex_lock(&valkey_mutex);
     reply = redisCommand(valkey_ctx,
         "SETEX %s %d approved",
         approved_key, APPROVAL_TTL_SECS);
+    pthread_mutex_unlock(&valkey_mutex);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
         ci_debug_printf(1, "sentinel_resp: "
             "Valkey SETEX failed for '%s'%s%s\n",
@@ -1678,9 +1690,11 @@ static int process_ott_approval(const char *ott_code,
         snprintf(host_key, sizeof(host_key),
                  "polis:approved:host:%s", approval_host);
 
+        pthread_mutex_lock(&valkey_mutex);
         reply = redisCommand(valkey_ctx,
             "SETEX %s %d approved",
             host_key, APPROVAL_TTL_SECS);
+        pthread_mutex_unlock(&valkey_mutex);
         if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
             ci_debug_printf(1, "sentinel_resp: WARNING: "
                 "Failed to SETEX host approval key '%s'%s%s\n",
@@ -1703,7 +1717,9 @@ static int process_ott_approval(const char *ott_code,
     /* Done last so that if earlier steps fail, the OTT remains   */
     /* available for retry.                                       */
     /* ---------------------------------------------------------- */
+    pthread_mutex_lock(&valkey_mutex);
     reply = redisCommand(valkey_ctx, "DEL %s", ott_key);
+    pthread_mutex_unlock(&valkey_mutex);
     if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
         ci_debug_printf(1, "sentinel_resp: WARNING: "
             "Failed to DEL OTT key '%s'%s%s — "
@@ -1984,7 +2000,7 @@ static int compress_gzip(const char *in, size_t in_len,
 
     if (ret == Z_STREAM_END) {
         /* Compression complete */
-        total = alloc - strm.avail_out;
+        total = strm.total_out;
     } else if (ret == Z_OK) {
         /* Buffer too small — grow and retry */
         size_t new_alloc = alloc * 2;
@@ -2001,9 +2017,9 @@ static int compress_gzip(const char *in, size_t in_len,
         buf = new_buf;
         alloc = new_alloc;
 
-        /* Continue compression */
-        strm.next_out = (Bytef *)(buf + (alloc / 2));
-        strm.avail_out = alloc / 2;
+        /* Continue compression using actual bytes written */
+        strm.next_out = (Bytef *)(buf + strm.total_out);
+        strm.avail_out = alloc - strm.total_out;
 
         ret = deflate(&strm, Z_FINISH);
         if (ret != Z_STREAM_END) {
@@ -2015,7 +2031,7 @@ static int compress_gzip(const char *in, size_t in_len,
             return -1;
         }
 
-        total = alloc - strm.avail_out;
+        total = strm.total_out;
     } else {
         /* Compression error */
         ci_debug_printf(1, "sentinel_resp: "
