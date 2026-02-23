@@ -3,9 +3,6 @@
 # =============================================================================
 # One-line install: irm https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.ps1 | iex
 # =============================================================================
-[CmdletBinding()]
-param()
-
 Set-StrictMode -Version Latest
 
 # Ensure TLS 1.2 for GitHub downloads (PS 5.1 defaults to TLS 1.0)
