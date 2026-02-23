@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $Version          = $env:POLIS_VERSION ?? "0.3.0-preview-3"
 $InstallDir       = $env:POLIS_HOME    ?? (Join-Path $env:USERPROFILE ".polis")
-$ImageDir         = "C:\ProgramData\Polis\images"
+$ImageDir         = Join-Path $env:ProgramData "Polis\images"
 $RepoOwner        = "OdraLabsHQ"
 $RepoName         = "polis"
 $MultipassMin     = [version]"1.16.0"

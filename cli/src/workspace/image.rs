@@ -42,12 +42,8 @@ pub struct ImageMetadata {
 /// Returns the image cache directory.
 ///
 /// Linux: `~/polis/images/` (snap AppArmor requires non-hidden)
-/// Windows: `C:\ProgramData\Polis\images\` (must be accessible to multipassd SYSTEM service)
+/// Windows: `%PROGRAMDATA%\Polis\images\` (accessible to multipassd SYSTEM service)
 /// macOS: `~/.polis/images/`
-///
-/// # Errors
-///
-/// Returns an error if the home directory cannot be determined.
 pub fn images_dir() -> Result<PathBuf> {
     #[cfg(target_os = "linux")]
     return Ok(dirs::home_dir()
@@ -55,8 +51,12 @@ pub fn images_dir() -> Result<PathBuf> {
         .join("polis")
         .join("images"));
     #[cfg(target_os = "windows")]
-    return Ok(PathBuf::from(r"C:\ProgramData\Polis\images"));
-    #[cfg(target_os = "macos")]
+    return Ok(PathBuf::from(
+        std::env::var("PROGRAMDATA").unwrap_or_else(|_| r"C:\ProgramData".to_string()),
+    )
+    .join("Polis")
+    .join("images"));
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
         .join(".polis")
