@@ -452,6 +452,8 @@ fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
 /// Print the security section of the human-readable health report.
 fn print_security_section(ctx: &OutputContext, sec: &SecurityChecks) {
     println!("  Security:");
+    // Process isolation (sysbox) is Linux-only — skip on other platforms.
+    #[cfg(target_os = "linux")]
     print_check(ctx, sec.process_isolation, "Process isolation active");
     print_check(ctx, sec.traffic_inspection, "Traffic inspection responding");
     print_check(
@@ -708,6 +710,11 @@ async fn check_dns() -> bool {
 }
 
 async fn check_process_isolation() -> bool {
+    // sysbox-runc is Linux-only; always return true on other platforms
+    // so the check doesn't appear as a failure.
+    #[cfg(not(target_os = "linux"))]
+    return true;
+    #[cfg(target_os = "linux")]
     tokio::process::Command::new("sysbox-runc")
         .arg("--version")
         .output()

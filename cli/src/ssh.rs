@@ -444,14 +444,21 @@ Host workspace
 
     /// Creates `~/.polis/sockets/` with permissions 700.
     ///
+    /// No-op on Windows (`ControlMaster` not supported).
+    ///
     /// # Errors
     ///
     /// Returns an error if the directory cannot be created or permissions set.
     pub fn create_sockets_dir(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.sockets_dir)
-            .with_context(|| format!("create dir {}", self.sockets_dir.display()))?;
-        set_permissions(&self.sockets_dir, 0o700)?;
-        Ok(())
+        #[cfg(windows)]
+        return Ok(());
+        #[cfg(not(windows))]
+        {
+            std::fs::create_dir_all(&self.sockets_dir)
+                .with_context(|| format!("create dir {}", self.sockets_dir.display()))?;
+            set_permissions(&self.sockets_dir, 0o700)?;
+            Ok(())
+        }
     }
 
     /// Validates that `~/.polis/ssh_config` has permissions 600 (V-004).
