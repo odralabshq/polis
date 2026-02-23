@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.validate.outputs.version }}
+      tag_name: ${{ steps.validate.outputs.tag_name }}
       is_prerelease: ${{ steps.validate.outputs.is_prerelease }}
       push_docker: ${{ steps.validate.outputs.push_docker }}
     steps:
@@ -66,6 +67,7 @@ jobs:
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${VERSION#v}" >> "$GITHUB_OUTPUT"
           echo "push_docker=$PUSH_DOCKER" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *"-"* ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
@@ -332,8 +334,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ needs.validate.outputs.version }}" -m "Release ${{ needs.validate.outputs.version }}"
-          git push origin "${{ needs.validate.outputs.version }}"
+          TAG="${{ needs.validate.outputs.tag_name }}"
+          if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists on remote, skipping"
+          else
+            git tag -a "$TAG" -m "Release ${{ needs.validate.outputs.version }}"
+            git push origin "$TAG"
+          fi
 
       - name: Download VM artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -356,7 +363,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
-          tag_name: ${{ needs.validate.outputs.version }}
+          tag_name: ${{ needs.validate.outputs.tag_name }}
           name: Polis ${{ needs.validate.outputs.version }}
           draft: false
           prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
