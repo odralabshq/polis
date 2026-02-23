@@ -244,7 +244,7 @@ run_init() {
 
     log_info "Running: polis start --image ${image_path}"
     if ! "${bin}" start --image "${image_path}"; then
-        log_warn "polis start failed. Run manually:"
+        log_error "polis start failed. Run manually:"
         echo "  polis start --image ${image_path}"
         return 1
     fi
