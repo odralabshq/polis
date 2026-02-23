@@ -226,7 +226,7 @@ download_image() {
 
     log_info "Downloading VM image..." >&2
     if command -v aria2c &>/dev/null; then
-        aria2c -x16 -s16 -k1M --file-allocation=none \
+        aria2c -x16 -s16 -k1M --file-allocation=none --allow-overwrite=true \
             -d "${INSTALL_DIR}/images" -o "${image_name}" \
             "${base_url}/${image_name}" >&2
     else
