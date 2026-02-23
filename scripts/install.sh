@@ -155,11 +155,23 @@ check_multipass() {
 resolve_version() {
     if [[ "${VERSION}" == "latest" ]]; then
         local response http_code body
-        response=$(curl -fsSL --proto "${CURL_PROTO}" -w "\n%{http_code}" \
+        response=$(curl -sSL --proto "${CURL_PROTO}" -w "\n%{http_code}" \
             "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
             2>&1) || true
         http_code=$(echo "${response}" | tail -1)
         body=$(echo "${response}" | sed '$d')
+
+        # /releases/latest returns 404 when only pre-releases exist; fall back to most recent release
+        if [[ "${http_code}" == "404" ]]; then
+            response=$(curl -sSL --proto "${CURL_PROTO}" -w "\n%{http_code}" \
+                "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=1" \
+                2>&1) || true
+            http_code=$(echo "${response}" | tail -1)
+            body=$(echo "${response}" | sed '$d')
+            if command -v jq &>/dev/null; then
+                body=$(echo "${body}" | jq '.[0]')
+            fi
+        fi
 
         if [[ "${http_code}" == "403" ]]; then
             log_error "GitHub API rate limit exceeded (60 requests/hour unauthenticated)"
