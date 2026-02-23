@@ -94,7 +94,7 @@ setup() {
     assert_success
 }
 
-@test "dockerfile: gate runs as nonroot" {
-    run grep -E "^USER (nonroot|65532)" "$GATE_DOCKERFILE"
+@test "dockerfile: gate runs as root (NET_ADMIN required for TPROXY)" {
+    run grep -E "^USER (root|0)" "$GATE_DOCKERFILE"
     assert_success
 }

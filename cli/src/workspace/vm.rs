@@ -5,7 +5,6 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::multipass::Multipass;
-use crate::workspace::COMPOSE_PATH;
 
 const VM_CPUS: &str = "2";
 const VM_MEMORY: &str = "8G";
@@ -18,6 +17,20 @@ pub enum VmState {
     Stopped,
     Starting,
     Running,
+}
+
+/// Get the first IPv4 address of the VM, if running.
+#[allow(dead_code)]
+pub async fn ip(mp: &impl Multipass) -> Option<String> {
+    let output = mp.vm_info().await.ok()?;
+    let info: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    info.get("info")?
+        .get("polis")?
+        .get("ipv4")?
+        .as_array()?
+        .first()?
+        .as_str()
+        .map(String::from)
 }
 
 /// Check if VM exists.
@@ -109,7 +122,7 @@ pub async fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Resu
 
     configure_credentials(mp).await;
     start_services_with_progress(mp, quiet).await;
-    pin_host_key();
+    pin_host_key().await;
     Ok(())
 }
 
@@ -148,8 +161,15 @@ pub async fn start(mp: &impl Multipass) -> Result<()> {
 ///
 /// Returns an error if the multipass stop command fails.
 pub async fn stop(mp: &impl Multipass) -> Result<()> {
+    // Stop all polis- containers (including agent sidecars not in the base
+    // compose file). Using `docker stop` with a filter is more reliable than
+    // `docker compose stop` which only knows about services in its file.
     let _ = mp
-        .exec(&["docker", "compose", "-f", COMPOSE_PATH, "stop"])
+        .exec(&[
+            "bash",
+            "-c",
+            "docker ps -q --filter name=polis- | xargs -r docker stop",
+        ])
         .await;
     let output = mp.stop().await.context("stopping workspace")?;
     if !output.status.success() {
@@ -237,11 +257,12 @@ async fn start_services_with_progress(mp: &impl Multipass, quiet: bool) {
     }
 }
 
-fn pin_host_key() {
+async fn pin_host_key() {
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("polis"));
-    if let Ok(output) = std::process::Command::new(exe)
+    if let Ok(output) = tokio::process::Command::new(exe)
         .args(["_extract-host-key"])
         .output()
+        .await
         && output.status.success()
         && let Ok(host_key) = String::from_utf8(output.stdout)
     {
@@ -300,6 +321,9 @@ mod tests {
             unimplemented!()
         }
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
             unimplemented!()
         }
         async fn exec(&self, _: &[&str]) -> Result<Output> {
@@ -383,6 +407,9 @@ mod tests {
             unimplemented!()
         }
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
             unimplemented!()
         }
         async fn exec(&self, _: &[&str]) -> Result<Output> {

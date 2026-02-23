@@ -17,7 +17,12 @@ use polis_cli::commands::update::validate_version_tag;
 proptest! {
     /// Generated IDs always have correct format: polis- prefix + 16 hex chars.
     #[test]
-    fn prop_workspace_id_has_valid_format(_seed in 0u64..1000) {
+    fn prop_workspace_id_has_valid_format(
+        major in 0u32..100,
+        minor in 0u32..100,
+    ) {
+        // Use inputs to vary the test run; the real invariant is on the generated ID.
+        let _ = (major, minor);
         let id = generate_workspace_id();
         prop_assert!(id.starts_with("polis-"), "missing polis- prefix: {}", id);
         prop_assert!(id.len() == 22, "wrong length: {}", id);

@@ -308,6 +308,9 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
   "tools": {
     "web": {
       "search": {}
+    },
+    "exec": {
+      "security": "full"
     }
   }
 }
@@ -315,6 +318,17 @@ CONFIGEOF
     chmod 600 "$CONFIG_FILE"
     echo "[openclaw-init] Created openclaw.json with model: ${DEFAULT_MODEL}"
     
+    # Configure exec approvals: auto-approve all commands.
+    # Polis provides its own security boundary (DLP/TPROXY), so the OpenClaw
+    # exec approval layer is redundant and would require a paired device that
+    # doesn't exist in headless mode.
+    EXEC_APPROVALS_FILE="${CONFIG_DIR}/exec-approvals.json"
+    cat > "$EXEC_APPROVALS_FILE" << 'EAEOF'
+{"version":1,"defaults":{"security":"full"}}
+EAEOF
+    chmod 600 "$EXEC_APPROVALS_FILE"
+    echo "[openclaw-init] Configured exec approvals: security=full (auto-approve)"
+
     # Mark as initialized
     touch "$FIRST_RUN_MARKER"
     
@@ -350,6 +364,26 @@ CONFIGEOF
     
 else
     echo "[openclaw-init] Already initialized, checking config..."
+
+    # Ensure exec approvals stay at security=full (gateway may regenerate the file)
+    EXEC_APPROVALS_FILE="${CONFIG_DIR}/exec-approvals.json"
+    if [[ -f "$EXEC_APPROVALS_FILE" ]]; then
+        if command -v jq &>/dev/null; then
+            CURRENT_SEC=$(jq -r '.defaults.security // empty' "$EXEC_APPROVALS_FILE" 2>/dev/null)
+            if [[ "$CURRENT_SEC" != "full" ]]; then
+                jq '.defaults.security = "full"' "$EXEC_APPROVALS_FILE" > "${EXEC_APPROVALS_FILE}.tmp" \
+                    && mv "${EXEC_APPROVALS_FILE}.tmp" "$EXEC_APPROVALS_FILE"
+                chmod 600 "$EXEC_APPROVALS_FILE"
+                echo "[openclaw-init] Patched exec approvals: security=full"
+            fi
+        fi
+    else
+        cat > "$EXEC_APPROVALS_FILE" << 'EAEOF'
+{"version":1,"defaults":{"security":"full"}}
+EAEOF
+        chmod 600 "$EXEC_APPROVALS_FILE"
+        echo "[openclaw-init] Created exec approvals: security=full"
+    fi
 
     # Re-install polis security CLI wrappers (they live in tmpfs, lost on restart)
     POLIS_SCRIPTS_SRC="/usr/local/share/openclaw/scripts"

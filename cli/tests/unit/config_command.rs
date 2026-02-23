@@ -86,6 +86,9 @@ macro_rules! multipass_stub_methods {
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
             anyhow::bail!("transfer not expected in this test")
         }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+            anyhow::bail!("transfer_recursive not expected in this test")
+        }
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
             anyhow::bail!("exec_with_stdin not expected in this test")
         }
@@ -224,21 +227,30 @@ async fn test_config_set_security_level_saves_file_on_success() {
 async fn test_config_set_succeeds_when_password_read_fails() {
     let (_dir, cmd) = set_cmd("strict");
     let result = config::run(&ctx(), cmd, false, &MockPasswordReadFails).await;
-    assert!(result.is_ok(), "local save should succeed even if propagation fails");
+    assert!(
+        result.is_ok(),
+        "local save should succeed even if propagation fails"
+    );
 }
 
 #[tokio::test]
 async fn test_config_set_succeeds_when_valkey_set_fails() {
     let (_dir, cmd) = set_cmd("balanced");
     let result = config::run(&ctx(), cmd, false, &MockValkeySetFails).await;
-    assert!(result.is_ok(), "local save should succeed even if Valkey SET fails");
+    assert!(
+        result.is_ok(),
+        "local save should succeed even if Valkey SET fails"
+    );
 }
 
 #[tokio::test]
 async fn test_config_set_succeeds_when_exec_errors() {
     let (_dir, cmd) = set_cmd("balanced");
     let result = config::run(&ctx(), cmd, false, &MockExecErrors).await;
-    assert!(result.is_ok(), "local save should succeed even if multipass exec errors");
+    assert!(
+        result.is_ok(),
+        "local save should succeed even if multipass exec errors"
+    );
 }
 
 #[tokio::test]
@@ -249,7 +261,10 @@ async fn test_config_set_saves_file_even_when_propagation_fails() {
         .await
         .expect("should succeed");
     let content = std::fs::read_to_string(&path).expect("file should exist");
-    assert!(content.contains("strict"), "value should be persisted locally");
+    assert!(
+        content.contains("strict"),
+        "value should be persisted locally"
+    );
 }
 
 // ── Tests: show does not call exec ───────────────────────────────────────────
@@ -291,7 +306,10 @@ async fn test_config_set_propagation_passes_level_as_separate_arg() {
     assert!(set_call.contains(&"SET".to_string()));
     assert!(set_call.contains(&"polis:config:security_level".to_string()));
     assert!(set_call.contains(&"strict".to_string()));
-    assert!(set_call.contains(&"testpass".to_string()), "password should be passed as arg");
+    assert!(
+        set_call.contains(&"testpass".to_string()),
+        "password should be passed as arg"
+    );
 }
 
 #[tokio::test]

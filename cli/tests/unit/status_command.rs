@@ -13,22 +13,38 @@ fn ctx() -> OutputContext {
 
 #[tokio::test]
 async fn test_status_no_workspace_returns_ok() {
-    assert!(status::run(&ctx(), false, &MultipassVmNotFound).await.is_ok());
+    assert!(
+        status::run(&ctx(), false, &MultipassVmNotFound)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
 async fn test_status_stopped_returns_ok() {
-    assert!(status::run(&ctx(), false, &MultipassVmStopped).await.is_ok());
+    assert!(
+        status::run(&ctx(), false, &MultipassVmStopped)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
 async fn test_status_running_returns_ok() {
-    assert!(status::run(&ctx(), false, &MultipassVmRunning).await.is_ok());
+    assert!(
+        status::run(&ctx(), false, &MultipassVmRunning)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
 async fn test_status_json_no_workspace_returns_ok() {
-    assert!(status::run(&ctx(), true, &MultipassVmNotFound).await.is_ok());
+    assert!(
+        status::run(&ctx(), true, &MultipassVmNotFound)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]

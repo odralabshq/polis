@@ -32,21 +32,38 @@ async fn test_stop_already_stopped_succeeds() {
 #[tokio::test]
 async fn test_delete_no_workspace_succeeds() {
     let (_dir, state_mgr) = isolated_state();
-    let args = DeleteArgs { all: false, yes: true };
-    assert!(delete::run(&args, &MultipassVmNotFound, &state_mgr, true).await.is_ok());
+    let args = DeleteArgs {
+        all: false,
+        yes: true,
+    };
+    assert!(
+        delete::run(&args, &MultipassVmNotFound, &state_mgr, true)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
 async fn test_delete_all_no_workspace_succeeds() {
     let (_dir, state_mgr) = isolated_state();
-    let args = DeleteArgs { all: true, yes: true };
-    assert!(delete::run(&args, &MultipassVmNotFound, &state_mgr, true).await.is_ok());
+    let args = DeleteArgs {
+        all: true,
+        yes: true,
+    };
+    assert!(
+        delete::run(&args, &MultipassVmNotFound, &state_mgr, true)
+            .await
+            .is_ok()
+    );
 }
 
 // ── polis start ───────────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn test_start_already_running_returns_ok() {
-    let args = StartArgs { image: None };
+    let args = StartArgs {
+        image: None,
+        agent: None,
+    };
     assert!(start::run(&args, &MultipassVmRunning, true).await.is_ok());
 }

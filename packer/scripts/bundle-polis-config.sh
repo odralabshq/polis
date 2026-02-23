@@ -47,7 +47,9 @@ done
 # Copy setup scripts
 mkdir -p "$BUNDLE_DIR/scripts"
 cp packer/scripts/setup-certs.sh "$BUNDLE_DIR/scripts/"
+cp scripts/generate-agent.sh "$BUNDLE_DIR/scripts/"
 chmod +x "$BUNDLE_DIR/scripts/setup-certs.sh"
+chmod +x "$BUNDLE_DIR/scripts/generate-agent.sh"
 
 # Copy config
 mkdir -p "$BUNDLE_DIR/config"

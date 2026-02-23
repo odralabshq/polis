@@ -308,7 +308,11 @@ pub async fn run_with(
     if issues.is_empty() {
         println!("  {} Everything looks good!", "✓".style(ctx.styles.success));
     } else {
-        let hint = if verbose { "" } else { " Run with --verbose for details." };
+        let hint = if verbose {
+            ""
+        } else {
+            " Run with --verbose for details."
+        };
         println!(
             "  {} Found {} issues.{hint}",
             "✗".style(ctx.styles.error),

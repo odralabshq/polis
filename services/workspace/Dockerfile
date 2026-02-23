@@ -76,7 +76,10 @@ RUN printf '%s\n' \
 
 # Rust via rustup (installed as polis user, not root)
 USER polis
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+SHELL ["/bin/sh", "-c"]
+# hadolint ignore=DL3002
 USER root
 ENV PATH="/home/polis/.cargo/bin:${PATH}"
 

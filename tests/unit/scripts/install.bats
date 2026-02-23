@@ -1,38 +1,37 @@
 #!/usr/bin/env bats
 # bats file_tags=unit,scripts,install
-# Tests for scripts/install.sh (issue 05): flag parsing, init_image, resolve_version
+# Tests for scripts/install.sh: resolve_version, run_init, main flow
 
 setup() {
     load "../../lib/test_helper.bash"
     INSTALL_SH="$PROJECT_ROOT/scripts/install.sh"
     TEST_DIR="$(mktemp -d)"
-    export POLIS_HOME="$TEST_DIR"  # picked up by INSTALL_DIR="${POLIS_HOME:-...}" in install.sh
+    export POLIS_HOME="$TEST_DIR"
 }
 
 teardown() {
     rm -rf "$TEST_DIR"
-    unset POLIS_HOME
+    unset POLIS_HOME POLIS_VERSION
 }
 
-# Source only the function definitions (stop before the flag-parsing execution block).
+# Source only function definitions (everything except the final `main` invocation).
 _source_functions() {
-    source <(awk '/^# Parse flags/{exit} {print}' "$INSTALL_SH")
+    source <(sed '$d' "$INSTALL_SH")
 }
 
 # Run the full script with real-work functions stubbed out.
-# Two-phase source: load functions, override stubs, then run the execution block.
-# Extra args are forwarded as flags to install.sh.
 _run_script() {
     bash -c '
         INSTALL_SH="$1"; shift
-        source <(awk "/^# Parse flags/{exit} {print}" "$INSTALL_SH")
-        download_and_verify() { :; }
+        source <(sed "\$d" "$INSTALL_SH")
+        check_multipass()     { log_ok "Multipass stub OK"; }
+        resolve_version()     { log_info "Installing Polis ${VERSION}"; }
+        download_cli()        { :; }
+        download_image()      { echo "/tmp/fake.qcow2"; }
         verify_attestation()  { :; }
         create_symlink()      { :; }
-        init_image()          { :; }
-        curl()                { printf '"'"'{"tag_name":"v0.1.0"}\n200'"'"'; }
-        multipass()           { return 0; }
-        source <(awk "/^# Parse flags/,0" "$INSTALL_SH")
+        run_init()            { :; }
+        main
     ' _ "$INSTALL_SH" "$@"
 }
 
@@ -58,95 +57,36 @@ _run_script() {
     assert_success
 }
 
-# ── Flag parsing: --image ─────────────────────────────────────────────────
+# ── run_init() ────────────────────────────────────────────────────────────
 
-@test "install: --image flag is accepted" {
-    run _run_script --version v0.1.0 --image https://example.com/img.qcow2
-    assert_success
-}
-
-@test "install: --image= (equals form) is accepted" {
-    run _run_script --version v0.1.0 --image=https://example.com/img.qcow2
-    assert_success
-}
-
-@test "install: --image without value exits 1 with error" {
-    run _run_script --image
-    assert_failure
-    assert_output --partial "--image requires a value"
-}
-
-# ── Flag parsing: --version ───────────────────────────────────────────────
-
-@test "install: --version flag pins version in output" {
-    run _run_script --version v0.3.0
-    assert_success
-    assert_output --partial "v0.3.0"
-}
-
-@test "install: --version= (equals form) pins version in output" {
-    run _run_script --version=v0.3.0
-    assert_success
-    assert_output --partial "v0.3.0"
-}
-
-@test "install: --version without value exits 1 with error" {
-    run _run_script --version
-    assert_failure
-    assert_output --partial "--version requires a value"
-}
-
-# ── Flag parsing: unknown flag ────────────────────────────────────────────
-
-@test "install: unknown flag exits 1 with error message" {
-    run _run_script --unknown
-    assert_failure
-    assert_output --partial "Unknown flag: --unknown"
-}
-
-# ── init_image() ──────────────────────────────────────────────────────────
-
-@test "init_image: calls polis init without --image when IMAGE_URL is empty" {
+@test "run_init: calls polis start --image with given path" {
     _source_functions
     mkdir -p "$TEST_DIR/bin"
     printf '#!/bin/bash\necho "polis $*"\n' > "$TEST_DIR/bin/polis"
     chmod +x "$TEST_DIR/bin/polis"
-    IMAGE_URL=""
-    run init_image
+    multipass() { return 1; }
+    run run_init "/tmp/test.qcow2"
     assert_success
-    assert_output --partial "polis init"
-    refute_output --partial "--image"
+    assert_output --partial "polis start --image /tmp/test.qcow2"
 }
 
-@test "init_image: calls polis init --image <url> when IMAGE_URL is set" {
-    _source_functions
-    mkdir -p "$TEST_DIR/bin"
-    printf '#!/bin/bash\necho "polis $*"\n' > "$TEST_DIR/bin/polis"
-    chmod +x "$TEST_DIR/bin/polis"
-    IMAGE_URL="https://example.com/img.qcow2"
-    run init_image
-    assert_success
-    assert_output --partial "init --image https://example.com/img.qcow2"
-}
-
-@test "init_image: non-fatal when polis init exits non-zero" {
+@test "run_init: non-fatal when polis start exits non-zero" {
     _source_functions
     mkdir -p "$TEST_DIR/bin"
     printf '#!/bin/bash\nexit 1\n' > "$TEST_DIR/bin/polis"
     chmod +x "$TEST_DIR/bin/polis"
-    IMAGE_URL=""
-    run init_image
+    multipass() { return 1; }
+    run run_init "/tmp/test.qcow2"
     assert_success
-    assert_output --partial "Image download failed. Run 'polis init' to retry."
+    assert_output --partial "polis start failed"
 }
 
-@test "init_image: non-fatal when polis binary does not exist" {
+@test "run_init: non-fatal when polis binary does not exist" {
     _source_functions
-    # No binary at INSTALL_DIR/bin/polis
-    IMAGE_URL=""
-    run init_image
+    multipass() { return 1; }
+    run run_init "/tmp/test.qcow2"
     assert_success
-    assert_output --partial "Image download failed. Run 'polis init' to retry."
+    assert_output --partial "polis start failed"
 }
 
 # ── resolve_version() ─────────────────────────────────────────────────────
@@ -158,7 +98,7 @@ _run_script() {
     run resolve_version
     assert_failure
     assert_output --partial "GitHub API rate limit exceeded"
-    assert_output --partial "GITHUB_TOKEN"
+    assert_output --partial "POLIS_VERSION"
 }
 
 @test "resolve_version: empty tag_name exits 1" {
@@ -201,13 +141,15 @@ _run_script() {
 # ── main() success message ────────────────────────────────────────────────
 
 @test "install: success message shows polis start" {
-    run _run_script --version v0.1.0
+    export POLIS_VERSION="v0.1.0"
+    run _run_script
     assert_success
     assert_output --partial "polis start"
 }
 
 @test "install: success message shows polis start claude" {
-    run _run_script --version v0.1.0
+    export POLIS_VERSION="v0.1.0"
+    run _run_script
     assert_success
     assert_output --partial "polis start claude"
 }

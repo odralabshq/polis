@@ -63,6 +63,13 @@ pub trait Multipass {
     /// Returns an error if the command cannot be spawned.
     async fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output>;
 
+    /// Run `multipass transfer --recursive <local_path> polis:<remote_path>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command cannot be spawned.
+    async fn transfer_recursive(&self, local_path: &str, remote_path: &str) -> Result<Output>;
+
     /// Run `multipass exec polis -- <args>`.
     ///
     /// # Errors
@@ -169,6 +176,19 @@ impl Multipass for MultipassCli {
             .output()
             .await
             .context("failed to run multipass transfer")
+    }
+
+    async fn transfer_recursive(&self, local_path: &str, remote_path: &str) -> Result<Output> {
+        tokio::process::Command::new("multipass")
+            .args([
+                "transfer",
+                "--recursive",
+                local_path,
+                &format!("{VM_NAME}:{remote_path}"),
+            ])
+            .output()
+            .await
+            .context("failed to run multipass transfer --recursive")
     }
 
     async fn exec(&self, args: &[&str]) -> Result<Output> {

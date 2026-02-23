@@ -1,4 +1,4 @@
-//! Integration tests for `polis doctor` (issue 17).
+//! Unit tests for `polis doctor` (issue 17).
 //!
 //! Tests use mocked `HealthProbe` to avoid slow real system checks.
 

@@ -114,8 +114,8 @@ fi
 # Bootstrap agents AFTER routing is configured so they have internet.
 # Supports two modes:
 #   1. Pre-installed (image-based): scripts already at /usr/local/bin, install.sh is a no-op
-#   2. Mounted (legacy/fallback): agents bind-mounted at /tmp/agents/*/
-for agent_dir in /tmp/agents/*/; do
+#   2. Mounted (legacy/fallback): agents bind-mounted at /opt/agents/*/
+for agent_dir in /opt/agents/*/; do
     [ -d "$agent_dir" ] || continue
     name=$(basename "$agent_dir")
     echo "[workspace] Bootstrapping agent: ${name}"
@@ -142,7 +142,7 @@ for agent_dir in /tmp/agents/*/; do
 done
 
 # For pre-installed agents (image-based), scripts are already at /usr/local/share/<agent>/scripts/.
-# Symlink them into PATH if not already present (handles the case where /tmp/agents is not mounted).
+# Symlink them into PATH if not already present (handles the case where /opt/agents is not mounted).
 for scripts_dir in /usr/local/share/*/scripts/; do
     [ -d "$scripts_dir" ] || continue
     for script in "${scripts_dir}"/polis-*.sh; do
@@ -159,7 +159,7 @@ protect_sensitive_paths
 # Collect and start agent services (with integrity verification from manifest system).
 # install.sh already ran above (before routing), so we only handle .service files here.
 agent_services=()
-for agent_dir in /tmp/agents/*/; do
+for agent_dir in /opt/agents/*/; do
     [ -d "$agent_dir" ] || continue
     name=$(basename "$agent_dir")
 
