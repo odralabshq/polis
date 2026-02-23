@@ -309,11 +309,50 @@ jobs:
           retention-days: 1
 
   # =========================================================
+  # Upload VM image to S3 / CloudFront CDN
+  # =========================================================
+  cdn:
+    name: Upload to CDN
+    needs: [validate, vm]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+    steps:
+      - name: Download VM artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: vm-image
+          path: ./vm
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722 # v4.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Upload VM image to S3
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          QCOW2=$(ls vm/*.qcow2 | head -1)
+          aws s3 cp "${QCOW2}" \
+            "s3://polis-releases/${VERSION}/polis-${VERSION}-amd64.qcow2" \
+            --no-progress
+          echo "✓ Uploaded to s3://polis-releases/${VERSION}/"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ secrets.CLOUDFRONT_DIST_ID }}" \
+            --paths "/${VERSION}/*"
+          echo "✓ CloudFront cache invalidated for /${VERSION}/*"
+
+  # =========================================================
   # Create GitHub Release
   # =========================================================
   release:
     name: Create Release
-    needs: [validate, vm, cli]
+    needs: [validate, vm, cli, cdn]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository

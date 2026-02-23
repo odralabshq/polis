@@ -12,6 +12,7 @@ INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 CURL_PROTO="=https"
+CDN_BASE_URL="${POLIS_CDN_URL:-https://d1qggvwquwdnma.cloudfront.net}"
 
 # Colors
 RED='\033[0;31m'
@@ -242,20 +243,22 @@ create_symlink() {
 }
 
 download_image() {
-    local arch base_url image_name dest expected actual
+    local arch image_name dest checksum_url expected actual
     arch=$(check_arch)
-    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
     image_name="polis-${VERSION}-${arch}.qcow2"
     dest="${INSTALL_DIR}/images/${image_name}"
 
+    # Checksum from GitHub (tamper-evident, separate origin from binary)
+    checksum_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}/${image_name}.sha256"
+
     mkdir -p "${INSTALL_DIR}/images"
 
-    log_info "Downloading VM image..."
+    log_info "Downloading VM image from CDN..."
     curl -fL --proto "${CURL_PROTO}" --progress-bar \
-        "${base_url}/${image_name}" -o "${dest}"
+        "${CDN_BASE_URL}/${VERSION}/${image_name}" -o "${dest}"
 
     log_info "Verifying image SHA256..."
-    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${image_name}.sha256" | awk '{print $1}')
+    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${checksum_url}" | awk '{print $1}')
     actual=$(sha256sum "${dest}" | awk '{print $1}')
     if [[ "${expected}" != "${actual}" ]]; then
         log_error "Image SHA256 mismatch!"
