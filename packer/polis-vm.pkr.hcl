@@ -105,6 +105,8 @@ locals {
   ubuntu_url      = "${local.ubuntu_base_url}/${local.ubuntu_img_name}"
   ubuntu_checksum = "file:${local.ubuntu_base_url}/SHA256SUMS"
   sysbox_sha256   = var.arch == "amd64" ? var.sysbox_sha256_amd64 : var.sysbox_sha256_arm64
+  # Random password for build-time SSH — never stored in final image (passwd -l)
+  build_password = uuidv4()
 }
 
 # ============================================================================
@@ -126,13 +128,13 @@ source "qemu" "polis" {
   headless         = var.headless
   shutdown_command = "sudo shutdown -P now"
   ssh_username     = "ubuntu"
-  ssh_password     = "ubuntu"
+  ssh_password     = local.build_password
   ssh_timeout      = "20m"
 
   # Retry until cloud-init finishes enabling password auth
   ssh_handshake_attempts = 100
 
-  # Cloud-init: create packer user with password auth enabled
+  # Cloud-init: create packer user with random password (locked in final image)
   cd_content = {
     "meta-data" = ""
     "user-data" = <<-EOF
@@ -146,7 +148,7 @@ source "qemu" "polis" {
         expire: false
         users:
           - name: ubuntu
-            password: ubuntu
+            password: ${local.build_password}
             type: text
       ssh_pwauth: true
     EOF

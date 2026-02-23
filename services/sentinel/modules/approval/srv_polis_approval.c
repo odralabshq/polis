@@ -416,6 +416,7 @@ int approval_init_service(ci_service_xdata_t *srv_xdata,
         /* Authenticate with ACL: AUTH governance-respmod <password> */
         reply = redisCommand(valkey_ctx,
             "AUTH governance-respmod %s", vk_pass);
+        memset(vk_pass, 0, sizeof(vk_pass));  /* Scrub password from stack */
         if (reply == NULL || reply->type == REDIS_REPLY_ERROR) {
             ci_debug_printf(1, "polis_approval: WARNING: "
                 "Valkey ACL auth failed%s%s — "
@@ -498,6 +499,7 @@ static int ensure_valkey_connected(void)
 
             reply = redisCommand(valkey_ctx,
                 "AUTH governance-respmod %s", vk_pass);
+            memset(vk_pass, 0, sizeof(vk_pass));  /* Scrub password from stack */
             if (reply == NULL ||
                 reply->type == REDIS_REPLY_ERROR) {
                 ci_debug_printf(1, "polis_approval: WARNING: "

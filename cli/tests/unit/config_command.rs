@@ -306,9 +306,14 @@ async fn test_config_set_propagation_passes_level_as_separate_arg() {
     assert!(set_call.contains(&"SET".to_string()));
     assert!(set_call.contains(&"polis:config:security_level".to_string()));
     assert!(set_call.contains(&"strict".to_string()));
+    // Password passed via REDISCLI_AUTH env var (not -a flag) to avoid process list exposure
     assert!(
-        set_call.contains(&"testpass".to_string()),
-        "password should be passed as arg"
+        set_call.iter().any(|a| a.starts_with("REDISCLI_AUTH=")),
+        "password should be passed via REDISCLI_AUTH env var, got: {set_call:?}"
+    );
+    assert!(
+        !set_call.contains(&"-a".to_string()),
+        "-a flag should not be used (exposes password in process list)"
     );
 }
 

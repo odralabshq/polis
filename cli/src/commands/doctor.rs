@@ -257,7 +257,11 @@ pub async fn run_with(
 
 /// Build and print JSON output for doctor checks.
 fn print_json_output(checks: &DoctorChecks, issues: &[String]) -> Result<()> {
-    let status = if issues.is_empty() { "healthy" } else { "unhealthy" };
+    let status = if issues.is_empty() {
+        "healthy"
+    } else {
+        "unhealthy"
+    };
     let out = serde_json::json!({
         "status": status,
         "checks": {
@@ -296,7 +300,12 @@ fn print_json_output(checks: &DoctorChecks, issues: &[String]) -> Result<()> {
 }
 
 /// Print human-readable doctor output.
-fn print_human_output(ctx: &OutputContext, checks: &DoctorChecks, issues: &[String], verbose: bool) {
+fn print_human_output(
+    ctx: &OutputContext,
+    checks: &DoctorChecks,
+    issues: &[String],
+    verbose: bool,
+) {
     println!();
     println!("  {}", "Polis Health Check".style(ctx.styles.header));
     println!();
@@ -325,7 +334,11 @@ fn print_summary(ctx: &OutputContext, issues: &[String], verbose: bool) {
         println!("  {} Everything looks good!", "✓".style(ctx.styles.success));
         return;
     }
-    let hint = if verbose { "" } else { " Run with --verbose for details." };
+    let hint = if verbose {
+        ""
+    } else {
+        " Run with --verbose for details."
+    };
     println!(
         "  {} Found {} issues.{hint}",
         "✗".style(ctx.styles.error),

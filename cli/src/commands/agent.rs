@@ -137,7 +137,10 @@ fn validate_agent_folder(path: &str) -> Result<String> {
     let manifest: AgentManifest = serde_yaml::from_str(&content)
         .context("failed to parse agent.yaml: missing or invalid metadata.name")?;
 
-    anyhow::ensure!(!manifest.metadata.name.is_empty(), "metadata.name is empty in agent.yaml");
+    anyhow::ensure!(
+        !manifest.metadata.name.is_empty(),
+        "metadata.name is empty in agent.yaml"
+    );
     validate_agent_name(&manifest.metadata.name)?;
     Ok(manifest.metadata.name)
 }
