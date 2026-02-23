@@ -185,7 +185,7 @@ jobs:
           EXTERNAL_IMAGES=$(docker compose -f docker-compose.yml config | grep -oP 'image:\s+\K\S+' | grep -v 'ghcr.io/odralabshq' | grep -v 'go-httpbin' | sed 's/@sha256:[a-f0-9]*//' | sort -u | tr '\n' ' ')
           # Pull and tag external images
           for img in $EXTERNAL_IMAGES; do
-            docker pull "$img" || true
+            docker pull "$img"
           done
           mkdir -p .build
           docker save -o .build/polis-images.tar $POLIS_IMAGES $EXTERNAL_IMAGES
