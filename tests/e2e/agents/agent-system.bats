@@ -6,6 +6,7 @@ setup_file() {
     load "../../lib/test_helper.bash"
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
+    require_container "$CTR_WORKSPACE" "$CTR_SENTINEL" "$CTR_GATE"
     approve_host "example.com" 600
 }
 
