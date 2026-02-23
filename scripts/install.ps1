@@ -167,12 +167,10 @@ function Get-Image {
 
     # Checksum always fetched from GitHub (separate origin from binary)
     Write-Info "Verifying image SHA256..."
-    $checksums = Invoke-WebRequest -Uri "$ghBase/checksums.sha256" -UseBasicParsing
-    # Normalize: checksums.sha256 may have ./ prefix on filenames (e.g. "hash  ./filename")
-    $rawContent = $checksums.Content -replace '\r', ''
-    $rawContent = $rawContent -replace '  \./', '  '
-    $checksumLines = $rawContent -split "`n"
-    $expected  = (($checksumLines | Where-Object { $_ -match [regex]::Escape($imageName) }) -replace '\s.*', '') | Select-Object -First 1
+    $checksumFile = Join-Path $env:TEMP "polis-checksums.sha256"
+    Invoke-WebRequest -Uri "$ghBase/checksums.sha256" -OutFile $checksumFile -UseBasicParsing
+    $expected = (Get-Content $checksumFile | Where-Object { $_ -like "*$imageName*" } | ForEach-Object { ($_ -split '\s+')[0] }) | Select-Object -First 1
+    Remove-Item $checksumFile -Force -ErrorAction SilentlyContinue
     if (-not $expected) {
         Write-Warn "Could not find checksum for $imageName - skipping verification"
     } else {
