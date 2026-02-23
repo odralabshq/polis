@@ -173,11 +173,9 @@ impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
         let vm_running = crate::workspace::vm::state(self.mp).await.ok()
             == Some(crate::workspace::vm::VmState::Running);
 
-        let process_isolation = check_process_isolation().await;
-
         if !vm_running {
             return Ok(SecurityChecks {
-                process_isolation,
+                process_isolation: false,
                 traffic_inspection: false,
                 malware_db_current: false,
                 malware_db_age_hours: 0,
@@ -187,10 +185,12 @@ impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
         }
 
         let (
+            process_isolation,
             traffic_inspection,
             (malware_db_current, malware_db_age_hours),
             (certificates_valid, certificates_expire_days),
         ) = tokio::join!(
+            check_process_isolation(self.mp),
             check_gate_health(self.mp),
             check_malware_db(self.mp),
             check_certificates(self.mp),
@@ -452,8 +452,6 @@ fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
 /// Print the security section of the human-readable health report.
 fn print_security_section(ctx: &OutputContext, sec: &SecurityChecks) {
     println!("  Security:");
-    // Process isolation (sysbox) is Linux-only — skip on other platforms.
-    #[cfg(target_os = "linux")]
     print_check(ctx, sec.process_isolation, "Process isolation active");
     print_check(ctx, sec.traffic_inspection, "Traffic inspection responding");
     print_check(
@@ -709,18 +707,10 @@ async fn check_dns() -> bool {
     .unwrap_or(false)
 }
 
-async fn check_process_isolation() -> bool {
-    // sysbox-runc is Linux-only; always return true on other platforms
-    // so the check doesn't appear as a failure.
-    #[cfg(not(target_os = "linux"))]
-    return true;
-    #[cfg(target_os = "linux")]
-    tokio::process::Command::new("sysbox-runc")
-        .arg("--version")
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// Check if sysbox-runc is available inside the multipass VM.
+async fn check_process_isolation(mp: &impl crate::multipass::Multipass) -> bool {
+    let output = mp.exec(&["sysbox-runc", "--version"]).await;
+    output.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Check if the gate container is running inside the multipass VM.
