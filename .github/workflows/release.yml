@@ -181,8 +181,8 @@ jobs:
           VERSION="${{ needs.validate.outputs.version }}"
           # Get all polis images
           POLIS_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "polis-.*-oss:${VERSION}" | tr '\n' ' ')
-          # Get external images from compose (alpine-base, etc.) - strip @sha256 digest for docker save
-          EXTERNAL_IMAGES=$(docker compose -f docker-compose.yml config | grep -oP 'image:\s+\K\S+' | grep -v 'ghcr.io/odralabshq' | grep -v 'go-httpbin' | sed 's/@sha256:[a-f0-9]*//' | sort -u | tr '\n' ' ')
+          # Get external images from compose - parse raw YAML to avoid docker compose config secrets requirement
+          EXTERNAL_IMAGES=$(grep -oP '^\s+image:\s+\K\S+' docker-compose.yml | grep -v 'ghcr.io/odralabshq' | grep -v 'go-httpbin' | sed 's/@sha256:[a-f0-9]*//' | sort -u | tr '\n' ' ')
           # Pull and tag external images
           for img in $EXTERNAL_IMAGES; do
             docker pull "$img"
