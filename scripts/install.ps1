@@ -9,7 +9,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$Version          = $env:POLIS_VERSION ?? "0.3.0-preview-4"
+$Version          = $env:POLIS_VERSION ?? "0.3.0-preview-6"
 $InstallDir       = $env:POLIS_HOME    ?? (Join-Path $env:USERPROFILE ".polis")
 $ImageDir         = Join-Path $env:ProgramData "Polis\images"
 $RepoOwner        = "OdraLabsHQ"
