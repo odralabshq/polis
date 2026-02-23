@@ -217,9 +217,16 @@ download_image() {
     local arch base_url image_name dest expected actual
     arch=$(check_arch)
     base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
-    image_name="polis-${VERSION}-${arch}.qcow2"
-    dest="${INSTALL_DIR}/images/${image_name}"
 
+    # Discover the actual image filename from versions.json
+    image_name=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/versions.json" | \
+        grep -o '"asset": *"[^"]*"' | cut -d'"' -f4)
+    if [[ -z "${image_name}" ]]; then
+        log_error "Could not determine image filename from versions.json"
+        exit 1
+    fi
+
+    dest="${INSTALL_DIR}/images/${image_name}"
     mkdir -p "${INSTALL_DIR}/images"
 
     log_info "Downloading VM image..."
