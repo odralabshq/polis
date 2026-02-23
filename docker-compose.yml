@@ -416,7 +416,7 @@ services:
   # SCANNER INIT (ClamAV Volume permission setup)
   # =========================================================
   scanner-init:
-    image: dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+    image: dhi.io/alpine-base:3.23-dev@sha256:2b318097756a2d92fb8fc059beaf512f8607224a17767d56e557618ca61296cb
     container_name: polis-scanner-init
     cap_drop:
       - ALL
@@ -440,7 +440,7 @@ services:
   # STATE INIT (Valkey Volume permission setup)
   # =========================================================
   state-init:
-    image: dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+    image: dhi.io/alpine-base:3.23-dev@sha256:2b318097756a2d92fb8fc059beaf512f8607224a17767d56e557618ca61296cb
     container_name: polis-state-init
     cap_drop:
       - ALL
