@@ -10,7 +10,7 @@ file:
 
   /opt/polis/scripts/setup-certs.sh:
     exists: true
-    mode: "0775"
+    mode: "0755"
 
   # Service configs
   /opt/polis/services/gate/config/g3proxy.yaml:
