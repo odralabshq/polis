@@ -79,7 +79,7 @@ Run `just --list` to see all available recipes.
 
 | Recipe | Description |
 |--------|-------------|
-| `just up` | Start all services |
+| `just up` | Start control plane only (no agent) |
 | `just down` | Stop all services |
 | `just status` | Show service status |
 | `just logs [service]` | View logs (optionally filter by service) |
@@ -652,14 +652,13 @@ The VM runs headless. Once QEMU starts, just wait — Packer will print `Connect
 
 ## OpenClaw Agent
 
-OpenClaw runs as a systemd service inside the workspace container, exposing a Control UI on port 18789. By default it installs at first boot (~3-5 min). Optionally, you can pre-build a layered image to skip the runtime install.
+OpenClaw runs as a systemd service inside the workspace container, exposing a Control UI on port 18789. It installs at first boot (~3-5 min).
 
 ### Setup and startup
 
 ```bash
 echo "OPENAI_API_KEY=sk-proj-..." >> .env   # or ANTHROPIC_API_KEY / OPENROUTER_API_KEY
-just setup-agents
-just up
+polis start --agent=openclaw
 ```
 
 ### Checking progress
@@ -673,18 +672,15 @@ docker exec polis-workspace cat /home/polis/.openclaw/gateway-token.txt   # get 
 
 Open `http://<host>:18789/#token=<token>`. On Multipass use the VM IP; on native Linux use `localhost`.
 
-### Pre-built image (optional)
-
-To skip the 3-5 min runtime install, build the layered image once:
+### Agent management
 
 ```bash
-docker compose -f docker-compose.yml \
-  -f agents/openclaw/.generated/compose.override.yaml \
-  build workspace \
-  --build-arg WORKSPACE_IMAGE=ghcr.io/odralabshq/polis-workspace-oss:latest
+polis agent list                    # list installed agents and active status
+polis agent restart                 # restart active agent's workspace
+polis agent update                  # re-generate artifacts and recreate workspace
+polis agent remove openclaw         # remove agent (stops workspace if active)
+polis agent add --path ./my-agent   # install a new agent from a local folder
 ```
-
-This uses `agents/openclaw/Dockerfile` which extends the base workspace with Node.js + OpenClaw pre-compiled.
 
 ### Reset config (new token, re-detect API keys)
 
@@ -701,7 +697,7 @@ docker exec polis-workspace systemctl restart openclaw
 | `/home/polis/.openclaw/gateway-token.txt` | Control UI token |
 | `/home/polis/.openclaw/agents/default/agent/auth-profiles.json` | API keys per provider |
 | `/run/openclaw-env` | Host `.env` bind-mounted for init script |
-| `/var/lib/openclaw-installed` | Idempotency marker (present in pre-built image) |
+| `/var/lib/openclaw-installed` | Idempotency marker |
 
 ---
 

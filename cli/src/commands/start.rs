@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Args;
 
@@ -10,12 +10,19 @@ use crate::multipass::Multipass;
 use crate::state::{StateManager, WorkspaceState};
 use crate::workspace::{health, image, vm};
 
+/// Path to the polis project root inside the VM.
+const VM_POLIS_ROOT: &str = "/opt/polis";
+
 /// Arguments for the start command.
 #[derive(Args)]
 pub struct StartArgs {
     /// Use custom image instead of cached/downloaded
     #[arg(long)]
     pub image: Option<String>,
+
+    /// Agent to activate (must match agents/<name>/ directory inside the VM)
+    #[arg(long)]
+    pub agent: Option<String>,
 }
 
 /// Run `polis start`.
@@ -23,6 +30,7 @@ pub struct StartArgs {
 /// # Errors
 ///
 /// Returns an error if image acquisition, VM creation, or health check fails.
+#[allow(clippy::too_many_lines)]
 pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
     let state_mgr = StateManager::new()?;
 
@@ -30,16 +38,34 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
     let vm_state = vm::state(mp).await?;
 
     if vm_state == vm::VmState::Running {
-        if !quiet {
-            println!();
-            println!("Workspace is running.");
-            println!();
-            print_guarantees();
-            println!();
-            println!("Connect: polis connect");
-            println!("Status:  polis status");
+        // Conflict detection: check if requested agent matches active agent
+        let current_agent = state_mgr.load()?.and_then(|s| s.active_agent);
+        if current_agent == args.agent {
+            if !quiet {
+                println!();
+                println!("Workspace is running.");
+                if let Some(name) = &args.agent {
+                    println!("Agent: {name}");
+                }
+                println!();
+                print_guarantees();
+                println!();
+                println!("Connect: polis connect");
+                println!("Status:  polis status");
+            }
+            return Ok(());
         }
-        return Ok(());
+        // Different agent (or switching between agent/no-agent)
+        let current_desc = current_agent
+            .as_deref()
+            .map_or_else(|| "no agent".to_string(), |n| format!("agent '{n}'"));
+        let requested_desc = args
+            .agent
+            .as_deref()
+            .map_or_else(|| "no agent".to_string(), |n| format!("--agent {n}"));
+        anyhow::bail!(
+            "Workspace is running with {current_desc}. Stop first:\n  polis stop\n  polis start {requested_desc}"
+        );
     }
 
     // Only resolve image if VM needs to be created
@@ -82,6 +108,14 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
         let image_path = image::ensure_available(source, quiet)?;
         vm::create(mp, &image_path, quiet).await?;
 
+        // If agent requested: validate it exists and generate artifacts
+        if let Some(agent_name) = &args.agent {
+            validate_agent(mp, agent_name).await?;
+            generate_agent_artifacts(mp, agent_name).await?;
+        }
+
+        // Start platform (with or without agent overlay)
+        start_compose(mp, args.agent.as_deref()).await?;
         let sha256 = image::load_metadata(&image::images_dir()?)
             .ok()
             .flatten()
@@ -92,22 +126,46 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
             created_at: Utc::now(),
             image_sha256: sha256,
             image_source: custom_source,
+            active_agent: args.agent.clone(),
         };
         state_mgr.save(&state)?;
     } else {
-        // VM exists but stopped - just start it
+        // VM exists but stopped - start it, then handle agent if requested
         vm::restart(mp, quiet).await?;
+
+        if let Some(agent_name) = &args.agent {
+            validate_agent(mp, agent_name).await?;
+            generate_agent_artifacts(mp, agent_name).await?;
+            start_compose(mp, args.agent.as_deref()).await?;
+        }
+
+        // Update state with active agent
+        let mut state = state_mgr.load()?.unwrap_or_else(|| WorkspaceState {
+            workspace_id: generate_workspace_id(),
+            created_at: Utc::now(),
+            image_sha256: None,
+            image_source: None,
+            active_agent: None,
+        });
+        state.active_agent.clone_from(&args.agent);
+        state_mgr.save(&state)?;
     }
 
     // Wait for healthy
     health::wait_ready(mp, quiet).await?;
 
-    // Print success
     if !quiet {
         println!();
         print_guarantees();
         println!();
-        println!("Workspace ready.");
+        if let Some(name) = &args.agent {
+            println!("Workspace ready. Agent: {name}");
+            println!();
+            println!("Agent shell:    polis agent shell");
+            println!("Agent commands: polis agent cmd help");
+        } else {
+            println!("Workspace ready.");
+        }
         println!();
         println!("Connect: polis connect");
         println!("Status:  polis status");
@@ -116,11 +174,106 @@ pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<(
     Ok(())
 }
 
+/// Validate that the agent directory and manifest exist inside the VM.
+///
+/// # Errors
+///
+/// Returns an error if the agent manifest is missing or the VM is unreachable.
+pub async fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()> {
+    let manifest_path = format!("{VM_POLIS_ROOT}/agents/{agent_name}/agent.yaml");
+    let output = mp
+        .exec(&["test", "-f", &manifest_path])
+        .await
+        .context("checking agent manifest")?;
+    if !output.status.success() {
+        // List available agents for the error message
+        let list_output = mp
+            .exec(&[
+                "bash",
+                "-c",
+                &format!("ls {VM_POLIS_ROOT}/agents/ 2>/dev/null || true"),
+            ])
+            .await
+            .unwrap_or_else(|_| std::process::Output {
+                status: std::process::ExitStatus::default(),
+                stdout: vec![],
+                stderr: vec![],
+            });
+        let available = String::from_utf8_lossy(&list_output.stdout)
+            .lines()
+            .filter(|l| !l.is_empty() && *l != "_template")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let hint = if available.is_empty() {
+            "No agents installed. Use: polis agent add --path <folder>".to_string()
+        } else {
+            format!("Available agents: {available}")
+        };
+        anyhow::bail!("Unknown agent '{agent_name}'. {hint}");
+    }
+    Ok(())
+}
+
+/// Call scripts/generate-agent.sh inside the VM.
+///
+/// # Errors
+///
+/// Returns an error if artifact generation fails or the VM is unreachable.
+pub async fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> Result<()> {
+    let script = format!("{VM_POLIS_ROOT}/scripts/generate-agent.sh");
+    let agents_dir = format!("{VM_POLIS_ROOT}/agents");
+    let output = mp
+        .exec(&["bash", &script, agent_name, &agents_dir])
+        .await
+        .context("running generate-agent.sh")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.is_empty() {
+            stdout.to_string()
+        } else {
+            stderr.to_string()
+        };
+        // Exit code 2 = missing yq
+        if output.status.code() == Some(2) {
+            anyhow::bail!(
+                "Error: yq v4+ is required inside the VM.\nInstall: sudo apt install yq\n\n{detail}"
+            );
+        }
+        anyhow::bail!("Error: Agent artifact generation failed for '{agent_name}'.\n{detail}");
+    }
+    Ok(())
+}
+
+/// Start docker compose inside the VM, optionally with an agent overlay.
+///
+/// # Errors
+///
+/// Returns an error if docker compose fails or the VM is unreachable.
+pub async fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Result<()> {
+    let base = format!("{VM_POLIS_ROOT}/docker-compose.yml");
+    let mut args: Vec<String> = vec!["docker".into(), "compose".into(), "-f".into(), base];
+    if let Some(name) = agent_name {
+        let overlay = format!("{VM_POLIS_ROOT}/agents/{name}/.generated/compose.agent.yaml");
+        args.push("-f".into());
+        args.push(overlay);
+    }
+    args.extend(["up".into(), "-d".into(), "--remove-orphans".into()]);
+
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = mp.exec(&arg_refs).await.context("starting platform")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Error: Failed to start platform.\n{stderr}");
+    }
+    Ok(())
+}
+
 fn print_guarantees() {
     use owo_colors::{OwoColorize, Stream::Stdout, Style};
-    let gov = Style::new().truecolor(37, 56, 144); // stop 5
-    let sec = Style::new().truecolor(26, 107, 160); // stop 6
-    let obs = Style::new().truecolor(26, 151, 179); // stop 7
+    let gov = Style::new().truecolor(37, 56, 144);
+    let sec = Style::new().truecolor(26, 107, 160);
+    let obs = Style::new().truecolor(26, 151, 179);
     println!(
         "✓ {}  policy engine active · audit trail recording",
         "[governance]   ".if_supports_color(Stdout, |t| t.style(gov))
@@ -191,6 +344,7 @@ mod tests {
             created_at: Utc::now(),
             image_sha256: None,
             image_source: Some("/custom/image.qcow2".to_string()),
+            active_agent: None,
         };
         assert_eq!(state.image_source, Some("/custom/image.qcow2".to_string()));
     }
@@ -202,6 +356,7 @@ mod tests {
             created_at: Utc::now(),
             image_sha256: None,
             image_source: Some("https://example.com/image.qcow2".to_string()),
+            active_agent: None,
         };
         let json = serde_json::to_string(&state).expect("serialize");
         assert!(json.contains("image_source"));

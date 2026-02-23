@@ -58,6 +58,10 @@ pub enum Command {
     /// Update Polis
     Update(commands::update::UpdateArgs),
 
+    /// Manage agents
+    #[command(subcommand)]
+    Agent(commands::agent::AgentCommand),
+
     /// Show version
     Version,
 
@@ -122,6 +126,12 @@ impl Cli {
             }
 
             Command::Version => commands::version::run(json),
+
+            Command::Agent(cmd) => {
+                let mp = crate::multipass::MultipassCli;
+                let ctx = crate::output::OutputContext::new(no_color, quiet);
+                commands::agent::run(cmd, &mp, &ctx, json).await
+            }
 
             // --- Internal commands ---
             #[allow(clippy::large_futures)]

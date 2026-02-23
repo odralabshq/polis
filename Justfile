@@ -126,7 +126,7 @@ build-service service:
 
 # Build VM image (requires packer)
 # Usage: just build-vm [arch=amd64|arm64] [headless=true|false]
-build-vm arch="amd64" headless="true": _export-images _bundle-config
+build-vm arch="amd64" headless="true": _export-images _bundle-config _build-agents
     #!/usr/bin/env bash
     set -euo pipefail
     ROOT="${PWD}"
@@ -136,10 +136,31 @@ build-vm arch="amd64" headless="true": _export-images _bundle-config
     packer build \
         -var "images_tar=${ROOT}/.build/polis-images.tar" \
         -var "config_tar=${ROOT}/.build/polis-config.tar.gz" \
+        -var "agents_tar=${ROOT}/.build/polis-agents.tar.gz" \
         -var "arch={{arch}}" \
         -var "headless={{headless}}" \
         polis-vm.pkr.hcl
     just --justfile "${ROOT}/Justfile" --working-directory "${ROOT}" _sign-vm {{arch}}
+
+# Internal: build agent artifacts for VM image
+_build-agents:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -rf .build/agents
+    mkdir -p .build/agents
+    for agent_dir in agents/*/; do
+        name=$(basename "$agent_dir")
+        [ "$name" = "_template" ] && continue
+        [ -f "${agent_dir}agent.yaml" ] || continue
+        cp -r "$agent_dir" ".build/agents/$name"
+    done
+    for agent_dir in .build/agents/*/; do
+        [ -d "$agent_dir" ] || continue
+        name=$(basename "$agent_dir")
+        ./scripts/generate-agent.sh "$name" ".build/agents"
+    done
+    tar -czf .build/polis-agents.tar.gz -C .build agents
+    echo "✓ Agents bundle: .build/polis-agents.tar.gz ($(du -h .build/polis-agents.tar.gz | cut -f1))"
 
 # Internal: sign the VM image with a dev keypair, producing a .sha256 sidecar
 _sign-vm arch="amd64":
@@ -259,18 +280,6 @@ setup-toolbox:
     sudo chown 65532:65532 ./certs/toolbox/toolbox.key
     echo "✓ Toolbox certs ready"
 
-# Generates the compose.override.yaml that configures the OpenClaw workspace image
-# and supporting services (socat proxy, env mounts). Required before `just up` for
-# HITL workspace tests to work.
-# Note: this does not start agents — it only sets up the compose override layer.
-setup-agents:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
-    if [[ -f "$OVERRIDE" ]]; then echo "Agent override already exists."; exit 0; fi
-    mkdir -p agents/openclaw/.generated
-    cp agents/openclaw/config/compose.override.template.yaml "$OVERRIDE"
-    echo "✓ Agent override generated from template."
 
 # ── Dev VM ──────────────────────────────────────────────────────────
 dev-create:
@@ -293,31 +302,18 @@ up:
     sudo systemctl restart sysbox 2>/dev/null || true
     timeout 15 bash -c 'until sudo systemctl is-active sysbox &>/dev/null; do sleep 1; done' || true
     touch .env
-    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
-    OVERRIDE_FLAG=""
-    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
-    # shellcheck disable=SC2086
-    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env up -d
-    # shellcheck disable=SC2086
-    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env ps
+    docker compose -f docker-compose.yml --env-file .env up -d
+    docker compose -f docker-compose.yml --env-file .env ps
+    echo ""
+    echo "Control plane started. Start an agent with: polis start --agent=<name>"
 down:
     docker compose down --volumes --remove-orphans
 
 status:
-    #!/usr/bin/env bash
-    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
-    OVERRIDE_FLAG=""
-    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
-    # shellcheck disable=SC2086
-    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env ps
+    docker compose -f docker-compose.yml --env-file .env ps
 
 logs service="":
-    #!/usr/bin/env bash
-    OVERRIDE="agents/openclaw/.generated/compose.override.yaml"
-    OVERRIDE_FLAG=""
-    [[ -f "$OVERRIDE" ]] && OVERRIDE_FLAG="-f $OVERRIDE"
-    # shellcheck disable=SC2086
-    docker compose -f docker-compose.yml $OVERRIDE_FLAG --env-file .env logs --tail=50 -f {{service}}
+    docker compose -f docker-compose.yml --env-file .env logs --tail=50 -f {{service}}
 
 # ── Release ─────────────────────────────────────────────────────────
 package-vm arch="amd64":
