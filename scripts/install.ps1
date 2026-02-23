@@ -7,7 +7,6 @@
 param()
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
 
 # Ensure TLS 1.2 for GitHub downloads (PS 5.1 defaults to TLS 1.0)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -55,8 +54,7 @@ function Install-Multipass {
     $proc = Start-Process msiexec -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait -PassThru
     Remove-Item $msi -Force -ErrorAction SilentlyContinue
     if ($proc.ExitCode -ne 0) {
-        Write-Err "Multipass installer exited with code $($proc.ExitCode)."
-        exit 1
+        throw "Multipass installer exited with code $($proc.ExitCode)."
     }
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("PATH", "User")
@@ -78,7 +76,7 @@ function Assert-Multipass {
             Write-Err "Hyper-V is not available and VirtualBox is not installed."
             Write-Host "  Option 1: Enable Hyper-V: Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All"
             Write-Host "  Option 2: Install VirtualBox: https://www.virtualbox.org/wiki/Downloads"
-            exit 1
+            throw "Missing virtualization backend."
         }
     }
 
@@ -90,7 +88,7 @@ function Assert-Multipass {
             if ($installed -lt $MultipassMin) {
                 Write-Err "Multipass $verStr is too old (need >= $MultipassMin)."
                 Write-Host "  Update: https://multipass.run/install"
-                exit 1
+                throw "Multipass version too old."
             }
             Write-Ok "Multipass $verStr OK"
         } catch {
@@ -122,7 +120,7 @@ function Install-Cli {
         Write-Host "  Expected: $expected"
         Write-Host "  Actual:   $actual"
         Remove-Item $exe -Force -ErrorAction SilentlyContinue
-        exit 1
+        throw "CLI SHA256 mismatch."
     }
     Write-Ok "CLI SHA256 verified: $expected"
 }
@@ -182,7 +180,7 @@ function Get-Image {
             Write-Host "  Actual:   $actual"
             Remove-Item $dest -Force -ErrorAction SilentlyContinue
             Remove-Item $sidecar -Force -ErrorAction SilentlyContinue
-            exit 1
+            throw "Image SHA256 mismatch."
         }
         Write-Ok "Image SHA256 verified: $expected"
     }
@@ -214,25 +212,35 @@ function Invoke-PolisInit {
     if ($LASTEXITCODE -ne 0) {
         Write-Err "polis start failed. Run manually:"
         Write-Host "  polis start --image $ImagePath"
-        exit 1
+        throw "polis start failed."
     }
 }
 
 # -- Main ----------------------------------------------------------------------
 
-Write-Host ""
-Write-Host "+===============================================================+"
-Write-Host "|                    Polis Installer                            |"
-Write-Host "+===============================================================+"
-Write-Host ""
+function Invoke-PolisInstall {
+    $ErrorActionPreference = "Stop"
 
-Assert-Multipass
-Write-Info "Installing Polis ${Version}"
-Install-Cli
-Add-ToUserPath
-$imagePath = Get-Image
-Invoke-PolisInit -ImagePath $imagePath
+    Write-Host ""
+    Write-Host "+===============================================================+"
+    Write-Host "|                    Polis Installer                            |"
+    Write-Host "+===============================================================+"
+    Write-Host ""
 
-Write-Host ""
-Write-Ok "Polis installed successfully!"
-Write-Host ""
+    Assert-Multipass
+    Write-Info "Installing Polis ${Version}"
+    Install-Cli
+    Add-ToUserPath
+    $imagePath = Get-Image
+    Invoke-PolisInit -ImagePath $imagePath
+
+    Write-Host ""
+    Write-Ok "Polis installed successfully!"
+    Write-Host ""
+}
+
+try {
+    Invoke-PolisInstall
+} catch {
+    Write-Err $_.Exception.Message
+}
