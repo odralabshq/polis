@@ -373,8 +373,9 @@ impl SshConfigManager {
     pub fn create_polis_config(&self) -> Result<()> {
         // ControlMaster/ControlPath/ControlPersist use Unix domain sockets and
         // are not supported by Windows OpenSSH — omit them on Windows.
+        // Windows OpenSSH ProxyCommand requires absolute path to executable.
         #[cfg(not(windows))]
-        const CONFIG: &str = "\
+        let config = "\
 # ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
 Host workspace
     HostName workspace
@@ -390,24 +391,29 @@ Host workspace
     IdentitiesOnly yes
 ";
         #[cfg(windows)]
-        const CONFIG: &str = "\
+        let config = format!(
+            "\
 # ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
 Host workspace
     HostName workspace
     User polis
-    ProxyCommand polis _ssh-proxy
+    ProxyCommand \"{}\" _ssh-proxy
     StrictHostKeyChecking yes
     UserKnownHostsFile ~/.polis/known_hosts
     IdentityFile ~/.polis/id_ed25519
     ForwardAgent no
     IdentitiesOnly yes
-";
+",
+            std::env::current_exe()
+                .unwrap_or_else(|_| std::path::PathBuf::from("polis.exe"))
+                .display()
+        );
         if let Some(parent) = self.polis_config_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create dir {}", parent.display()))?;
             set_permissions(parent, 0o700)?;
         }
-        std::fs::write(&self.polis_config_path, CONFIG)
+        std::fs::write(&self.polis_config_path, config)
             .with_context(|| format!("write {}", self.polis_config_path.display()))?;
         set_permissions(&self.polis_config_path, 0o600)?;
         Ok(())
