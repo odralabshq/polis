@@ -12,6 +12,7 @@ INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 CURL_PROTO="=https"
+CDN_BASE_URL="${POLIS_CDN_URL:-https://d1qggvwquwdnma.cloudfront.net}"
 
 # Colors
 RED='\033[0;31m'
@@ -208,22 +209,23 @@ create_symlink() {
 }
 
 download_image() {
-    local arch base_url image_name dest expected actual
+    local arch gh_base_url image_name dest expected actual
     arch=$(check_arch)
-    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
+    gh_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
 
-    # Discover the actual image filename from versions.json
-    image_name=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/versions.json" | python3 -c "import sys,json; print(json.load(sys.stdin)['vm_image']['asset'])")
+    # Discover the actual image filename from versions.json (GitHub)
+    image_name=$(curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/versions.json" | python3 -c "import sys,json; print(json.load(sys.stdin)['vm_image']['asset'])")
 
     dest="${INSTALL_DIR}/images/${image_name}"
     mkdir -p "${INSTALL_DIR}/images"
 
-    log_info "Downloading VM image..." >&2
+    log_info "Downloading VM image from CDN..." >&2
     curl -fL --http2 --retry 3 --retry-delay 2 --continue-at - --progress-bar \
-        "${base_url}/${image_name}" -o "${dest}" >&2
+        "${CDN_BASE_URL}/${VERSION}/${image_name}" -o "${dest}" >&2
 
+    # Checksum from GitHub (tamper-evident, separate origin from binary)
     log_info "Verifying image SHA256..." >&2
-    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/checksums.sha256" | grep "${image_name}" | awk '{print $1}')
+    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/checksums.sha256" | grep "${image_name}" | awk '{print $1}')
     actual=$(sha256sum "${dest}" | awk '{print $1}')
     if [[ "${expected}" != "${actual}" ]]; then
         log_error "Image SHA256 mismatch!" >&2
