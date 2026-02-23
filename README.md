@@ -1,9 +1,11 @@
-# Polis - Secure Workspace for AI Coding Agents
+# Polis — Secure Workspace for AI Coding Agents
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.0--preview-orange.svg)](https://github.com/OdraLabsHQ/polis/releases)
 
-Polis is a secure runtime for AI coding agents. It wraps any AI agent in an isolated container where all network traffic is intercepted, inspected for malware, and audited — without modifying the agent itself.
+> **⚠️ Experimental Preview** — Polis is under active development This platform in not yet recommended for production use.
+
+Polis is a secure runtime for AI coding agents. It wraps any AI agent in an isolated VM where all network traffic is intercepted, inspected for malware, and audited — without modifying the agent itself.
 
 ## The Problem
 
@@ -11,94 +13,137 @@ AI agents make HTTP requests, download packages, and execute code autonomously. 
 
 Polis solves this by routing all agent traffic through a TLS-intercepting proxy with real-time malware scanning. The agent runs normally; Polis handles security transparently.
 
-## ⚡️ Quick Start (Users)
+## ⚡️ Quick Start
 
-Install the Polis CLI and run an agent:
+### Linux
 
 ```bash
-# Install CLI
-curl -sSL https://polis.dev/install.sh | bash
-
-# Run an agent
-polis run claude-dev
+curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
 ```
 
-The CLI downloads a pre-built VM image and starts the agent. No source code or build tools required.
+### Windows (PowerShell)
 
-### CLI Commands
+```powershell
+irm https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.ps1 | iex
+```
+
+### macOS
+
+🔜 Coming soon. macOS support is on the roadmap.
+
+---
+
+The installer downloads the Polis CLI and a pre-built VM image (~1.8 GB), installs [Multipass](https://multipass.run) if needed, and starts the workspace. No source code or build tools required.
+
+Once installed:
+
+```bash
+polis start                    # Start workspace with default agent (OpenClaw)
+polis start --agent=openclaw   # Explicitly choose an agent
+polis connect --ide vscode     # Open workspace in VS Code
+```
+
+To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
+
+---
+
+## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `polis init` | Download and cache the workspace VM image (latest release) |
-| `polis init --image <path\|url>` | Use a local file or custom URL instead of the latest release |
-| `polis init --force` | Re-download even if the cached image passes verification |
-| `polis init --check` | Check for a newer image without downloading (dry-run) |
-| `polis run [agent]` | Create workspace and start agent |
-| `polis start` | Start existing workspace |
+| `polis start` | Start workspace (downloads image on first run) |
+| `polis start --agent=<name>` | Start with a specific agent |
+| `polis start --image <path>` | Use a custom VM image |
 | `polis stop` | Stop workspace (preserves state) |
 | `polis delete` | Remove workspace |
-| `polis delete --all` | Remove workspace and cached images (~3.5 GB) |
+| `polis delete --all` | Remove workspace, certs, config, and cached images |
 | `polis status` | Show workspace and agent status |
-| `polis connect` | Show connection options (SSH, UI) |
-| `polis doctor` | Diagnose issues (workspace, network, image integrity) |
+| `polis connect` | Show connection options (SSH, IDE) |
+| `polis connect --ide vscode` | Open workspace directly in VS Code |
+| `polis connect --ide cursor` | Open workspace directly in Cursor |
+| `polis exec <cmd>` | Run a command inside the workspace |
+| `polis doctor` | Diagnose issues (workspace, network, image) |
 | `polis update` | Update Polis to the latest signed release |
+| `polis update --check` | Check for updates without applying |
+| `polis config show` | Show current configuration |
+| `polis config set <key> <value>` | Set a configuration value |
+| `polis version` | Show CLI version |
 
-### Configuration
+### Agent Management
+
+| Command | Description |
+|---------|-------------|
+| `polis agent list` | List installed agents |
+| `polis agent add --path <folder>` | Install a new agent from a local folder |
+| `polis agent remove <name>` | Remove an agent |
+| `polis agent restart` | Restart the active agent's workspace |
+| `polis agent update` | Re-generate config and recreate workspace |
+| `polis agent shell` | Open an interactive shell in the workspace |
+| `polis agent exec <cmd>` | Run a command in the workspace container |
+| `polis agent cmd <args>` | Run an agent-specific command (defined in the agent's `commands.sh`) |
+
+---
+
+## Agents
+
+Polis is agent-agnostic. Agents are defined under `agents/<name>/` with an `agent.yaml` manifest. [OpenClaw](https://github.com/nicepkg/openclaw) is the default bundled agent.
+
+### OpenClaw
+
+OpenClaw is an AI coding agent with a browser-based Control UI. It supports Anthropic, OpenAI, and OpenRouter as LLM providers.
 
 ```bash
-# Set default agent
-polis config set defaults.agent claude-dev
+# Set at least one API key before starting
+export ANTHROPIC_API_KEY=sk-ant-...
+# or: export OPENAI_API_KEY=sk-proj-...
+# or: export OPENROUTER_API_KEY=sk-or-...
 
-# View configuration
-polis config show
+polis start
+```
+
+OpenClaw installs on first boot (~3–5 min). Once ready, open the Control UI:
+
+```
+http://<host-ip>:18789/#token=<token>
+```
+
+Get the token:
+
+```bash
+polis agent cmd token
+```
+
+On Multipass, use the VM IP (`multipass info polis` to find it). On native Linux, use `localhost`.
+
+### Adding Custom Agents
+
+Use the agent template to create your own:
+
+```bash
+cp -r agents/_template agents/my-agent
+# Edit agents/my-agent/agent.yaml
+polis agent add --path agents/my-agent
+polis start --agent=my-agent
 ```
 
 ---
 
-## 🛠️ Quick Start (Developers)
-
-For contributing to Polis, clone the repo and use `just`:
-
-### Native Linux (Recommended)
+## Configuration
 
 ```bash
-# Install prerequisites
-sudo apt-get install -y docker.io docker-compose-v2
+# Show current config
+polis config show
 
-# Install Sysbox
-SYSBOX_VERSION="0.6.4"
-wget https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
-sudo apt-get install -y ./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
-sudo systemctl restart docker
-
-# Clone and build
-git clone --recursive https://github.com/OdraLabsHQ/polis.git
-cd polis
-just setup && just build && just up
+# Set security level (balanced or strict)
+polis config set security.level strict
 ```
 
-### Development VM (macOS/Windows)
+| Level | Behavior |
+|-------|----------|
+| `balanced` (default) | New domains prompt for approval, known domains auto-allow |
+| `strict` | All domains require explicit approval |
 
-```bash
-# Clone repo locally
-git clone --recursive https://github.com/OdraLabsHQ/polis.git
-cd polis
-
-# Create dev VM (requires Multipass)
-./tools/dev-vm.sh create
-
-# Enter VM and build
-./tools/dev-vm.sh shell
-just setup && just build && just up
-```
-
-### VS Code Remote Development
-
-1. Get SSH config: `./tools/dev-vm.sh ssh-config >> ~/.ssh/config`
-2. In VS Code: `Cmd+Shift+P` → "Remote-SSH: Connect to Host" → `polis-dev`
-3. Open folder: `/home/ubuntu/polis`
-
-See [docs/DEVELOPER.md](docs/DEVELOPER.md) for full development guide.
+Credentials and malware are always blocked regardless of security level.
 
 ---
 
@@ -110,7 +155,7 @@ Polis routes all workspace traffic through a TLS-intercepting proxy with ICAP-ba
   Browser ──► http://localhost:18789 (Agent UI)
                       │
   ┌───────────────────┼────────────────────────────┐
-  │  Workspace (Sysbox-isolated)                   │
+  │  Workspace (Sysbox-isolated VM)                │
   │                   │                            │
   │    AI Agent (OpenClaw, or any agent)           │
   │         • Full dev environment                 │
@@ -144,9 +189,11 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 | **Gateway** | TLS-intercepting proxy (g3proxy), traffic routing | `services/gate` |
 | **Sentinel** | Content inspection logic (c-icap), DLP, approvals | `services/sentinel` |
 | **Scanner** | Real-time malware scanning (ClamAV) | `services/scanner` |
-| **Toolbox** | MCP tools | `services/toolbox` |
+| **Toolbox** | MCP tools for agent interaction | `services/toolbox` |
 | **State** | Redis-compatible data store (Valkey) | `services/state` |
 | **Workspace** | Isolated environment (Sysbox) | `services/workspace` |
+
+---
 
 ## 🔐 What We Address
 
@@ -172,69 +219,23 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 | Tool chaining for exfiltration (DB read → HTTP POST) | 🔜 Coming soon |
 | Indirect prompt injection via fetched content | 🔜 Coming soon |
 
+---
+
 ## 🖥️ Platform Support
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| **Native Linux** (Ubuntu/Debian) | ✅ **Recommended** | Best performance, full Sysbox support |
-| **Multipass VM** (Windows/macOS/Linux) | ✅ **Supported** | Cross-platform via `polis` CLI |
-| Other Linux distros | 🔜 Coming soon | RHEL, Fedora, Arch |
+| **Linux** (Ubuntu/Debian) | ✅ Supported | Recommended for development and production |
+| **Windows** | ✅ Supported | Via Multipass VM, PowerShell installer |
+| **macOS** | 🔜 Coming soon | Multipass-based, on the roadmap |
 
-## 🔌 Agent Plugin System
-
-Polis is agent-agnostic. Agents live under `agents/<name>/` with an `agent.yaml` manifest, install scripts, and generated compose artifacts. OpenClaw is the default.
-
-### Running OpenClaw
-
-```bash
-echo "OPENAI_API_KEY=sk-proj-..." >> .env   # or ANTHROPIC_API_KEY / OPENROUTER_API_KEY
-polis start --agent=openclaw
-```
-
-OpenClaw installs at first boot (~3-5 min). Check progress and get the token:
-
-```bash
-just logs workspace                                                        # init progress
-docker exec polis-workspace journalctl -u openclaw -f                     # gateway log
-docker exec polis-workspace cat /home/polis/.openclaw/gateway-token.txt   # token
-```
-
-Open the Control UI at `http://<host>:18789/#token=<token>`. On Multipass use the VM IP (`multipass info polis-dev`); on native Linux use `localhost`.
-
-### Agent commands
-
-```bash
-polis agent list                    # list installed agents
-polis agent restart                 # restart active agent's workspace
-polis agent update                  # re-generate config and recreate workspace
-polis agent remove <name>           # remove agent
-polis agent add --path <folder>     # install a new agent from a local folder
-```
-
-## ⚙️ Configuration
-
-Add at least one API key to your config:
-
-```bash
-polis config set anthropic_api_key sk-ant-...
-polis config set openai_api_key sk-proj-...
-```
-
-Or set environment variables before running:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-polis run
-```
+---
 
 ## 🔧 Troubleshooting
 
 **Multipass not found:**
 
 ```bash
-# macOS
-brew install multipass
-
 # Linux
 sudo snap install multipass
 
@@ -245,16 +246,19 @@ winget install Canonical.Multipass
 **Workspace won't start:**
 
 ```bash
-polis doctor    # Diagnose issues
-polis delete    # Clean slate
-polis run       # Try again
+polis doctor         # Diagnose issues
+polis delete         # Clean slate
+polis start          # Try again
 ```
 
-**Full reset (developers):**
+**Full reset:**
 
 ```bash
-just clean-all && just build && just setup && just up
+polis delete --all   # Remove everything
+polis start          # Fresh install
 ```
+
+---
 
 ## 🛡️ Security Framework Alignment
 
@@ -264,9 +268,11 @@ Polis is designed against industry security frameworks:
 - **MITRE ATLAS** — AI-specific threat tactics and techniques
 - **NIST AI RMF** — Risk management framework alignment
 
+---
+
 ## 📄 License
 
-Apache 2.0 - See [LICENSE](LICENSE) for details.
+Apache 2.0 — See [LICENSE](LICENSE) for details.
 
 ## ⚠️ Disclaimer
 
