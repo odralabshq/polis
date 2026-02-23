@@ -224,27 +224,27 @@ download_image() {
     dest="${INSTALL_DIR}/images/${image_name}"
     mkdir -p "${INSTALL_DIR}/images"
 
-    log_info "Downloading VM image..."
+    log_info "Downloading VM image..." >&2
     if command -v aria2c &>/dev/null; then
         aria2c -x16 -s16 -k1M --file-allocation=none \
             -d "${INSTALL_DIR}/images" -o "${image_name}" \
-            "${base_url}/${image_name}"
+            "${base_url}/${image_name}" >&2
     else
         curl -fL --proto "${CURL_PROTO}" --progress-bar \
-            "${base_url}/${image_name}" -o "${dest}"
+            "${base_url}/${image_name}" -o "${dest}" >&2
     fi
 
-    log_info "Verifying image SHA256..."
+    log_info "Verifying image SHA256..." >&2
     expected=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/checksums.sha256" | grep "${image_name}" | awk '{print $1}')
     actual=$(sha256sum "${dest}" | awk '{print $1}')
     if [[ "${expected}" != "${actual}" ]]; then
-        log_error "Image SHA256 mismatch!"
+        log_error "Image SHA256 mismatch!" >&2
         echo "  Expected: ${expected}" >&2
         echo "  Actual:   ${actual}" >&2
         rm -f "${dest}"
         exit 1
     fi
-    log_ok "Image SHA256 verified: ${expected}"
+    log_ok "Image SHA256 verified: ${expected}" >&2
 
     echo "${dest}"
     return 0
