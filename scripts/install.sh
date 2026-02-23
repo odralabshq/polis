@@ -67,7 +67,9 @@ MULTIPASS_MIN_VERSION="1.16.0"
 MULTIPASS_VERSION="${MULTIPASS_VERSION:-1.16.1}"
 
 semver_gte() {
-    printf '%s\n%s\n' "$2" "$1" | sort -V -C
+    local version="$1"
+    local minimum="$2"
+    printf '%s\n%s\n' "$minimum" "$version" | sort -V -C
     return 0
 }
 

@@ -5,18 +5,18 @@ FROM dhi.io/debian-base:trixie-dev@sha256:2166e2eaef0651c9ad21de6ab5a34fda12541d
 
 # Install systemd and required tools for networking
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    systemd \
-    systemd-sysv \
-    iproute2 \
     ca-certificates \
     curl \
     git \
+    iproute2 \
     kmod \
-    procps \
-    passwd \
-    openssh-server \
-    netcat-openbsd \
     libnss-systemd \
+    netcat-openbsd \
+    openssh-server \
+    passwd \
+    procps \
+    systemd \
+    systemd-sysv \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /run/sshd /var/empty \
     && chmod 755 /var/empty
@@ -24,27 +24,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Development toolchains: Python, Node.js
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    gcc \
-    g++ \
-    make \
     cmake \
+    diffutils \
+    fd-find \
+    g++ \
+    gcc \
+    htop \
+    jq \
+    less \
+    make \
+    nodejs \
+    npm \
+    patch \
     python3 \
     python3-pip \
     python3-venv \
-    nodejs \
-    npm \
-    jq \
+    ripgrep \
+    tree \
+    unzip \
     vim \
     wget \
     zip \
-    unzip \
-    ripgrep \
-    fd-find \
-    tree \
-    less \
-    diffutils \
-    patch \
-    htop \
     && mkdir -p /usr/local/bin && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 
