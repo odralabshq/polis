@@ -22,29 +22,6 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
-function Invoke-Download {
-    param([string]$Uri, [string]$OutFile)
-    # Use .NET WebClient for large downloads — shows MB progress without the
-    # crippling overhead of Invoke-WebRequest's Write-Progress on PS 5.x
-    $wc = New-Object System.Net.WebClient
-    $lastPct = -1
-    $handler = {
-        param($sender, $e)
-        $pct = $e.ProgressPercentage
-        if ($pct -ne $script:lastPct -and ($pct % 5 -eq 0)) {
-            $mbDone = [math]::Round($e.BytesReceived / 1MB, 0)
-            $mbTotal = [math]::Round($e.TotalBytesToReceive / 1MB, 0)
-            Write-Host "`r[INFO]  Downloading... ${mbDone} MB / ${mbTotal} MB (${pct}%)" -NoNewline -ForegroundColor Cyan
-            $script:lastPct = $pct
-        }
-    }
-    $wc.add_DownloadProgressChanged($handler)
-    $task = $wc.DownloadFileTaskAsync($Uri, $OutFile)
-    $task.Wait()
-    $wc.Dispose()
-    Write-Host ""
-}
-
 # -- Multipass -----------------------------------------------------------------
 
 function Test-HyperV {
@@ -173,17 +150,17 @@ function Get-Image {
     $ghUrl      = "${ghBase}/${imageName}"
     $downloaded = $false
 
-    Write-Info "Downloading VM image from CDN..."
+    Write-Info "Downloading VM image from CDN (this may take a few minutes)..."
     try {
-        Invoke-Download -Uri $cdnUrl -OutFile $dest
+        Invoke-WebRequest -Uri $cdnUrl -OutFile $dest -UseBasicParsing -ErrorAction Stop
         $downloaded = $true
     } catch {
         Write-Warn "CDN unavailable, falling back to GitHub..."
     }
 
     if (-not $downloaded) {
-        Write-Info "Downloading VM image from GitHub..."
-        Invoke-Download -Uri $ghUrl -OutFile $dest
+        Write-Info "Downloading VM image from GitHub (this may take a few minutes)..."
+        Invoke-WebRequest -Uri $ghUrl -OutFile $dest -UseBasicParsing
     }
 
     # Download signed sidecar for CLI integrity verification
