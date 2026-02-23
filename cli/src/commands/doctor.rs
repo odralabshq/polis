@@ -652,19 +652,39 @@ async fn check_version_drift(current: String) -> Option<VersionDrift> {
 }
 
 async fn disk_space_gb() -> Result<u64> {
-    let out = tokio::process::Command::new("df")
-        .args(["-BG", "/"])
-        .output()
-        .await
-        .context("df failed")?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    // df -BG output (second line): "/dev/sda1  100G  55G  45G  55% /"
-    // column index 3 is "Available", e.g. "45G"
-    text.lines()
-        .nth(1)
-        .and_then(|l| l.split_whitespace().nth(3))
-        .and_then(|s| s.trim_end_matches('G').parse::<u64>().ok())
-        .ok_or_else(|| anyhow::anyhow!("cannot parse df output"))
+    #[cfg(windows)]
+    {
+        let out = tokio::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "((Get-PSDrive C).Free / 1GB) -as [int]",
+            ])
+            .output()
+            .await
+            .context("powershell failed")?;
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse::<u64>()
+            .context("cannot parse disk space from powershell")
+    }
+    #[cfg(not(windows))]
+    {
+        // `df -k` is POSIX and works on both Linux and macOS.
+        // Column 3 (0-indexed) is "Available" in 1 KiB blocks.
+        let out = tokio::process::Command::new("df")
+            .args(["-k", "/"])
+            .output()
+            .await
+            .context("df failed")?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.lines()
+            .nth(1)
+            .and_then(|l| l.split_whitespace().nth(3))
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|kb| kb / (1024 * 1024))
+            .ok_or_else(|| anyhow::anyhow!("cannot parse df output"))
+    }
 }
 
 async fn check_internet() -> bool {

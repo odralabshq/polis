@@ -371,6 +371,9 @@ impl SshConfigManager {
     ///
     /// Returns an error if the file cannot be written or permissions cannot be set.
     pub fn create_polis_config(&self) -> Result<()> {
+        // ControlMaster/ControlPath/ControlPersist use Unix domain sockets and
+        // are not supported by Windows OpenSSH — omit them on Windows.
+        #[cfg(not(windows))]
         const CONFIG: &str = "\
 # ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
 Host workspace
@@ -383,6 +386,19 @@ Host workspace
     ControlMaster auto
     ControlPath ~/.polis/sockets/%r@%h:%p
     ControlPersist 30s
+    ForwardAgent no
+    IdentitiesOnly yes
+";
+        #[cfg(windows)]
+        const CONFIG: &str = "\
+# ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
+Host workspace
+    HostName workspace
+    User polis
+    ProxyCommand polis _ssh-proxy
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.polis/known_hosts
+    IdentityFile ~/.polis/id_ed25519
     ForwardAgent no
     IdentitiesOnly yes
 ";

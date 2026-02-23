@@ -89,7 +89,7 @@ pub async fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Resu
         println!("✓ {}", inception_line("L0", "sequence started."));
     }
 
-    let image_url = format!("file://{}", image_path.canonicalize()?.display());
+    let image_url = image_path_to_file_url(image_path)?;
 
     let pb = (!quiet).then(|| {
         crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
@@ -124,6 +124,31 @@ pub async fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Resu
     start_services_with_progress(mp, quiet).await;
     pin_host_key().await;
     Ok(())
+}
+
+/// Converts a local image path to a `file://` URL suitable for `multipass launch`.
+///
+/// On Windows, `canonicalize()` returns a UNC extended-length path
+/// (`\\?\C:\...`). Multipass expects a standard `file:///C:/...` URL.
+///
+/// # Errors
+///
+/// Returns an error if the path cannot be canonicalized.
+fn image_path_to_file_url(path: &Path) -> Result<String> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("canonicalizing {}", path.display()))?;
+    #[cfg(windows)]
+    {
+        let s = canonical.to_string_lossy();
+        // Strip the `\\?\` extended-length prefix that canonicalize() adds on Windows.
+        let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
+        Ok(format!("file:///{}", stripped.replace('\\', "/")))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(format!("file://{}", canonical.display()))
+    }
 }
 
 fn inception_line(level: &str, msg: &str) -> String {

@@ -41,9 +41,13 @@ pub struct ImageMetadata {
 
 /// Returns the image cache directory.
 ///
-/// Linux: `~/polis/images/` (snap AppArmor requires non-hidden)
+/// Linux: `~/polis/images/` (snap `AppArmor` requires non-hidden)
 /// Windows: `%PROGRAMDATA%\Polis\images\` (accessible to multipassd SYSTEM service)
 /// macOS: `~/.polis/images/`
+///
+/// # Errors
+///
+/// Returns an error if the home directory cannot be determined.
 pub fn images_dir() -> Result<PathBuf> {
     #[cfg(target_os = "linux")]
     return Ok(dirs::home_dir()
