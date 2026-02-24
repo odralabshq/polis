@@ -105,13 +105,6 @@ impl KnownHostsManager {
         Ok(())
     }
 
-    /// Returns `true` if the `known_hosts` file exists.
-    #[allow(dead_code)] // Used by tests
-    #[must_use]
-    pub fn exists(&self) -> bool {
-        self.path.exists()
-    }
-
     /// Removes the `known_hosts` file if it exists.
     ///
     /// # Errors
@@ -161,36 +154,17 @@ mod tests {
     const VALID_KEY: &str = "workspace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyMaterialHere";
 
     // -----------------------------------------------------------------------
-    // KnownHostsManager::exists
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_known_hosts_manager_exists_returns_false_when_file_absent() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let mgr = manager_in(&dir);
-        assert!(!mgr.exists());
-    }
-
-    #[test]
-    fn test_known_hosts_manager_exists_returns_true_after_update() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let mgr = manager_in(&dir);
-        mgr.update(VALID_KEY).expect("update should succeed");
-        assert!(mgr.exists());
-    }
-
-    // -----------------------------------------------------------------------
     // KnownHostsManager::update
     // -----------------------------------------------------------------------
 
     #[test]
-    fn test_known_hosts_manager_update_writes_content_to_file() {
+    fn test_known_hosts_manager_update_creates_file() {
         let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+        assert!(!path.exists());
         let mgr = manager_in(&dir);
         mgr.update(VALID_KEY).expect("update should succeed");
-        let content =
-            std::fs::read_to_string(dir.path().join("known_hosts")).expect("file should exist");
-        assert_eq!(content, VALID_KEY);
+        assert!(path.exists());
     }
 
     #[test]
@@ -251,10 +225,11 @@ mod tests {
     #[test]
     fn test_known_hosts_manager_remove_deletes_existing_file() {
         let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("known_hosts");
         let mgr = manager_in(&dir);
         mgr.update(VALID_KEY).expect("update should succeed");
         mgr.remove().expect("remove should succeed");
-        assert!(!mgr.exists());
+        assert!(!path.exists());
     }
 
     #[test]

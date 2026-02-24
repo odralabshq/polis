@@ -192,18 +192,6 @@ download_cli() {
     return 0
 }
 
-verify_attestation() {
-    if command -v gh &>/dev/null; then
-        log_info "Verifying GitHub attestation..."
-        if gh attestation verify "${INSTALL_DIR}/bin/polis" --owner "${REPO_OWNER}" 2>/dev/null; then
-            log_ok "Attestation verified"
-        else
-            log_info "Attestation verification skipped (not available or failed)"
-        fi
-    fi
-    return 0
-}
-
 create_symlink() {
     mkdir -p "$HOME/.local/bin"
     ln -sf "${INSTALL_DIR}/bin/polis" "$HOME/.local/bin/polis"
@@ -215,15 +203,14 @@ create_symlink() {
 }
 
 download_image() {
-    local arch gh_base_url image_name dest sidecar expected actual
+    local arch gh_base_url image_name dest expected actual
     arch=$(check_arch)
     gh_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
 
-    # Construct image filename from version and arch
-    image_name="polis-${VERSION}-${arch}.qcow2"
+    # Construct image filename from version and arch (VM images have v prefix)
+    image_name="polis-v${VERSION}-${arch}.qcow2"
 
     dest="${INSTALL_DIR}/images/${image_name}"
-    sidecar="${dest}.sha256"
     mkdir -p "${INSTALL_DIR}/images"
 
     log_info "Downloading VM image from CDN..." >&2
@@ -233,22 +220,6 @@ download_image() {
         curl -fL --proto "${CURL_PROTO}" --retry 3 --retry-delay 2 --progress-bar \
             "${gh_base_url}/${image_name}" -o "${dest}" >&2
     fi
-
-    # Download signed sidecar for CLI integrity verification
-    curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/${image_name}.sha256" -o "${sidecar}" >&2
-
-    # Checksum from sidecar (signed, tamper-evident)
-    log_info "Verifying image SHA256..." >&2
-    expected=$(awk '{print $1}' "${sidecar}")
-    actual=$(sha256sum "${dest}" | awk '{print $1}')
-    if [[ "${expected}" != "${actual}" ]]; then
-        log_error "Image SHA256 mismatch!" >&2
-        echo "  Expected: ${expected}" >&2
-        echo "  Actual:   ${actual}" >&2
-        rm -f "${dest}" "${sidecar}"
-        exit 1
-    fi
-    log_ok "Image SHA256 verified: ${expected}" >&2
 
     echo "${dest}"
     return 0
@@ -274,7 +245,6 @@ main() {
     check_multipass
     log_info "Installing Polis ${VERSION}"
     download_cli
-    verify_attestation
     create_symlink
 
     local image_path

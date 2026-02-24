@@ -19,20 +19,6 @@ pub enum VmState {
     Running,
 }
 
-/// Get the first IPv4 address of the VM, if running.
-#[allow(dead_code)]
-pub async fn ip(mp: &impl Multipass) -> Option<String> {
-    let output = mp.vm_info().await.ok()?;
-    let info: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    info.get("info")?
-        .get("polis")?
-        .get("ipv4")?
-        .as_array()?
-        .first()?
-        .as_str()
-        .map(String::from)
-}
-
 /// Check if VM exists.
 pub async fn exists(mp: &impl Multipass) -> bool {
     mp.vm_info()
@@ -67,15 +53,6 @@ pub async fn state(mp: &impl Multipass) -> Result<VmState> {
 }
 
 /// Check if VM is running.
-///
-/// # Errors
-///
-/// Returns an error if the VM state cannot be determined.
-#[allow(dead_code)] // API for future use
-pub async fn is_running(mp: &impl Multipass) -> Result<bool> {
-    Ok(state(mp).await? == VmState::Running)
-}
-
 /// Create VM from image.
 ///
 /// # Errors
