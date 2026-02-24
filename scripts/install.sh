@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-VERSION="${POLIS_VERSION:-0.3.0-RC-1}"
+VERSION="${POLIS_VERSION:-0.3.0-RC-2}"
 INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
