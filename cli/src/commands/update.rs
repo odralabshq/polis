@@ -725,7 +725,7 @@ pub async fn run(
     args: &UpdateArgs,
     ctx: &OutputContext,
     checker: &impl UpdateChecker,
-    mp: &impl Multipass,
+    _mp: &impl Multipass,
 ) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
 
@@ -735,19 +735,38 @@ pub async fn run(
     }
 
     let cli_update = checker.check(current)?;
-    let image_update = check_image_update();
-    let has_updates = display_update_status(ctx, current, &cli_update, image_update.as_ref());
+
+    match &cli_update {
+        UpdateInfo::UpToDate => {
+            println!(
+                "  {} CLI v{current} (latest)",
+                "✓".style(ctx.styles.success),
+            );
+            return Ok(());
+        }
+        UpdateInfo::Available {
+            version,
+            release_notes,
+            ..
+        } => {
+            println!("  CLI v{current} → v{version} available");
+            if !release_notes.is_empty() {
+                println!();
+                println!("  Changes in v{version}:");
+                for note in release_notes {
+                    println!("    • {note}");
+                }
+            }
+        }
+    }
 
     if args.check {
-        if has_updates {
-            println!();
-            println!("Run 'polis update' to apply updates.");
-        }
+        println!();
+        println!("Run 'polis update' to apply the update.");
         return Ok(());
     }
 
     apply_cli_update(ctx, checker, cli_update)?;
-    apply_container_updates(ctx, mp).await?;
 
     println!();
     Ok(())

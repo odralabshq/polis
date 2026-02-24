@@ -130,8 +130,18 @@ impl Multipass for MultipassCli {
     ) -> Result<Output> {
         tokio::process::Command::new("multipass")
             .args([
-                "launch", image_url, "--name", VM_NAME, "--cpus", cpus, "--memory", memory,
-                "--disk", disk, "--timeout", "600",
+                "launch",
+                image_url,
+                "--name",
+                VM_NAME,
+                "--cpus",
+                cpus,
+                "--memory",
+                memory,
+                "--disk",
+                disk,
+                "--timeout",
+                "600",
             ])
             .output()
             .await

@@ -161,13 +161,19 @@ download_cli() {
     base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
     bin_dir="${INSTALL_DIR}/bin"
     binary_name="polis-linux-${arch}"
+    tarball="${binary_name}.tar.gz"
     checksum_file="/tmp/polis.sha256.$$"
 
     mkdir -p "${bin_dir}"
 
     log_info "Downloading CLI (${arch})..."
-    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}" -o "${bin_dir}/polis"
+    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${tarball}" -o "/tmp/${tarball}"
     curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
+
+    log_info "Extracting CLI..."
+    tar -xzf "/tmp/${tarball}" -C "${bin_dir}" --strip-components=0
+    mv "${bin_dir}/${binary_name}" "${bin_dir}/polis"
+    rm -f "/tmp/${tarball}"
 
     log_info "Verifying CLI SHA256..."
     expected=$(cut -d' ' -f1 < "${checksum_file}")
@@ -231,9 +237,9 @@ download_image() {
     # Download signed sidecar for CLI integrity verification
     curl -fsSL "${gh_base_url}/${image_name}.sha256" -o "${sidecar}" >&2
 
-    # Checksum from GitHub (tamper-evident, separate origin from binary)
+    # Checksum from sidecar (signed, tamper-evident)
     log_info "Verifying image SHA256..." >&2
-    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/checksums.sha256" | grep "${image_name}" | awk '{print $1}')
+    expected=$(awk '{print $1}' "${sidecar}")
     actual=$(sha256sum "${dest}" | awk '{print $1}')
     if [[ "${expected}" != "${actual}" ]]; then
         log_error "Image SHA256 mismatch!" >&2

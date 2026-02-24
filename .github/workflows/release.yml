@@ -132,39 +132,6 @@ jobs:
           done
           docker compose build
 
-      - name: Install zipsign
-        run: cargo install zipsign --version 0.2.1 --locked
-
-      - name: Generate and sign versions.json
-        env:
-          POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          cat > versions.json << EOF
-          {
-            "manifest_version": 1,
-            "vm_image": {
-              "version": "${VERSION}",
-              "asset": "polis-${VERSION}-amd64.qcow2"
-            },
-            "containers": {
-              "polis-resolver-oss": "${VERSION}",
-              "polis-certgen-oss": "${VERSION}",
-              "polis-gate-oss": "${VERSION}",
-              "polis-sentinel-oss": "${VERSION}",
-              "polis-scanner-oss": "${VERSION}",
-              "polis-workspace-oss": "${VERSION}",
-              "polis-host-init-oss": "${VERSION}",
-              "polis-state-oss": "${VERSION}",
-              "polis-toolbox-oss": "${VERSION}"
-            }
-          }
-          EOF
-          echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
-          tar -czf versions.json.tar.gz versions.json
-          zipsign sign tar versions.json.tar.gz /tmp/polis-release.key -o versions.json.sig -f
-          rm /tmp/polis-release.key versions.json.tar.gz
-
       - name: Push images to GHCR (optional)
         if: needs.validate.outputs.push_docker == 'true'
         run: |
@@ -190,15 +157,6 @@ jobs:
           mkdir -p .build
           docker save -o .build/polis-images.tar $POLIS_IMAGES $EXTERNAL_IMAGES
           echo "✓ Exported: $POLIS_IMAGES $EXTERNAL_IMAGES"
-
-      - name: Upload versions.json artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: versions-json
-          path: |
-            versions.json
-            versions.json.sig
-          retention-days: 1
 
       - name: Upload images tarball
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -317,9 +275,6 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: polis-linux-amd64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: polis-windows-amd64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -355,6 +310,15 @@ jobs:
         run: (Get-FileHash ${{ matrix.artifact }} -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.artifact }}" | Out-File -Encoding ascii ${{ matrix.artifact }}.sha256
         shell: pwsh
 
+      - name: Create tarball (Unix)
+        if: runner.os != 'Windows'
+        run: tar -czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Create tarball (Windows)
+        if: runner.os == 'Windows'
+        run: tar -czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+        shell: bash
+
       - name: Attest CLI provenance
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
         with:
@@ -367,6 +331,7 @@ jobs:
           path: |
             ${{ matrix.artifact }}
             ${{ matrix.artifact }}.sha256
+            ${{ matrix.artifact }}.tar.gz
           retention-days: 1
 
   # =========================================================
@@ -449,8 +414,9 @@ jobs:
       - name: Download versions.json artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: versions-json
-          path: ./
+          pattern: cli-*
+          path: ./cli-bin
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
@@ -463,18 +429,7 @@ jobs:
           files: |
             vm/*.qcow2
             vm/*.qcow2.sha256
-            vm/checksums.sha256
-            vm/checksums.sha256.sig
-            cli-bin/polis-linux-amd64
             cli-bin/polis-linux-amd64.sha256
-            cli-bin/polis-windows-amd64.exe
-            cli-bin/polis-windows-amd64.exe.sha256
-            cli-bin/polis-macos-amd64
-            cli-bin/polis-macos-amd64.sha256
-            cli-bin/polis-macos-arm64
-            cli-bin/polis-macos-arm64.sha256
-            scripts/install.sh
-            versions.json
-            versions.json.sig
+            cli-bin/polis-linux-amd64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -477,10 +477,7 @@ mod tests {
         let tmp = std::env::temp_dir();
         let url = image_path_to_file_url(&tmp).expect("should produce a URL");
         // Multipass Hyper-V driver expects file://C:/... not file:///C:/...
-        assert!(
-            url.starts_with("file://"),
-            "expected file://, got: {url}"
-        );
+        assert!(url.starts_with("file://"), "expected file://, got: {url}");
         assert!(
             !url.starts_with("file:///"),
             "must not have three slashes (breaks Hyper-V driver): {url}"

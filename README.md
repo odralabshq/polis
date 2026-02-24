@@ -15,21 +15,27 @@ Polis solves this by routing all agent traffic through a TLS-intercepting proxy 
 
 ## ⚡️ Quick Start
 
-### Linux
+## Supported Platforms
+
+| OS | Architecture | Status |
+|----|-------------|--------|
+| Linux | amd64 | ✅ Supported |
+| Windows | amd64 | 🔜 Coming soon |
+| macOS | arm64 | 🔜 Coming soon |
+
+### Linux (amd64)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
 ```
 
-### Windows (PowerShell)
+### Windows (PowerShell) — Coming soon
 
-```powershell
-irm https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.ps1 | iex
-```
+🔜 Windows amd64 support is on the roadmap.
 
-### macOS
+### macOS — Coming soon
 
-🔜 Coming soon. macOS support is on the roadmap.
+🔜 macOS arm64 support is on the roadmap.
 
 ---
 
@@ -38,9 +44,9 @@ The installer downloads the Polis CLI and a pre-built VM image (~1.8 GB), instal
 Once installed:
 
 ```bash
-polis start                    # Start workspace with default agent (OpenClaw)
-polis start --agent=openclaw   # Explicitly choose an agent
-polis connect --ide vscode     # Open workspace in VS Code
+polis status                   # Show workspace and agent status
+polis connect                  # Connect to workspace via SSH or IDE
+polis start --agent=openclaw   # Start Polis with pre-configured openclaw agent
 ```
 
 To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
@@ -59,7 +65,7 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | `polis delete --all` | Remove workspace, certs, config, and cached images |
 | `polis status` | Show workspace and agent status |
 | `polis connect` | Show connection options (SSH, IDE) |
-| `polis connect --ide vscode` | Open workspace directly in VS Code |
+| `polis connect` | Connect to workspace (SSH, VS Code, Cursor) |
 | `polis connect --ide cursor` | Open workspace directly in Cursor |
 | `polis exec <cmd>` | Run a command inside the workspace |
 | `polis doctor` | Diagnose issues (workspace, network, image) |
@@ -134,16 +140,20 @@ polis start --agent=my-agent
 # Show current config
 polis config show
 
-# Set security level (balanced or strict)
+# Set security level (relaxed, balanced, or strict)
 polis config set security.level strict
 ```
 
 | Level | Behavior |
 |-------|----------|
+| `relaxed` | New domains auto-allowed, credentials trigger approval |
 | `balanced` (default) | New domains prompt for approval, known domains auto-allow |
 | `strict` | All domains require explicit approval |
 
-Credentials and malware are always blocked regardless of security level.
+**Notes:**
+- Credentials (API keys, AWS keys, private keys) always trigger approval regardless of level
+- Malware is always blocked regardless of level
+- Changes propagate to running workspace immediately
 
 ---
 
@@ -199,25 +209,24 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 
 | Threat | How |
 |--------|-----|
-| Agent exfiltrates API keys or credentials over HTTPS | TLS interception — all encrypted traffic is decrypted and inspected by g3proxy |
-| Malicious packages or downloads | ClamAV scans every HTTP response via ICAP before it reaches the agent |
-| Agent connects to unauthorized services | Only HTTP/HTTPS (80/443) allowed outbound; all other ports blocked via iptables |
-| Container escape to host system | Sysbox runtime provides VM-like isolation without privileged mode |
-| IPv6 bypass of proxy controls | IPv6 disabled at Docker network level and via sysctl/ip6tables in containers |
-| Agent accesses Docker socket or host resources | No Docker socket mounted; only read-only CA cert and init scripts bind-mounted |
-| DNS tunneling exfiltration | All traffic forced through proxy; non-HTTP ports blocked |
-| Cloud metadata service access (169.254.169.254) | Blocked by network isolation — workspace has no route to metadata endpoint |
+| Compromised agent exfiltrates credentials | TLS interception + DLP engine scans for AWS keys, GitHub tokens, OpenAI/Anthropic keys, private keys |
+| Agent requests access to new domains | Human-in-the-loop (HITL) approval system blocks requests until user confirms |
+| Malicious code downloaded by agent | ClamAV scans every HTTP response via ICAP before it reaches the agent |
+| Agent attempts non-HTTP connections | Only HTTP/HTTPS (80/443) allowed outbound; all other ports blocked via iptables |
+| Container escape vulnerability | Sysbox runtime provides VM-like isolation without privileged mode |
+| Proxy bypass via IPv6 | IPv6 disabled at Docker network level and via sysctl/ip6tables in containers |
+| Unauthorized host resource access | No Docker socket mounted; only read-only CA cert and init scripts bind-mounted |
+| Data exfiltration via DNS tunneling | All traffic forced through proxy; non-HTTP ports blocked |
+| Cloud metadata service access (SSRF) | Blocked by network isolation — workspace has no route to 169.254.169.254 |
 
 ### Coming Soon
 
 | Threat | Status |
 |--------|--------|
-| Typosquatted packages (`nxdebug` vs `nx-debug`) | 🔜 Coming soon |
-| Poisoned dependencies in lockfiles | 🔜 Coming soon |
-| DLP engine with secrets/PII detection | 🔜 Coming soon |
-| MCP tool gateway with filesystem policies | 🔜 Coming soon |
-| Tool chaining for exfiltration (DB read → HTTP POST) | 🔜 Coming soon |
-| Indirect prompt injection via fetched content | 🔜 Coming soon |
+| Typosquatted packages (`nxdebug` vs `nx-debug`) | 🔜 Package name validation |
+| Poisoned dependencies in lockfiles | 🔜 Dependency integrity checks |
+| Tool chaining for exfiltration (DB read → HTTP POST) | 🔜 MCP tool call auditing |
+| Indirect prompt injection via fetched content | 🔜 Content sanitization |
 
 ---
 
@@ -225,9 +234,9 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| **Linux** (Ubuntu/Debian) | ✅ Supported | Recommended for development and production |
-| **Windows** | ✅ Supported | Via Multipass VM, PowerShell installer |
-| **macOS** | 🔜 Coming soon | Multipass-based, on the roadmap |
+| **Linux** (amd64) | ✅ Supported | Recommended |
+| **Windows** (amd64) | 🔜 Coming soon | On the roadmap |
+| **macOS** (arm64) | 🔜 Coming soon | On the roadmap |
 
 ---
 
@@ -236,11 +245,7 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 **Multipass not found:**
 
 ```bash
-# Linux
 sudo snap install multipass
-
-# Windows
-winget install Canonical.Multipass
 ```
 
 **Workspace won't start:**
@@ -259,14 +264,6 @@ polis start          # Fresh install
 ```
 
 ---
-
-## 🛡️ Security Framework Alignment
-
-Polis is designed against industry security frameworks:
-
-- **OWASP Top 10 for Agentic Applications** — Agent-specific threat coverage
-- **MITRE ATLAS** — AI-specific threat tactics and techniques
-- **NIST AI RMF** — Risk management framework alignment
 
 ---
 
