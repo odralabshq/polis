@@ -106,7 +106,7 @@ function Install-Cli {
     $exe  = Join-Path $binDir "polis.exe"
     $sha  = Join-Path $env:TEMP "polis.sha256"
 
-    Write-Info "Downloading polis CLI ${Version}..."
+    Write-Info "Downloading CLI ${Version}..."
     Invoke-WebRequest -Uri "$base/polis-windows-amd64.exe"        -OutFile $exe -UseBasicParsing
     Invoke-WebRequest -Uri "$base/polis-windows-amd64.exe.sha256" -OutFile $sha -UseBasicParsing
 

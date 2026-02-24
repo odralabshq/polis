@@ -165,7 +165,7 @@ download_cli() {
 
     mkdir -p "${bin_dir}"
 
-    log_info "Downloading polis CLI (${arch})..."
+    log_info "Downloading CLI (${arch})..."
     curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}" -o "${bin_dir}/polis"
     curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
 
