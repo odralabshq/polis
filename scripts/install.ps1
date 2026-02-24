@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 # Ensure TLS 1.2 for GitHub downloads (PS 5.1 defaults to TLS 1.0)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Version          = if ($env:POLIS_VERSION)  { $env:POLIS_VERSION }  else { "0.3.0-preview-10" }
+$Version          = if ($env:POLIS_VERSION)  { $env:POLIS_VERSION }  else { "0.3.0-preview-11" }
 $InstallDir       = if ($env:POLIS_HOME)     { $env:POLIS_HOME }     else { Join-Path $env:USERPROFILE ".polis" }
 $CdnBaseUrl       = if ($env:POLIS_CDN_URL)  { $env:POLIS_CDN_URL }  else { "https://d1qggvwquwdnma.cloudfront.net" }
 $ImageDir         = Join-Path $InstallDir "images"
