@@ -11,7 +11,7 @@ Set-StrictMode -Version Latest
 $Version          = if ($env:POLIS_VERSION)  { $env:POLIS_VERSION }  else { "0.3.0-preview-8" }
 $InstallDir       = if ($env:POLIS_HOME)     { $env:POLIS_HOME }     else { Join-Path $env:USERPROFILE ".polis" }
 $CdnBaseUrl       = if ($env:POLIS_CDN_URL)  { $env:POLIS_CDN_URL }  else { "https://d1qggvwquwdnma.cloudfront.net" }
-$ImageDir         = Join-Path $env:ProgramData "Polis\images"
+$ImageDir         = Join-Path $InstallDir "images"
 $RepoOwner        = "OdraLabsHQ"
 $RepoName         = "polis"
 $MultipassMin     = [version]"1.16.0"

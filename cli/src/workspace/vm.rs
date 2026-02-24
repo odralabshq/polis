@@ -143,8 +143,10 @@ fn image_path_to_file_url(path: &Path) -> Result<String> {
         let s = canonical.to_string_lossy();
         // Strip the `\\?\` extended-length prefix that canonicalize() adds on Windows.
         let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
-        // Multipass on Windows expects file://C:/... (two slashes), not file:///C:/...
-        Ok(format!("file://{}", stripped.replace('\\', "/")))
+        // RFC 8089 file URL: file:///C:/path (three slashes — two for authority + empty host).
+        // Using only two slashes (file://C:/...) causes Multipass to treat the drive
+        // letter as a hostname, which fails on Windows.
+        Ok(format!("file:///{}", stripped.replace('\\', "/")))
     }
     #[cfg(not(windows))]
     {
@@ -465,6 +467,28 @@ mod tests {
         assert!(
             mp.exec_called.get(),
             "exec() should be called for systemctl"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn image_path_to_file_url_uses_three_slashes_on_windows() {
+        // Construct a path that exists so canonicalize() succeeds.
+        let tmp = std::env::temp_dir();
+        let url = image_path_to_file_url(&tmp).expect("should produce a URL");
+        assert!(
+            url.starts_with("file:///"),
+            "expected file:/// (three slashes), got: {url}"
+        );
+        assert!(
+            !url.starts_with("file:////"),
+            "should not have four slashes: {url}"
+        );
+        // Drive letter must appear right after the third slash, e.g. file:///C:/
+        let after = url.strip_prefix("file:///").unwrap();
+        assert!(
+            after.contains(":/"),
+            "expected drive letter like C:/ after file:///, got: {url}"
         );
     }
 }

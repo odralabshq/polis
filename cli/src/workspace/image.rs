@@ -49,18 +49,18 @@ pub struct ImageMetadata {
 ///
 /// Returns an error if the home directory cannot be determined.
 pub fn images_dir() -> Result<PathBuf> {
+    // All platforms use ~/.polis/images/ so the image is always owned by the
+    // current user and readable by the process that calls `multipass launch`.
+    //
+    // On Windows, ProgramData was previously used but multipassd runs as
+    // NT AUTHORITY\SYSTEM and may not have read access to files created there
+    // by the logged-in user. Using the home directory avoids that ACL mismatch.
     #[cfg(target_os = "linux")]
     return Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
         .join("polis")
         .join("images"));
-    #[cfg(target_os = "windows")]
-    return Ok(PathBuf::from(
-        std::env::var("PROGRAMDATA").unwrap_or_else(|_| r"C:\ProgramData".to_string()),
-    )
-    .join("Polis")
-    .join("images"));
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(target_os = "linux"))]
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
         .join(".polis")
