@@ -227,15 +227,15 @@ download_image() {
     mkdir -p "${INSTALL_DIR}/images"
 
     log_info "Downloading VM image from CDN..." >&2
-    if ! curl -fL --http2 --retry 3 --retry-delay 2 --progress-bar \
+    if ! curl -fL --proto "${CURL_PROTO}" --http2 --retry 3 --retry-delay 2 --progress-bar \
         "${CDN_BASE_URL}/v${VERSION}/${image_name}" -o "${dest}" >&2; then
         log_warn "CDN unavailable, falling back to GitHub..." >&2
-        curl -fL --retry 3 --retry-delay 2 --progress-bar \
+        curl -fL --proto "${CURL_PROTO}" --retry 3 --retry-delay 2 --progress-bar \
             "${gh_base_url}/${image_name}" -o "${dest}" >&2
     fi
 
     # Download signed sidecar for CLI integrity verification
-    curl -fsSL "${gh_base_url}/${image_name}.sha256" -o "${sidecar}" >&2
+    curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/${image_name}.sha256" -o "${sidecar}" >&2
 
     # Checksum from sidecar (signed, tamper-evident)
     log_info "Verifying image SHA256..." >&2
