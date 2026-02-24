@@ -219,8 +219,8 @@ download_image() {
     arch=$(check_arch)
     gh_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
 
-    # Discover the actual image filename from versions.json (GitHub)
-    image_name=$(curl -fsSL --proto "${CURL_PROTO}" "${gh_base_url}/versions.json" | python3 -c "import sys,json; print(json.load(sys.stdin)['vm_image']['asset'])")
+    # Construct image filename from version and arch
+    image_name="polis-${VERSION}-${arch}.qcow2"
 
     dest="${INSTALL_DIR}/images/${image_name}"
     sidecar="${dest}.sha256"
