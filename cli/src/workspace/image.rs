@@ -519,13 +519,19 @@ mod tests {
     #[test]
     fn version_from_path_parses_amd64() {
         let p = Path::new("/tmp/polis-0.3.0-preview-11-amd64.qcow2");
-        assert_eq!(super::version_from_path(p).as_deref(), Some("0.3.0-preview-11"));
+        assert_eq!(
+            super::version_from_path(p).as_deref(),
+            Some("0.3.0-preview-11")
+        );
     }
 
     #[test]
     fn version_from_path_parses_arm64() {
         let p = Path::new("/tmp/polis-0.3.0-preview-11-arm64.qcow2");
-        assert_eq!(super::version_from_path(p).as_deref(), Some("0.3.0-preview-11"));
+        assert_eq!(
+            super::version_from_path(p).as_deref(),
+            Some("0.3.0-preview-11")
+        );
     }
 
     #[test]
