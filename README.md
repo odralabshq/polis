@@ -65,8 +65,6 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | `polis delete --all` | Remove workspace, certs, config, and cached images |
 | `polis status` | Show workspace and agent status |
 | `polis connect` | Show connection options (SSH, IDE) |
-| `polis connect` | Connect to workspace (SSH, VS Code, Cursor) |
-| `polis connect --ide cursor` | Open workspace directly in Cursor |
 | `polis exec <cmd>` | Run a command inside the workspace |
 | `polis doctor` | Diagnose issues (workspace, network, image) |
 | `polis update` | Update Polis to the latest signed release |
