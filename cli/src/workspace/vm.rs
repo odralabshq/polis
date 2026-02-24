@@ -129,7 +129,11 @@ pub async fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Resu
 /// Converts a local image path to a `file://` URL suitable for `multipass launch`.
 ///
 /// On Windows, `canonicalize()` returns a UNC extended-length path
-/// (`\\?\C:\...`). Multipass expects a standard `file:///C:/...` URL.
+/// (`\\?\C:\...`). Multipass on Windows does not correctly handle the standard
+/// `file:///C:/...` form — it strips the leading slash and treats the path as
+/// `/C:/...` which does not exist. Using `file://localhost/C:/...` works
+/// correctly: Multipass resolves `localhost` as the local machine and the
+/// drive letter is preserved.
 ///
 /// # Errors
 ///
@@ -143,10 +147,9 @@ fn image_path_to_file_url(path: &Path) -> Result<String> {
         let s = canonical.to_string_lossy();
         // Strip the `\\?\` extended-length prefix that canonicalize() adds on Windows.
         let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
-        // RFC 8089 file URL: file:///C:/path (three slashes — two for authority + empty host).
-        // Using only two slashes (file://C:/...) causes Multipass to treat the drive
-        // letter as a hostname, which fails on Windows.
-        Ok(format!("file:///{}", stripped.replace('\\', "/")))
+        // Multipass on Windows mishandles file:///C:/... (strips the leading slash,
+        // producing /C:/... which doesn't exist). file://localhost/C:/... works correctly.
+        Ok(format!("file://localhost/{}", stripped.replace('\\', "/")))
     }
     #[cfg(not(windows))]
     {
@@ -472,23 +475,18 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    fn image_path_to_file_url_uses_three_slashes_on_windows() {
-        // Construct a path that exists so canonicalize() succeeds.
+    fn image_path_to_file_url_uses_localhost_on_windows() {
         let tmp = std::env::temp_dir();
         let url = image_path_to_file_url(&tmp).expect("should produce a URL");
         assert!(
-            url.starts_with("file:///"),
-            "expected file:/// (three slashes), got: {url}"
+            url.starts_with("file://localhost/"),
+            "expected file://localhost/, got: {url}"
         );
-        assert!(
-            !url.starts_with("file:////"),
-            "should not have four slashes: {url}"
-        );
-        // Drive letter must appear right after the third slash, e.g. file:///C:/
-        let after = url.strip_prefix("file:///").unwrap();
+        // Drive letter must appear right after the localhost/, e.g. file://localhost/C:/
+        let after = url.strip_prefix("file://localhost/").unwrap();
         assert!(
             after.contains(":/"),
-            "expected drive letter like C:/ after file:///, got: {url}"
+            "expected drive letter like C:/ after file://localhost/, got: {url}"
         );
     }
 }
