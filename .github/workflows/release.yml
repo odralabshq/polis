@@ -367,10 +367,12 @@ jobs:
           echo "✓ Uploaded to s3://polis-releases/${VERSION}/${FILENAME}"
 
       - name: Invalidate CloudFront cache
+        env:
+          CLOUDFRONT_DIST_ID: ${{ secrets.CLOUDFRONT_DIST_ID }}
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           aws cloudfront create-invalidation \
-            --distribution-id "${{ secrets.CLOUDFRONT_DIST_ID }}" \
+            --distribution-id "${CLOUDFRONT_DIST_ID}" \
             --paths "/${VERSION}/*"
           echo "✓ CloudFront cache invalidated for /${VERSION}/*"
 
