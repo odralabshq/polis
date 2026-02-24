@@ -19,20 +19,6 @@ pub enum VmState {
     Running,
 }
 
-/// Get the first IPv4 address of the VM, if running.
-#[allow(dead_code)]
-pub async fn ip(mp: &impl Multipass) -> Option<String> {
-    let output = mp.vm_info().await.ok()?;
-    let info: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    info.get("info")?
-        .get("polis")?
-        .get("ipv4")?
-        .as_array()?
-        .first()?
-        .as_str()
-        .map(String::from)
-}
-
 /// Check if VM exists.
 pub async fn exists(mp: &impl Multipass) -> bool {
     mp.vm_info()
@@ -67,15 +53,6 @@ pub async fn state(mp: &impl Multipass) -> Result<VmState> {
 }
 
 /// Check if VM is running.
-///
-/// # Errors
-///
-/// Returns an error if the VM state cannot be determined.
-#[allow(dead_code)] // API for future use
-pub async fn is_running(mp: &impl Multipass) -> Result<bool> {
-    Ok(state(mp).await? == VmState::Running)
-}
-
 /// Create VM from image.
 ///
 /// # Errors
@@ -89,7 +66,7 @@ pub async fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Resu
         println!("✓ {}", inception_line("L0", "sequence started."));
     }
 
-    let image_url = format!("file://{}", image_path.canonicalize()?.display());
+    let image_url = image_path_to_file_url(image_path)?;
 
     let pb = (!quiet).then(|| {
         crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
@@ -124,6 +101,35 @@ pub async fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Resu
     start_services_with_progress(mp, quiet).await;
     pin_host_key().await;
     Ok(())
+}
+
+/// Converts a local image path to a `file://` URL suitable for `multipass launch`.
+///
+/// On Windows, `canonicalize()` returns a UNC extended-length path (`\\?\C:\...`).
+/// Multipass on Windows (Hyper-V driver) expects `file://C:/...` (two slashes,
+/// drive letter as "host"). `file:///C:/...` causes Multipass to strip the leading
+/// slash and treat the path as `/C:/...` which does not exist.
+///
+/// # Errors
+///
+/// Returns an error if the path cannot be canonicalized.
+fn image_path_to_file_url(path: &Path) -> Result<String> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("canonicalizing {}", path.display()))?;
+    #[cfg(windows)]
+    {
+        let s = canonical.to_string_lossy();
+        // Strip the `\\?\` extended-length prefix that canonicalize() adds on Windows.
+        let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
+        // Multipass Hyper-V driver on Windows expects file://C:/path (two slashes).
+        // file:///C:/path causes it to strip the leading slash → /C:/path (not found).
+        Ok(format!("file://{}", stripped.replace('\\', "/")))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(format!("file://{}", canonical.display()))
+    }
 }
 
 fn inception_line(level: &str, msg: &str) -> String {
@@ -439,6 +445,24 @@ mod tests {
         assert!(
             mp.exec_called.get(),
             "exec() should be called for systemctl"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn image_path_to_file_url_uses_two_slashes_on_windows() {
+        let tmp = std::env::temp_dir();
+        let url = image_path_to_file_url(&tmp).expect("should produce a URL");
+        // Multipass Hyper-V driver expects file://C:/... not file:///C:/...
+        assert!(url.starts_with("file://"), "expected file://, got: {url}");
+        assert!(
+            !url.starts_with("file:///"),
+            "must not have three slashes (breaks Hyper-V driver): {url}"
+        );
+        let after = url.strip_prefix("file://").unwrap();
+        assert!(
+            after.contains(":/"),
+            "expected drive letter like C:/ after file://, got: {url}"
         );
     }
 }

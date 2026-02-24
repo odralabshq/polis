@@ -140,6 +140,12 @@ build-vm arch="amd64" headless="true": _export-images _bundle-config _build-agen
         -var "arch={{arch}}" \
         -var "headless={{headless}}" \
         polis-vm.pkr.hcl
+    # Additional compression pass
+    for img in output/*.qcow2; do
+        echo "==> Compressing ${img}..."
+        qemu-img convert -c -O qcow2 "${img}" "${img}.tmp"
+        mv "${img}.tmp" "${img}"
+    done
     just --justfile "${ROOT}/Justfile" --working-directory "${ROOT}" _sign-vm {{arch}}
 
 # Internal: build agent artifacts for VM image
@@ -179,14 +185,13 @@ _sign-vm arch="amd64":
         echo "ERROR: No .qcow2 found in packer/output" >&2
         exit 1
     fi
-    SIDECAR="${IMAGE%.qcow2}.qcow2.sha256"
     CHECKSUM=$(sha256sum "${IMAGE}" | cut -d' ' -f1)
-    PLAIN_FILE=$(mktemp)
-    echo "${CHECKSUM}  $(basename "${IMAGE}")" > "${PLAIN_FILE}"
-    tar -czf "${PLAIN_FILE}.tar.gz" -C "$(dirname "${PLAIN_FILE}")" "$(basename "${PLAIN_FILE}")"
-    zipsign sign tar --context "" "${PLAIN_FILE}.tar.gz" "${SIGNING_KEY}" -o "${SIDECAR}" -f
-    rm -f "${PLAIN_FILE}" "${PLAIN_FILE}.tar.gz"
-    echo "✓ Signed sidecar: ${SIDECAR}"
+    tmpdir=$(mktemp -d)
+    echo "${CHECKSUM}  $(basename "${IMAGE}")" > "${tmpdir}/checksum.txt"
+    tar -czf "${tmpdir}/sidecar.tar.gz" -C "${tmpdir}" checksum.txt
+    zipsign sign tar --context "" "${tmpdir}/sidecar.tar.gz" "${SIGNING_KEY}" -o "${IMAGE}.sha256" -f
+    rm -rf "${tmpdir}"
+    echo "✓ ${IMAGE}.sha256 (signed)"
     echo "  Public key: $(base64 -w0 "${PUB_KEY}")"
 
 # Internal: export Docker images for VM build

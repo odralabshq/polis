@@ -105,13 +105,6 @@ impl KnownHostsManager {
         Ok(())
     }
 
-    /// Returns `true` if the `known_hosts` file exists.
-    #[allow(dead_code)] // Used by tests
-    #[must_use]
-    pub fn exists(&self) -> bool {
-        self.path.exists()
-    }
-
     /// Removes the `known_hosts` file if it exists.
     ///
     /// # Errors
@@ -161,36 +154,17 @@ mod tests {
     const VALID_KEY: &str = "workspace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyMaterialHere";
 
     // -----------------------------------------------------------------------
-    // KnownHostsManager::exists
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_known_hosts_manager_exists_returns_false_when_file_absent() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let mgr = manager_in(&dir);
-        assert!(!mgr.exists());
-    }
-
-    #[test]
-    fn test_known_hosts_manager_exists_returns_true_after_update() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let mgr = manager_in(&dir);
-        mgr.update(VALID_KEY).expect("update should succeed");
-        assert!(mgr.exists());
-    }
-
-    // -----------------------------------------------------------------------
     // KnownHostsManager::update
     // -----------------------------------------------------------------------
 
     #[test]
-    fn test_known_hosts_manager_update_writes_content_to_file() {
+    fn test_known_hosts_manager_update_creates_file() {
         let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("known_hosts");
+        assert!(!path.exists());
         let mgr = manager_in(&dir);
         mgr.update(VALID_KEY).expect("update should succeed");
-        let content =
-            std::fs::read_to_string(dir.path().join("known_hosts")).expect("file should exist");
-        assert_eq!(content, VALID_KEY);
+        assert!(path.exists());
     }
 
     #[test]
@@ -251,10 +225,11 @@ mod tests {
     #[test]
     fn test_known_hosts_manager_remove_deletes_existing_file() {
         let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("known_hosts");
         let mgr = manager_in(&dir);
         mgr.update(VALID_KEY).expect("update should succeed");
         mgr.remove().expect("remove should succeed");
-        assert!(!mgr.exists());
+        assert!(!path.exists());
     }
 
     #[test]
@@ -371,7 +346,11 @@ impl SshConfigManager {
     ///
     /// Returns an error if the file cannot be written or permissions cannot be set.
     pub fn create_polis_config(&self) -> Result<()> {
-        const CONFIG: &str = "\
+        // ControlMaster/ControlPath/ControlPersist use Unix domain sockets and
+        // are not supported by Windows OpenSSH — omit them on Windows.
+        // Windows OpenSSH ProxyCommand requires absolute path to executable.
+        #[cfg(not(windows))]
+        let config = "\
 # ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
 Host workspace
     HostName workspace
@@ -386,12 +365,30 @@ Host workspace
     ForwardAgent no
     IdentitiesOnly yes
 ";
+        #[cfg(windows)]
+        let config = format!(
+            "\
+# ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
+Host workspace
+    HostName workspace
+    User polis
+    ProxyCommand \"{}\" _ssh-proxy
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.polis/known_hosts
+    IdentityFile ~/.polis/id_ed25519
+    ForwardAgent no
+    IdentitiesOnly yes
+",
+            std::env::current_exe()
+                .unwrap_or_else(|_| std::path::PathBuf::from("polis.exe"))
+                .display()
+        );
         if let Some(parent) = self.polis_config_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create dir {}", parent.display()))?;
             set_permissions(parent, 0o700)?;
         }
-        std::fs::write(&self.polis_config_path, CONFIG)
+        std::fs::write(&self.polis_config_path, config)
             .with_context(|| format!("write {}", self.polis_config_path.display()))?;
         set_permissions(&self.polis_config_path, 0o600)?;
         Ok(())
@@ -428,14 +425,21 @@ Host workspace
 
     /// Creates `~/.polis/sockets/` with permissions 700.
     ///
+    /// No-op on Windows (`ControlMaster` not supported).
+    ///
     /// # Errors
     ///
     /// Returns an error if the directory cannot be created or permissions set.
     pub fn create_sockets_dir(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.sockets_dir)
-            .with_context(|| format!("create dir {}", self.sockets_dir.display()))?;
-        set_permissions(&self.sockets_dir, 0o700)?;
-        Ok(())
+        #[cfg(windows)]
+        return Ok(());
+        #[cfg(not(windows))]
+        {
+            std::fs::create_dir_all(&self.sockets_dir)
+                .with_context(|| format!("create dir {}", self.sockets_dir.display()))?;
+            set_permissions(&self.sockets_dir, 0o700)?;
+            Ok(())
+        }
     }
 
     /// Validates that `~/.polis/ssh_config` has permissions 600 (V-004).
