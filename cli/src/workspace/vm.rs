@@ -128,12 +128,10 @@ pub async fn create(mp: &impl Multipass, image_path: &Path, quiet: bool) -> Resu
 
 /// Converts a local image path to a `file://` URL suitable for `multipass launch`.
 ///
-/// On Windows, `canonicalize()` returns a UNC extended-length path
-/// (`\\?\C:\...`). Multipass on Windows does not correctly handle the standard
-/// `file:///C:/...` form — it strips the leading slash and treats the path as
-/// `/C:/...` which does not exist. Using `file://localhost/C:/...` works
-/// correctly: Multipass resolves `localhost` as the local machine and the
-/// drive letter is preserved.
+/// On Windows, `canonicalize()` returns a UNC extended-length path (`\\?\C:\...`).
+/// Multipass on Windows (Hyper-V driver) expects `file://C:/...` (two slashes,
+/// drive letter as "host"). `file:///C:/...` causes Multipass to strip the leading
+/// slash and treat the path as `/C:/...` which does not exist.
 ///
 /// # Errors
 ///
@@ -147,9 +145,9 @@ fn image_path_to_file_url(path: &Path) -> Result<String> {
         let s = canonical.to_string_lossy();
         // Strip the `\\?\` extended-length prefix that canonicalize() adds on Windows.
         let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
-        // Multipass on Windows mishandles file:///C:/... (strips the leading slash,
-        // producing /C:/... which doesn't exist). file://localhost/C:/... works correctly.
-        Ok(format!("file://localhost/{}", stripped.replace('\\', "/")))
+        // Multipass Hyper-V driver on Windows expects file://C:/path (two slashes).
+        // file:///C:/path causes it to strip the leading slash → /C:/path (not found).
+        Ok(format!("file://{}", stripped.replace('\\', "/")))
     }
     #[cfg(not(windows))]
     {
@@ -475,18 +473,22 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    fn image_path_to_file_url_uses_localhost_on_windows() {
+    fn image_path_to_file_url_uses_two_slashes_on_windows() {
         let tmp = std::env::temp_dir();
         let url = image_path_to_file_url(&tmp).expect("should produce a URL");
+        // Multipass Hyper-V driver expects file://C:/... not file:///C:/...
         assert!(
-            url.starts_with("file://localhost/"),
-            "expected file://localhost/, got: {url}"
+            url.starts_with("file://"),
+            "expected file://, got: {url}"
         );
-        // Drive letter must appear right after the localhost/, e.g. file://localhost/C:/
-        let after = url.strip_prefix("file://localhost/").unwrap();
+        assert!(
+            !url.starts_with("file:///"),
+            "must not have three slashes (breaks Hyper-V driver): {url}"
+        );
+        let after = url.strip_prefix("file://").unwrap();
         assert!(
             after.contains(":/"),
-            "expected drive letter like C:/ after file://localhost/, got: {url}"
+            "expected drive letter like C:/ after file://, got: {url}"
         );
     }
 }
