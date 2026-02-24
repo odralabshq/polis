@@ -243,12 +243,11 @@ build {
       "sudo apt-get clean",
       "sudo rm -rf /var/lib/apt/lists/*",
       # Full cloud-init reset so the image works on any hypervisor (QEMU, Hyper-V, etc.)
-      # cloud-init clean --logs removes /var/lib/cloud but leaves netplan configs
-      # that reference the build-time NIC. Remove them so cloud-init regenerates
-      # network config for whatever NIC the target hypervisor provides.
-      "sudo cloud-init clean --logs --machine-id",
-      "sudo rm -f /etc/netplan/50-cloud-init.yaml",
-      "sudo truncate -s 0 /etc/machine-id",
+      # --logs: remove /var/log/cloud-init*
+      # --machine-id: truncate /etc/machine-id so systemd regenerates it
+      # --configs network: remove generated netplan/network configs so cloud-init
+      #   re-detects the NIC on the target hypervisor (QEMU virtio vs Hyper-V hv_netvsc)
+      "sudo cloud-init clean --logs --machine-id --configs network",
       "sudo passwd -l ubuntu",
       "sudo passwd -l root"
     ]
