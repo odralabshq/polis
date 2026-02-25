@@ -251,6 +251,80 @@ jobs:
           retention-days: 1
 
   # =========================================================
+  # Build Hyper-V VM image
+  # =========================================================
+  vm-hyperv:
+    name: Build Hyper-V Image
+    needs: [validate, docker]
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download images tarball
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: docker-images
+          path: .build
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@1aa358be5cf73883762b302a3a03abd66e75b232 # v3.1.0
+
+      - name: Init Packer
+        env:
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: packer init packer/
+        shell: pwsh
+
+      - name: Generate Polis config bundle
+        run: |
+          $env:POLIS_IMAGE_VERSION = "${{ needs.validate.outputs.version }}"
+          mkdir -p .build
+          bash packer/scripts/bundle-polis-config.sh
+        shell: pwsh
+
+      - name: Build VM image
+        run: |
+          cd packer
+          packer build `
+            -var "polis_version=${{ needs.validate.outputs.version }}" `
+            -var "images_tar=${PWD}/../.build/polis-images.tar" `
+            -var "config_tar=${PWD}/../.build/polis-config.tar.gz" `
+            -var "sysbox_version=${env:SYSBOX_VERSION}" `
+            -var "sysbox_sha256_amd64=${env:SYSBOX_SHA256_AMD64}" `
+            -var "arch=amd64" `
+            -only="hyperv-iso.polis" `
+            polis-vm.pkr.hcl
+        shell: pwsh
+
+      - name: Sign VM image checksum
+        env:
+          POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
+        run: |
+          cargo install zipsign --version 0.2.1 --locked
+          $keyFile = [System.IO.Path]::GetTempFileName()
+          [System.Convert]::FromBase64String($env:POLIS_SIGNING_KEY) | Set-Content -Path $keyFile -Encoding Byte
+          $VERSION = "${{ needs.validate.outputs.version }}"
+          $IMAGE = "polis-$VERSION-amd64.vhdx"
+          cd packer/output-hyperv
+          sha256sum "$IMAGE" > checksum.txt
+          $sidecar = "$IMAGE.sha256"
+          # Simple signature creation mirroring the Linux flow
+          zipsign sign file --context "" "$IMAGE" $keyFile -o "$sidecar" -f
+          Remove-Item $keyFile
+          echo "✓ $IMAGE.sha256 (signed)"
+        shell: pwsh
+
+      - name: Upload VM artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: vm-image-hyperv
+          path: |
+            packer/output-hyperv/*.vhdx
+            packer/output-hyperv/*.vhdx.sha256
+          retention-days: 1
+
+  # =========================================================
   # Build CLI binary (Linux only)
   # =========================================================
   cli:
@@ -320,15 +394,21 @@ jobs:
   # =========================================================
   cdn:
     name: Upload to CDN
-    needs: [validate, vm]
+    needs: [validate, vm, vm-hyperv]
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
     steps:
-      - name: Download VM artifact
+      - name: Download QEMU VM artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: vm-image
+          path: ./vm
+
+      - name: Download Hyper-V VM artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: vm-image-hyperv
           path: ./vm
 
       - name: Configure AWS credentials (OIDC)
@@ -337,15 +417,16 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Upload VM image to S3
+      - name: Upload VM images to S3
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          QCOW2=$(ls vm/*.qcow2 | head -1)
-          FILENAME=$(basename "${QCOW2}")
-          aws s3 cp "${QCOW2}" \
-            "s3://polis-releases/${VERSION}/${FILENAME}" \
-            --no-progress
-          echo "✓ Uploaded to s3://polis-releases/${VERSION}/${FILENAME}"
+          for f in vm/*; do
+            filename=$(basename "$f")
+            aws s3 cp "$f" \
+              "s3://polis-releases/${VERSION}/${filename}" \
+              --no-progress
+            echo "✓ Uploaded $filename to s3://polis-releases/${VERSION}/${filename}"
+          done
 
       - name: Invalidate CloudFront cache
         env:
@@ -362,7 +443,7 @@ jobs:
   # =========================================================
   release:
     name: Create Release
-    needs: [validate, vm, cli, cdn]
+    needs: [validate, vm, vm-hyperv, cli, cdn]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -381,10 +462,16 @@ jobs:
             git push origin "$TAG" || echo "::warning::Tag push blocked by repository rules — release action will create the tag"
           fi
 
-      - name: Download VM artifact
+      - name: Download QEMU VM artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: vm-image
+          path: ./vm
+
+      - name: Download Hyper-V VM artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: vm-image-hyperv
           path: ./vm
 
       - name: Download CLI artifacts
@@ -405,6 +492,8 @@ jobs:
           files: |
             vm/*.qcow2
             vm/*.qcow2.sha256
+            vm/*.vhdx
+            vm/*.vhdx.sha256
             cli-bin/polis-linux-amd64.sha256
             cli-bin/polis-linux-amd64.tar.gz
         env:

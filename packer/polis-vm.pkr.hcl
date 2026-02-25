@@ -18,6 +18,10 @@ packer {
       version = ">= 3.2.0"
       source  = "github.com/YaleUniversity/goss"
     }
+    hyperv = {
+      version = ">= 1.1.0"
+      source  = "github.com/hashicorp/hyperv"
+    }
   }
 }
 
@@ -75,15 +79,32 @@ variable "ubuntu_serial" {
   default     = "20260128"
 }
 
-variable "use_minimal_image" {
-  type        = bool
-  description = "Use Ubuntu Minimal cloud image (recommended: smaller footprint, reduced attack surface)"
-  default     = true
+variable "ubuntu_iso_url" {
+  type        = string
+  description = "URL to Ubuntu 24.04 Mini ISO"
+  default     = "https://cdimage.ubuntu.com/ubuntu-mini-iso/noble/daily-live/current/noble-mini-iso-amd64.iso"
+}
+
+variable "ubuntu_iso_checksum" {
+  type        = string
+  description = "SHA256 of the Ubuntu 24.04 Mini ISO"
+  default     = "077ff0e8079eae284a50d18673bb11030bfa4bbddc4f4e446e84e3a7b42b485c"
+}
+
+variable "hyperv_switch_name" {
+  type        = string
+  description = "Hyper-V virtual switch name"
+  default     = "Default Switch"
+}
+
+variable "hyperv_generation" {
+  type    = number
+  default = 2
 }
 
 variable "headless" {
   type        = bool
-  description = "Run QEMU headless (set false to open console for debugging)"
+  description = "Run QEMU/Hyper-V headless (set false to open console for debugging)"
   default     = true
 }
 
@@ -98,13 +119,7 @@ variable "accelerator" {
 # ============================================================================
 
 locals {
-  # Minimal image: ~248MB, reduced attack surface (recommended)
-  # Full image: ~2GB, more packages pre-installed
-  ubuntu_base_url = var.use_minimal_image ? "https://cloud-images.ubuntu.com/minimal/releases/noble/release" : "https://cloud-images.ubuntu.com/releases/24.04/release-${var.ubuntu_serial}"
-  ubuntu_img_name = var.use_minimal_image ? "ubuntu-24.04-minimal-cloudimg-${var.arch}.img" : "ubuntu-24.04-server-cloudimg-${var.arch}.img"
-  ubuntu_url      = "${local.ubuntu_base_url}/${local.ubuntu_img_name}"
-  ubuntu_checksum = "file:${local.ubuntu_base_url}/SHA256SUMS"
-  sysbox_sha256   = var.arch == "amd64" ? var.sysbox_sha256_amd64 : var.sysbox_sha256_arm64
+  sysbox_sha256 = var.arch == "amd64" ? var.sysbox_sha256_amd64 : var.sysbox_sha256_arm64
   # Random password for build-time SSH — never stored in final image (passwd -l)
   build_password = uuidv4()
 }
@@ -114,9 +129,9 @@ locals {
 # ============================================================================
 
 source "qemu" "polis" {
-  iso_url          = local.ubuntu_url
-  iso_checksum     = local.ubuntu_checksum
-  disk_image       = true
+  iso_url          = var.ubuntu_iso_url
+  iso_checksum     = var.ubuntu_iso_checksum
+  disk_image       = false
   output_directory = "output"
   vm_name          = "polis-${var.polis_version}-${var.arch}.qcow2"
   format           = "qcow2"
@@ -129,31 +144,102 @@ source "qemu" "polis" {
   shutdown_command = "sudo shutdown -P now"
   ssh_username     = "ubuntu"
   ssh_password     = local.build_password
-  ssh_timeout      = "20m"
+  ssh_timeout      = "40m"
 
-  # Retry until cloud-init finishes enabling password auth
-  ssh_handshake_attempts = 100
-
-  # Cloud-init: create packer user with random password (locked in final image)
   cd_content = {
     "meta-data" = ""
     "user-data" = <<-EOF
       #cloud-config
-      users:
-        - name: ubuntu
-          sudo: ALL=(ALL) NOPASSWD:ALL
-          shell: /bin/bash
-          lock_passwd: false
-      chpasswd:
-        expire: false
-        users:
-          - name: ubuntu
-            password: ${local.build_password}
-            type: text
-      ssh_pwauth: true
+      autoinstall:
+        version: 1
+        install-type:
+          minimal: true
+        identity:
+          hostname: polis-vm
+          password: "${local.build_password}"
+          username: ubuntu
+        ssh:
+          install-server: true
+          allow-pw: true
+        user-data:
+          users:
+            - name: ubuntu
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              shell: /bin/bash
+              lock_passwd: false
+        late-commands:
+          - "apt-get purge -y snapd"
+          - "rm -rf /var/cache/snapd"
+          - "apt-get autoremove -y"
     EOF
   }
   cd_label = "CIDATA"
+
+  boot_wait = "5s"
+  boot_command = [
+    "<wait>c<wait>",
+    "set linux_gfx_mode=800x600<enter>",
+    "linux /casper/vmlinuz quiet autoinstall ds=nocloud;s=/cdrom/ ---<enter>",
+    "initrd /casper/initrd<enter>",
+    "boot<enter>"
+  ]
+}
+
+source "hyperv-iso" "polis" {
+  iso_url               = var.ubuntu_iso_url
+  iso_checksum          = var.ubuntu_iso_checksum
+  output_directory      = "output-hyperv"
+  vm_name               = "polis-${var.polis_version}-${var.arch}.vhdx"
+  switch_name           = var.hyperv_switch_name
+  generation            = var.hyperv_generation
+  enable_dynamic_memory = true
+  disk_size             = "20480"
+  memory                = 4096
+  cpus                  = 2
+  headless              = var.headless
+  shutdown_command      = "sudo shutdown -P now"
+  ssh_username          = "ubuntu"
+  ssh_password          = local.build_password
+  ssh_timeout           = "40m"
+
+  # Autoinstall config for fresh ISO install
+  cd_content = {
+    "meta-data" = ""
+    "user-data" = <<-EOF
+      #cloud-config
+      autoinstall:
+        version: 1
+        install-type:
+          minimal: true
+        identity:
+          hostname: polis-vm
+          password: "${local.build_password}"
+          username: ubuntu
+        ssh:
+          install-server: true
+          allow-pw: true
+        user-data:
+          users:
+            - name: ubuntu
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              shell: /bin/bash
+              lock_passwd: false
+        late-commands:
+          - "apt-get purge -y snapd"
+          - "rm -rf /var/cache/snapd"
+          - "apt-get autoremove -y"
+    EOF
+  }
+  cd_label = "CIDATA"
+
+  boot_wait = "5s"
+  boot_command = [
+    "<wait>c<wait>",
+    "set linux_gfx_mode=800x600<enter>",
+    "linux /casper/vmlinuz quiet autoinstall ds=nocloud;s=/cdrom/ ---<enter>",
+    "initrd /casper/initrd<enter>",
+    "boot<enter>"
+  ]
 }
 
 # ============================================================================
@@ -161,7 +247,10 @@ source "qemu" "polis" {
 # ============================================================================
 
 build {
-  sources = ["source.qemu.polis"]
+  sources = [
+    "source.qemu.polis",
+    "source.hyperv-iso.polis"
+  ]
 
   # Install Docker via apt repository with GPG verification
   provisioner "shell" {
