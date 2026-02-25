@@ -126,6 +126,24 @@ else {
     Write-Ok "Added to Hyper-V Administrators (log out and back in to apply)"
 }
 
+# ─── Packer HTTP firewall rule ───────────────────────────────────────────────
+Write-Step "Packer HTTP server firewall rule (ports 8000-9000)"
+$existing = Get-NetFirewallRule -DisplayName "Packer_http_server" -ErrorAction SilentlyContinue
+if ($existing) {
+    Write-Skip "Packer_http_server firewall rule"
+} else {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) {
+        New-NetFirewallRule -DisplayName "Packer_http_server" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000-9000 | Out-Null
+        Write-Ok "Firewall rule created"
+    } else {
+        Write-Host "  Creating firewall rule (requires elevation)..."
+        Start-Process powershell -Verb RunAs -Wait -ArgumentList `
+            "-NoProfile -Command New-NetFirewallRule -DisplayName 'Packer_http_server' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000-9000"
+        Write-Ok "Firewall rule created"
+    }
+}
+
 # ─── shellcheck ─────────────────────────────────────────────────────────────
 Write-Step "shellcheck"
 if (Test-Command shellcheck) { Write-Skip "shellcheck" }

@@ -14,6 +14,9 @@ cd /opt/polis
 tar -xzf /tmp/polis-config.tar.gz
 rm /tmp/polis-config.tar.gz
 
+# Ensure scripts are executable (Windows tar doesn't preserve Unix permissions)
+chmod 755 /opt/polis/scripts/*.sh
+
 # Install netcat for SSH proxy and yq for agent manifest parsing
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends netcat-openbsd
