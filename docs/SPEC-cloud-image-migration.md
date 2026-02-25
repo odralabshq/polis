@@ -55,6 +55,52 @@ The provisioning splits into two phases:
 
 This split keeps cloud-init static (no version templating) while the CLI handles all version-specific orchestration.
 
+### Unified Init Image (`polis-init`)
+
+The current compose file uses three init containers:
+
+| Container | Image | Purpose |
+|---|---|---|
+| `host-init` | `dhi.io/alpine-base:3.23-dev` (built) | Host iptables + bridge setup |
+| `scanner-init` | `dhi.io/alpine-base:3.23-dev` (pulled) | `chown` ClamAV volume |
+| `state-init` | `dhi.io/alpine-base:3.23-dev` (pulled) | `chown` Valkey volume |
+
+`scanner-init` and `state-init` pull directly from `dhi.io` at runtime, which requires DHI authentication. This breaks the cloud-init migration where users pull all images from public GHCR.
+
+The fix: consolidate all three into a single `polis-init` image built in CI and pushed to GHCR. Rename `services/host-init` to `services/init`.
+
+```dockerfile
+# services/init/Dockerfile
+FROM dhi.io/alpine-base:3.23-dev@sha256:2b318097...
+RUN apk add --no-cache docker-cli iptables
+```
+
+The Dockerfile is identical to the current `host-init` — DHI alpine base + `docker-cli` + `iptables`. The `docker-cli` and `iptables` packages add ~15 MB, negligible for an init container.
+
+In `docker-compose.yml`, all three init containers use the same built image with different commands:
+
+```yaml
+  host-init:
+    image: ghcr.io/odralabshq/polis-init-oss:${POLIS_INIT_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: services/init/Dockerfile
+    command: ["sh", "-c", "INT_BR=\"br-$$(docker network inspect ... )\" ..."]
+    # ... existing host-init config (NET_ADMIN, host network, etc.)
+
+  scanner-init:
+    image: ghcr.io/odralabshq/polis-init-oss:${POLIS_INIT_VERSION:-latest}
+    command: chown -R 65532:65532 /var/lib/clamav
+    # ... existing scanner-init config (CHOWN cap, read_only, etc.)
+
+  state-init:
+    image: ghcr.io/odralabshq/polis-init-oss:${POLIS_INIT_VERSION:-latest}
+    command: chown -R 65532:65532 /data
+    # ... existing state-init config (CHOWN cap, read_only, etc.)
+```
+
+This eliminates all runtime `dhi.io` pulls. DHI auth is only needed at CI build time (already configured). Users pull everything from public GHCR.
+
 ### Why Two Phases?
 
 - Cloud-init YAML is a static file — no templating engine, no variable substitution for image tags
@@ -416,6 +462,7 @@ The CLI's `docker compose pull` uses the version tag from docker-compose.yml. Th
 | `packer/goss-spec.yaml` | Goss spec |
 | `packer/packer_cache/` | Packer cache directory |
 | `packer/output/` | Packer output directory |
+| `services/host-init/` | Replaced by `services/init/` (unified init image) |
 
 The entire `packer/` directory can be deleted.
 
@@ -424,6 +471,7 @@ The entire `packer/` directory can be deleted.
 | Path | Change |
 |---|---|
 | `cloud-init.yaml` | Production config (done — see Cloud-Init Design above) |
+| `docker-compose.yml` | Replace `dhi.io/alpine-base` in `scanner-init` and `state-init` with `ghcr.io/odralabshq/polis-init-oss`; update `host-init` image reference |
 | `cli/src/multipass.rs` | Add `cloud_init` param to `launch()` |
 | `cli/src/workspace/vm.rs` | Use cloud-init path instead of image path |
 | `cli/src/workspace/image.rs` | Replace with cloud-init embed + write helper |
@@ -431,6 +479,12 @@ The entire `packer/` directory can be deleted.
 | `.github/workflows/release.yml` | Remove vm/vm-hyperv/cdn jobs, simplify release |
 | `Justfile` | Remove `build-vm`, `build-vm-hyperv`, related internal targets |
 | `scripts/install-tools-windows.ps1` | Remove Packer, QEMU dependencies |
+
+## New Files
+
+| Path | Purpose |
+|---|---|
+| `services/init/Dockerfile` | Unified init image: DHI alpine-base + docker-cli + iptables |
 
 ## Reproducibility Strategy
 
@@ -550,16 +604,17 @@ The Docker images on GHCR are useful regardless of approach — they can be pull
 
 1. ✅ **Rewrite `cloud-init.yaml`** — Production config with Docker CE, Sysbox, hardening
 2. ✅ **POC scripts** — `scripts/poc-cloud-init.ps1` and `scripts/poc-cloud-init.sh` verified on Windows and Linux
-3. **Update `cli/src/multipass.rs`** — Add `cloud_init` parameter to `launch()` trait and implementation
-4. **Update `cli/src/workspace/vm.rs`** — Use cloud-init path, update `create()` signature
-5. **Rewrite `cli/src/workspace/image.rs`** — Replace download logic with `include_str!` embed
-6. **Update `cli/src/commands/start.rs`** — New flow: cloud-init → transfer config → pull images → start
-7. **Update `.github/workflows/release.yml`** — Remove vm/vm-hyperv/cdn jobs
-8. **Update `Justfile`** — Remove build-vm targets, update install-tools
-9. **Delete `packer/` directory** — All contents
-10. **Test on Windows** — `polis start` with Hyper-V backend
-11. **Test on Linux** — `polis start` with QEMU backend
-12. **Test on macOS** — `polis start` with QEMU backend (if applicable)
+3. **Consolidate init image** — Create `services/init/Dockerfile`, update `docker-compose.yml` to use `ghcr.io/odralabshq/polis-init-oss` for `host-init`, `scanner-init`, and `state-init`; delete `services/host-init/`
+4. **Update `cli/src/multipass.rs`** — Add `cloud_init` parameter to `launch()` trait and implementation
+5. **Update `cli/src/workspace/vm.rs`** — Use cloud-init path, update `create()` signature
+6. **Rewrite `cli/src/workspace/image.rs`** — Replace download logic with `include_str!` embed
+7. **Update `cli/src/commands/start.rs`** — New flow: cloud-init → transfer config → pull images → start
+8. **Update `.github/workflows/release.yml`** — Remove vm/vm-hyperv/cdn jobs
+9. **Update `Justfile`** — Remove build-vm targets, update install-tools
+10. **Delete `packer/` directory** — All contents
+11. **Test on Windows** — `polis start` with Hyper-V backend
+12. **Test on Linux** — `polis start` with QEMU backend
+13. **Test on macOS** — `polis start` with QEMU backend (if applicable)
 
 ## Tradeoffs Summary
 
