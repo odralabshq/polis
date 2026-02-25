@@ -39,7 +39,7 @@ Eliminate the Packer build pipeline entirely. Replace baked VM images (qcow2/VHD
 The provisioning splits into two phases:
 
 **Phase 1 — cloud-init (runs during `multipass launch`)**
-- Install Docker CE (version-pinned)
+- Install Docker CE from the official Docker apt repo (GPG fingerprint verified)
 - Install Sysbox (version-pinned + SHA256 verified)
 - Configure Docker daemon with Sysbox runtime
 - Apply VM hardening (sysctl, auditd, AppArmor)
@@ -68,10 +68,6 @@ The production `cloud-init.yaml` replaces all Packer provisioner scripts. It shi
 
 ```yaml
 #cloud-config
-# Polis Workspace — cloud-init provisioning
-# Installs Docker CE, Sysbox, applies hardening.
-# Polis-specific config is transferred by the CLI after launch.
-
 hostname: polis-vm
 manage_etc_hosts: true
 
@@ -82,34 +78,20 @@ users:
     lock_passwd: false
     groups: [docker]
 
-# ── Docker CE via apt module ────────────────────────────────────────
-# Uses keyid (GPG fingerprint) for reproducible key verification.
-# Avoids curl|sh pattern. cloud-init fetches and dearmors the key.
-apt:
-  sources:
-    docker:
-      keyid: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
-      keyserver: https://download.docker.com/linux/ubuntu/gpg
-      source: "deb [arch=amd64 signed-by=$KEY_FILE] https://download.docker.com/linux/ubuntu $RELEASE stable"
-
 package_update: true
 package_upgrade: false
 
+# Base packages — Docker CE installed via runcmd (official apt repo)
 packages:
-  - docker-ce=5:27.5.1-1~ubuntu.24.04~noble
-  - docker-ce-cli=5:27.5.1-1~ubuntu.24.04~noble
-  - containerd.io
-  - docker-compose-plugin
-  - docker-buildx-plugin
   - netcat-openbsd
   - jq
   - auditd
   - ca-certificates
   - curl
+  - gnupg
+  - openssl
 
-# ── Write config files before runcmd ────────────────────────────────
 write_files:
-  # Docker daemon config with Sysbox runtime
   - path: /etc/docker/daemon.json
     content: |
       {
@@ -117,12 +99,10 @@ write_files:
           "sysbox-runc": { "path": "/usr/bin/sysbox-runc" }
         },
         "no-new-privileges": true,
-        "live-restore": true,
         "userland-proxy": false
       }
     permissions: '0644'
 
-  # Sysctl hardening (CIS Ubuntu 24.04 Level 1)
   - path: /etc/sysctl.d/99-polis-hardening.conf
     content: |
       kernel.randomize_va_space = 2
@@ -132,7 +112,6 @@ write_files:
       kernel.yama.ptrace_scope = 2
     permissions: '0644'
 
-  # Docker audit rules
   - path: /etc/audit/rules.d/docker.rules
     content: |
       -w /usr/bin/docker -p rwxa -k docker
@@ -145,53 +124,78 @@ write_files:
     permissions: '0644'
 
 runcmd:
-  # ── Install yq ──────────────────────────────────────────────────
+  # Install yq
   - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.6/yq_linux_amd64
   - chmod +x /usr/local/bin/yq
 
-  # ── Install Sysbox (SHA256 verified) ────────────────────────────
+  # Install Docker CE from official apt repo (GPG fingerprint verified)
+  - |
+    DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | tee /etc/apt/keyrings/docker.asc > /dev/null
+    chmod a+r /etc/apt/keyrings/docker.asc
+    ACTUAL=$(gpg --show-keys --with-colons --with-fingerprint /etc/apt/keyrings/docker.asc 2>/dev/null | awk -F: '/^fpr/{print $10; exit}')
+    if [ "${ACTUAL}" != "${DOCKER_GPG_FINGERPRINT}" ]; then
+      echo "FATAL: Docker GPG fingerprint mismatch (got ${ACTUAL})" >&2
+      exit 1
+    fi
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    usermod -aG docker ubuntu
+
+  # Install Sysbox (SHA256 verified)
   - |
     SYSBOX_VERSION="0.6.7"
     SYSBOX_SHA256="b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
-    DEB_NAME="sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
-    DEB_URL="https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/${DEB_NAME}"
-    curl -fsSL -o "/tmp/${DEB_NAME}" "${DEB_URL}"
-    ACTUAL=$(sha256sum "/tmp/${DEB_NAME}" | awk '{print $1}')
+    DEB="sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
+    curl -fsSL -o "/tmp/${DEB}" "https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/${DEB}"
+    ACTUAL=$(sha256sum "/tmp/${DEB}" | awk '{print $1}')
     if [ "${ACTUAL}" != "${SYSBOX_SHA256}" ]; then
-      echo "ERROR: Sysbox SHA256 mismatch! Expected ${SYSBOX_SHA256}, got ${ACTUAL}" >&2
+      echo "FATAL: Sysbox SHA256 mismatch (expected ${SYSBOX_SHA256}, got ${ACTUAL})" >&2
       exit 1
     fi
-    apt-get install -y "/tmp/${DEB_NAME}"
-    rm -f "/tmp/${DEB_NAME}"
+    apt-get install -y "/tmp/${DEB}"
+    rm -f "/tmp/${DEB}"
 
-  # ── Restart Docker with Sysbox runtime ──────────────────────────
-  - systemctl restart docker
+  # Restart Docker cleanly — Sysbox postinst stops Docker; wipe stale netns state
+  - systemctl stop docker.socket docker || true
+  - systemctl stop sysbox sysbox-mgr sysbox-fs || true
+  - rm -f /var/run/docker/netns/*
+  - systemctl start sysbox-mgr sysbox-fs sysbox || true
+  - systemctl reset-failed docker || true
+  - systemctl start docker
+  - sleep 5
 
-  # ── Apply hardening ─────────────────────────────────────────────
+  # Apply hardening
   - sysctl --system
   - systemctl enable apparmor
   - systemctl start apparmor || true
   - systemctl enable auditd
   - systemctl restart auditd || true
 
-  # ── Create polis directory structure ────────────────────────────
+  # Create polis directory
   - mkdir -p /opt/polis
   - chown ubuntu:ubuntu /opt/polis
 
-final_message: "Polis VM ready after $UPTIME seconds"
+final_message: "Polis VM provisioned in $UPTIME seconds"
 ```
 
 ### Key Design Decisions
 
-1. **Docker via `apt:` module** — cloud-init's native apt source management handles GPG key download, dearmoring, and repo setup atomically. The `keyid` field verifies the GPG fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88` (same fingerprint verified in current `install-docker.sh`). This runs before `packages:`, so Docker is installed via apt with proper signing.
+1. **Docker CE via `runcmd` (not `apt:` module)** — Docker CE is installed via a shell block in `runcmd` rather than cloud-init's `apt:` module. This mirrors the working `install-docker.sh` from the Packer build exactly. The GPG fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88` is verified before the repo is added.
 
-2. **Docker version pinning** — `docker-ce=5:27.5.1-1~ubuntu.24.04~noble` pins to an exact version. Update this when upgrading Docker. The format is `5:<major>.<minor>.<patch>-1~ubuntu.<version>~<codename>`.
+2. **Docker CE, not `docker.io`** — Ubuntu's `docker.io` package ships runc 1.3.x which conflicts with Sysbox's hardened `/proc` (`unsafe procfs detected: openat2 fsmount`). Docker CE ships its own runc that works correctly with Sysbox. This is the same package used in the Packer build.
 
-3. **Sysbox via `runcmd:`** — No apt repo exists for Sysbox; it's distributed as a .deb on GitHub. The SHA256 verification matches the current `install-sysbox.sh` approach.
+3. **Sysbox via `runcmd`** — No apt repo exists for Sysbox; it's distributed as a .deb on GitHub. The SHA256 verification matches the current `install-sysbox.sh` approach.
 
-4. **`package_upgrade: false`** — Skipping full upgrade saves 2-3 minutes. Security updates come from the base image (Multipass downloads the latest 24.04.x point release).
+4. **Clean Docker restart after Sysbox install** — Sysbox's postinst script stops Docker. The restart sequence explicitly stops `docker.socket` (not just `docker.service`), stops all Sysbox services, wipes stale `/var/run/docker/netns/*` files, then starts Sysbox and Docker in the correct order. Skipping any of these steps causes bind-mount failures when containers start.
 
-5. **Hardening via `write_files:`** — Sysctl, audit rules, and Docker daemon config are written as static files before `runcmd:` executes. This is more reliable than heredocs in shell scripts.
+5. **`live-restore: false` (omitted from daemon.json)** — `live-restore: true` causes Docker to attempt to re-attach to existing network namespaces on restart, which fails with Sysbox's netns management. It is intentionally omitted.
+
+6. **`package_upgrade: false`** — Skipping full upgrade saves 2-3 minutes. Security updates come from the base image (Multipass downloads the latest 24.04.x point release).
+
+7. **Hardening via `write_files:`** — Sysctl, audit rules, and Docker daemon config are written as static files before `runcmd:` executes. This is more reliable than heredocs in shell scripts.
 
 ## CLI Changes
 
@@ -308,6 +312,7 @@ async fn transfer_config(mp: &impl Multipass) -> Result<()> {
     // Bundle docker-compose.yml, scripts, certs into tar
     // Transfer via multipass transfer
     // Extract inside VM via multipass exec
+    // chmod +x all .sh files (Windows tar strips execute bits)
 }
 
 /// Pull Docker images inside the VM.
@@ -418,7 +423,7 @@ The entire `packer/` directory can be deleted.
 
 | Path | Change |
 |---|---|
-| `cloud-init.yaml` | Rewrite with production config (see Cloud-Init Design above) |
+| `cloud-init.yaml` | Production config (done — see Cloud-Init Design above) |
 | `cli/src/multipass.rs` | Add `cloud_init` param to `launch()` |
 | `cli/src/workspace/vm.rs` | Use cloud-init path instead of image path |
 | `cli/src/workspace/image.rs` | Replace with cloud-init embed + write helper |
@@ -426,16 +431,15 @@ The entire `packer/` directory can be deleted.
 | `.github/workflows/release.yml` | Remove vm/vm-hyperv/cdn jobs, simplify release |
 | `Justfile` | Remove `build-vm`, `build-vm-hyperv`, related internal targets |
 | `scripts/install-tools-windows.ps1` | Remove Packer, QEMU dependencies |
-| `Justfile` install-tools | Remove Packer, QEMU, xorriso dependencies |
 
 ## Reproducibility Strategy
 
 | Concern | Mitigation |
 |---|---|
-| Docker CE version drift | Pin exact version: `docker-ce=5:27.5.1-1~ubuntu.24.04~noble` |
+| Docker CE version drift | GPG fingerprint verified; latest stable from official repo |
 | Sysbox version drift | Pin version + SHA256 checksum in cloud-init |
 | Ubuntu base image drift | `multipass launch 24.04` tracks 24.04.x point releases (not rolling) |
-| Docker GPG key rotation | Verify by fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88` via `keyid` |
+| Docker GPG key rotation | Verify by fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88` |
 | Docker image version drift | Compose file pins images by version tag; CLI sets version env vars |
 | yq version drift | Pin download URL to specific release tag (`v4.44.6`) |
 | Network unavailable at launch | Fail fast with clear error message — internet is required |
@@ -453,7 +457,7 @@ The entire `packer/` directory can be deleted.
 
 Cloud-init must download and install Docker CE (~200 MB), Sysbox (~70 MB), and pull Docker images from GHCR (~500 MB compressed). Total: ~5-10 minutes on a typical connection.
 
-**Mitigation**: 
+**Mitigation**:
 - `--timeout 900` prevents premature timeout
 - Progress is visible via `multipass launch` output
 - Subsequent `polis start` (after `polis stop`) is instant — no re-provisioning
@@ -465,22 +469,34 @@ Cloud-init must download and install Docker CE (~200 MB), Sysbox (~70 MB), and p
 
 **Mitigation**: VM name is `polis` (no numbers). The cloud-init sets `hostname: polis-vm` (hyphen, not a number suffix). This avoids the bug.
 
-### P3: cloud-init `apt:` module + GPG key race condition
+### P3: `docker.io` vs `docker-ce` — runc incompatibility with Sysbox
 
-[Known issue](https://github.com/canonical/cloud-init/issues/5223): On Ubuntu 24.04 cloud images, `gpg` may not be pre-installed. If cloud-init tries to dearmor a GPG key before `gpg` is available, package installation fails.
+Ubuntu's `docker.io` package ships runc 1.3.x which produces `unsafe procfs detected: openat2 fsmount` errors when Sysbox intercepts `/proc` access inside containers. This causes containers to fail with exit code 255.
 
-**Mitigation**: The `keyid` + `keyserver` approach in the `apt:` module handles this correctly — cloud-init installs `gpg` as a dependency before processing apt sources. This was fixed in cloud-init 24.2+, which ships with Ubuntu 24.04.1+.
+**Mitigation**: cloud-init installs `docker-ce` from Docker's official apt repo, which ships its own runc binary compatible with Sysbox. This is the same package used in the Packer build.
 
-### P4: Sysbox .deb download fails (GitHub rate limiting)
+### P4: Stale netns files after Sysbox install
+
+Sysbox's postinst script stops `docker.service` but not `docker.socket`. When Docker restarts, the socket re-activates Docker before Sysbox is fully ready, leaving stale zero-byte files in `/var/run/docker/netns/`. Subsequent `docker compose up` fails with `bind-mount /proc/<pid>/ns/net -> /var/run/docker/netns/<hash>: no such file or directory`.
+
+**Mitigation**: The restart sequence in `runcmd` explicitly stops both `docker.socket` and `docker.service`, stops all Sysbox services, wipes `/var/run/docker/netns/*`, then starts Sysbox and Docker in the correct order.
+
+### P5: Windows tar strips execute bits from shell scripts
+
+When the CLI bundles config files on Windows and transfers them via `multipass transfer`, tar does not preserve Unix execute permissions. Shell scripts mounted into containers (e.g. health check scripts) have mode `0666` instead of `0755`, causing `permission denied` in container health checks.
+
+**Mitigation**: After extracting the config bundle inside the VM, run `find /opt/polis -name '*.sh' -exec chmod +x {} \;`.
+
+### P6: Sysbox .deb download fails (GitHub rate limiting)
 
 GitHub may rate-limit unauthenticated downloads from `github.com/nestybox/sysbox/releases`.
 
-**Mitigation**: 
+**Mitigation**:
 - Sysbox .deb is ~70 MB, well within GitHub's anonymous download limits
-- If rate-limited, the `curl -fsSL` in runcmd will fail, cloud-init will report the error, and `multipass launch` will fail with a clear message
+- If rate-limited, `curl -fsSL` in runcmd will fail with a clear error
 - Future: Mirror Sysbox .deb to GHCR or a project-controlled URL
 
-### P5: Docker image pull fails (GHCR unavailable)
+### P7: Docker image pull fails (GHCR unavailable)
 
 If GHCR is down during `docker compose pull`, the launch will partially succeed (VM is up, Docker is installed) but services won't start.
 
@@ -488,25 +504,37 @@ If GHCR is down during `docker compose pull`, the launch will partially succeed 
 - `docker compose pull` is run by the CLI (Phase 2), not cloud-init
 - CLI can retry the pull on failure
 - Health check detects missing images and reports actionable error
-- User can manually retry: `polis start` (CLI detects running VM, retries pull)
 
-### P6: cloud-init runs again on reboot
+### P8: cloud-init runs again on reboot
 
 Cloud-init may re-run modules on subsequent boots.
 
 **Mitigation**: cloud-init's default behavior on Multipass instances is to run once per instance. The `runcmd` module only runs on first boot by default. No explicit cleanup needed.
 
-### P7: Disk space — 40 GB default may be excessive
-
-Current VM uses 40 GB disk. With no baked images, the actual usage is lower.
-
-**Mitigation**: Reduce `VM_DISK` from `"40G"` to `"20G"`. Docker images + overlay2 + OS ≈ 8-10 GB. 20 GB provides comfortable headroom.
-
-### P8: Multipass not installed
+### P9: Multipass not installed
 
 Users need Multipass installed before running `polis start`.
 
 **Mitigation**: Already handled — `polis doctor` checks for Multipass and provides installation instructions. The `check_prerequisites` function in `vm.rs` validates Multipass version ≥ 1.16.0.
+
+## POC Status
+
+Both Windows (Hyper-V) and Linux (QEMU) POC scripts are implemented and verified:
+
+| Script | Platform | Status |
+|---|---|---|
+| `scripts/poc-cloud-init.ps1` | Windows / PowerShell | ✅ Verified — completes in ~2 min |
+| `scripts/poc-cloud-init.sh` | Linux / bash | ✅ Verified |
+
+The POC scripts simulate the full 6-phase user journey:
+1. Launch VM with cloud-init
+2. Bundle and transfer config
+3. Generate certificates
+4. Load Docker images (from `.build/polis-images.tar`)
+5. Start services (`docker compose up -d`)
+6. Health check
+
+All 11 containers start healthy. The POC uses locally-built images from `just build` rather than GHCR pull — production will use GHCR.
 
 ## Rollback Plan
 
@@ -520,17 +548,18 @@ The Docker images on GHCR are useful regardless of approach — they can be pull
 
 ## Migration Steps (Implementation Order)
 
-1. **Rewrite `cloud-init.yaml`** — Production config with Docker, Sysbox, hardening (as specified above)
-2. **Update `cli/src/multipass.rs`** — Add `cloud_init` parameter to `launch()` trait and implementation
-3. **Update `cli/src/workspace/vm.rs`** — Use cloud-init path, update `create()` signature
-4. **Rewrite `cli/src/workspace/image.rs`** — Replace download logic with `include_str!` embed
-5. **Update `cli/src/commands/start.rs`** — New flow: cloud-init → transfer config → pull images → start
-6. **Update `.github/workflows/release.yml`** — Remove vm/vm-hyperv/cdn jobs
-7. **Update `Justfile`** — Remove build-vm targets, update install-tools
-8. **Delete `packer/` directory** — All contents
-9. **Test on Windows** — `polis start` with Hyper-V backend
-10. **Test on Linux** — `polis start` with QEMU backend
-11. **Test on macOS** — `polis start` with QEMU backend (if applicable)
+1. ✅ **Rewrite `cloud-init.yaml`** — Production config with Docker CE, Sysbox, hardening
+2. ✅ **POC scripts** — `scripts/poc-cloud-init.ps1` and `scripts/poc-cloud-init.sh` verified on Windows and Linux
+3. **Update `cli/src/multipass.rs`** — Add `cloud_init` parameter to `launch()` trait and implementation
+4. **Update `cli/src/workspace/vm.rs`** — Use cloud-init path, update `create()` signature
+5. **Rewrite `cli/src/workspace/image.rs`** — Replace download logic with `include_str!` embed
+6. **Update `cli/src/commands/start.rs`** — New flow: cloud-init → transfer config → pull images → start
+7. **Update `.github/workflows/release.yml`** — Remove vm/vm-hyperv/cdn jobs
+8. **Update `Justfile`** — Remove build-vm targets, update install-tools
+9. **Delete `packer/` directory** — All contents
+10. **Test on Windows** — `polis start` with Hyper-V backend
+11. **Test on Linux** — `polis start` with QEMU backend
+12. **Test on macOS** — `polis start` with QEMU backend (if applicable)
 
 ## Tradeoffs Summary
 
