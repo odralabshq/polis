@@ -1,108 +1,145 @@
 #cloud-config
-# Polis Developer VM Cloud-Init Configuration
-# This provisions a VM for development with Docker and Sysbox
-# The polis directory will be mounted from the host machine
+# ============================================================================
+# Polis Workspace — Cloud-Init Provisioning (POC)
+# ============================================================================
+# Provisions a Multipass VM with Docker, Sysbox, and VM hardening.
+# Polis config (docker-compose, certs, agents) is transferred by the CLI
+# after launch — this file handles OS-level setup only.
 #
-# UID/GID Mapping Strategy (inspired by VS Code Dev Containers):
-# - Sets ubuntu user to UID/GID 1000:1000 (most common host user ID)
-# - Prevents permission issues with mounted directories
-# - Files created in container are owned by your host user
+# Test on Linux:
+#   multipass launch 24.04 --name polis-test --cpus 2 --memory 8G --disk 20G \
+#     --cloud-init cloud-init.yaml --timeout 900
+#
+# Test on Windows (Hyper-V):
+#   multipass launch 24.04 --name polis-test --cpus 2 --memory 8G --disk 20G \
+#     --cloud-init cloud-init.yaml --timeout 900
+#
+# Verify:
+#   multipass exec polis-test -- cloud-init status --wait
+#   multipass exec polis-test -- docker --version
+#   multipass exec polis-test -- docker compose version
+#   multipass exec polis-test -- docker info | grep -A2 Runtimes
+#   multipass exec polis-test -- sysctl kernel.dmesg_restrict
+#   multipass exec polis-test -- systemctl is-active auditd
+#   multipass exec polis-test -- ls -la /opt/polis/
+#
+# Cleanup:
+#   multipass delete polis-test && multipass purge
+# ============================================================================
+
+hostname: polis-vm
+manage_etc_hosts: true
+
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: false
+    groups: [docker]
 
 package_update: true
-package_upgrade: true
+package_upgrade: false
 
-# Install required system packages
+# ── Base packages (Docker installed via runcmd from official apt repo) ───────
 packages:
-  - apt-transport-https
+  - netcat-openbsd
+  - jq
+  - auditd
   - ca-certificates
   - curl
   - gnupg
-  - lsb-release
-  - jq
-  - git
-  - build-essential
+  - openssl
 
-# Configure system settings for Docker and Sysbox
+# ── Config files (written before runcmd) ────────────────────────────
 write_files:
-  # Docker daemon configuration for Sysbox
+  # Docker daemon — Sysbox runtime + hardening
   - path: /etc/docker/daemon.json
     content: |
       {
         "runtimes": {
-          "sysbox-runc": {
-            "path": "/usr/bin/sysbox-runc"
-          }
+          "sysbox-runc": { "path": "/usr/bin/sysbox-runc" }
         },
-        "default-address-pools": [
-          {
-            "base": "172.20.0.0/16",
-            "size": 24
-          }
-        ]
+        "no-new-privileges": true,
+        "userland-proxy": false
       }
     permissions: '0644'
 
+  # Sysctl hardening (CIS Ubuntu 24.04 Level 1)
+  - path: /etc/sysctl.d/99-polis-hardening.conf
+    content: |
+      kernel.randomize_va_space = 2
+      kernel.dmesg_restrict = 1
+      kernel.kptr_restrict = 2
+      fs.suid_dumpable = 0
+      kernel.yama.ptrace_scope = 2
+    permissions: '0644'
+
+  # Docker audit rules
+  - path: /etc/audit/rules.d/docker.rules
+    content: |
+      -w /usr/bin/docker -p rwxa -k docker
+      -w /var/lib/docker -p rwxa -k docker
+      -w /etc/docker -p rwxa -k docker
+      -w /usr/lib/systemd/system/docker.service -p rwxa -k docker
+      -w /etc/default/docker -p rwxa -k docker
+      -w /etc/docker/daemon.json -p rwxa -k docker
+      -w /usr/bin/containerd -p rwxa -k docker
+    permissions: '0644'
+
 runcmd:
-  # 0. Set ubuntu user to UID/GID 1000:1000 for permission compatibility
-  # This matches the most common host user ID (first non-root user on Linux/macOS)
-  # Prevents "permission denied" errors when editing files from host
+  # ── Install yq (agent manifest parsing) ─────────────────────────
+  - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.6/yq_linux_amd64
+  - chmod +x /usr/local/bin/yq
+
+  # ── Install Docker from official apt repo (same as packer build) ─
+  # Uses docker-ce + containerd.io for correct runc version (avoids
+  # Ubuntu's runc 1.3.x which conflicts with Sysbox's hardened /proc)
   - |
-    # Check if ubuntu user already has UID 1000
-    current_uid=$(id -u ubuntu)
-    if [ "$current_uid" != "1000" ]; then
-      echo "Changing ubuntu user UID/GID to 1000:1000 for host compatibility..."
-      # Stop any processes running as ubuntu
-      pkill -u ubuntu || true
-      # Change UID/GID
-      usermod -u 1000 ubuntu
-      groupmod -g 1000 ubuntu
-      # Fix ownership of ubuntu's home directory
-      chown -R 1000:1000 /home/ubuntu
-      echo "ubuntu user UID/GID set to 1000:1000"
-    else
-      echo "ubuntu user already has UID 1000"
+    DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | tee /etc/apt/keyrings/docker.asc > /dev/null
+    chmod a+r /etc/apt/keyrings/docker.asc
+    ACTUAL=$(gpg --show-keys --with-colons --with-fingerprint /etc/apt/keyrings/docker.asc 2>/dev/null | awk -F: '/^fpr/{print $10; exit}')
+    if [ "${ACTUAL}" != "${DOCKER_GPG_FINGERPRINT}" ]; then
+      echo "FATAL: Docker GPG fingerprint mismatch (got ${ACTUAL})" >&2
+      exit 1
     fi
-
-  # 1. Install Docker Engine
-  - |
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
     apt-get update
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    
-  # 2. Install Sysbox (required for workspace isolation)
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    usermod -aG docker ubuntu
   - |
-    SYSBOX_VERSION="0.6.4"
-    wget https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
-    apt-get install -y ./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
-    rm sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
-    
-  # 3. Restart Docker to pick up Sysbox runtime
-  - systemctl restart docker
-  
-  # 4. Add ubuntu user to docker group
-  - usermod -aG docker ubuntu
-  
-  # 5. Verify installation
-  - docker info | grep -i sysbox
+    SYSBOX_VERSION="0.6.7"
+    SYSBOX_SHA256="b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
+    DEB="sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
+    curl -fsSL -o "/tmp/${DEB}" "https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/${DEB}"
+    ACTUAL=$(sha256sum "/tmp/${DEB}" | awk '{print $1}')
+    if [ "${ACTUAL}" != "${SYSBOX_SHA256}" ]; then
+      echo "FATAL: Sysbox SHA256 mismatch (expected ${SYSBOX_SHA256}, got ${ACTUAL})" >&2
+      exit 1
+    fi
+    apt-get install -y "/tmp/${DEB}"
+    rm -f "/tmp/${DEB}"
 
-final_message: |
-  Polis Dev VM is ready!
-  
-  UID/GID Configuration:
-  - ubuntu user set to UID/GID 1000:1000
-  - This matches most host systems (prevents permission issues)
-  - Files you create on host will be editable in VM and vice versa
-  
-  Next steps:
-  1. Mount your local polis directory: multipass mount ./polis polis-dev:/home/ubuntu/polis
-  2. Access VM: multipass shell polis-dev
-  3. Configure API keys: cd ~/polis && nano .env
-  4. Build from source: just clean-all && just build && just setup && just up
-  
-  The VM has:
-  - Docker Engine with docker-compose
-  - Sysbox runtime (sysbox-runc)
-  - Ubuntu user (UID 1000) in docker group
-  
-  No permission issues expected with mounted directories!
+  # ── Restart Docker to pick up Sysbox runtime + daemon.json ──────
+  # Sysbox postinst stops Docker — restart cleanly with fresh netns state
+  - systemctl stop docker.socket docker || true
+  - systemctl stop sysbox sysbox-mgr sysbox-fs || true
+  - rm -f /var/run/docker/netns/*
+  - systemctl start sysbox-mgr sysbox-fs sysbox || true
+  - systemctl reset-failed docker || true
+  - systemctl start docker
+  - sleep 5
+
+  # ── Apply hardening ─────────────────────────────────────────────
+  - sysctl --system
+  - systemctl enable apparmor
+  - systemctl start apparmor || true
+  - systemctl enable auditd
+  - systemctl restart auditd || true
+
+  # ── Create polis directory structure ────────────────────────────
+  - mkdir -p /opt/polis
+  - chown ubuntu:ubuntu /opt/polis
+
+final_message: "Polis VM provisioned in $UPTIME seconds"
