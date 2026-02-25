@@ -42,42 +42,34 @@ pub struct ImageMetadata {
 /// Returns the image cache directory.
 ///
 /// Linux: `~/polis/images/` (snap `AppArmor` requires non-hidden)
-/// macOS/Windows: `~/.polis/images/`
+/// Windows: `%PROGRAMDATA%\Polis\images\` (accessible to multipassd SYSTEM service)
+/// macOS: `~/.polis/images/`
 ///
 /// # Errors
 ///
 /// Returns an error if the home directory cannot be determined.
 pub fn images_dir() -> Result<PathBuf> {
-    let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    // All platforms use ~/.polis/images/ so the image is always owned by the
+    // current user and readable by the process that calls `multipass launch`.
+    //
+    // On Windows, ProgramData was previously used but multipassd runs as
+    // NT AUTHORITY\SYSTEM and may not have read access to files created there
+    // by the logged-in user. Using the home directory avoids that ACL mismatch.
     #[cfg(target_os = "linux")]
-    return Ok(home.join("polis").join("images"));
+    return Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join("polis")
+        .join("images"));
     #[cfg(not(target_os = "linux"))]
-    Ok(home.join(".polis").join("images"))
+    Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join(".polis")
+        .join("images"))
 }
 
 /// Check if a valid image exists in cache.
 ///
 /// # Errors
-///
-/// Returns an error if the image cache directory cannot be determined.
-#[allow(dead_code)] // API for future use
-pub fn is_cached() -> Result<bool> {
-    let dir = images_dir()?;
-    Ok(dir.join(IMAGE_FILENAME).exists() && dir.join(METADATA_FILENAME).exists())
-}
-
-/// Get path to cached image, or None if not cached.
-///
-/// # Errors
-///
-/// Returns an error if the image cache directory cannot be determined.
-#[allow(dead_code)] // API for future use
-pub fn cached_path() -> Result<Option<PathBuf>> {
-    let path = images_dir()?.join(IMAGE_FILENAME);
-    Ok(if path.exists() { Some(path) } else { None })
-}
-
 /// Load existing metadata from cache.
 ///
 /// # Errors
@@ -144,6 +136,17 @@ fn ensure_default(dir: &Path, dest: &Path, sidecar: &Path, quiet: bool) -> Resul
     Ok(dest.to_path_buf())
 }
 
+fn version_from_path(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let stem = name.strip_prefix("polis-")?.strip_suffix(".qcow2")?;
+    for arch in &["amd64", "arm64"] {
+        if let Some(version) = stem.strip_suffix(&format!("-{arch}")) {
+            return Some(version.to_string());
+        }
+    }
+    None
+}
+
 fn ensure_local(
     dir: &Path,
     dest: &Path,
@@ -165,7 +168,7 @@ fn ensure_local(
         sha256_file(dest)?
     };
     let meta = ImageMetadata {
-        version: "local".to_string(),
+        version: version_from_path(path).unwrap_or_else(|| "local".to_string()),
         sha256,
         arch: current_arch()?.to_string(),
         downloaded_at: Utc::now(),
@@ -492,6 +495,30 @@ mod tests {
         let loaded = load_metadata(dir.path()).expect("load").expect("some");
         assert_eq!(loaded.version, "v1.0.0");
         assert_eq!(loaded.sha256, "abc123");
+    }
+
+    #[test]
+    fn version_from_path_parses_amd64() {
+        let p = Path::new("/tmp/polis-0.3.0-preview-11-amd64.qcow2");
+        assert_eq!(
+            super::version_from_path(p).as_deref(),
+            Some("0.3.0-preview-11")
+        );
+    }
+
+    #[test]
+    fn version_from_path_parses_arm64() {
+        let p = Path::new("/tmp/polis-0.3.0-preview-11-arm64.qcow2");
+        assert_eq!(
+            super::version_from_path(p).as_deref(),
+            Some("0.3.0-preview-11")
+        );
+    }
+
+    #[test]
+    fn version_from_path_returns_none_for_unknown_name() {
+        let p = Path::new("/tmp/custom.qcow2");
+        assert!(super::version_from_path(p).is_none());
     }
 
     #[test]

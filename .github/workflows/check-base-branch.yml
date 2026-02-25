@@ -10,11 +10,11 @@ jobs:
   check-base-branch:
     runs-on: ubuntu-latest
     steps:
-      - name: Enforce PRs to main must come from develop
+      - name: Enforce PRs to main must come from release branches
         env:
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          if [[ "$HEAD_REF" != "develop" ]]; then
-            echo "❌ PRs to main must come from 'develop', not '$HEAD_REF'."
+          if [[ "$HEAD_REF" != release/* ]]; then
+            echo "❌ PRs to main must come from 'release/*' branches, not '$HEAD_REF'."
             exit 1
           fi

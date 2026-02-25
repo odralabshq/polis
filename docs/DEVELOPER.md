@@ -1,6 +1,8 @@
 # Polis Developer Guide
 
-This guide covers the development workflow, tools, and CI/CD for Polis.
+This guide covers the development workflow, tools, and CI/CD for building Polis from source.
+
+> For user installation (pre-built binaries), see the [README](../README.md).
 
 ## Quick Start
 
@@ -360,7 +362,7 @@ git push origin v0.4.0
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | Push/PR to main/develop | Lint, build, test, security scan |
-| `release.yml` | Tag `v*` or manual | Build images + VM + CLI → GitHub Release |
+| `release.yml` | Tag `v*` or manual | Build images + VM + CLI → S3/CDN upload → GitHub Release |
 | `g3-builder.yml` | Push to main (g3 Dockerfile changes) | Rebuild g3-builder base image |
 
 ### CI Pipeline Stages (`ci.yml`)
@@ -403,6 +405,8 @@ validate → docker (build + tag + push to GHCR + generate versions.json)
                 ↓
               cli (Rust binary build)
                 ↓
+              cdn (upload VM image to S3, invalidate CloudFront cache)
+                ↓
             release (GitHub Release with all artifacts)
 ```
 
@@ -412,10 +416,15 @@ validate → docker (build + tag + push to GHCR + generate versions.json)
 |----------|-------------|
 | `polis-vX.X.X-amd64.qcow2` | VM image with Docker + Sysbox + Polis |
 | `checksums.sha256` | SHA256 checksums for VM |
-| `polis-linux-amd64` | CLI binary |
-| `polis-linux-amd64.sha256` | CLI checksum |
-| `install.sh` | Installation script |
+| `polis-linux-amd64` | CLI binary (Linux) |
+| `polis-linux-amd64.sha256` | CLI checksum (Linux) |
+| `polis-windows-amd64.exe` | CLI binary (Windows) |
+| `polis-windows-amd64.exe.sha256` | CLI checksum (Windows) |
+| `install.sh` | Linux/macOS installation script |
+| `install.ps1` | Windows installation script |
 | `versions.json` | Signed container version manifest (ed25519) |
+
+VM images are also uploaded to S3 (`polis-releases` bucket) and served via CloudFront CDN for faster downloads. The `install.sh` and `install.ps1` scripts download images from the CDN by default, with automatic fallback to GitHub Releases.
 
 Docker images pushed to GHCR:
 - `ghcr.io/odralabshq/polis-gate-oss:vX.X.X`
@@ -436,28 +445,19 @@ Docker images pushed to GHCR:
 3. Pipeline automatically:
    - Validates version format (`vX.X.X` or `vX.X.X-suffix`)
    - Builds and pushes Docker images to GHCR tagged `:vX.X.X`
-   - Generates `versions.json` and signs it with the release ed25519 key
    - Builds VM image: bakes images + `.env` (with `POLIS_*_VERSION=vX.X.X`) via Packer
    - Builds CLI binary
    - Creates GitHub Release with attestations
 
-### Container Version Manifest (`versions.json`)
+### Release Artifacts
 
-Each release publishes a signed `versions.json` that maps container names to their versions:
+Each release publishes:
 
-```json
-{
-  "manifest_version": 1,
-  "vm_image": { "version": "v0.3.0", "asset": "polis-v0.3.0-amd64.qcow2" },
-  "containers": {
-    "polis-gate-oss": "v0.3.0",
-    "polis-sentinel-oss": "v0.3.0",
-    ...
-  }
-}
-```
+- **VM image**: `polis-vX.Y.Z-amd64.qcow2` + `.sha256` (zipsign-signed sidecar)
+- **CLI binaries**: `polis-{linux,darwin}-{amd64,arm64}.tar.gz` + `.sha256` (plain text)
+- **Provenance attestations**: GitHub-signed SLSA provenance for all artifacts
 
-`polis update` downloads this manifest, verifies the ed25519 signature against the public key compiled into the CLI binary, then updates containers in the VM accordingly.
+`polis update` downloads the CLI binary for your platform, verifies the SHA-256 checksum, then replaces itself.
 
 ### Release Signing Key Setup (one-time)
 
@@ -494,16 +494,17 @@ gh attestation verify polis-linux-amd64 --owner OdraLabsHQ
 
 ## Testing `polis update` Locally
 
-Any developer can test the full `polis update` manifest flow without the release signing key:
+Test the CLI self-update flow:
 
 ```bash
-# Generates a throwaway keypair, signs a local versions.json, serves it over HTTP
-./tools/test-update-local.sh v0.3.1
+# Build a local release binary
+cargo build --release --manifest-path cli/Cargo.toml
+
+# Test update check (dry-run)
+./cli/target/release/polis update --check
 ```
 
-This exercises the full path: manifest download → ed25519 signature verification → version comparison. It stops at "Workspace not running" when it tries to update containers, which is expected without a running VM.
-
-The script uses `POLIS_VERIFYING_KEY_B64` env var to override the compiled-in public key at runtime, so no access to the real signing key is needed.
+The update command checks GitHub releases for a newer version, verifies the signature, and prompts before replacing the binary.
 
 ---
 

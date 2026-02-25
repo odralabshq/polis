@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.validate.outputs.version }}
+      tag_name: ${{ steps.validate.outputs.tag_name }}
       is_prerelease: ${{ steps.validate.outputs.is_prerelease }}
       push_docker: ${{ steps.validate.outputs.push_docker }}
     steps:
@@ -66,6 +67,7 @@ jobs:
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${VERSION#v}" >> "$GITHUB_OUTPUT"
           echo "push_docker=$PUSH_DOCKER" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *"-"* ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
@@ -97,6 +99,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
+      - name: Login to dhi.io
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Login to GitHub Container Registry
         if: needs.validate.outputs.push_docker == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -123,39 +132,6 @@ jobs:
           done
           docker compose build
 
-      - name: Install zipsign
-        run: cargo install zipsign --version 0.2.1 --locked
-
-      - name: Generate and sign versions.json
-        env:
-          POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          cat > versions.json << EOF
-          {
-            "manifest_version": 1,
-            "vm_image": {
-              "version": "${VERSION}",
-              "asset": "polis-${VERSION}-amd64.qcow2"
-            },
-            "containers": {
-              "polis-resolver-oss": "${VERSION}",
-              "polis-certgen-oss": "${VERSION}",
-              "polis-gate-oss": "${VERSION}",
-              "polis-sentinel-oss": "${VERSION}",
-              "polis-scanner-oss": "${VERSION}",
-              "polis-workspace-oss": "${VERSION}",
-              "polis-host-init-oss": "${VERSION}",
-              "polis-state-oss": "${VERSION}",
-              "polis-toolbox-oss": "${VERSION}"
-            }
-          }
-          EOF
-          echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
-          tar -czf versions.json.tar.gz versions.json
-          zipsign sign tar versions.json.tar.gz /tmp/polis-release.key -o versions.json -f
-          rm /tmp/polis-release.key versions.json.tar.gz
-
       - name: Push images to GHCR (optional)
         if: needs.validate.outputs.push_docker == 'true'
         run: |
@@ -170,17 +146,17 @@ jobs:
       - name: Export images tarball
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "polis-.*-oss:${VERSION}" | tr '\n' ' ')
+          # Get all polis images
+          POLIS_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "polis-.*-oss:${VERSION}" | tr '\n' ' ')
+          # Get external images from compose - parse raw YAML to avoid docker compose config secrets requirement
+          EXTERNAL_IMAGES=$(grep -oP '^\s+image:\s+\K\S+' docker-compose.yml | grep -v 'ghcr.io/odralabshq' | grep -v 'go-httpbin' | sed 's/@sha256:[a-f0-9]*//' | sort -u | tr '\n' ' ')
+          # Pull and tag external images
+          for img in $EXTERNAL_IMAGES; do
+            docker pull "$img"
+          done
           mkdir -p .build
-          docker save -o .build/polis-images.tar $IMAGES
-          echo "✓ Exported: $IMAGES"
-
-      - name: Upload versions.json artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: versions-json
-          path: versions.json
-          retention-days: 1
+          docker save -o .build/polis-images.tar $POLIS_IMAGES $EXTERNAL_IMAGES
+          echo "✓ Exported: $POLIS_IMAGES $EXTERNAL_IMAGES"
 
       - name: Upload images tarball
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -206,10 +182,23 @@ jobs:
           name: docker-images
           path: .build
 
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils xorriso
+
+      - name: Enable KVM group permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Setup Packer
         uses: hashicorp/setup-packer@1aa358be5cf73883762b302a3a03abd66e75b232 # v3.1.0
 
       - name: Init Packer
+        env:
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: packer init packer/
 
       - name: Generate Polis config bundle
@@ -230,29 +219,22 @@ jobs:
             -var "arch=amd64" \
             polis-vm.pkr.hcl
 
-      - name: Generate checksum
-        run: |
-          cd packer/output
-          sha256sum ./*.qcow2 > checksums.sha256
-
       - name: Sign VM image checksum
         env:
           POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
         run: |
           cargo install zipsign --version 0.2.1 --locked
           echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
-          for qcow2 in packer/output/*.qcow2; do
-            checksum=$(sha256sum "${qcow2}" | cut -d' ' -f1)
-            sidecar="${qcow2}.sha256"
-            tmpdir=$(mktemp -d)
-            echo "${checksum}  $(basename "${qcow2}")" > "${tmpdir}/checksum.txt"
-            tar -czf "${tmpdir}/checksum.tar.gz" -C "${tmpdir}" checksum.txt
-            zipsign sign tar --context "" "${tmpdir}/checksum.tar.gz" /tmp/polis-release.key \
-              -o "${sidecar}" -f
-            rm -rf "${tmpdir}"
-            echo "✓ Signed: ${sidecar}"
-          done
-          rm -f /tmp/polis-release.key
+          VERSION="${{ needs.validate.outputs.version }}"
+          IMAGE="polis-${VERSION}-amd64.qcow2"
+          cd packer/output
+          sha256sum "${IMAGE}" > checksum.txt
+          tmpdir=$(mktemp -d)
+          tar -czf "${tmpdir}/sidecar.tar.gz" -C . checksum.txt
+          zipsign sign tar --context "" "${tmpdir}/sidecar.tar.gz" /tmp/polis-release.key \
+            -o "${IMAGE}.sha256" -f
+          rm -rf "${tmpdir}" /tmp/polis-release.key checksum.txt
+          echo "✓ ${IMAGE}.sha256 (signed)"
 
       - name: Attest VM provenance
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
@@ -266,16 +248,21 @@ jobs:
           path: |
             packer/output/*.qcow2
             packer/output/*.qcow2.sha256
-            packer/output/checksums.sha256
           retention-days: 1
 
   # =========================================================
-  # Build CLI binary
+  # Build CLI binary (Linux only)
   # =========================================================
   cli:
-    name: Build CLI
+    name: Build CLI (${{ matrix.artifact }})
     needs: validate
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: polis-linux-amd64
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -284,36 +271,98 @@ jobs:
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Build CLI
         run: |
           cd cli
-          cargo build --release
-          cp target/release/polis ../polis-linux-amd64
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Copy binary
+        run: cp cli/target/${{ matrix.target }}/release/polis ${{ matrix.artifact }}
 
       - name: Generate checksum
-        run: sha256sum polis-linux-amd64 > polis-linux-amd64.sha256
+        run: sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+
+      - name: Create tarball
+        run: tar -czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Sign CLI tarball
+        env:
+          POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
+        run: |
+          cargo install zipsign --version 0.2.1 --locked
+          echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
+          zipsign sign tar --context "" "${{ matrix.artifact }}.tar.gz" /tmp/polis-release.key \
+            -o "${{ matrix.artifact }}.tar.gz.signed" -f
+          mv "${{ matrix.artifact }}.tar.gz.signed" "${{ matrix.artifact }}.tar.gz"
+          rm -f /tmp/polis-release.key
+          echo "✓ Signed: ${{ matrix.artifact }}.tar.gz"
+        shell: bash
 
       - name: Attest CLI provenance
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
         with:
-          subject-path: polis-linux-amd64
+          subject-path: ${{ matrix.artifact }}
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: cli-binary
+          name: cli-${{ matrix.target }}
           path: |
-            polis-linux-amd64
-            polis-linux-amd64.sha256
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
+            ${{ matrix.artifact }}.tar.gz
           retention-days: 1
+
+  # =========================================================
+  # Upload VM image to S3 / CloudFront CDN
+  # =========================================================
+  cdn:
+    name: Upload to CDN
+    needs: [validate, vm]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+    steps:
+      - name: Download VM artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: vm-image
+          path: ./vm
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722 # v4.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Upload VM image to S3
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          QCOW2=$(ls vm/*.qcow2 | head -1)
+          FILENAME=$(basename "${QCOW2}")
+          aws s3 cp "${QCOW2}" \
+            "s3://polis-releases/${VERSION}/${FILENAME}" \
+            --no-progress
+          echo "✓ Uploaded to s3://polis-releases/${VERSION}/${FILENAME}"
+
+      - name: Invalidate CloudFront cache
+        env:
+          CLOUDFRONT_DIST_ID: ${{ secrets.CLOUDFRONT_DIST_ID }}
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          aws cloudfront create-invalidation \
+            --distribution-id "${CLOUDFRONT_DIST_ID}" \
+            --paths "/${VERSION}/*"
+          echo "✓ CloudFront cache invalidated for /${VERSION}/*"
 
   # =========================================================
   # Create GitHub Release
   # =========================================================
   release:
     name: Create Release
-    needs: [validate, vm, cli]
+    needs: [validate, vm, cli, cdn]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -324,8 +373,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ needs.validate.outputs.version }}" -m "Release ${{ needs.validate.outputs.version }}"
-          git push origin "${{ needs.validate.outputs.version }}"
+          TAG="${{ needs.validate.outputs.tag_name }}"
+          if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists on remote, skipping"
+          else
+            git tag -a "$TAG" -m "Release ${{ needs.validate.outputs.version }}"
+            git push origin "$TAG" || echo "::warning::Tag push blocked by repository rules — release action will create the tag"
+          fi
 
       - name: Download VM artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -333,22 +387,17 @@ jobs:
           name: vm-image
           path: ./vm
 
-      - name: Download CLI artifact
+      - name: Download CLI artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: cli-binary
+          pattern: cli-*
           path: ./cli-bin
-
-      - name: Download versions.json artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: versions-json
-          path: ./
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
-          tag_name: ${{ needs.validate.outputs.version }}
+          tag_name: ${{ needs.validate.outputs.tag_name }}
           name: Polis ${{ needs.validate.outputs.version }}
           draft: false
           prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
@@ -356,10 +405,7 @@ jobs:
           files: |
             vm/*.qcow2
             vm/*.qcow2.sha256
-            vm/checksums.sha256
-            cli-bin/polis-linux-amd64
             cli-bin/polis-linux-amd64.sha256
-            scripts/install.sh
-            versions.json
+            cli-bin/polis-linux-amd64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

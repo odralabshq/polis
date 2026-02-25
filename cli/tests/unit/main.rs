@@ -6,7 +6,6 @@ pub mod mocks;
 
 mod agent_command;
 mod config_command;
-mod container_update;
 mod doctor_command;
 mod helpers;
 mod output;

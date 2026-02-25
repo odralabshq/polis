@@ -8,7 +8,6 @@ use proptest::prelude::*;
 
 use polis_cli::commands::config::{validate_config_key, validate_config_value};
 use polis_cli::commands::start::generate_workspace_id;
-use polis_cli::commands::update::validate_version_tag;
 
 // ============================================================================
 // generate_workspace_id() property tests
@@ -38,94 +37,7 @@ fn test_workspace_id_uniqueness_batch() {
 }
 
 // ============================================================================
-// validate_version_tag() property tests
-// ============================================================================
-
-proptest! {
-    /// Valid semver tags with v prefix are accepted.
-    #[test]
-    fn prop_valid_semver_tags_accepted(
-        major in 0u32..100,
-        minor in 0u32..100,
-        patch in 0u32..100,
-    ) {
-        let tag = format!("v{major}.{minor}.{patch}");
-        prop_assert!(validate_version_tag(&tag).is_ok(), "rejected valid tag: {tag}");
-    }
-
-    /// Pre-release tags with alphanumeric identifiers are accepted.
-    #[test]
-    fn prop_prerelease_tags_accepted(
-        major in 0u32..10,
-        minor in 0u32..10,
-        patch in 0u32..10,
-        pre in "[a-zA-Z][a-zA-Z0-9]{0,5}",
-        num in 0u32..100,
-    ) {
-        let tag = format!("v{major}.{minor}.{patch}-{pre}.{num}");
-        prop_assert!(validate_version_tag(&tag).is_ok(), "rejected valid prerelease: {tag}");
-    }
-
-    /// Tags without v prefix are rejected.
-    #[test]
-    fn prop_missing_v_prefix_rejected(
-        major in 0u32..100,
-        minor in 0u32..100,
-        patch in 0u32..100,
-    ) {
-        let tag = format!("{major}.{minor}.{patch}");
-        prop_assert!(validate_version_tag(&tag).is_err(), "accepted tag without v: {tag}");
-    }
-
-    /// Arbitrary strings (not semver) are rejected.
-    #[test]
-    fn prop_arbitrary_strings_rejected(s in "[^v].*") {
-        // Skip empty strings
-        if !s.is_empty() {
-            prop_assert!(validate_version_tag(&s).is_err(), "accepted invalid: {s}");
-        }
-    }
-}
-
-#[test]
-fn test_version_tag_rejects_injection_attempts() {
-    let malicious = [
-        "v1.0.0; curl evil.com",
-        "v1.0.0 && rm -rf /",
-        "v1.0.0$(whoami)",
-        "v1.0.0`id`",
-        "latest",
-        "v1",
-        "v1.0",
-        "",
-    ];
-    for tag in malicious {
-        assert!(
-            validate_version_tag(tag).is_err(),
-            "accepted malicious tag: {tag}"
-        );
-    }
-}
-
-#[test]
-fn test_version_tag_accepts_known_good() {
-    let valid = [
-        "v0.3.0",
-        "v1.0.0",
-        "v1.0.0-rc.1",
-        "v2.0.0-beta.3",
-        "v10.20.30",
-    ];
-    for tag in valid {
-        assert!(
-            validate_version_tag(tag).is_ok(),
-            "rejected valid tag: {tag}"
-        );
-    }
-}
-
-// ============================================================================
-// validate_config_key/value() property tests
+// validate_config_key() and validate_config_value() property tests
 // ============================================================================
 
 proptest! {

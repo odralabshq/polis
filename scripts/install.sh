@@ -7,11 +7,12 @@
 
 set -euo pipefail
 
-VERSION="${POLIS_VERSION:-latest}"
+VERSION="${POLIS_VERSION:-0.3.0}"
 INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 CURL_PROTO="=https"
+CDN_BASE_URL="${POLIS_CDN_URL:-https://d1qggvwquwdnma.cloudfront.net}"
 
 # Colors
 RED='\033[0;31m'
@@ -152,35 +153,7 @@ check_multipass() {
     return 0
 }
 
-resolve_version() {
-    if [[ "${VERSION}" == "latest" ]]; then
-        local response http_code body
-        response=$(curl -fsSL --proto "${CURL_PROTO}" -w "\n%{http_code}" \
-            "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
-            2>&1) || true
-        http_code=$(echo "${response}" | tail -1)
-        body=$(echo "${response}" | sed '$d')
 
-        if [[ "${http_code}" == "403" ]]; then
-            log_error "GitHub API rate limit exceeded (60 requests/hour unauthenticated)"
-            echo "  Set GITHUB_TOKEN or use: POLIS_VERSION=v0.3.0 install.sh"
-            exit 1
-        fi
-
-        if command -v jq &>/dev/null; then
-            VERSION=$(echo "${body}" | jq -r '.tag_name')
-        else
-            VERSION=$(echo "${body}" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-        fi
-
-        if [[ -z "${VERSION}" || "${VERSION}" == "null" ]]; then
-            log_error "Failed to resolve latest version"
-            exit 1
-        fi
-    fi
-    log_info "Installing Polis ${VERSION}"
-    return 0
-}
 
 download_cli() {
     local arch base_url bin_dir binary_name checksum_file expected actual
@@ -188,13 +161,19 @@ download_cli() {
     base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
     bin_dir="${INSTALL_DIR}/bin"
     binary_name="polis-linux-${arch}"
+    tarball="${binary_name}.tar.gz"
     checksum_file="/tmp/polis.sha256.$$"
 
     mkdir -p "${bin_dir}"
 
-    log_info "Downloading polis CLI (${arch})..."
-    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}" -o "${bin_dir}/polis"
+    log_info "Downloading CLI (${arch})..."
+    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${tarball}" -o "/tmp/${tarball}"
     curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
+
+    log_info "Extracting CLI..."
+    tar -xzf "/tmp/${tarball}" -C "${bin_dir}" --strip-components=0
+    mv "${bin_dir}/${binary_name}" "${bin_dir}/polis"
+    rm -f "/tmp/${tarball}"
 
     log_info "Verifying CLI SHA256..."
     expected=$(cut -d' ' -f1 < "${checksum_file}")
@@ -213,58 +192,34 @@ download_cli() {
     return 0
 }
 
-verify_attestation() {
-    if command -v gh &>/dev/null; then
-        log_info "Verifying GitHub attestation..."
-        if gh attestation verify "${INSTALL_DIR}/bin/polis" --owner "${REPO_OWNER}" 2>/dev/null; then
-            log_ok "Attestation verified"
-        else
-            log_info "Attestation verification skipped (not available or failed)"
-        fi
-    fi
-    return 0
-}
-
 create_symlink() {
     mkdir -p "$HOME/.local/bin"
     ln -sf "${INSTALL_DIR}/bin/polis" "$HOME/.local/bin/polis"
     log_ok "Symlinked: ~/.local/bin/polis"
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-        log_warn "\$HOME/.local/bin is not in your PATH"
-        echo ""
-        echo "Add it by running:"
-        # shellcheck disable=SC2016
-        echo '  export PATH="$HOME/.local/bin:$PATH"'
-        echo ""
-        echo "To make it permanent, add to your shell rc file (~/.bashrc or ~/.zshrc)"
+        log_warn "\$HOME/.local/bin is not in PATH — add it to your shell rc"
     fi
     return 0
 }
 
 download_image() {
-    local arch base_url image_name dest expected actual
+    local arch gh_base_url image_name dest expected actual
     arch=$(check_arch)
-    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
-    image_name="polis-${VERSION}-${arch}.qcow2"
-    dest="${INSTALL_DIR}/images/${image_name}"
+    gh_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
 
+    # Construct image filename from version and arch (VM images have v prefix)
+    image_name="polis-v${VERSION}-${arch}.qcow2"
+
+    dest="${INSTALL_DIR}/images/${image_name}"
     mkdir -p "${INSTALL_DIR}/images"
 
-    log_info "Downloading VM image..."
-    curl -fL --proto "${CURL_PROTO}" --progress-bar \
-        "${base_url}/${image_name}" -o "${dest}"
-
-    log_info "Verifying image SHA256..."
-    expected=$(curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${image_name}.sha256" | awk '{print $1}')
-    actual=$(sha256sum "${dest}" | awk '{print $1}')
-    if [[ "${expected}" != "${actual}" ]]; then
-        log_error "Image SHA256 mismatch!"
-        echo "  Expected: ${expected}" >&2
-        echo "  Actual:   ${actual}" >&2
-        rm -f "${dest}"
-        exit 1
+    log_info "Downloading VM image from CDN..." >&2
+    if ! curl -fL --proto "${CURL_PROTO}" --http2 --retry 3 --retry-delay 2 --progress-bar \
+        "${CDN_BASE_URL}/v${VERSION}/${image_name}" -o "${dest}" >&2; then
+        log_warn "CDN unavailable, falling back to GitHub..." >&2
+        curl -fL --proto "${CURL_PROTO}" --retry 3 --retry-delay 2 --progress-bar \
+            "${gh_base_url}/${image_name}" -o "${dest}" >&2
     fi
-    log_ok "Image SHA256 verified: ${expected}"
 
     echo "${dest}"
     return 0
@@ -274,25 +229,12 @@ run_init() {
     local image_path="$1"
     local bin="${INSTALL_DIR}/bin/polis"
 
-    # Clean up any existing workspace for a fresh install
-    if multipass info polis &>/dev/null 2>&1; then
-        log_warn "An existing polis VM was found."
-        read -r -p "Remove it and start fresh? [y/N] " confirm
-        if [[ "${confirm,,}" != "y" ]]; then
-            log_info "Keeping existing VM. Skipping image init."
-            return 0
-        fi
-        log_info "Removing existing polis VM..."
-        multipass delete polis && multipass purge
-    fi
-    rm -f "${INSTALL_DIR}/state.json"
-
     log_info "Running: polis start --image ${image_path}"
-    "${bin}" start --image "${image_path}" || {
-        log_warn "polis start failed. Run manually:"
+    if ! "${bin}" start --image "${image_path}"; then
+        log_error "polis start failed. Run manually:"
         echo "  polis start --image ${image_path}"
-        return 0
-    }
+        return 1
+    fi
     return 0
 }
 
@@ -301,23 +243,30 @@ main() {
 
     check_arch >/dev/null
     check_multipass
-    resolve_version
+    log_info "Installing Polis ${VERSION}"
     download_cli
-    verify_attestation
     create_symlink
 
     local image_path
     image_path=$(download_image)
+
+    if multipass info polis &>/dev/null 2>&1; then
+        log_warn "An existing polis VM was found."
+        read -r -p "Remove it and start fresh? [y/N] " confirm
+        if [[ "${confirm,,}" == "y" ]]; then
+            log_info "Removing existing polis VM..."
+            multipass delete polis && multipass purge
+        else
+            log_info "Keeping existing VM. Skipping removal."
+        fi
+    fi
+    rm -f "${INSTALL_DIR}/state.json"
+
     run_init "${image_path}"
 
     echo ""
     log_ok "Polis installed successfully!"
     echo ""
-    echo "Get started:"
-    echo "  polis start          # Create workspace"
-    echo "  polis start claude   # Create workspace with Claude agent"
-    echo ""
-    return 0
 }
 
 main

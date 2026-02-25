@@ -126,8 +126,9 @@ run_init() {
     log_info "Running: polis start --image ${image}"
     POLIS_VERIFYING_KEY_B64="${verifying_key_b64}" \
         "${INSTALL_DIR}/bin/polis" start --image "${image}" || {
-        log_warn "polis start failed. Run manually:"
+        log_error "polis start failed. Run manually:"
         echo "  POLIS_VERIFYING_KEY_B64=$(base64 -w0 "${pub_key}") polis start --image ${image}"
+        return 1
     }
     return 0
 }

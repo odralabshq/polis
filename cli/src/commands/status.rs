@@ -305,20 +305,19 @@ pub fn agent_health_display(health: AgentHealth) -> &'static str {
     }
 }
 
-#[allow(dead_code)] // Used by tests and future features
+#[cfg(test)]
 #[must_use]
 pub fn format_agent_line(name: &str, health: AgentHealth) -> String {
     format!("{name} ({})", agent_health_display(health))
 }
 
-#[allow(dead_code)] // Used by tests and future features
+#[cfg(test)]
 #[must_use]
 pub fn format_events_warning(count: u32) -> String {
     let noun = if count == 1 { "event" } else { "events" };
     format!("{count} security {noun}\nRun: polis logs --security")
 }
 
-#[allow(dead_code)] // Used by tests
 #[must_use]
 pub fn workspace_unknown() -> WorkspaceStatus {
     WorkspaceStatus {

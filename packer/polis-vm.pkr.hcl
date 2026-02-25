@@ -233,15 +233,21 @@ build {
     sleep         = "2s"
   }
 
-  # Cleanup
+  # Cleanup and reclaim space
   provisioner "shell" {
     inline = [
+      "sudo fstrim -av || true",
       "sudo dd if=/dev/zero of=/EMPTY bs=1M 2>/dev/null || true",
       "sudo rm -f /EMPTY",
       "sudo sync",
       "sudo apt-get clean",
       "sudo rm -rf /var/lib/apt/lists/*",
-      "sudo cloud-init clean --logs",
+      # Full cloud-init reset so the image works on any hypervisor (QEMU, Hyper-V, etc.)
+      # --logs: remove /var/log/cloud-init*
+      # --machine-id: truncate /etc/machine-id so systemd regenerates it
+      # --configs network: remove generated netplan/network configs so cloud-init
+      #   re-detects the NIC on the target hypervisor (QEMU virtio vs Hyper-V hv_netvsc)
+      "sudo cloud-init clean --logs --machine-id --configs network",
       "sudo passwd -l ubuntu",
       "sudo passwd -l root"
     ]

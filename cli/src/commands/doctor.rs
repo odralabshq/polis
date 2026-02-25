@@ -173,11 +173,9 @@ impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
         let vm_running = crate::workspace::vm::state(self.mp).await.ok()
             == Some(crate::workspace::vm::VmState::Running);
 
-        let process_isolation = check_process_isolation().await;
-
         if !vm_running {
             return Ok(SecurityChecks {
-                process_isolation,
+                process_isolation: false,
                 traffic_inspection: false,
                 malware_db_current: false,
                 malware_db_age_hours: 0,
@@ -187,10 +185,12 @@ impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
         }
 
         let (
+            process_isolation,
             traffic_inspection,
             (malware_db_current, malware_db_age_hours),
             (certificates_valid, certificates_expire_days),
         ) = tokio::join!(
+            check_process_isolation(self.mp),
             check_gate_health(self.mp),
             check_malware_db(self.mp),
             check_certificates(self.mp),
@@ -652,19 +652,39 @@ async fn check_version_drift(current: String) -> Option<VersionDrift> {
 }
 
 async fn disk_space_gb() -> Result<u64> {
-    let out = tokio::process::Command::new("df")
-        .args(["-BG", "/"])
-        .output()
-        .await
-        .context("df failed")?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    // df -BG output (second line): "/dev/sda1  100G  55G  45G  55% /"
-    // column index 3 is "Available", e.g. "45G"
-    text.lines()
-        .nth(1)
-        .and_then(|l| l.split_whitespace().nth(3))
-        .and_then(|s| s.trim_end_matches('G').parse::<u64>().ok())
-        .ok_or_else(|| anyhow::anyhow!("cannot parse df output"))
+    #[cfg(windows)]
+    {
+        let out = tokio::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "((Get-PSDrive C).Free / 1GB) -as [int]",
+            ])
+            .output()
+            .await
+            .context("powershell failed")?;
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse::<u64>()
+            .context("cannot parse disk space from powershell")
+    }
+    #[cfg(not(windows))]
+    {
+        // `df -k` is POSIX and works on both Linux and macOS.
+        // Column 3 (0-indexed) is "Available" in 1 KiB blocks.
+        let out = tokio::process::Command::new("df")
+            .args(["-k", "/"])
+            .output()
+            .await
+            .context("df failed")?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.lines()
+            .nth(1)
+            .and_then(|l| l.split_whitespace().nth(3))
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|kb| kb / (1024 * 1024))
+            .ok_or_else(|| anyhow::anyhow!("cannot parse df output"))
+    }
 }
 
 async fn check_internet() -> bool {
@@ -687,13 +707,10 @@ async fn check_dns() -> bool {
     .unwrap_or(false)
 }
 
-async fn check_process_isolation() -> bool {
-    tokio::process::Command::new("sysbox-runc")
-        .arg("--version")
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// Check if sysbox-runc is available inside the multipass VM.
+async fn check_process_isolation(mp: &impl crate::multipass::Multipass) -> bool {
+    let output = mp.exec(&["sysbox-runc", "--version"]).await;
+    output.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Check if the gate container is running inside the multipass VM.
