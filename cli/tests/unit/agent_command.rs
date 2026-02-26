@@ -23,7 +23,7 @@ impl Multipass for ExecStub {
     async fn vm_info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
-    async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
         anyhow::bail!("not expected in this test")
     }
     async fn start(&self) -> Result<Output> {

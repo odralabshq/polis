@@ -35,7 +35,7 @@ impl Multipass for VmNotFound {
     async fn vm_info(&self) -> Result<Output> {
         Ok(err_output(1, b"instance \"polis\" does not exist"))
     }
-    async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
         anyhow::bail!("launch not expected in this test")
     }
     async fn start(&self) -> Result<Output> {
@@ -80,7 +80,7 @@ impl Multipass for VmStopped {
     async fn vm_info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Stopped"}}}"#))
     }
-    async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
         anyhow::bail!("launch not expected in this test")
     }
     async fn start(&self) -> Result<Output> {
@@ -125,7 +125,7 @@ impl Multipass for VmRunning {
     async fn vm_info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
-    async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
         anyhow::bail!("launch not expected in this test")
     }
     async fn start(&self) -> Result<Output> {

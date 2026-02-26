@@ -49,13 +49,14 @@ zipsign-api = { version = "0.2", default-features = false, features = ["verify-t
 tar = "0.4"
 flate2 = "1.0"
 sha2 = "0.10"
+include_dir = "0.7"
+tempfile = "3.25"
 ureq = "2.12"
 
 [dev-dependencies]
 assert_cmd = "2.1"
 predicates = "3.1"
 serde_json = "1.0"
-tempfile = "3.25"  # isolated temp dirs for StateManager tests
 ed25519-dalek = "2.2"
 base64 = "0.22"   # test helpers: encode verifying key as b64
 mockall = "0.13"

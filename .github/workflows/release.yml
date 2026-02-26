@@ -1,7 +1,7 @@
 # Release Workflow for Polis
-# Builds Docker images, bakes them into VM, builds CLI, creates release.
+# Builds Docker images, signs them with cosign, builds CLI, creates release.
 #
-# Flow: Docker build → Export → Packer VM → CLI binary → GitHub Release
+# Flow: validate → docker (build+push+sign+SBOM+digest) → prepare (assets) → cli → release
 #
 # Usage: Push a v* tag or manually trigger via Actions UI
 
@@ -77,7 +77,8 @@ jobs:
           echo "✓ Version $VERSION validated (push_docker=$PUSH_DOCKER)"
 
   # =========================================================
-  # Build Docker images and export tarball
+  # Build Docker images, push to GHCR, sign with cosign,
+  # generate digest manifest, and produce SBOMs
   # =========================================================
   docker:
     name: Build Docker Images
@@ -114,6 +115,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build all images
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX; do
+            export "POLIS_${svc}_VERSION=${VERSION}"
+          done
+          docker compose build
+
       - name: Tag images with release version
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
@@ -124,15 +133,7 @@ jobs:
             docker tag "$img" "${ghcr_img}:latest"
           done
 
-      - name: Build all images
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX; do
-            export "POLIS_${svc}_VERSION=${VERSION}"
-          done
-          docker compose build
-
-      - name: Push images to GHCR (optional)
+      - name: Push images to GHCR
         if: needs.validate.outputs.push_docker == 'true'
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
@@ -143,203 +144,218 @@ jobs:
             echo "✓ Pushed ${ghcr_img}"
           done
 
-      - name: Export images tarball
+      - name: Install cosign
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign images and generate digest manifest
+        if: needs.validate.outputs.push_docker == 'true'
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          # Get all polis images
-          POLIS_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "polis-.*-oss:${VERSION}" | tr '\n' ' ')
-          # Get external images from compose - parse raw YAML to avoid docker compose config secrets requirement
-          EXTERNAL_IMAGES=$(grep -oP '^\s+image:\s+\K\S+' docker-compose.yml | grep -v 'ghcr.io/odralabshq' | grep -v 'go-httpbin' | sed 's/@sha256:[a-f0-9]*//' | sort -u | tr '\n' ' ')
-          # Pull and tag external images
-          for img in $EXTERNAL_IMAGES; do
-            docker pull "$img"
-          done
           mkdir -p .build
-          docker save -o .build/polis-images.tar $POLIS_IMAGES $EXTERNAL_IMAGES
-          echo "✓ Exported: $POLIS_IMAGES $EXTERNAL_IMAGES"
+          DIGEST_MANIFEST=".build/image-digests.json"
+          echo "{}" > "${DIGEST_MANIFEST}"
 
-      - name: Upload images tarball
+          for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "polis-.*-oss:${VERSION}"); do
+            # Get the digest for the pushed image
+            DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${img}" | cut -d@ -f2)
+            if [[ -z "${DIGEST}" ]]; then
+              echo "::warning::No RepoDigest found for ${img} — skipping signing"
+              continue
+            fi
+
+            # Sign by digest using keyless GitHub OIDC
+            IMAGE_REF="${img%:${VERSION}}@${DIGEST}"
+            cosign sign --yes "${IMAGE_REF}"
+            echo "✓ Signed ${IMAGE_REF}"
+
+            # Add to digest manifest: map versioned image ref → sha256 digest
+            jq --arg img "${img}" --arg digest "${DIGEST}" \
+              '. + {($img): $digest}' "${DIGEST_MANIFEST}" \
+              > tmp.json && mv tmp.json "${DIGEST_MANIFEST}"
+          done
+
+          echo "✓ Digest manifest:"
+          cat "${DIGEST_MANIFEST}"
+
+      - name: Upload digest manifest artifact
+        if: needs.validate.outputs.push_docker == 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: docker-images
-          path: .build/polis-images.tar
+          name: image-digests
+          path: .build/image-digests.json
+          retention-days: 1
+
+      - name: Generate SBOM for resolver image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-resolver-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-resolver.spdx.json
+          output-file: .build/sbom-resolver.spdx.json
+
+      - name: Generate SBOM for certgen image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-certgen-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-certgen.spdx.json
+          output-file: .build/sbom-certgen.spdx.json
+
+      - name: Generate SBOM for gate image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-gate-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-gate.spdx.json
+          output-file: .build/sbom-gate.spdx.json
+
+      - name: Generate SBOM for sentinel image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-sentinel-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-sentinel.spdx.json
+          output-file: .build/sbom-sentinel.spdx.json
+
+      - name: Generate SBOM for scanner image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-scanner-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-scanner.spdx.json
+          output-file: .build/sbom-scanner.spdx.json
+
+      - name: Generate SBOM for workspace image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-workspace-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-workspace.spdx.json
+          output-file: .build/sbom-workspace.spdx.json
+
+      - name: Generate SBOM for init image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-init-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-init.spdx.json
+          output-file: .build/sbom-init.spdx.json
+
+      - name: Generate SBOM for state image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-state-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-state.spdx.json
+          output-file: .build/sbom-state.spdx.json
+
+      - name: Generate SBOM for toolbox image
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-toolbox-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-toolbox.spdx.json
+          output-file: .build/sbom-toolbox.spdx.json
+
+      - name: Upload SBOMs artifact
+        if: needs.validate.outputs.push_docker == 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sboms
+          path: .build/sbom-*.spdx.json
           retention-days: 1
 
   # =========================================================
-  # Build VM image with Docker images baked in
+  # Prepare embedded assets for CLI compilation:
+  #   - Run generate-agent.sh per agent
+  #   - Build polis-setup.config.tar
+  #   - Copy cloud-init.yaml
+  #   - Download image-digests.json from docker job
   # =========================================================
-  vm:
-    name: Build VM Image
+  prepare:
+    name: Prepare Embedded Assets
     needs: [validate, docker]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Download images tarball
+      - name: Download image-digests artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: docker-images
-          path: .build
+          name: image-digests
+          path: .build/
 
-      - name: Install QEMU
+      - name: Generate agent artifacts
         run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 qemu-utils xorriso
+          # generate-agent.sh requires yq — only needed at CI time, not in VM
+          for agent_dir in agents/*/; do
+            agent_name=$(basename "$agent_dir")
+            [[ "$agent_name" == "_template" ]] && continue
+            echo "Generating artifacts for agent: $agent_name"
+            ./scripts/generate-agent.sh "$agent_name" agents
+          done
 
-      - name: Enable KVM group permissions
+      - name: Build polis-setup.config.tar
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          mkdir -p .build/assets
+          tar cf .build/assets/polis-setup.config.tar \
+            docker-compose.yml \
+            scripts/ \
+            agents/
+          echo "✓ Built polis-setup.config.tar"
 
-      - name: Setup Packer
-        uses: hashicorp/setup-packer@1aa358be5cf73883762b302a3a03abd66e75b232 # v3.1.0
-
-      - name: Init Packer
-        env:
-          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: packer init packer/
-
-      - name: Generate Polis config bundle
+      - name: Copy cloud-init.yaml to assets
         run: |
-          export POLIS_IMAGE_VERSION="${{ needs.validate.outputs.version }}"
-          mkdir -p .build
-          bash packer/scripts/bundle-polis-config.sh
+          cp cloud-init.yaml .build/assets/cloud-init.yaml
+          echo "✓ Copied cloud-init.yaml"
 
-      - name: Build VM image
+      - name: Copy image-digests.json to assets
         run: |
-          cd packer
-          packer build \
-            -var "polis_version=${{ needs.validate.outputs.version }}" \
-            -var "images_tar=${PWD}/../.build/polis-images.tar" \
-            -var "config_tar=${PWD}/../.build/polis-config.tar.gz" \
-            -var "sysbox_version=${SYSBOX_VERSION}" \
-            -var "sysbox_sha256_amd64=${SYSBOX_SHA256_AMD64}" \
-            -var "arch=amd64" \
-            polis-vm.pkr.hcl
+          cp .build/image-digests.json .build/assets/image-digests.json
+          echo "✓ Copied image-digests.json"
 
-      - name: Sign VM image checksum
-        env:
-          POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
-        run: |
-          cargo install zipsign --version 0.2.1 --locked
-          echo "${POLIS_SIGNING_KEY}" | base64 -d > /tmp/polis-release.key
-          VERSION="${{ needs.validate.outputs.version }}"
-          IMAGE="polis-${VERSION}-amd64.qcow2"
-          cd packer/output
-          sha256sum "${IMAGE}" > checksum.txt
-          tmpdir=$(mktemp -d)
-          tar -czf "${tmpdir}/sidecar.tar.gz" -C . checksum.txt
-          zipsign sign tar --context "" "${tmpdir}/sidecar.tar.gz" /tmp/polis-release.key \
-            -o "${IMAGE}.sha256" -f
-          rm -rf "${tmpdir}" /tmp/polis-release.key checksum.txt
-          echo "✓ ${IMAGE}.sha256 (signed)"
-
-      - name: Attest VM provenance
-        uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
-        with:
-          subject-path: packer/output/*.qcow2
-
-      - name: Upload VM artifact
+      - name: Upload prepared assets artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: vm-image
-          path: |
-            packer/output/*.qcow2
-            packer/output/*.qcow2.sha256
+          name: prepared-assets
+          path: .build/assets/
           retention-days: 1
 
   # =========================================================
-  # Build Hyper-V VM image
-  # =========================================================
-  vm-hyperv:
-    name: Build Hyper-V Image
-    needs: [validate, docker]
-    runs-on: windows-2022
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Download images tarball
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: docker-images
-          path: .build
-
-      - name: Setup Packer
-        uses: hashicorp/setup-packer@1aa358be5cf73883762b302a3a03abd66e75b232 # v3.1.0
-
-      - name: Init Packer
-        env:
-          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: packer init packer/
-        shell: pwsh
-
-      - name: Generate Polis config bundle
-        run: |
-          $env:POLIS_IMAGE_VERSION = "${{ needs.validate.outputs.version }}"
-          mkdir -p .build
-          bash packer/scripts/bundle-polis-config.sh
-        shell: pwsh
-
-      - name: Build VM image
-        run: |
-          cd packer
-          packer build `
-            -var "polis_version=${{ needs.validate.outputs.version }}" `
-            -var "images_tar=${PWD}/../.build/polis-images.tar" `
-            -var "config_tar=${PWD}/../.build/polis-config.tar.gz" `
-            -var "sysbox_version=${env:SYSBOX_VERSION}" `
-            -var "sysbox_sha256_amd64=${env:SYSBOX_SHA256_AMD64}" `
-            -var "arch=amd64" `
-            -only="hyperv-iso.polis" `
-            polis-vm.pkr.hcl
-        shell: pwsh
-
-      - name: Sign VM image checksum
-        env:
-          POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
-        run: |
-          cargo install zipsign --version 0.2.1 --locked
-          $keyFile = [System.IO.Path]::GetTempFileName()
-          [System.Convert]::FromBase64String($env:POLIS_SIGNING_KEY) | Set-Content -Path $keyFile -Encoding Byte
-          $VERSION = "${{ needs.validate.outputs.version }}"
-          $IMAGE = "polis-$VERSION-amd64.vhdx"
-          cd packer/output-hyperv
-          sha256sum "$IMAGE" > checksum.txt
-          $sidecar = "$IMAGE.sha256"
-          # Simple signature creation mirroring the Linux flow
-          zipsign sign file --context "" "$IMAGE" $keyFile -o "$sidecar" -f
-          Remove-Item $keyFile
-          echo "✓ $IMAGE.sha256 (signed)"
-        shell: pwsh
-
-      - name: Upload VM artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: vm-image-hyperv
-          path: |
-            packer/output-hyperv/*.vhdx
-            packer/output-hyperv/*.vhdx.sha256
-          retention-days: 1
-
-  # =========================================================
-  # Build CLI binary (Linux only)
+  # Build CLI binary for all 3 targets
+  # Embeds cloud-init.yaml, image-digests.json, polis-setup.config.tar
+  # via include_dir!("$CARGO_MANIFEST_DIR/../.build/assets")
   # =========================================================
   cli:
     name: Build CLI (${{ matrix.artifact }})
-    needs: validate
+    needs: [validate, docker, prepare]
     strategy:
       matrix:
         include:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: polis-linux-amd64
+            binary: polis
+          - os: windows-2022
+            target: x86_64-pc-windows-gnu
+            artifact: polis-windows-amd64
+            binary: polis.exe
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: polis-macos-aarch64
+            binary: polis
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download prepared assets
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: prepared-assets
+          path: .build/assets/
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
@@ -348,20 +364,40 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build CLI
-        run: |
-          cd cli
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
+        working-directory: cli
 
-      - name: Copy binary
-        run: cp cli/target/${{ matrix.target }}/release/polis ${{ matrix.artifact }}
+      - name: Copy binary (Unix)
+        if: runner.os != 'Windows'
+        run: cp cli/target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.artifact }}
 
-      - name: Generate checksum
+      - name: Copy binary (Windows)
+        if: runner.os == 'Windows'
+        run: cp cli/target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.artifact }}.exe
+        shell: pwsh
+
+      - name: Generate checksum (Unix)
+        if: runner.os != 'Windows'
         run: sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
 
-      - name: Create tarball
+      - name: Generate checksum (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $hash = (Get-FileHash "${{ matrix.artifact }}.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.artifact }}.exe" | Out-File -Encoding ascii "${{ matrix.artifact }}.sha256"
+        shell: pwsh
+
+      - name: Create tarball (Unix)
+        if: runner.os != 'Windows'
         run: tar -czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
-      - name: Sign CLI tarball
+      - name: Create zip (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path "${{ matrix.artifact }}.exe" -DestinationPath "${{ matrix.artifact }}.zip"
+        shell: pwsh
+
+      - name: Sign CLI tarball (Unix)
+        if: runner.os != 'Windows'
         env:
           POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
         run: |
@@ -374,12 +410,34 @@ jobs:
           echo "✓ Signed: ${{ matrix.artifact }}.tar.gz"
         shell: bash
 
-      - name: Attest CLI provenance
+      - name: Sign CLI zip (Windows)
+        if: runner.os == 'Windows'
+        env:
+          POLIS_SIGNING_KEY: ${{ secrets.POLIS_SIGNING_KEY }}
+        run: |
+          cargo install zipsign --version 0.2.1 --locked
+          $keyFile = [System.IO.Path]::GetTempFileName()
+          [System.Convert]::FromBase64String($env:POLIS_SIGNING_KEY) | Set-Content -Path $keyFile -Encoding Byte
+          zipsign sign file --context "" "${{ matrix.artifact }}.zip" $keyFile -o "${{ matrix.artifact }}.zip.signed" -f
+          Move-Item "${{ matrix.artifact }}.zip.signed" "${{ matrix.artifact }}.zip" -Force
+          Remove-Item $keyFile
+          echo "✓ Signed: ${{ matrix.artifact }}.zip"
+        shell: pwsh
+
+      - name: Attest CLI provenance (Unix)
+        if: runner.os != 'Windows'
         uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
         with:
           subject-path: ${{ matrix.artifact }}
 
-      - name: Upload CLI artifact
+      - name: Attest CLI provenance (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd # v3.2.0
+        with:
+          subject-path: ${{ matrix.artifact }}.exe
+
+      - name: Upload CLI artifact (Unix)
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: cli-${{ matrix.target }}
@@ -389,61 +447,24 @@ jobs:
             ${{ matrix.artifact }}.tar.gz
           retention-days: 1
 
-  # =========================================================
-  # Upload VM image to S3 / CloudFront CDN
-  # =========================================================
-  cdn:
-    name: Upload to CDN
-    needs: [validate, vm, vm-hyperv]
-    runs-on: ubuntu-24.04
-    permissions:
-      id-token: write
-    steps:
-      - name: Download QEMU VM artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+      - name: Upload CLI artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: vm-image
-          path: ./vm
-
-      - name: Download Hyper-V VM artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: vm-image-hyperv
-          path: ./vm
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d28d111c5fe6722 # v4.1.0
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
-
-      - name: Upload VM images to S3
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          for f in vm/*; do
-            filename=$(basename "$f")
-            aws s3 cp "$f" \
-              "s3://polis-releases/${VERSION}/${filename}" \
-              --no-progress
-            echo "✓ Uploaded $filename to s3://polis-releases/${VERSION}/${filename}"
-          done
-
-      - name: Invalidate CloudFront cache
-        env:
-          CLOUDFRONT_DIST_ID: ${{ secrets.CLOUDFRONT_DIST_ID }}
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          aws cloudfront create-invalidation \
-            --distribution-id "${CLOUDFRONT_DIST_ID}" \
-            --paths "/${VERSION}/*"
-          echo "✓ CloudFront cache invalidated for /${VERSION}/*"
+          name: cli-${{ matrix.target }}
+          path: |
+            ${{ matrix.artifact }}.exe
+            ${{ matrix.artifact }}.sha256
+            ${{ matrix.artifact }}.zip
+          retention-days: 1
 
   # =========================================================
-  # Create GitHub Release
+  # Create GitHub Release with CLI binaries, checksums,
+  # digest manifest, and SBOMs
   # =========================================================
   release:
     name: Create Release
-    needs: [validate, vm, vm-hyperv, cli, cdn]
+    needs: [validate, docker, cli]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -462,24 +483,24 @@ jobs:
             git push origin "$TAG" || echo "::warning::Tag push blocked by repository rules — release action will create the tag"
           fi
 
-      - name: Download QEMU VM artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: vm-image
-          path: ./vm
-
-      - name: Download Hyper-V VM artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: vm-image-hyperv
-          path: ./vm
-
       - name: Download CLI artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: cli-*
           path: ./cli-bin
           merge-multiple: true
+
+      - name: Download image-digests artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: image-digests
+          path: ./release-assets
+
+      - name: Download SBOMs artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: sboms
+          path: ./release-assets
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
@@ -490,11 +511,16 @@ jobs:
           prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: |
-            vm/*.qcow2
-            vm/*.qcow2.sha256
-            vm/*.vhdx
-            vm/*.vhdx.sha256
+            cli-bin/polis-linux-amd64
             cli-bin/polis-linux-amd64.sha256
             cli-bin/polis-linux-amd64.tar.gz
+            cli-bin/polis-windows-amd64.exe
+            cli-bin/polis-windows-amd64.sha256
+            cli-bin/polis-windows-amd64.zip
+            cli-bin/polis-macos-aarch64
+            cli-bin/polis-macos-aarch64.sha256
+            cli-bin/polis-macos-aarch64.tar.gz
+            release-assets/image-digests.json
+            release-assets/sbom-*.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

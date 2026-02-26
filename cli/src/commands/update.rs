@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::multipass::Multipass;
 use crate::output::OutputContext;
+use crate::workspace::{digest, vm};
 
 /// Arguments for the update command.
 #[derive(Args)]
@@ -91,7 +92,8 @@ impl UpdateChecker for GithubUpdateChecker {
 /// Run `polis update [--check]`.
 ///
 /// Checks GitHub for a newer release, verifies its signature, prompts the user,
-/// then downloads and replaces the current binary.
+/// then downloads and replaces the current binary. If the VM is running, also
+/// updates the VM config.
 ///
 /// # Errors
 ///
@@ -102,7 +104,7 @@ pub async fn run(
     args: &UpdateArgs,
     ctx: &OutputContext,
     checker: &impl UpdateChecker,
-    _mp: &impl Multipass,
+    mp: &impl Multipass,
 ) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
 
@@ -119,7 +121,6 @@ pub async fn run(
                 "  {} CLI v{current} (latest)",
                 "✓".style(ctx.styles.success),
             );
-            return Ok(());
         }
         UpdateInfo::Available {
             version,
@@ -143,9 +144,111 @@ pub async fn run(
         return Ok(());
     }
 
-    apply_cli_update(ctx, checker, cli_update)?;
+    if matches!(cli_update, UpdateInfo::Available { .. }) {
+        apply_cli_update(ctx, checker, cli_update)?;
+    }
+
+    // After CLI self-update, update VM config if the VM is running
+    let vm_state = vm::state(mp).await?;
+    if vm_state == vm::VmState::Running {
+        if !ctx.quiet {
+            println!();
+            println!("Updating VM config...");
+        }
+        update_config(mp, ctx.quiet).await?;
+    }
 
     println!();
+    Ok(())
+}
+
+/// Update the VM config when the CLI has been updated to a new version.
+///
+/// Extracts embedded assets, computes the SHA256 of the new config tarball,
+/// and compares it against the hash stored in the VM. If they differ, stops
+/// services, transfers the new config, pulls images, verifies digests,
+/// restarts services, and writes the new hash.
+///
+/// # Errors
+///
+/// Returns an error if any step of the update cycle fails.
+pub async fn update_config(mp: &impl Multipass, quiet: bool) -> Result<()> {
+    // 1. Extract embedded assets (new version's tarball)
+    let (assets_dir, _guard) = crate::assets::extract_assets()
+        .context("extracting embedded assets")?;
+
+    // 2. Compute SHA256 of the new config tarball
+    let new_hash = vm::sha256_file(&assets_dir.join("polis-setup.config.tar"))
+        .context("computing config tarball hash")?;
+
+    // 3. Read current hash from VM
+    let hash_output = mp
+        .exec(&["cat", "/opt/polis/.config-hash"])
+        .await
+        .context("reading current config hash from VM")?;
+    let current_hash = String::from_utf8_lossy(&hash_output.stdout)
+        .trim()
+        .to_string();
+
+    // 4. If hashes match, config is up to date
+    if new_hash == current_hash {
+        if !quiet {
+            println!("  Config is up to date");
+        }
+        return Ok(());
+    }
+
+    // 5. Hashes differ — perform full config update cycle
+    if !quiet {
+        println!("  Config changed — updating...");
+    }
+
+    // 5a. Stop services
+    mp.exec(&[
+        "docker",
+        "compose",
+        "-f",
+        "/opt/polis/docker-compose.yml",
+        "down",
+    ])
+    .await
+    .context("stopping services")?;
+
+    // 5b. Transfer new config
+    let version = env!("CARGO_PKG_VERSION");
+    vm::transfer_config(mp, &assets_dir, version)
+        .await
+        .context("transferring new config")?;
+
+    // 5c. Pull new images
+    vm::pull_images(mp).await.context("pulling Docker images")?;
+
+    // 5d. Verify image digests
+    digest::verify_image_digests(mp)
+        .await
+        .context("verifying image digests")?;
+
+    // 5e. Restart services
+    mp.exec(&[
+        "docker",
+        "compose",
+        "-f",
+        "/opt/polis/docker-compose.yml",
+        "up",
+        "-d",
+    ])
+    .await
+    .context("restarting services")?;
+
+    // 5f. Write new hash AFTER successful restart
+    vm::write_config_hash(mp, &new_hash)
+        .await
+        .context("writing new config hash")?;
+
+    if !quiet {
+        println!("  Config updated successfully");
+    }
+
     Ok(())
 }
 
@@ -393,10 +496,7 @@ mod tests {
         }
         async fn launch(
             &self,
-            _: &str,
-            _: &str,
-            _: &str,
-            _: &str,
+            _: &crate::multipass::LaunchParams<'_>,
         ) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: launch not expected")
         }

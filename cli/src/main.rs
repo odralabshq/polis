@@ -4,6 +4,7 @@
 
 use clap::Parser;
 
+mod assets;
 mod cli;
 mod commands;
 mod multipass;

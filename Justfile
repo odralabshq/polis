@@ -14,8 +14,17 @@ install-tools:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	sudo apt-get update -qq
-	# Docker
-	command -v docker &>/dev/null || sudo apt-get install -y docker.io
+	sudo apt-get install -y build-essential pkg-config libssl-dev
+	# Docker (docker-ce)
+	if ! command -v docker &>/dev/null; then
+		curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+			| sudo gpg --dearmor -o /usr/share/keyrings/docker.gpg
+		echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+			| sudo tee /etc/apt/sources.list.d/docker.list
+		sudo apt-get update -qq
+		sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+		sudo usermod -aG docker "${USER}"
+	fi
 	# shellcheck
 	command -v shellcheck &>/dev/null || sudo apt-get install -y shellcheck
 	# hadolint
@@ -32,22 +41,14 @@ install-tools:
 	fi
 	# Multipass
 	command -v multipass &>/dev/null || sudo snap install multipass
-	# HashiCorp repo for packer
-	if ! command -v packer &>/dev/null; then
-		sudo apt-get install -y gnupg curl
-		curl -fsSL https://apt.releases.hashicorp.com/gpg \
-			| sudo gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
-		echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-			| sudo tee /etc/apt/sources.list.d/hashicorp.list
-		sudo apt-get update -qq
-		sudo apt-get install -y packer
+	# Rust toolchain
+	if ! command -v cargo &>/dev/null; then
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+		source "${HOME}/.cargo/env"
 	fi
-	# QEMU + xorriso for VM builds
-	sudo apt-get install -y qemu-system-x86 qemu-utils ovmf xorriso
 
 # Windows-only: Install all prerequisites for building Polis
-# Installs: just, Docker Desktop, Packer, Windows ADK (oscdimg),
-#           Hyper-V, shellcheck, hadolint, Rust toolchain, zipsign
+# Installs: just, Docker Desktop, shellcheck, hadolint, Rust toolchain, zipsign
 install-tools-windows:
 	powershell -NoProfile -ExecutionPolicy Bypass scripts/install-tools-windows.ps1
 
@@ -69,7 +70,7 @@ lint-c:
 	  xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
 
 lint-shell:
-	shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh packer/scripts/*.sh
+	shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh
 
 # ── Test ────────────────────────────────────────────────────────────
 test: test-rust test-c test-unit
@@ -121,10 +122,40 @@ fmt:
 	cargo fmt --all --manifest-path services/toolbox/Cargo.toml
 
 # ── Build ───────────────────────────────────────────────────────────
-build: build-cli build-docker build-vm
+prepare-config:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .build/assets
+	# Generate agent artifacts (skip _template)
+	for agent_dir in agents/*/; do
+		name=$(basename "$agent_dir")
+		[ "$name" = "_template" ] && continue
+		[ -f "${agent_dir}agent.yaml" ] || continue
+		echo "→ Generating artifacts for agent: $name"
+		./scripts/generate-agent.sh "$name" agents
+	done
+	# Build config tarball
+	tar cf .build/assets/polis-setup.config.tar \
+		docker-compose.yml \
+		scripts/ \
+		agents/
+	echo "✓ Built .build/assets/polis-setup.config.tar"
+	# Copy cloud-init.yaml
+	cp cloud-init.yaml .build/assets/cloud-init.yaml
+	echo "✓ Copied cloud-init.yaml"
+	# Create stub image-digests.json if not present
+	if [ ! -f .build/assets/image-digests.json ]; then
+		echo '{}' > .build/assets/image-digests.json
+		echo "✓ Created stub image-digests.json"
+	fi
 
-# Windows-only: Build all components and the Hyper-V VM image
-build-windows: build-cli build-docker build-vm-hyperv
+build: prepare-config build-cli build-docker
+
+# Windows-only: Build all components
+build-windows: prepare-config build-cli build-docker
+
+# Quick build — skips asset preparation
+build-quick: build-cli
 
 # Build the CLI binary
 build-cli:
@@ -137,149 +168,6 @@ build-docker:
 # Build a specific service
 build-service service:
 	docker build -f services/{{service}}/Dockerfile .
-
-# Build VM image (requires packer)
-# Usage: just build-vm [arch=amd64|arm64] [headless=true|false]
-build-vm arch="amd64" headless="true": _export-images _bundle-config _build-agents
-	#!/usr/bin/env bash
-	set -euo pipefail
-	ROOT="${PWD}"
-	cd packer
-	rm -rf output
-	packer init .
-	packer build \
-		-var "images_tar=${ROOT}/.build/polis-images.tar" \
-		-var "config_tar=${ROOT}/.build/polis-config.tar.gz" \
-		-var "agents_tar=${ROOT}/.build/polis-agents.tar.gz" \
-		-var "arch={{arch}}" \
-		-var "headless={{headless}}" \
-		polis-vm.pkr.hcl
-	# Additional compression pass
-	for img in output/*.qcow2; do
-		echo "==> Compressing ${img}..."
-		qemu-img convert -c -O qcow2 "${img}" "${img}.tmp"
-		mv "${img}.tmp" "${img}"
-	done
-	just --justfile "${ROOT}/Justfile" --working-directory "${ROOT}" _sign-vm {{arch}}
-
-# Windows-only: Build Hyper-V VM image
-# Usage: just build-vm-hyperv [arch=amd64] [headless=true]
-build-vm-hyperv arch="amd64" headless="true": _export-images-windows _bundle-config-windows _build-agents-windows
-	powershell -NoProfile -ExecutionPolicy Bypass packer/scripts/build-vm-hyperv.ps1 -Arch {{arch}} -Headless {{headless}}
-
-# Internal: build agent artifacts for VM image
-_build-agents:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	rm -rf .build/agents
-	mkdir -p .build/agents
-	for agent_dir in agents/*/; do
-		name=$(basename "$agent_dir")
-		[ "$name" = "_template" ] && continue
-		[ -f "${agent_dir}agent.yaml" ] || continue
-		cp -r "$agent_dir" ".build/agents/$name"
-	done
-	for agent_dir in .build/agents/*/; do
-		[ -d "$agent_dir" ] || continue
-		name=$(basename "$agent_dir")
-		./scripts/generate-agent.sh "$name" ".build/agents"
-	done
-	tar -czf .build/polis-agents.tar.gz -C .build agents
-	echo "✓ Agents bundle: .build/polis-agents.tar.gz ($(du -h .build/polis-agents.tar.gz | cut -f1))"
-
-# Internal: sign the VM image with a dev keypair, producing a .sha256 sidecar
-_sign-vm arch="amd64":
-	#!/usr/bin/env bash
-	set -euo pipefail
-	SIGNING_KEY=".secrets/polis-release.key"
-	PUB_KEY=".secrets/polis-release.pub"
-	if [[ ! -f "${SIGNING_KEY}" ]]; then
-		echo "No signing key found — generating dev keypair at ${SIGNING_KEY}..."
-		mkdir -p .secrets
-		zipsign gen-key "${SIGNING_KEY}" "${PUB_KEY}"
-		echo "✓ Dev keypair generated (gitignored)"
-	fi
-	IMAGE=$(find packer/output -name "*-{{arch}}.qcow2" | sort | tail -1)
-	if [[ -z "${IMAGE}" ]]; then
-		echo "ERROR: No .qcow2 found in packer/output" >&2
-		exit 1
-	fi
-	CHECKSUM=$(sha256sum "${IMAGE}" | cut -d' ' -f1)
-	tmpdir=$(mktemp -d)
-	echo "${CHECKSUM}  $(basename "${IMAGE}")" > "${tmpdir}/checksum.txt"
-	tar -czf "${tmpdir}/sidecar.tar.gz" -C "${tmpdir}" checksum.txt
-	zipsign sign tar --context "" "${tmpdir}/sidecar.tar.gz" "${SIGNING_KEY}" -o "${IMAGE}.sha256" -f
-	rm -rf "${tmpdir}"
-	echo "✓ ${IMAGE}.sha256 (signed)"
-	echo "  Public key: $(base64 -w0 "${PUB_KEY}")"
-
-# Internal: Windows-version signing for Hyper-V image
-_sign-vm-hyperv arch="amd64":
-	powershell -NoProfile -ExecutionPolicy Bypass packer/scripts/sign-vm-hyperv.ps1 -Arch {{arch}}
-
-# Internal: export Docker images for VM build
-_export-images:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
-		POLIS_IMAGE_VERSION="latest"
-	fi
-	# Set per-service vars so docker compose config resolves the image refs
-	for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX; do
-		export "POLIS_${svc}_VERSION=${POLIS_IMAGE_VERSION}"
-	done
-	# Get all images with env vars resolved
-	IMAGES=$(docker compose -f docker-compose.yml config | grep -oP 'image:\s+\K\S+' | sort -u | grep -v 'go-httpbin')
-	if [[ -z "${IMAGES}" ]]; then
-		echo "ERROR: No images found in docker-compose.yml" >&2
-		exit 1
-	fi
-	mkdir -p .build
-	chmod 700 .build
-	echo "Pulling external images..."
-	EXPORT_IMAGES=""
-	for img in ${IMAGES}; do
-		if [[ ! "$img" =~ ^ghcr\.io/odralabshq/polis- ]]; then
-			docker pull "$img" || true
-			# Strip @sha256:... suffix for export (docker load doesn't preserve digests)
-			simple_tag="${img%%@sha256:*}"
-			if [[ "$simple_tag" != "$img" ]]; then
-				echo "Tagging $img as $simple_tag"
-				docker tag "$img" "$simple_tag"
-				EXPORT_IMAGES="$EXPORT_IMAGES $simple_tag"
-			else
-				EXPORT_IMAGES="$EXPORT_IMAGES $img"
-			fi
-		else
-			EXPORT_IMAGES="$EXPORT_IMAGES $img"
-		fi
-	done
-	echo "Exporting:${EXPORT_IMAGES}"
-	# shellcheck disable=SC2086
-	docker save -o .build/polis-images.tar ${EXPORT_IMAGES}
-
-# Internal: export Docker images for VM build (Windows)
-_export-images-windows:
-	powershell -NoProfile -ExecutionPolicy Bypass packer/scripts/export-images-windows.ps1
-
-# Internal: bundle config files for VM build
-_bundle-config:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	if [[ -z "${POLIS_IMAGE_VERSION:-}" ]]; then
-		POLIS_IMAGE_VERSION="latest"
-	fi
-	export POLIS_IMAGE_VERSION
-	bash packer/scripts/bundle-polis-config.sh
-
-# Internal: Windows-version bundling for config
-_bundle-config-windows:
-	powershell -NoProfile -ExecutionPolicy Bypass packer/scripts/bundle-config-windows.ps1
-
-# Internal: Windows-version bundling for agents
-_build-agents-windows:
-	powershell -NoProfile -ExecutionPolicy Bypass packer/scripts/build-agents-windows.ps1
-
 
 # ── Setup ───────────────────────────────────────────────────────────
 setup: setup-ca setup-valkey setup-toolbox
@@ -357,14 +245,6 @@ status:
 
 logs service="":
 	docker compose -f docker-compose.yml --env-file .env logs --tail=50 -f {{service}}
-
-# ── Release ─────────────────────────────────────────────────────────
-package-vm arch="amd64":
-	#!/usr/bin/env bash
-	set -euo pipefail
-	VERSION=$(git describe --tags --always)
-	cp packer/output/polis-*.qcow2 "polis-${VERSION}-{{arch}}.qcow2"
-	sha256sum "polis-${VERSION}-{{arch}}.qcow2" > "polis-${VERSION}-{{arch}}.qcow2.sha256"
 
 # ── Clean ───────────────────────────────────────────────────────────
 clean:

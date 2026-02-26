@@ -159,7 +159,7 @@ mod tests {
         async fn vm_info(&self) -> Result<Output> {
             unimplemented!()
         }
-        async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
             unimplemented!()
         }
         async fn start(&self) -> Result<Output> {

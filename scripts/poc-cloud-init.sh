@@ -104,7 +104,7 @@ phase2_bundle_and_transfer() {
     log_step "Phase 2: Bundle config and transfer into VM"
 
     local bundle_dir
-    bundle_dir=$(mktemp -d)
+    bundle_dir=$(mktemp -d --tmpdir="${HOME}")
     trap "rm -rf '${bundle_dir}'" RETURN
 
     log_info "Bundling polis config..."
@@ -235,7 +235,7 @@ phase3_generate_certs() {
         chmod +x scripts/setup-certs.sh
         chmod +x services/state/scripts/*.sh 2>/dev/null || true
         chmod +x services/toolbox/scripts/*.sh 2>/dev/null || true
-        bash scripts/setup-certs.sh
+        sudo bash scripts/setup-certs.sh
     "
     log_ok "Certificates generated"
 }

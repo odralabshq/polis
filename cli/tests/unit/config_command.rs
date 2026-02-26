@@ -68,7 +68,7 @@ macro_rules! multipass_stub_methods {
                 stderr: Vec::new(),
             })
         }
-        async fn launch(&self, _: &str, _: &str, _: &str, _: &str) -> Result<Output> {
+        async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
             anyhow::bail!("launch not expected in this test")
         }
         async fn start(&self) -> Result<Output> {

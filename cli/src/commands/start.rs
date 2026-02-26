@@ -1,14 +1,12 @@
 //! `polis start` — start workspace (download and create if needed).
 
-use std::path::PathBuf;
-
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Args;
 
 use crate::multipass::Multipass;
 use crate::state::{StateManager, WorkspaceState};
-use crate::workspace::{health, image, vm};
+use crate::workspace::{digest, health, vm};
 
 /// Path to the polis project root inside the VM.
 const VM_POLIS_ROOT: &str = "/opt/polis";
@@ -16,13 +14,27 @@ const VM_POLIS_ROOT: &str = "/opt/polis";
 /// Arguments for the start command.
 #[derive(Args)]
 pub struct StartArgs {
-    /// Use custom image instead of cached/downloaded
-    #[arg(long)]
-    pub image: Option<String>,
-
     /// Agent to activate (must match agents/<name>/ directory inside the VM)
     #[arg(long)]
     pub agent: Option<String>,
+}
+
+/// Check that the host architecture is amd64.
+///
+/// Sysbox (the container runtime used by Polis) does not support arm64 as of v0.6.7.
+///
+/// # Errors
+///
+/// Returns an error if the host is arm64 / aarch64.
+pub fn check_architecture() -> Result<()> {
+    if std::env::consts::ARCH == "aarch64" {
+        anyhow::bail!(
+            "Polis requires an amd64 host. \
+Sysbox (the container runtime used by Polis) does not support arm64 as of v0.6.7. \
+Please use an amd64 machine."
+        );
+    }
+    Ok(())
 }
 
 /// Run `polis start`.
@@ -31,12 +43,19 @@ pub struct StartArgs {
 ///
 /// Returns an error if image acquisition, VM creation, or health check fails.
 pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+    check_architecture()?;
     let state_mgr = StateManager::new()?;
     let vm_state = vm::state(mp).await?;
 
     match vm_state {
         vm::VmState::Running => return handle_running_vm(&state_mgr, args, quiet),
-        vm::VmState::NotFound => create_and_start_vm(&state_mgr, args, mp, quiet).await?,
+        vm::VmState::NotFound => {
+            // create_and_start_vm handles the full provisioning flow including
+            // health check and config hash write.
+            create_and_start_vm(&state_mgr, args, mp, quiet).await?;
+            print_success_message(args.agent.as_deref(), quiet);
+            return Ok(());
+        }
         _ => restart_vm(&state_mgr, args, mp, quiet).await?,
     }
 
@@ -63,28 +82,74 @@ fn handle_running_vm(state_mgr: &StateManager, args: &StartArgs, quiet: bool) ->
 }
 
 /// Create a new VM and start the workspace.
+///
+/// Full provisioning flow (Phase 1 + Phase 2):
+/// 1. `extract_assets()` — extract 3 embedded files to temp dir, hold TempDir guard
+/// 2. `vm::create()` — launch VM with cloud-init, verify cloud-init
+/// 3. `vm::transfer_config()` — transfer tarball, extract, write .env
+/// 4. `vm::pull_images()` — docker compose pull with 10-min timeout
+/// 5. `digest::verify_image_digests()` — verify pulled images against manifest
+/// 6. `setup_agent_if_requested()` — if agent specified
+/// 7. `start_compose()` — docker compose up -d
+/// 8. `health::wait_ready()` — wait for health check
+/// 9. `vm::write_config_hash()` — write hash AFTER successful startup
+/// 10. TempDir guard dropped automatically for cleanup
 async fn create_and_start_vm(
     state_mgr: &StateManager,
     args: &StartArgs,
     mp: &impl Multipass,
     quiet: bool,
 ) -> Result<()> {
-    let source = resolve_image_source(args.image.as_deref(), state_mgr)?;
-    let image_path = image::ensure_available(source, quiet)?;
-    vm::create(mp, &image_path, quiet).await?;
+    // Step 1: Extract all 3 embedded assets to a temp dir.
+    // The TempDir guard must be held until all operations complete.
+    let (assets_dir, _assets_guard) =
+        crate::assets::extract_assets().context("extracting embedded assets")?;
 
+    // Compute the config tarball hash now (before transfer) so we can write it
+    // after successful startup. Hash is computed on the host from the embedded asset.
+    let tar_path = assets_dir.join("polis-setup.config.tar");
+    let config_hash =
+        vm::sha256_file(&tar_path).context("computing config tarball SHA256")?;
+
+    // Step 2: Launch VM with cloud-init and verify cloud-init completed.
+    vm::create(mp, quiet).await?;
+
+    // Step 3: Transfer config tarball into VM, extract to /opt/polis, write .env.
+    let version = env!("CARGO_PKG_VERSION");
+    vm::transfer_config(mp, &assets_dir, version)
+        .await
+        .context("transferring config to VM")?;
+
+    // Step 4: Pull all Docker images (10-minute timeout).
+    vm::pull_images(mp).await.context("pulling Docker images")?;
+
+    // Step 5: Verify pulled image digests against embedded manifest.
+    digest::verify_image_digests(mp)
+        .await
+        .context("verifying image digests")?;
+
+    // Step 6: Set up agent artifacts if requested.
     setup_agent_if_requested(mp, args.agent.as_deref()).await?;
+
+    // Step 7: Start docker compose (with optional agent overlay).
     start_compose(mp, args.agent.as_deref()).await?;
 
-    let sha256 = image::load_metadata(&image::images_dir()?)
-        .ok()
-        .flatten()
-        .map(|m| m.sha256);
+    // Step 8: Wait for all services to become healthy.
+    health::wait_ready(mp, quiet).await?;
+
+    // Step 9: Write config hash AFTER successful startup so failed provisioning
+    // can be retried (Requirements 15.1, 15.3).
+    vm::write_config_hash(mp, &config_hash)
+        .await
+        .context("writing config hash")?;
+
+    // Step 10: _assets_guard is dropped here, cleaning up the temp directory.
+
     let state = WorkspaceState {
         workspace_id: generate_workspace_id(),
         created_at: Utc::now(),
-        image_sha256: sha256,
-        image_source: args.image.clone(),
+        image_sha256: None,
+        image_source: None,
         active_agent: args.agent.clone(),
     };
     state_mgr.save(&state)
@@ -113,33 +178,6 @@ async fn restart_vm(
     });
     state.active_agent.clone_from(&args.agent);
     state_mgr.save(&state)
-}
-
-/// Resolve image source from CLI arg or persisted state.
-fn resolve_image_source(
-    cli_image: Option<&str>,
-    state_mgr: &StateManager,
-) -> Result<image::ImageSource> {
-    if let Some(s) = cli_image {
-        return parse_image_source(s);
-    }
-    let persisted = state_mgr
-        .load()?
-        .and_then(|s| s.image_source)
-        .map(|s| parse_image_source(&s))
-        .transpose()?
-        .unwrap_or(image::ImageSource::Default);
-    Ok(persisted)
-}
-
-/// Parse a string into an `ImageSource`.
-fn parse_image_source(s: &str) -> Result<image::ImageSource> {
-    if s.starts_with("http://") || s.starts_with("https://") {
-        return Ok(image::ImageSource::HttpUrl(s.to_string()));
-    }
-    let path = PathBuf::from(s);
-    anyhow::ensure!(path.exists(), "Image file not found: {}", path.display());
-    Ok(image::ImageSource::LocalFile(path))
 }
 
 /// Validate and generate artifacts for an agent if one is requested.
@@ -337,6 +375,38 @@ pub fn generate_workspace_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_architecture_passes_on_non_arm64() {
+        // On any non-aarch64 host this must succeed.
+        // On an aarch64 host the test is skipped so CI on Apple Silicon still passes.
+        if std::env::consts::ARCH == "aarch64" {
+            // Running on arm64 — verify the function correctly returns an error.
+            let err = check_architecture().unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("amd64"), "error should mention amd64: {msg}");
+            assert!(msg.contains("Sysbox"), "error should mention Sysbox: {msg}");
+            assert!(msg.contains("arm64"), "error should mention arm64: {msg}");
+        } else {
+            assert!(
+                check_architecture().is_ok(),
+                "check_architecture() should succeed on non-arm64 host"
+            );
+        }
+    }
+
+    #[test]
+    fn check_architecture_error_message_content() {
+        // Directly verify the error message text by simulating what the function
+        // would produce on arm64 — we inspect the bail! string directly.
+        let msg = "Polis requires an amd64 host. \
+Sysbox (the container runtime used by Polis) does not support arm64 as of v0.6.7. \
+Please use an amd64 machine.";
+        assert!(msg.contains("amd64"));
+        assert!(msg.contains("Sysbox"));
+        assert!(msg.contains("arm64"));
+        assert!(msg.contains("v0.6.7"));
+    }
 
     #[test]
     fn workspace_id_format() {

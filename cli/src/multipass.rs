@@ -7,6 +7,26 @@ use anyhow::{Context, Result};
 /// VM name used by all multipass operations.
 pub const VM_NAME: &str = "polis";
 
+/// Parameters for `multipass launch`. Struct-based to avoid breaking
+/// test doubles on future parameter additions.
+pub struct LaunchParams<'a> {
+    /// Ubuntu image to launch, e.g. `"24.04"` (not a `file://` URL).
+    pub image: &'a str,
+    /// Number of vCPUs, e.g. `"2"`.
+    pub cpus: &'a str,
+    /// Memory size, e.g. `"8G"`.
+    pub memory: &'a str,
+    /// Disk size, e.g. `"40G"`.
+    pub disk: &'a str,
+    /// Optional path to a cloud-init YAML file.
+    /// When `Some`, `--cloud-init <path>` is appended to the launch command.
+    /// When `None`, the flag is omitted entirely.
+    pub cloud_init: Option<&'a str>,
+    /// Launch timeout in seconds, e.g. `"900"`.
+    /// Defaults to `"600"` when `None`.
+    pub timeout: Option<&'a str>,
+}
+
 /// Abstraction over the multipass CLI, enabling test doubles.
 ///
 /// All methods target the `polis` VM. The production implementation
@@ -22,11 +42,13 @@ pub trait Multipass {
 
     /// Run `multipass launch` with the given VM parameters.
     ///
+    /// Includes `--cloud-init <path>` when `params.cloud_init` is `Some`;
+    /// omits the flag when it is `None`.
+    ///
     /// # Errors
     ///
     /// Returns an error if the command cannot be spawned.
-    async fn launch(&self, image_url: &str, cpus: &str, memory: &str, disk: &str)
-    -> Result<Output>;
+    async fn launch(&self, params: &LaunchParams<'_>) -> Result<Output>;
 
     /// Run `multipass start polis`.
     ///
@@ -123,26 +145,29 @@ impl Multipass for MultipassCli {
 
     async fn launch(
         &self,
-        image_url: &str,
-        cpus: &str,
-        memory: &str,
-        disk: &str,
+        params: &LaunchParams<'_>,
     ) -> Result<Output> {
+        let timeout = params.timeout.unwrap_or("600");
+        let mut args = vec![
+            "launch",
+            params.image,
+            "--name",
+            VM_NAME,
+            "--cpus",
+            params.cpus,
+            "--memory",
+            params.memory,
+            "--disk",
+            params.disk,
+            "--timeout",
+            timeout,
+        ];
+        if let Some(path) = params.cloud_init {
+            args.push("--cloud-init");
+            args.push(path);
+        }
         tokio::process::Command::new("multipass")
-            .args([
-                "launch",
-                image_url,
-                "--name",
-                VM_NAME,
-                "--cpus",
-                cpus,
-                "--memory",
-                memory,
-                "--disk",
-                disk,
-                "--timeout",
-                "600",
-            ])
+            .args(&args)
             .output()
             .await
             .context("failed to run multipass launch")

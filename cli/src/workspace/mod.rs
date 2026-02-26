@@ -4,7 +4,9 @@
 //! - `image` — Image download, verification, and caching
 //! - `vm` — VM lifecycle operations
 //! - `health` — Health checks and readiness waiting
+//! - `digest` — Image digest verification against the embedded release manifest
 
+pub mod digest;
 pub mod health;
 pub mod image;
 pub mod vm;
