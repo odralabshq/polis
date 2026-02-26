@@ -48,50 +48,13 @@ function Install-Cli {
     $bin = Join-Path $RepoDir "cli\target\release\polis.exe"
     if (-not (Test-Path $bin)) {
         Write-Err "CLI binary not found at $bin"
-        Write-Host "  Build it first: cd $RepoDir\cli; cargo build --release"
+        Write-Host "  Build it first: cd $RepoDir; just build-windows"
         exit 1
     }
     $dest = Join-Path $InstallDir "bin"
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item $bin (Join-Path $dest "polis.exe") -Force
     Write-Ok "Installed CLI from $bin"
-}
-
-# ── Image init ────────────────────────────────────────────────────────────────
-
-function Invoke-PolisInit {
-    $outputDir = Join-Path $RepoDir "packer\output"
-    $image = Get-ChildItem $outputDir -Filter "*.qcow2" -ErrorAction SilentlyContinue |
-             Sort-Object Name | Select-Object -Last 1
-    if (-not $image) {
-        Write-Err "No VM image found in $outputDir"
-        Write-Host "  Build it first: just build-vm"
-        exit 1
-    }
-    $sidecar = $image.FullName + ".sha256"
-    if (-not (Test-Path $sidecar)) {
-        Write-Err "No signed sidecar found at $sidecar"
-        Write-Host "  Run: just build-vm  (signing happens automatically)"
-        exit 1
-    }
-    $pubKey = Join-Path $RepoDir ".secrets\polis-release.pub"
-    if (-not (Test-Path $pubKey)) {
-        Write-Err "Dev public key not found at $pubKey"
-        Write-Host "  Run: just build-vm  (keypair is generated automatically)"
-        exit 1
-    }
-    $keyB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pubKey))
-    $polis  = Join-Path $InstallDir "bin\polis.exe"
-    Write-Info "Running: polis start --image $($image.FullName)"
-    $env:POLIS_VERIFYING_KEY_B64 = $keyB64
-    try {
-        & $polis start --image $image.FullName
-    } catch {
-        Write-Warn "polis start failed. Run manually:"
-        Write-Host "  `$env:POLIS_VERIFYING_KEY_B64='$keyB64'; polis start --image $($image.FullName)"
-    } finally {
-        Remove-Item Env:\POLIS_VERIFYING_KEY_B64 -ErrorAction SilentlyContinue
-    }
 }
 
 # ── PATH ──────────────────────────────────────────────────────────────────────
@@ -104,6 +67,67 @@ function Add-ToUserPath {
         $env:PATH += ";$binDir"
         Write-Ok "Added $binDir to user PATH"
     }
+}
+
+# ── VM init + image loading ───────────────────────────────────────────────────
+
+function Invoke-PolisInit {
+    $imagesTar = Join-Path $RepoDir ".build\polis-images.tar.zst"
+    if (-not (Test-Path $imagesTar)) {
+        Write-Err "Docker images tarball not found: $imagesTar"
+        Write-Host "  Build it first: cd $RepoDir; just build-windows"
+        exit 1
+    }
+
+    $polis = Join-Path $InstallDir "bin\polis.exe"
+
+    # Remove existing VM for a clean install
+    $vmExists = & multipass info polis 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Warn "An existing polis VM was found."
+        $confirm = Read-Host "Remove it and start fresh? [y/N]"
+        if ($confirm -eq 'y' -or $confirm -eq 'Y') {
+            Write-Info "Removing existing polis VM..."
+            & multipass delete polis
+            & multipass purge
+        } else {
+            Write-Info "Keeping existing VM."
+        }
+    }
+    Remove-Item (Join-Path $InstallDir "state.json") -ErrorAction SilentlyContinue
+
+    Write-Info "Running: polis start --dev"
+    & $polis start --dev
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "polis start --dev failed."
+        exit 1
+    }
+
+    Write-Info "Loading Docker images into VM..."
+    & multipass transfer $imagesTar polis:/tmp/polis-images.tar.zst
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to transfer images tarball to VM"; exit 1 }
+
+    & multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst'
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to load Docker images in VM"; exit 1 }
+    Write-Ok "Docker images loaded"
+
+    # Tag loaded images with the CLI version
+    $cliVersion = (& $polis --version 2>&1) -replace '^polis\s+', ''
+    $tag = "v$cliVersion"
+    Write-Info "Tagging images as $tag..."
+    & multipass exec polis -- bash -c "docker images --format '{{.Repository}}:{{.Tag}}' | grep ':latest$' | while read -r img; do base=""`${img%%:*}""; docker tag ""`$img"" ""`${base}:$tag""; done"
+
+    # Pull go-httpbin (small third-party image not built locally)
+    & multipass exec polis -- docker pull mccutchen/go-httpbin 2>$null
+
+    # Fix ownership of key files for container uid 65532
+    & multipass exec polis -- sudo chown 65532:65532 /opt/polis/certs/valkey/server.key /opt/polis/certs/valkey/client.key /opt/polis/certs/toolbox/toolbox.key 2>$null
+    & multipass exec polis -- sudo chown 65532:65532 /opt/polis/certs/ca/ca.key 2>$null
+
+    Write-Info "Starting services..."
+    & multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans'
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to start services"; exit 1 }
+    Write-Ok "Services started"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -124,7 +148,4 @@ Invoke-PolisInit
 
 Write-Host ""
 Write-Ok "Polis (dev build) installed successfully!"
-Write-Host ""
-Write-Host "Get started:"
-Write-Host "  polis run"
 Write-Host ""

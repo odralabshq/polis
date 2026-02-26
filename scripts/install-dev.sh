@@ -105,7 +105,7 @@ run_init() {
     local images_tar="${REPO_DIR}/.build/polis-images.tar.zst"
     if [[ ! -f "${images_tar}" ]]; then
         log_error "Docker images tarball not found: ${images_tar}"
-        echo "  Build it first: cd ${REPO_DIR} && just build-docker save-docker-images"
+        echo "  Build it first: cd ${REPO_DIR} && just build"
         return 1
     fi
 

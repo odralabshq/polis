@@ -168,7 +168,7 @@ prepare-config:
 build: prepare-config build-cli build-docker save-docker-images
 
 # Windows-only: Build all components
-build-windows: prepare-config build-cli build-docker
+build-windows: prepare-config build-cli build-docker save-docker-images
 
 # Quick build — skips asset preparation
 build-quick: build-cli
