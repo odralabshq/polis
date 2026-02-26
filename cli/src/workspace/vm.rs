@@ -110,7 +110,7 @@ pub async fn verify_cloud_init(mp: &impl Multipass) -> Result<()> {
 ///
 /// Returns an error if prerequisites are not met, asset extraction fails,
 /// the multipass launch fails, or cloud-init reports a failure.
-pub async fn create(mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn create(mp: &impl Multipass, quiet: bool, dev: bool) -> Result<()> {
     check_prerequisites(mp).await?;
 
     if !quiet {
@@ -176,7 +176,13 @@ pub async fn create(mp: &impl Multipass, quiet: bool) -> Result<()> {
     verify_cloud_init(mp).await?;
 
     configure_credentials(mp).await;
-    start_services_with_progress(mp, quiet).await;
+
+    // In dev mode, skip starting services — images will be loaded manually
+    // by the install-dev script after this function returns.
+    if !dev {
+        start_services_with_progress(mp, quiet).await;
+    }
+
     pin_host_key().await;
     Ok(())
 }

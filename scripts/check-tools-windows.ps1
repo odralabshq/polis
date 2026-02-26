@@ -1,4 +1,4 @@
-# check-tools-windows.ps1 — Verify all prerequisites for building Polis on Windows
+﻿# check-tools-windows.ps1 — Verify all prerequisites for building Polis on Windows
 $ErrorActionPreference = "Stop"
 
 $missing = @()

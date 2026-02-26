@@ -1,4 +1,4 @@
-# Polis Dev Installer for Windows — installs from local build artifacts
+﻿# Polis Dev Installer for Windows — installs from local build artifacts
 # Usage: .\scripts\install-dev.ps1 [-RepoDir C:\path\to\polis]
 [CmdletBinding()]
 param(
@@ -28,8 +28,10 @@ function Assert-Multipass {
     $verLine = (& multipass version 2>$null | Select-Object -First 1) -replace '\s+', ' '
     $verStr  = ($verLine -split ' ')[1]
     if ($verStr) {
+        # Strip platform suffixes like +win, +mac so [version] can parse it
+        $verClean = $verStr -replace '\+.*', ''
         try {
-            $installed = [version]$verStr
+            $installed = [version]$verClean
             if ($installed -lt $MultipassMin) {
                 Write-Err "Multipass $verStr is too old (need >= $MultipassMin)."
                 Write-Host "  Update: https://multipass.run/install"
@@ -82,11 +84,20 @@ function Invoke-PolisInit {
     $polis = Join-Path $InstallDir "bin\polis.exe"
 
     # Remove existing VM for a clean install
-    $vmExists = & multipass info polis 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    $vmExists = $false
+    try {
+        $ErrorActionPreference = "Continue"
+        $null = & multipass info polis 2>&1
+        if ($LASTEXITCODE -eq 0) { $vmExists = $true }
+        $ErrorActionPreference = "Stop"
+    } catch {
+        $ErrorActionPreference = "Stop"
+    }
+
+    if ($vmExists) {
         Write-Warn "An existing polis VM was found."
         $confirm = Read-Host "Remove it and start fresh? [y/N]"
-        if ($confirm -eq 'y' -or $confirm -eq 'Y') {
+        if ($confirm -eq 'y') {
             Write-Info "Removing existing polis VM..."
             & multipass delete polis
             & multipass purge
@@ -97,8 +108,11 @@ function Invoke-PolisInit {
     Remove-Item (Join-Path $InstallDir "state.json") -ErrorAction SilentlyContinue
 
     Write-Info "Running: polis start --dev"
+    $ErrorActionPreference = "Continue"
     & $polis start --dev
-    if ($LASTEXITCODE -ne 0) {
+    $startExitCode = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($startExitCode -ne 0) {
         Write-Err "polis start --dev failed."
         exit 1
     }
@@ -115,7 +129,8 @@ function Invoke-PolisInit {
     $cliVersion = (& $polis --version 2>&1) -replace '^polis\s+', ''
     $tag = "v$cliVersion"
     Write-Info "Tagging images as $tag..."
-    & multipass exec polis -- bash -c "docker images --format '{{.Repository}}:{{.Tag}}' | grep ':latest$' | while read -r img; do base=""`${img%%:*}""; docker tag ""`$img"" ""`${base}:$tag""; done"
+    $tagScript = 'docker images --format ''{{.Repository}}:{{.Tag}}'' | grep '':latest$'' | while read -r img; do base=${img%%:*}; docker tag $img ${base}:' + $tag + '; done'
+    & multipass exec polis -- bash -c $tagScript
 
     # Pull go-httpbin (small third-party image not built locally)
     & multipass exec polis -- docker pull mccutchen/go-httpbin 2>$null

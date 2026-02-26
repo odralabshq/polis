@@ -1,4 +1,4 @@
-# install-tools-windows.ps1 — Install all prerequisites for building Polis on Windows
+﻿# install-tools-windows.ps1 — Install all prerequisites for building Polis on Windows
 # Requires: PowerShell 5.1+, winget, and an internet connection.
 # Run from repo root as a normal user; will UAC-elevate only where needed.
 #
@@ -101,12 +101,39 @@ else {
     }
 }
 
+# ─── PATH fixup for just ────────────────────────────────────────────────────
+# winget installs just to its packages dir but doesn't always add it to PATH
+if (-not (Test-Command just)) {
+    $justPkg = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter "Casey.Just*" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($justPkg) {
+        $justDir = $justPkg.FullName
+        $justExe = Get-ChildItem $justDir -Filter "just.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($justExe) {
+            $justBinDir = $justExe.DirectoryName
+            $userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+            if ($userPath -notlike "*$justBinDir*") {
+                [System.Environment]::SetEnvironmentVariable("PATH", "$userPath;$justBinDir", "User")
+                $env:PATH += ";$justBinDir"
+                Write-Ok "Added just to user PATH: $justBinDir"
+            }
+        }
+    }
+}
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host " Install complete! Verify with: just install-tools-windows --check" -ForegroundColor Cyan
+Write-Host " Install complete!" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
 Write-Host " Next steps:"
-Write-Host "  1. Start Docker Desktop if not already running"
-Write-Host "  2. Run: just build-windows"
+Write-Host "  1. Close and reopen your terminal (so PATH changes take effect)"
+Write-Host "  2. Verify: just --version"
+Write-Host "  3. Start Docker Desktop if not already running"
+Write-Host "  4. Run: just build-windows"
+Write-Host ""
+if (-not (Test-Command just)) {
+    Write-Host " NOTE: If 'just' is still not found after restarting your terminal," -ForegroundColor Yellow
+    Write-Host "       install it manually: winget install Casey.Just" -ForegroundColor Yellow
+    Write-Host "       Then add its install location to your PATH." -ForegroundColor Yellow
+}

@@ -167,8 +167,12 @@ prepare-config:
 
 build: prepare-config build-cli build-docker save-docker-images
 
+# Windows-only: Prepare config assets (no sudo, PowerShell tar)
+prepare-config-windows:
+	powershell -NoProfile -ExecutionPolicy Bypass scripts/prepare-config-windows.ps1
+
 # Windows-only: Build all components
-build-windows: prepare-config build-cli build-docker save-docker-images
+build-windows: prepare-config-windows build-cli build-docker save-docker-images-windows
 
 # Quick build — skips asset preparation
 build-quick: build-cli
@@ -199,6 +203,10 @@ save-docker-images:
 	echo "→ Saving $(echo "$IMAGES" | wc -w) images..."
 	docker save $IMAGES | zstd -T0 -3 -o .build/polis-images.tar.zst --force
 	echo "✓ Saved .build/polis-images.tar.zst ($(du -h .build/polis-images.tar.zst | cut -f1))"
+
+# Windows-only: Save Docker images (uses PowerShell, no bash/zstd dependency)
+save-docker-images-windows:
+	powershell -NoProfile -ExecutionPolicy Bypass scripts/save-docker-images-windows.ps1
 
 # Build a specific service
 build-service service:

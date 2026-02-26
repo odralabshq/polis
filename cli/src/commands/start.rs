@@ -115,7 +115,7 @@ async fn create_and_start_vm(
     let config_hash = vm::sha256_file(&tar_path).context("computing config tarball SHA256")?;
 
     // Step 2: Launch VM with cloud-init and verify cloud-init completed.
-    vm::create(mp, quiet).await?;
+    vm::create(mp, quiet, args.dev).await?;
 
     // Step 3: Transfer config tarball into VM, extract to /opt/polis, write .env.
     let version = env!("CARGO_PKG_VERSION");
