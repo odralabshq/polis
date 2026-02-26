@@ -101,14 +101,14 @@ setup() {
 
 # ── DHI Supply Chain (Issue 14) ──────────────────────────────────────────
 
-@test "compose config: scanner-init uses DHI alpine-base" {
-    run grep -A2 "scanner-init:" "$COMPOSE"
-    assert_output --partial "dhi.io/alpine-base"
+@test "compose config: scanner-init uses polis-init image" {
+    run grep -A5 "^  scanner-init:" "$COMPOSE"
+    assert_output --partial "polis-init-oss"
 }
 
-@test "compose config: state-init uses DHI alpine-base" {
-    run grep -A2 "state-init:" "$COMPOSE"
-    assert_output --partial "dhi.io/alpine-base"
+@test "compose config: state-init uses polis-init image" {
+    run grep -A5 "^  state-init:" "$COMPOSE"
+    assert_output --partial "polis-init-oss"
 }
 
 @test "compose config: state uses DHI valkey" {

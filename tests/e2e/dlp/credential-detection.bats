@@ -74,7 +74,7 @@ teardown() {
     run_with_network_skip "httpbin.org" \
         docker exec "$CTR_WORKSPACE" curl -s -D - -o /dev/null \
         -X POST -d "data=${RSA_KEY}" \
-        --connect-timeout 15 https://httpbin.org/post
+        --connect-timeout 15 --max-time 30 https://httpbin.org/post
     assert_output --partial "x-polis-block: true"
     assert_output --partial "x-polis-pattern: rsa_key"
 }
@@ -86,6 +86,6 @@ teardown() {
     run_with_network_skip "httpbin.org" \
         docker exec "$CTR_WORKSPACE" curl -s -D - -o /dev/null \
         -X POST --data-binary @/tmp/large_payload \
-        --connect-timeout 15 https://httpbin.org/post
+        --connect-timeout 15 --max-time 30 https://httpbin.org/post
     assert_output --partial "x-polis-block: true"
 }

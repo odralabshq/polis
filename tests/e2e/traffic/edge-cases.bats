@@ -14,6 +14,12 @@ setup_file() {
     done
     approve_host "$HTTPBIN_HOST" 600
     approve_host "httpbin.org" 600
+    # Warm up the ICAP chain with a benign request before running tests
+    for _i in $(seq 1 5); do
+        docker exec "$CTR_WORKSPACE" curl -sf --connect-timeout 5 \
+            $PROXY "http://${HTTPBIN_HOST}/get" &>/dev/null && break
+        sleep 2
+    done
 }
 
 teardown_file() {

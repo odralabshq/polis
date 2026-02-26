@@ -401,7 +401,6 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
-      - seccomp=./services/init/config/seccomp.json
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     command:
@@ -409,8 +408,8 @@ services:
       - -c
       - |
         INT_BR="br-$$(docker network inspect polis_internal-bridge --format '{{.Id}}' | cut -c1-12)"
-        iptables -C DOCKER-USER -i "$$INT_BR" -o "$$INT_BR" -j ACCEPT 2>/dev/null ||
-        iptables -I DOCKER-USER -i "$$INT_BR" -o "$$INT_BR" -j ACCEPT
+        nft list chain ip filter DOCKER-USER 2>/dev/null | grep -q "iifname \"$$INT_BR\" oifname \"$$INT_BR\" accept" ||
+        nft insert rule ip filter DOCKER-USER iifname "$$INT_BR" oifname "$$INT_BR" accept
     restart: "no"
 
   # =========================================================
@@ -430,7 +429,6 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
-      - seccomp=./services/init/config/seccomp.json
     deploy:
       resources:
         limits:
@@ -457,7 +455,6 @@ services:
     read_only: true
     security_opt:
       - no-new-privileges:true
-      - seccomp=./services/init/config/seccomp.json
     deploy:
       resources:
         limits:

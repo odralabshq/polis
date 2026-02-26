@@ -25,6 +25,15 @@ install-tools:
 		sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 		sudo usermod -aG docker "${USER}"
 	fi
+	# Sysbox container runtime
+	if ! docker info 2>/dev/null | grep -q sysbox-runc; then
+		SYSBOX_VERSION="0.6.6"
+		SYSBOX_DEB="/tmp/sysbox-ce.deb"
+		curl -fsSL -o "${SYSBOX_DEB}" \
+			"https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+		sudo apt-get install -y "${SYSBOX_DEB}"
+		rm "${SYSBOX_DEB}"
+	fi
 	# shellcheck
 	command -v shellcheck &>/dev/null || sudo apt-get install -y shellcheck
 	# hadolint
@@ -46,6 +55,8 @@ install-tools:
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 		source "${HOME}/.cargo/env"
 	fi
+	# Git submodules (bats-core)
+	git submodule update --init
 
 # Windows-only: Install all prerequisites for building Polis
 # Installs: just, Docker Desktop, shellcheck, hadolint, Rust toolchain, zipsign
@@ -114,7 +125,7 @@ test-e2e:
 test-all: test test-integration test-e2e
 
 # Full clean-build-test cycle — CI equivalent, stops on first failure
-test-clean: clean-all build-docker setup up test-all
+test-clean: clean-all prepare-config build-docker setup up test-all
 
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
