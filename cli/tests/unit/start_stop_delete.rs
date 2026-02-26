@@ -61,8 +61,6 @@ async fn test_delete_all_no_workspace_succeeds() {
 
 #[tokio::test]
 async fn test_start_already_running_returns_ok() {
-    let args = StartArgs {
-        agent: None,
-    };
+    let args = StartArgs { agent: None };
     assert!(start::run(&args, &MultipassVmRunning, true).await.is_ok());
 }

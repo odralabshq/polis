@@ -143,10 +143,7 @@ impl Multipass for MultipassCli {
             .context("failed to run multipass info")
     }
 
-    async fn launch(
-        &self,
-        params: &LaunchParams<'_>,
-    ) -> Result<Output> {
+    async fn launch(&self, params: &LaunchParams<'_>) -> Result<Output> {
         let timeout = params.timeout.unwrap_or("600");
         let mut args = vec![
             "launch",

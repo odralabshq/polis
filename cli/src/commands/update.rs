@@ -174,8 +174,8 @@ pub async fn run(
 /// Returns an error if any step of the update cycle fails.
 pub async fn update_config(mp: &impl Multipass, quiet: bool) -> Result<()> {
     // 1. Extract embedded assets (new version's tarball)
-    let (assets_dir, _guard) = crate::assets::extract_assets()
-        .context("extracting embedded assets")?;
+    let (assets_dir, _guard) =
+        crate::assets::extract_assets().context("extracting embedded assets")?;
 
     // 2. Compute SHA256 of the new config tarball
     let new_hash = vm::sha256_file(&assets_dir.join("polis-setup.config.tar"))

@@ -169,7 +169,8 @@ mod tests {
             unimplemented!()
         }
         async fn exec(&self, args: &[&str]) -> Result<Output> {
-            let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+            let args_owned: Vec<String> =
+                args.iter().map(std::string::ToString::to_string).collect();
             self.exec_calls.lock().expect("lock").push(args_owned);
 
             let combined = args.join(" ");
@@ -238,7 +239,10 @@ mod tests {
         let result = verify_manifest(&mp, &manifest).await;
         assert!(result.is_ok(), "empty manifest should succeed");
         // No exec calls should have been made.
-        assert!(mp.calls().is_empty(), "no docker inspect calls for empty manifest");
+        assert!(
+            mp.calls().is_empty(),
+            "no docker inspect calls for empty manifest"
+        );
     }
 
     #[tokio::test]
@@ -273,8 +277,14 @@ mod tests {
 
         let msg = err.to_string();
         assert!(msg.contains(image), "error should mention image name");
-        assert!(msg.contains(expected), "error should mention expected digest");
-        assert!(msg.contains(actual_digest), "error should mention actual digest");
+        assert!(
+            msg.contains(expected),
+            "error should mention expected digest"
+        );
+        assert!(
+            msg.contains(actual_digest),
+            "error should mention actual digest"
+        );
         assert!(
             msg.contains("polis delete && polis start"),
             "error should include recovery command"
@@ -310,23 +320,49 @@ mod tests {
         // No matching response → mock returns fail_output() with non-zero exit.
         // But our verify_manifest checks the stdout content, not exit code.
         // To simulate a real exec error, use a mock that returns Err.
+        #[allow(clippy::items_after_statements)]
         struct FailingMock;
+        #[allow(clippy::items_after_statements)]
         impl Multipass for FailingMock {
-            async fn vm_info(&self) -> Result<Output> { unimplemented!() }
-            async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> { unimplemented!() }
-            async fn start(&self) -> Result<Output> { unimplemented!() }
-            async fn stop(&self) -> Result<Output> { unimplemented!() }
-            async fn delete(&self) -> Result<Output> { unimplemented!() }
-            async fn purge(&self) -> Result<Output> { unimplemented!() }
-            async fn transfer(&self, _: &str, _: &str) -> Result<Output> { unimplemented!() }
-            async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { unimplemented!() }
-            async fn version(&self) -> Result<Output> { unimplemented!() }
+            async fn vm_info(&self) -> Result<Output> {
+                unimplemented!()
+            }
+            async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
+                unimplemented!()
+            }
+            async fn start(&self) -> Result<Output> {
+                unimplemented!()
+            }
+            async fn stop(&self) -> Result<Output> {
+                unimplemented!()
+            }
+            async fn delete(&self) -> Result<Output> {
+                unimplemented!()
+            }
+            async fn purge(&self) -> Result<Output> {
+                unimplemented!()
+            }
+            async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+                unimplemented!()
+            }
+            async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+                unimplemented!()
+            }
+            async fn version(&self) -> Result<Output> {
+                unimplemented!()
+            }
             async fn exec(&self, _: &[&str]) -> Result<Output> {
                 Err(anyhow::anyhow!("multipass exec failed"))
             }
-            async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> { unimplemented!() }
-            fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> { unimplemented!() }
-            async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> { unimplemented!() }
+            async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+                unimplemented!()
+            }
+            fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+                unimplemented!()
+            }
+            async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+                unimplemented!()
+            }
         }
 
         let mut manifest = DigestManifest::new();
@@ -350,10 +386,8 @@ mod tests {
             .iter()
             .map(|(img, digest)| (*img, format!("{img}@{digest}")))
             .collect();
-        let responses_ref: Vec<(&str, &str)> = responses
-            .iter()
-            .map(|(k, v)| (*k, v.as_str()))
-            .collect();
+        let responses_ref: Vec<(&str, &str)> =
+            responses.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
         let mp = DigestMock::new(responses_ref);
         let mut manifest = DigestManifest::new();

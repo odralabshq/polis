@@ -1,4 +1,7 @@
 //! `polis agent` — agent management subcommands.
+#![allow(clippy::format_push_string)]
+#![allow(clippy::items_after_statements)]
+#![allow(clippy::too_many_lines)]
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -26,18 +29,16 @@ static AGENT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Shell metacharacters that must not appear in runtime.command.
 static SHELL_METACHAR_RE: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::expect_used)]
-    Regex::new(r#"[;|&`$()\\<>!#~*\[\]{}]"#).expect("valid regex")
+    Regex::new(r"[;|&`$()\\<>!#~*\[\]{}]").expect("valid regex")
 });
 
 /// Platform-reserved ports that agents must not use.
-const PLATFORM_PORTS: &[u16] = &[80, 443, 8080, 8443, 9090, 9091, 9092, 9093, 3000, 5432, 6379, 27017];
+const PLATFORM_PORTS: &[u16] = &[
+    80, 443, 8080, 8443, 9090, 9091, 9092, 9093, 3000, 5432, 6379, 27017,
+];
 
 /// Allowed prefixes for readWritePaths (same as generate-agent.sh).
-const ALLOWED_RW_PREFIXES: &[&str] = &[
-    "/opt/polis/agents/",
-    "/tmp/",
-    "/var/tmp/",
-];
+const ALLOWED_RW_PREFIXES: &[&str] = &["/opt/polis/agents/", "/tmp/", "/var/tmp/"];
 
 // ---------------------------------------------------------------------------
 // Full AgentManifest struct (typed representation of agent.yaml)
@@ -180,15 +181,15 @@ fn validate_full_manifest(manifest: &FullAgentManifest) -> Result<()> {
     }
 
     // install/init path escape check
-    if let Some(install) = &manifest.spec.install {
-        if install.contains("..") {
-            errors.push("spec.install path escapes agent directory".to_string());
-        }
+    if let Some(install) = &manifest.spec.install
+        && install.contains("..")
+    {
+        errors.push("spec.install path escapes agent directory".to_string());
     }
-    if let Some(init) = &manifest.spec.init {
-        if init.contains("..") {
-            errors.push("spec.init path escapes agent directory".to_string());
-        }
+    if let Some(init) = &manifest.spec.init
+        && init.contains("..")
+    {
+        errors.push("spec.init path escapes agent directory".to_string());
     }
 
     // Port conflict check
@@ -202,16 +203,18 @@ fn validate_full_manifest(manifest: &FullAgentManifest) -> Result<()> {
     }
 
     // readWritePaths prefix check
-    if let Some(security) = &manifest.spec.security {
-        if let Some(rw_paths) = &security.read_write_paths {
-            for path in rw_paths {
-                let allowed = ALLOWED_RW_PREFIXES.iter().any(|prefix| path.starts_with(prefix));
-                if !allowed {
-                    errors.push(format!(
-                        "readWritePaths entry '{path}' is outside allowed prefixes: {}",
-                        ALLOWED_RW_PREFIXES.join(", ")
-                    ));
-                }
+    if let Some(security) = &manifest.spec.security
+        && let Some(rw_paths) = &security.read_write_paths
+    {
+        for path in rw_paths {
+            let allowed = ALLOWED_RW_PREFIXES
+                .iter()
+                .any(|prefix| path.starts_with(prefix));
+            if !allowed {
+                errors.push(format!(
+                    "readWritePaths entry '{path}' is outside allowed prefixes: {}",
+                    ALLOWED_RW_PREFIXES.join(", ")
+                ));
             }
         }
     }
@@ -233,25 +236,47 @@ fn generate_compose_overlay(manifest: &FullAgentManifest, out_dir: &Path) -> Res
     let name = &manifest.metadata.name;
     let spec = &manifest.spec;
 
-    let health_interval = spec.health.as_ref().and_then(|h| h.interval.as_deref()).unwrap_or("30s");
-    let health_timeout = spec.health.as_ref().and_then(|h| h.timeout.as_deref()).unwrap_or("10s");
+    let health_interval = spec
+        .health
+        .as_ref()
+        .and_then(|h| h.interval.as_deref())
+        .unwrap_or("30s");
+    let health_timeout = spec
+        .health
+        .as_ref()
+        .and_then(|h| h.timeout.as_deref())
+        .unwrap_or("10s");
     let health_retries = spec.health.as_ref().and_then(|h| h.retries).unwrap_or(3);
-    let health_start_period = spec.health.as_ref().and_then(|h| h.start_period.as_deref()).unwrap_or("60s");
-    let health_cmd = spec.health.as_ref().and_then(|h| h.command.as_deref()).unwrap_or("");
+    let health_start_period = spec
+        .health
+        .as_ref()
+        .and_then(|h| h.start_period.as_deref())
+        .unwrap_or("60s");
+    let health_cmd = spec
+        .health
+        .as_ref()
+        .and_then(|h| h.command.as_deref())
+        .unwrap_or("");
 
     let healthcheck_test = format!(
         "systemctl is-active polis-init.service && systemctl is-active {name}.service && {health_cmd} && ip route | grep -q default"
     );
 
     let mut out = String::new();
-    out.push_str(&format!("# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n"));
+    out.push_str(&format!(
+        "# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n"
+    ));
     out.push_str("services:\n");
     out.push_str("  workspace:\n");
     out.push_str("    env_file:\n");
     out.push_str("      - .env\n");
     out.push_str("    volumes:\n");
-    out.push_str(&format!("      - ./agents/{name}/:/opt/agents/{name}/:ro\n"));
-    out.push_str(&format!("      - ./agents/{name}/.generated/{name}.service:/etc/systemd/system/{name}.service:ro\n"));
+    out.push_str(&format!(
+        "      - ./agents/{name}/:/opt/agents/{name}/:ro\n"
+    ));
+    out.push_str(&format!(
+        "      - ./agents/{name}/.generated/{name}.service:/etc/systemd/system/{name}.service:ro\n"
+    ));
     out.push_str(&format!("      - ./agents/{name}/.generated/{name}.service.sha256:/etc/systemd/system/{name}.service.sha256:ro\n"));
 
     // Persistence volume mounts
@@ -265,15 +290,23 @@ fn generate_compose_overlay(manifest: &FullAgentManifest, out_dir: &Path) -> Res
     }
 
     out.push_str("    healthcheck:\n");
-    out.push_str(&format!("      test: [\"CMD-SHELL\", \"{healthcheck_test}\"]\n"));
+    out.push_str(&format!(
+        "      test: [\"CMD-SHELL\", \"{healthcheck_test}\"]\n"
+    ));
     out.push_str(&format!("      interval: {health_interval}\n"));
     out.push_str(&format!("      timeout: {health_timeout}\n"));
     out.push_str(&format!("      retries: {health_retries}\n"));
     out.push_str(&format!("      start_period: {health_start_period}\n"));
 
     // Resources
-    let mem_limit = spec.resources.as_ref().and_then(|r| r.memory_limit.as_deref());
-    let mem_reservation = spec.resources.as_ref().and_then(|r| r.memory_reservation.as_deref());
+    let mem_limit = spec
+        .resources
+        .as_ref()
+        .and_then(|r| r.memory_limit.as_deref());
+    let mem_reservation = spec
+        .resources
+        .as_ref()
+        .and_then(|r| r.memory_reservation.as_deref());
     if mem_limit.is_some() || mem_reservation.is_some() {
         out.push_str("    deploy:\n");
         out.push_str("      resources:\n");
@@ -288,49 +321,50 @@ fn generate_compose_overlay(manifest: &FullAgentManifest, out_dir: &Path) -> Res
     }
 
     // Socat proxy sidecars (one per port)
-    if let Some(ports) = &spec.ports {
-        if !ports.is_empty() {
-            out.push('\n');
-            for port_spec in ports {
-                let container_port = port_spec.container;
-                let host_env = port_spec.host_env.as_deref().unwrap_or("");
-                let default_port = port_spec.default.unwrap_or(container_port);
-                out.push_str(&format!("  {name}-proxy-{container_port}:\n"));
-                out.push_str("    image: alpine/socat:latest\n");
-                out.push_str("    restart: unless-stopped\n");
-                out.push_str("    ports:\n");
-                if host_env.is_empty() {
-                    out.push_str(&format!("      - \"{default_port}:{container_port}\"\n"));
-                } else {
-                    out.push_str(&format!("      - \"${{{host_env}:-{default_port}}}:{container_port}\"\n"));
-                }
+    if let Some(ports) = &spec.ports
+        && !ports.is_empty()
+    {
+        out.push('\n');
+        for port_spec in ports {
+            let container_port = port_spec.container;
+            let host_env = port_spec.host_env.as_deref().unwrap_or("");
+            let default_port = port_spec.default.unwrap_or(container_port);
+            out.push_str(&format!("  {name}-proxy-{container_port}:\n"));
+            out.push_str("    image: alpine/socat:latest\n");
+            out.push_str("    restart: unless-stopped\n");
+            out.push_str("    ports:\n");
+            if host_env.is_empty() {
+                out.push_str(&format!("      - \"{default_port}:{container_port}\"\n"));
+            } else {
                 out.push_str(&format!(
+                    "      - \"${{{host_env}:-{default_port}}}:{container_port}\"\n"
+                ));
+            }
+            out.push_str(&format!(
                     "    command: TCP-LISTEN:{container_port},fork,reuseaddr TCP:polis-workspace:{container_port}\n"
                 ));
-                out.push_str("    networks:\n");
-                out.push_str("      - internal-bridge\n");
-                out.push_str("      - default\n");
-                out.push_str("    depends_on:\n");
-                out.push_str("      - workspace\n");
-            }
+            out.push_str("    networks:\n");
+            out.push_str("      - internal-bridge\n");
+            out.push_str("      - default\n");
+            out.push_str("    depends_on:\n");
+            out.push_str("      - workspace\n");
         }
     }
 
     // Top-level volumes section
-    if let Some(persistence) = &spec.persistence {
-        if !persistence.is_empty() {
-            out.push('\n');
-            out.push_str("volumes:\n");
-            for p in persistence {
-                out.push_str(&format!("  polis-agent-{name}-{}:\n", p.name));
-                out.push_str(&format!("    name: polis-agent-{name}-{}\n", p.name));
-            }
+    if let Some(persistence) = &spec.persistence
+        && !persistence.is_empty()
+    {
+        out.push('\n');
+        out.push_str("volumes:\n");
+        for p in persistence {
+            out.push_str(&format!("  polis-agent-{name}-{}:\n", p.name));
+            out.push_str(&format!("    name: polis-agent-{name}-{}\n", p.name));
         }
     }
 
     let out_path = out_dir.join("compose.agent.yaml");
-    std::fs::write(&out_path, out)
-        .with_context(|| format!("writing {}", out_path.display()))?;
+    std::fs::write(&out_path, out).with_context(|| format!("writing {}", out_path.display()))?;
     Ok(())
 }
 
@@ -341,23 +375,33 @@ fn generate_systemd_unit(manifest: &FullAgentManifest, out_dir: &Path) -> Result
     let runtime = &spec.runtime;
 
     let display_name = manifest.metadata.display_name.as_deref().unwrap_or(name);
-    let protect_system = spec.security.as_ref()
+    let protect_system = spec
+        .security
+        .as_ref()
         .and_then(|s| s.protect_system.as_deref())
         .unwrap_or("strict");
-    let protect_home = spec.security.as_ref()
+    let protect_home = spec
+        .security
+        .as_ref()
         .and_then(|s| s.protect_home.as_deref())
         .unwrap_or("true");
-    let private_tmp = spec.security.as_ref()
+    let private_tmp = spec
+        .security
+        .as_ref()
         .and_then(|s| s.private_tmp)
         .unwrap_or(true);
     let mem_max = spec.security.as_ref().and_then(|s| s.memory_max.as_deref());
     let cpu_quota = spec.security.as_ref().and_then(|s| s.cpu_quota.as_deref());
-    let rw_paths = spec.security.as_ref()
+    let rw_paths = spec
+        .security
+        .as_ref()
         .and_then(|s| s.read_write_paths.as_ref())
         .map(|paths| paths.join(" "));
 
     let mut out = String::new();
-    out.push_str(&format!("# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n"));
+    out.push_str(&format!(
+        "# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n"
+    ));
     out.push_str("[Unit]\n");
     out.push_str(&format!("Description={display_name}\n"));
     out.push_str("After=network-online.target polis-init.service\n");
@@ -393,7 +437,9 @@ fn generate_systemd_unit(manifest: &FullAgentManifest, out_dir: &Path) -> Result
 
     out.push('\n');
     if let Some(init) = &spec.init {
-        out.push_str(&format!("ExecStartPre=+/bin/bash /opt/agents/{name}/{init}\n"));
+        out.push_str(&format!(
+            "ExecStartPre=+/bin/bash /opt/agents/{name}/{init}\n"
+        ));
     }
     out.push_str(&format!("ExecStart={}\n", runtime.command));
     out.push('\n');
@@ -419,8 +465,7 @@ fn generate_systemd_unit(manifest: &FullAgentManifest, out_dir: &Path) -> Result
     out.push_str("WantedBy=multi-user.target\n");
 
     let out_path = out_dir.join(format!("{name}.service"));
-    std::fs::write(&out_path, out)
-        .with_context(|| format!("writing {}", out_path.display()))?;
+    std::fs::write(&out_path, out).with_context(|| format!("writing {}", out_path.display()))?;
     Ok(())
 }
 
@@ -434,8 +479,7 @@ fn generate_service_hash(manifest: &FullAgentManifest, out_dir: &Path) -> Result
     hasher.update(&content);
     let hash = format!("{:x}\n", hasher.finalize());
     let out_path = out_dir.join(format!("{name}.service.sha256"));
-    std::fs::write(&out_path, hash)
-        .with_context(|| format!("writing {}", out_path.display()))?;
+    std::fs::write(&out_path, hash).with_context(|| format!("writing {}", out_path.display()))?;
     Ok(())
 }
 
@@ -641,8 +685,8 @@ pub fn read_agent_metadata(polis_dir: &std::path::Path, agent_name: &str) -> Res
     let manifest_path = polis_dir.join("agents").join(agent_name).join("agent.yaml");
     let content = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("reading agent manifest: {}", manifest_path.display()))?;
-    let manifest: serde_yaml::Value = serde_yaml::from_str(&content)
-        .context("parsing agent.yaml")?;
+    let manifest: serde_yaml::Value =
+        serde_yaml::from_str(&content).context("parsing agent.yaml")?;
     AgentMetadata::from_manifest(&manifest)
 }
 
@@ -684,13 +728,10 @@ async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result
     // generate_agent_artifacts expects polis_dir/agents/<name>/agent.yaml
     // If the user passed the agent folder directly, we need to treat its parent as
     // the agents/ dir and its grandparent as polis_dir.
-    let polis_dir = parent_dir
-        .parent()
-        .unwrap_or(parent_dir);
+    let polis_dir = parent_dir.parent().unwrap_or(parent_dir);
     // Fallback: generate into the agent folder's .generated/ directly
     let out_dir = agent_folder.join(".generated");
-    std::fs::create_dir_all(&out_dir)
-        .context("creating .generated directory")?;
+    std::fs::create_dir_all(&out_dir).context("creating .generated directory")?;
     let manifest = parse_agent_manifest(&agent_folder.join("agent.yaml"))?;
     validate_full_manifest(&manifest)?;
     if !ctx.quiet {
@@ -865,7 +906,10 @@ async fn list(mp: &impl Multipass, ctx: &OutputContext, json: bool) -> Result<()
     let mut current_name: Option<String> = None;
     let mut current_yaml = String::new();
     for line in output.lines() {
-        if let Some(name) = line.strip_prefix("===AGENT:").and_then(|s| s.strip_suffix("===")) {
+        if let Some(name) = line
+            .strip_prefix("===AGENT:")
+            .and_then(|s| s.strip_suffix("==="))
+        {
             current_name = Some(name.to_string());
             current_yaml.clear();
         } else if line == "===END===" {
@@ -1076,8 +1120,8 @@ async fn shell(mp: &impl Multipass) -> Result<()> {
         .await?;
     let user = if cat_out.status.success() {
         let content = String::from_utf8_lossy(&cat_out.stdout);
-        let manifest: serde_yaml::Value = serde_yaml::from_str(&content)
-            .unwrap_or(serde_yaml::Value::Null);
+        let manifest: serde_yaml::Value =
+            serde_yaml::from_str(&content).unwrap_or(serde_yaml::Value::Null);
         manifest
             .get("spec")
             .and_then(|s| s.get("runtime"))
@@ -1194,13 +1238,13 @@ mod tests {
 
     #[test]
     fn test_agent_metadata_from_manifest_parses_fields() {
-        let yaml = r#"
+        let yaml = r"
 metadata:
   name: my-agent
 spec:
   runtime:
     user: agentuser
-"#;
+";
         let manifest: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse");
         let meta = AgentMetadata::from_manifest(&manifest).expect("from_manifest");
         assert_eq!(meta.compose_project, "my-agent");
@@ -1209,30 +1253,33 @@ spec:
 
     #[test]
     fn test_agent_metadata_missing_name_returns_error() {
-        let yaml = r#"
+        let yaml = r"
 metadata:
   version: v1.0
 spec:
   runtime:
     user: agentuser
-"#;
+";
         let manifest: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse");
-        let err = AgentMetadata::from_manifest(&manifest).unwrap_err();
+        let err = AgentMetadata::from_manifest(&manifest).expect_err("expected Err");
         assert!(err.to_string().contains("metadata.name"), "error: {err}");
     }
 
     #[test]
     fn test_agent_metadata_missing_runtime_user_returns_error() {
-        let yaml = r#"
+        let yaml = r"
 metadata:
   name: my-agent
 spec:
   runtime:
     command: /usr/bin/myapp
-"#;
+";
         let manifest: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse");
-        let err = AgentMetadata::from_manifest(&manifest).unwrap_err();
-        assert!(err.to_string().contains("spec.runtime.user"), "error: {err}");
+        let err = AgentMetadata::from_manifest(&manifest).expect_err("expected Err");
+        assert!(
+            err.to_string().contains("spec.runtime.user"),
+            "error: {err}"
+        );
     }
 
     #[test]
@@ -1245,7 +1292,7 @@ spec:
     user: agentuser
 "#;
         let manifest: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse");
-        let err = AgentMetadata::from_manifest(&manifest).unwrap_err();
+        let err = AgentMetadata::from_manifest(&manifest).expect_err("expected Err");
         assert!(err.to_string().contains("metadata.name"), "error: {err}");
     }
 
@@ -1268,7 +1315,7 @@ spec:
     #[test]
     fn test_read_agent_metadata_missing_file_returns_error() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let err = read_agent_metadata(dir.path(), "nonexistent").unwrap_err();
+        let err = read_agent_metadata(dir.path(), "nonexistent").expect_err("expected Err");
         assert!(
             err.to_string().contains("reading agent manifest"),
             "error: {err}"
@@ -1355,7 +1402,8 @@ spec:
 
     #[test]
     fn test_validate_full_manifest_valid() {
-        let manifest: FullAgentManifest = serde_yaml::from_str(full_manifest_yaml()).expect("parse");
+        let manifest: FullAgentManifest =
+            serde_yaml::from_str(full_manifest_yaml()).expect("parse");
         assert!(validate_full_manifest(&manifest).is_ok());
     }
 
@@ -1363,7 +1411,7 @@ spec:
     fn test_validate_full_manifest_wrong_api_version() {
         let yaml = full_manifest_yaml().replace("polis.dev/v1", "polis.dev/v2");
         let manifest: FullAgentManifest = serde_yaml::from_str(&yaml).expect("parse");
-        let err = validate_full_manifest(&manifest).unwrap_err();
+        let err = validate_full_manifest(&manifest).expect_err("expected Err");
         assert!(err.to_string().contains("apiVersion"), "error: {err}");
     }
 
@@ -1371,7 +1419,7 @@ spec:
     fn test_validate_full_manifest_wrong_kind() {
         let yaml = full_manifest_yaml().replace("AgentPlugin", "SomethingElse");
         let manifest: FullAgentManifest = serde_yaml::from_str(&yaml).expect("parse");
-        let err = validate_full_manifest(&manifest).unwrap_err();
+        let err = validate_full_manifest(&manifest).expect_err("expected Err");
         assert!(err.to_string().contains("kind"), "error: {err}");
     }
 
@@ -1379,15 +1427,16 @@ spec:
     fn test_validate_full_manifest_root_user_rejected() {
         let yaml = full_manifest_yaml().replace("user: polis", "user: root");
         let manifest: FullAgentManifest = serde_yaml::from_str(&yaml).expect("parse");
-        let err = validate_full_manifest(&manifest).unwrap_err();
+        let err = validate_full_manifest(&manifest).expect_err("expected Err");
         assert!(err.to_string().contains("unprivileged"), "error: {err}");
     }
 
     #[test]
     fn test_validate_full_manifest_command_no_leading_slash() {
-        let yaml = full_manifest_yaml().replace("command: /usr/bin/myapp --port 9000", "command: myapp");
+        let yaml =
+            full_manifest_yaml().replace("command: /usr/bin/myapp --port 9000", "command: myapp");
         let manifest: FullAgentManifest = serde_yaml::from_str(&yaml).expect("parse");
-        let err = validate_full_manifest(&manifest).unwrap_err();
+        let err = validate_full_manifest(&manifest).expect_err("expected Err");
         assert!(err.to_string().contains("runtime.command"), "error: {err}");
     }
 
@@ -1399,7 +1448,7 @@ spec:
                 &format!("command: /usr/bin/myapp {metachar} evil"),
             );
             let manifest: FullAgentManifest = serde_yaml::from_str(&yaml).expect("parse");
-            let err = validate_full_manifest(&manifest).unwrap_err();
+            let err = validate_full_manifest(&manifest).expect_err("expected Err");
             assert!(
                 err.to_string().contains("metacharacter"),
                 "should reject metachar '{metachar}': {err}"
@@ -1414,7 +1463,7 @@ spec:
                 .replace("container: 9000", &format!("container: {reserved}"))
                 .replace("default: 9000", &format!("default: {reserved}"));
             let manifest: FullAgentManifest = serde_yaml::from_str(&yaml).expect("parse");
-            let err = validate_full_manifest(&manifest).unwrap_err();
+            let err = validate_full_manifest(&manifest).expect_err("expected Err");
             assert!(
                 err.to_string().contains("conflicts with platform"),
                 "should reject port {reserved}: {err}"
@@ -1424,20 +1473,20 @@ spec:
 
     #[test]
     fn test_validate_full_manifest_rw_path_outside_allowed_prefix() {
-        let yaml = full_manifest_yaml().replace(
-            "- /opt/polis/agents/test-agent",
-            "- /etc/secret",
-        );
+        let yaml = full_manifest_yaml().replace("- /opt/polis/agents/test-agent", "- /etc/secret");
         let manifest: FullAgentManifest = serde_yaml::from_str(&yaml).expect("parse");
-        let err = validate_full_manifest(&manifest).unwrap_err();
-        assert!(err.to_string().contains("outside allowed prefixes"), "error: {err}");
+        let err = validate_full_manifest(&manifest).expect_err("expected Err");
+        assert!(
+            err.to_string().contains("outside allowed prefixes"),
+            "error: {err}"
+        );
     }
 
     #[test]
     fn test_validate_full_manifest_packaging_not_script() {
         let yaml = full_manifest_yaml().replace("packaging: script", "packaging: docker");
         let manifest: FullAgentManifest = serde_yaml::from_str(&yaml).expect("parse");
-        let err = validate_full_manifest(&manifest).unwrap_err();
+        let err = validate_full_manifest(&manifest).expect_err("expected Err");
         assert!(err.to_string().contains("packaging"), "error: {err}");
     }
 
@@ -1451,10 +1500,22 @@ spec:
         generate_agent_artifacts(dir.path(), "test-agent").expect("generate");
 
         let gen_dir = agent_dir.join(".generated");
-        assert!(gen_dir.join("compose.agent.yaml").exists(), "compose.agent.yaml missing");
-        assert!(gen_dir.join("test-agent.service").exists(), "test-agent.service missing");
-        assert!(gen_dir.join("test-agent.service.sha256").exists(), "test-agent.service.sha256 missing");
-        assert!(gen_dir.join("test-agent.env").exists(), "test-agent.env missing");
+        assert!(
+            gen_dir.join("compose.agent.yaml").exists(),
+            "compose.agent.yaml missing"
+        );
+        assert!(
+            gen_dir.join("test-agent.service").exists(),
+            "test-agent.service missing"
+        );
+        assert!(
+            gen_dir.join("test-agent.service.sha256").exists(),
+            "test-agent.service.sha256 missing"
+        );
+        assert!(
+            gen_dir.join("test-agent.env").exists(),
+            "test-agent.env missing"
+        );
     }
 
     #[test]
@@ -1466,12 +1527,18 @@ spec:
 
         generate_agent_artifacts(dir.path(), "test-agent").expect("generate");
 
-        let compose = std::fs::read_to_string(
-            agent_dir.join(".generated").join("compose.agent.yaml")
-        ).expect("read compose");
-        assert!(compose.contains("test-agent-proxy-9000"), "socat proxy missing");
+        let compose =
+            std::fs::read_to_string(agent_dir.join(".generated").join("compose.agent.yaml"))
+                .expect("read compose");
+        assert!(
+            compose.contains("test-agent-proxy-9000"),
+            "socat proxy missing"
+        );
         assert!(compose.contains("TEST_HOST_PORT"), "host env var missing");
-        assert!(compose.contains("polis-agent-test-agent-data"), "volume missing");
+        assert!(
+            compose.contains("polis-agent-test-agent-data"),
+            "volume missing"
+        );
     }
 
     #[test]
@@ -1483,18 +1550,33 @@ spec:
 
         generate_agent_artifacts(dir.path(), "test-agent").expect("generate");
 
-        let service = std::fs::read_to_string(
-            agent_dir.join(".generated").join("test-agent.service")
-        ).expect("read service");
-        assert!(service.contains("NoNewPrivileges=true"), "NoNewPrivileges missing");
-        assert!(service.contains("ProtectSystem=strict"), "ProtectSystem missing");
-        assert!(service.contains("ProtectHome=read-only"), "ProtectHome missing");
+        let service =
+            std::fs::read_to_string(agent_dir.join(".generated").join("test-agent.service"))
+                .expect("read service");
+        assert!(
+            service.contains("NoNewPrivileges=true"),
+            "NoNewPrivileges missing"
+        );
+        assert!(
+            service.contains("ProtectSystem=strict"),
+            "ProtectSystem missing"
+        );
+        assert!(
+            service.contains("ProtectHome=read-only"),
+            "ProtectHome missing"
+        );
         assert!(service.contains("PrivateTmp=true"), "PrivateTmp missing");
         assert!(service.contains("MemoryMax=2G"), "MemoryMax missing");
         assert!(service.contains("CPUQuota=100%"), "CPUQuota missing");
-        assert!(service.contains("ExecStart=/usr/bin/myapp"), "ExecStart missing");
+        assert!(
+            service.contains("ExecStart=/usr/bin/myapp"),
+            "ExecStart missing"
+        );
         assert!(service.contains("User=polis"), "User missing");
-        assert!(service.contains("ExecStartPre=+/bin/bash /opt/agents/test-agent/scripts/init.sh"), "ExecStartPre missing");
+        assert!(
+            service.contains("ExecStartPre=+/bin/bash /opt/agents/test-agent/scripts/init.sh"),
+            "ExecStartPre missing"
+        );
     }
 
     #[test]
@@ -1507,11 +1589,17 @@ spec:
         generate_agent_artifacts(dir.path(), "test-agent").expect("generate");
 
         let hash_content = std::fs::read_to_string(
-            agent_dir.join(".generated").join("test-agent.service.sha256")
-        ).expect("read hash");
+            agent_dir
+                .join(".generated")
+                .join("test-agent.service.sha256"),
+        )
+        .expect("read hash");
         let hash = hash_content.trim();
         assert_eq!(hash.len(), 64, "SHA256 hex should be 64 chars, got: {hash}");
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "not hex: {hash}");
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "not hex: {hash}"
+        );
     }
 
     #[test]
@@ -1524,13 +1612,14 @@ spec:
         generate_agent_artifacts(dir.path(), "test-agent").expect("generate");
 
         let gen_dir = agent_dir.join(".generated");
-        let service_bytes = std::fs::read(gen_dir.join("test-agent.service")).expect("read service");
+        let service_bytes =
+            std::fs::read(gen_dir.join("test-agent.service")).expect("read service");
         let mut hasher = Sha256::new();
         hasher.update(&service_bytes);
         let expected = format!("{:x}", hasher.finalize());
 
-        let stored = std::fs::read_to_string(gen_dir.join("test-agent.service.sha256"))
-            .expect("read hash");
+        let stored =
+            std::fs::read_to_string(gen_dir.join("test-agent.service.sha256")).expect("read hash");
         assert_eq!(stored.trim(), expected, "hash mismatch");
     }
 
@@ -1544,16 +1633,26 @@ spec:
         std::fs::write(
             dir.path().join(".env"),
             "MY_API_KEY=secret\nOTHER_KEY=ignored\nMY_OPTIONAL_KEY=opt\n",
-        ).expect("write .env");
+        )
+        .expect("write .env");
 
         generate_agent_artifacts(dir.path(), "test-agent").expect("generate");
 
-        let env_content = std::fs::read_to_string(
-            agent_dir.join(".generated").join("test-agent.env")
-        ).expect("read env");
-        assert!(env_content.contains("MY_API_KEY=secret"), "declared key missing");
-        assert!(env_content.contains("MY_OPTIONAL_KEY=opt"), "optional key missing");
-        assert!(!env_content.contains("OTHER_KEY"), "undeclared key should be filtered");
+        let env_content =
+            std::fs::read_to_string(agent_dir.join(".generated").join("test-agent.env"))
+                .expect("read env");
+        assert!(
+            env_content.contains("MY_API_KEY=secret"),
+            "declared key missing"
+        );
+        assert!(
+            env_content.contains("MY_OPTIONAL_KEY=opt"),
+            "optional key missing"
+        );
+        assert!(
+            !env_content.contains("OTHER_KEY"),
+            "undeclared key should be filtered"
+        );
     }
 
     #[test]
@@ -1566,10 +1665,13 @@ spec:
 
         generate_agent_artifacts(dir.path(), "test-agent").expect("generate");
 
-        let env_content = std::fs::read_to_string(
-            agent_dir.join(".generated").join("test-agent.env")
-        ).expect("read env");
-        assert!(env_content.is_empty(), "env should be empty when no .env file");
+        let env_content =
+            std::fs::read_to_string(agent_dir.join(".generated").join("test-agent.env"))
+                .expect("read env");
+        assert!(
+            env_content.is_empty(),
+            "env should be empty when no .env file"
+        );
     }
 
     #[test]
@@ -1578,7 +1680,7 @@ spec:
         let agent_dir = dir.path().join("agents").join("bad-agent");
         std::fs::create_dir_all(&agent_dir).expect("create dirs");
         // root user — should fail validation
-        let yaml = r#"
+        let yaml = r"
 apiVersion: polis.dev/v1
 kind: AgentPlugin
 metadata:
@@ -1588,10 +1690,10 @@ spec:
   runtime:
     command: /usr/bin/myapp
     user: root
-"#;
+";
         std::fs::write(agent_dir.join("agent.yaml"), yaml).expect("write yaml");
 
-        let err = generate_agent_artifacts(dir.path(), "bad-agent").unwrap_err();
+        let err = generate_agent_artifacts(dir.path(), "bad-agent").expect_err("expected Err");
         assert!(err.to_string().contains("unprivileged"), "error: {err}");
     }
 
@@ -1600,17 +1702,24 @@ spec:
         let dir = tempfile::tempdir().expect("tempdir");
         let agent_dir = dir.path().join("agents").join("test-agent");
         std::fs::create_dir_all(&agent_dir).expect("create dirs");
-        std::fs::write(agent_dir.join("agent.yaml"), minimal_valid_manifest_yaml()).expect("write yaml");
+        std::fs::write(agent_dir.join("agent.yaml"), minimal_valid_manifest_yaml())
+            .expect("write yaml");
 
         generate_agent_artifacts(dir.path(), "test-agent").expect("generate");
 
-        let compose = std::fs::read_to_string(
-            agent_dir.join(".generated").join("compose.agent.yaml")
-        ).expect("read compose");
+        let compose =
+            std::fs::read_to_string(agent_dir.join(".generated").join("compose.agent.yaml"))
+                .expect("read compose");
         assert!(compose.contains("workspace:"), "workspace service missing");
-        assert!(compose.contains("./agents/test-agent/"), "agent volume mount missing");
+        assert!(
+            compose.contains("./agents/test-agent/"),
+            "agent volume mount missing"
+        );
         // No socat proxy when no ports defined
-        assert!(!compose.contains("proxy"), "no proxy expected for minimal manifest");
+        assert!(
+            !compose.contains("proxy"),
+            "no proxy expected for minimal manifest"
+        );
     }
 
     #[test]
@@ -1624,12 +1733,14 @@ spec:
         let gen_dir = agent_dir.join(".generated");
         let compose1 = std::fs::read_to_string(gen_dir.join("compose.agent.yaml")).expect("read");
         let service1 = std::fs::read_to_string(gen_dir.join("test-agent.service")).expect("read");
-        let hash1 = std::fs::read_to_string(gen_dir.join("test-agent.service.sha256")).expect("read");
+        let hash1 =
+            std::fs::read_to_string(gen_dir.join("test-agent.service.sha256")).expect("read");
 
         generate_agent_artifacts(dir.path(), "test-agent").expect("second generate");
         let compose2 = std::fs::read_to_string(gen_dir.join("compose.agent.yaml")).expect("read");
         let service2 = std::fs::read_to_string(gen_dir.join("test-agent.service")).expect("read");
-        let hash2 = std::fs::read_to_string(gen_dir.join("test-agent.service.sha256")).expect("read");
+        let hash2 =
+            std::fs::read_to_string(gen_dir.join("test-agent.service.sha256")).expect("read");
 
         assert_eq!(compose1, compose2, "compose.agent.yaml not deterministic");
         assert_eq!(service1, service2, ".service not deterministic");

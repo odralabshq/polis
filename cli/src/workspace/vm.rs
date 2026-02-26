@@ -263,11 +263,7 @@ pub async fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
 ///
 /// Returns an error if the tarball contains path traversal entries, if any
 /// multipass command fails, or if the `.env` file cannot be written.
-pub async fn transfer_config(
-    mp: &impl Multipass,
-    assets_dir: &Path,
-    version: &str,
-) -> Result<()> {
+pub async fn transfer_config(mp: &impl Multipass, assets_dir: &Path, version: &str) -> Result<()> {
     let tar_path = assets_dir.join("polis-setup.config.tar");
 
     // 1. Validate tarball entries on the host before transferring (V-013).
@@ -360,6 +356,7 @@ pub fn validate_tarball_paths(tar_path: &Path) -> Result<()> {
 ///
 /// All 9 `POLIS_*_VERSION` variables are set to the same `v{version}` tag —
 /// services are versioned in lockstep with the CLI.
+#[must_use]
 pub fn generate_env_content(version: &str) -> String {
     let tag = format!("v{version}");
     format!(
@@ -736,9 +733,12 @@ mod tests {
     #[tokio::test]
     async fn verify_cloud_init_critical_failure_on_exit_code_1() {
         let mp = MultipassExitStatusStub(1);
-        let err = verify_cloud_init(&mp).await.unwrap_err();
+        let err = verify_cloud_init(&mp).await.expect_err("expected Err");
         let msg = err.to_string();
-        assert!(msg.contains("critical failure"), "expected 'critical failure' in: {msg}");
+        assert!(
+            msg.contains("critical failure"),
+            "expected 'critical failure' in: {msg}"
+        );
         assert!(
             msg.contains("/var/log/cloud-init-output.log"),
             "expected log path in: {msg}"
@@ -752,7 +752,7 @@ mod tests {
     #[tokio::test]
     async fn verify_cloud_init_degraded_error_on_exit_code_2() {
         let mp = MultipassExitStatusStub(2);
-        let err = verify_cloud_init(&mp).await.unwrap_err();
+        let err = verify_cloud_init(&mp).await.expect_err("expected Err");
         let msg = err.to_string();
         assert!(msg.contains("degraded"), "expected 'degraded' in: {msg}");
         assert!(
@@ -806,7 +806,10 @@ mod tests {
         let tag = "v0.4.0";
         // All 9 vars must use the same tag
         let count = content.matches(&format!("={tag}")).count();
-        assert_eq!(count, 9, "expected exactly 9 vars set to {tag}, got {count}");
+        assert_eq!(
+            count, 9,
+            "expected exactly 9 vars set to {tag}, got {count}"
+        );
     }
 
     #[test]
@@ -873,8 +876,8 @@ mod tests {
             // mode
             header[100..107].copy_from_slice(b"0000644");
             // Compute checksum
-            let sum: u32 = header.iter().map(|&b| b as u32).sum::<u32>() + 8 * b' ' as u32
-                - header[148..156].iter().map(|&b| b as u32).sum::<u32>();
+            let sum: u32 = header.iter().map(|&b| u32::from(b)).sum::<u32>() + 8 * u32::from(b' ')
+                - header[148..156].iter().map(|&b| u32::from(b)).sum::<u32>();
             let cksum = format!("{sum:06o}\0 ");
             header[148..156].copy_from_slice(cksum.as_bytes());
             file.write_all(&header).expect("write header");
@@ -884,7 +887,7 @@ mod tests {
 
         let result = validate_tarball_paths(&tar_path);
         assert!(result.is_err(), "path traversal tarball should be rejected");
-        let msg = result.unwrap_err().to_string();
+        let msg = result.expect_err("expected Err").to_string();
         assert!(msg.contains("FATAL"), "error should contain FATAL: {msg}");
     }
 
@@ -902,8 +905,8 @@ mod tests {
             header[156] = b'0';
             header[124..135].copy_from_slice(b"00000000000");
             header[100..107].copy_from_slice(b"0000644");
-            let sum: u32 = header.iter().map(|&b| b as u32).sum::<u32>() + 8 * b' ' as u32
-                - header[148..156].iter().map(|&b| b as u32).sum::<u32>();
+            let sum: u32 = header.iter().map(|&b| u32::from(b)).sum::<u32>() + 8 * u32::from(b' ')
+                - header[148..156].iter().map(|&b| u32::from(b)).sum::<u32>();
             let cksum = format!("{sum:06o}\0 ");
             header[148..156].copy_from_slice(cksum.as_bytes());
             file.write_all(&header).expect("write header");
@@ -912,13 +915,13 @@ mod tests {
 
         let result = validate_tarball_paths(&tar_path);
         assert!(result.is_err(), "absolute path tarball should be rejected");
-        let msg = result.unwrap_err().to_string();
+        let msg = result.expect_err("expected Err").to_string();
         assert!(msg.contains("FATAL"), "error should contain FATAL: {msg}");
     }
 
     // ── transfer_config tests ────────────────────────────────────────────────
 
-    /// Mock that records transfer and exec calls for transfer_config tests.
+    /// Mock that records transfer and exec calls for `transfer_config` tests.
     struct TransferConfigSpy {
         transferred: std::cell::RefCell<Vec<(String, String)>>,
         exec_calls: std::cell::RefCell<Vec<Vec<String>>>,
@@ -966,13 +969,14 @@ mod tests {
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             self.exec_calls
                 .borrow_mut()
-                .push(args.iter().map(|s| s.to_string()).collect());
+                .push(args.iter().map(std::string::ToString::to_string).collect());
             Ok(ok(b""))
         }
         async fn exec_with_stdin(&self, args: &[&str], stdin: &[u8]) -> Result<Output> {
-            self.exec_with_stdin_calls
-                .borrow_mut()
-                .push((args.iter().map(|s| s.to_string()).collect(), stdin.to_vec()));
+            self.exec_with_stdin_calls.borrow_mut().push((
+                args.iter().map(std::string::ToString::to_string).collect(),
+                stdin.to_vec(),
+            ));
             Ok(ok(b""))
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
@@ -986,7 +990,7 @@ mod tests {
         }
     }
 
-    /// Build a minimal safe tarball in a temp dir and return (dir, tar_path).
+    /// Build a minimal safe tarball in a temp dir and return (dir, `tar_path`).
     fn make_safe_tarball() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
         let tar_path = dir.path().join("polis-setup.config.tar");
@@ -1072,9 +1076,9 @@ mod tests {
             .await
             .expect("transfer_config");
         let calls = mp.exec_calls.borrow();
-        let chmod_call = calls.iter().find(|args| {
-            args.contains(&"find".to_string()) && args.contains(&"chmod".to_string())
-        });
+        let chmod_call = calls
+            .iter()
+            .find(|args| args.contains(&"find".to_string()) && args.contains(&"chmod".to_string()));
         assert!(
             chmod_call.is_some(),
             "expected a find ... chmod +x exec call for Windows tar fix"
@@ -1155,11 +1159,7 @@ mod tests {
             args.contains(&"/opt/polis/.config-hash".to_string()),
             "must write to /opt/polis/.config-hash: {args:?}"
         );
-        assert_eq!(
-            stdin,
-            b"abc123def456",
-            "stdin must be the hash bytes"
-        );
+        assert_eq!(stdin, b"abc123def456", "stdin must be the hash bytes");
     }
 
     #[tokio::test]
@@ -1204,8 +1204,8 @@ mod tests {
             header[156] = b'0';
             header[124..135].copy_from_slice(b"00000000000");
             header[100..107].copy_from_slice(b"0000644");
-            let sum: u32 = header.iter().map(|&b| b as u32).sum::<u32>() + 8 * b' ' as u32
-                - header[148..156].iter().map(|&b| b as u32).sum::<u32>();
+            let sum: u32 = header.iter().map(|&b| u32::from(b)).sum::<u32>() + 8 * u32::from(b' ')
+                - header[148..156].iter().map(|&b| u32::from(b)).sum::<u32>();
             let cksum = format!("{sum:06o}\0 ");
             header[148..156].copy_from_slice(cksum.as_bytes());
             file.write_all(&header).expect("write header");
@@ -1232,27 +1232,52 @@ mod tests {
 
     impl PullImagesStub {
         fn success() -> Self {
-            Self { exit_code: 0, stderr: vec![] }
+            Self {
+                exit_code: 0,
+                stderr: vec![],
+            }
         }
 
         fn failure(stderr: &[u8]) -> Self {
-            Self { exit_code: 1, stderr: stderr.to_vec() }
+            Self {
+                exit_code: 1,
+                stderr: stderr.to_vec(),
+            }
         }
 
         fn timeout() -> Self {
-            Self { exit_code: 124, stderr: b"Timeout".to_vec() }
+            Self {
+                exit_code: 124,
+                stderr: b"Timeout".to_vec(),
+            }
         }
     }
 
     impl Multipass for PullImagesStub {
-        async fn vm_info(&self) -> Result<Output> { unimplemented!() }
-        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> { unimplemented!() }
-        async fn start(&self) -> Result<Output> { unimplemented!() }
-        async fn stop(&self) -> Result<Output> { unimplemented!() }
-        async fn delete(&self) -> Result<Output> { unimplemented!() }
-        async fn purge(&self) -> Result<Output> { unimplemented!() }
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> { unimplemented!() }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { unimplemented!() }
+        async fn vm_info(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn start(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn stop(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn delete(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn purge(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+            unimplemented!()
+        }
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             Ok(Output {
                 status: std::process::ExitStatus::from_raw(self.exit_code << 8),
@@ -1260,10 +1285,18 @@ mod tests {
                 stderr: self.stderr.clone(),
             })
         }
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> { unimplemented!() }
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> { unimplemented!() }
-        async fn version(&self) -> Result<Output> { unimplemented!() }
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> { unimplemented!() }
+        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+            unimplemented!()
+        }
+        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+            unimplemented!()
+        }
+        async fn version(&self) -> Result<Output> {
+            unimplemented!()
+        }
+        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]
@@ -1283,7 +1316,7 @@ mod tests {
     #[tokio::test]
     async fn pull_images_includes_stderr_in_error() {
         let mp = PullImagesStub::failure(b"Error response from daemon: manifest unknown");
-        let err = pull_images(&mp).await.unwrap_err();
+        let err = pull_images(&mp).await.expect_err("expected Err");
         let msg = err.to_string();
         assert!(
             msg.contains("Error response from daemon"),
@@ -1294,7 +1327,7 @@ mod tests {
     #[tokio::test]
     async fn pull_images_timeout_returns_specific_error() {
         let mp = PullImagesStub::timeout();
-        let err = pull_images(&mp).await.unwrap_err();
+        let err = pull_images(&mp).await.expect_err("expected Err");
         let msg = err.to_string();
         assert!(
             msg.contains("timed out") || msg.contains("10 minutes"),
@@ -1305,7 +1338,7 @@ mod tests {
     #[tokio::test]
     async fn pull_images_timeout_suggests_network_check() {
         let mp = PullImagesStub::timeout();
-        let err = pull_images(&mp).await.unwrap_err();
+        let err = pull_images(&mp).await.expect_err("expected Err");
         let msg = err.to_string();
         assert!(
             msg.contains("network") || msg.contains("connectivity"),

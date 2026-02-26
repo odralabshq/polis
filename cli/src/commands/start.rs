@@ -84,7 +84,7 @@ fn handle_running_vm(state_mgr: &StateManager, args: &StartArgs, quiet: bool) ->
 /// Create a new VM and start the workspace.
 ///
 /// Full provisioning flow (Phase 1 + Phase 2):
-/// 1. `extract_assets()` — extract 3 embedded files to temp dir, hold TempDir guard
+/// 1. `extract_assets()` — extract 3 embedded files to temp dir, hold `TempDir` guard
 /// 2. `vm::create()` — launch VM with cloud-init, verify cloud-init
 /// 3. `vm::transfer_config()` — transfer tarball, extract, write .env
 /// 4. `vm::pull_images()` — docker compose pull with 10-min timeout
@@ -93,7 +93,7 @@ fn handle_running_vm(state_mgr: &StateManager, args: &StartArgs, quiet: bool) ->
 /// 7. `start_compose()` — docker compose up -d
 /// 8. `health::wait_ready()` — wait for health check
 /// 9. `vm::write_config_hash()` — write hash AFTER successful startup
-/// 10. TempDir guard dropped automatically for cleanup
+/// 10. `TempDir` guard dropped automatically for cleanup
 async fn create_and_start_vm(
     state_mgr: &StateManager,
     args: &StartArgs,
@@ -108,8 +108,7 @@ async fn create_and_start_vm(
     // Compute the config tarball hash now (before transfer) so we can write it
     // after successful startup. Hash is computed on the host from the embedded asset.
     let tar_path = assets_dir.join("polis-setup.config.tar");
-    let config_hash =
-        vm::sha256_file(&tar_path).context("computing config tarball SHA256")?;
+    let config_hash = vm::sha256_file(&tar_path).context("computing config tarball SHA256")?;
 
     // Step 2: Launch VM with cloud-init and verify cloud-init completed.
     vm::create(mp, quiet).await?;
@@ -382,7 +381,7 @@ mod tests {
         // On an aarch64 host the test is skipped so CI on Apple Silicon still passes.
         if std::env::consts::ARCH == "aarch64" {
             // Running on arm64 — verify the function correctly returns an error.
-            let err = check_architecture().unwrap_err();
+            let err = check_architecture().expect_err("expected Err");
             let msg = err.to_string();
             assert!(msg.contains("amd64"), "error should mention amd64: {msg}");
             assert!(msg.contains("Sysbox"), "error should mention Sysbox: {msg}");

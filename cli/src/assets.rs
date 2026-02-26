@@ -39,7 +39,7 @@ pub fn extract_assets() -> Result<(PathBuf, tempfile::TempDir)> {
 pub fn get_asset(name: &str) -> Result<&'static [u8]> {
     EMBEDDED_ASSETS
         .get_file(name)
-        .map(|f| f.contents())
+        .map(include_dir::File::contents)
         .ok_or_else(|| anyhow::anyhow!("embedded asset not found: {name}"))
 }
 
@@ -50,9 +50,16 @@ mod tests {
     #[test]
     fn extract_assets_creates_temp_dir_with_files() {
         let (path, _guard) = extract_assets().expect("extract_assets");
-        assert!(path.exists(), "extracted dir should exist while guard is held");
+        assert!(
+            path.exists(),
+            "extracted dir should exist while guard is held"
+        );
         // All 3 expected files must be present.
-        for name in &["cloud-init.yaml", "image-digests.json", "polis-setup.config.tar"] {
+        for name in &[
+            "cloud-init.yaml",
+            "image-digests.json",
+            "polis-setup.config.tar",
+        ] {
             assert!(
                 path.join(name).exists(),
                 "expected asset {name} to be extracted"
@@ -75,7 +82,11 @@ mod tests {
 
     #[test]
     fn get_asset_returns_bytes_for_known_files() {
-        for name in &["cloud-init.yaml", "image-digests.json", "polis-setup.config.tar"] {
+        for name in &[
+            "cloud-init.yaml",
+            "image-digests.json",
+            "polis-setup.config.tar",
+        ] {
             let bytes = get_asset(name).unwrap_or_else(|e| panic!("get_asset({name}): {e}"));
             // Bytes slice must be non-null (zero-length is fine for stub tar).
             let _ = bytes;
