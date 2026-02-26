@@ -13,7 +13,11 @@ use include_dir::{Dir, include_dir};
 /// All 3 embedded assets, compiled in at build time.
 static EMBEDDED_ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../.build/assets");
 
-/// Extract all embedded assets to a temporary directory.
+/// Extract all embedded assets to a temporary directory under `~/.polis/tmp/`.
+///
+/// The Multipass snap daemon is strictly confined and can only read files under
+/// `$HOME`, `/mnt`, or `/media`. Using system `/tmp` causes a misleading
+/// "bad file" error because `AppArmor` blocks the daemon's read.
 ///
 /// Returns `(path, guard)` where `path` is the directory containing the
 /// extracted files and `guard` is a [`tempfile::TempDir`] that deletes the
@@ -21,10 +25,19 @@ static EMBEDDED_ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../.build/as
 ///
 /// # Errors
 ///
-/// Returns an error if the temporary directory cannot be created or if any
-/// asset fails to extract.
+/// Returns an error if the directory cannot be created or if any asset fails
+/// to extract.
 pub fn extract_assets() -> Result<(PathBuf, tempfile::TempDir)> {
-    let dir = tempfile::tempdir().context("creating temp dir for assets")?;
+    let base = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join("polis")
+        .join("tmp");
+    std::fs::create_dir_all(&base).context("creating ~/polis/tmp")?;
+
+    let dir = tempfile::Builder::new()
+        .prefix("polis-assets-")
+        .tempdir_in(&base)
+        .context("creating temp dir for assets")?;
     EMBEDDED_ASSETS
         .extract(dir.path())
         .context("extracting embedded assets")?;

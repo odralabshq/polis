@@ -72,7 +72,6 @@ write_files:
         "no-new-privileges": true,
         "userland-proxy": false
       }
-    permissions: '0644'
 
   # Sysctl hardening (CIS Ubuntu 24.04 Level 1)
   - path: /etc/sysctl.d/99-polis-hardening.conf
@@ -87,7 +86,6 @@ write_files:
       fs.suid_dumpable = 0
       # Restrict ptrace to parent processes only
       kernel.yama.ptrace_scope = 2
-    permissions: '0644'
 
   # Docker audit rules
   - path: /etc/audit/rules.d/docker.rules
@@ -99,7 +97,6 @@ write_files:
       -w /etc/default/docker -p rwxa -k docker
       -w /etc/docker/daemon.json -p rwxa -k docker
       -w /usr/bin/containerd -p rwxa -k docker
-    permissions: '0644'
 
   # polis.service — auto-start docker compose on VM reboot
   - path: /etc/systemd/system/polis.service
@@ -121,12 +118,11 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
-    permissions: '0644'
 
 runcmd:
   # ── apt-get update with retry (V-002: 3 attempts, 10s backoff) ───────────
   - |
-    set -euo pipefail
+    set -eu
     for attempt in 1 2 3; do
       echo "apt-get update attempt ${attempt}/3..."
       if apt-get update; then
@@ -140,12 +136,12 @@ runcmd:
       sleep 10
     done
 
-  # ── Install Docker CE from official apt repo (V-001: set -euo pipefail) ──
+  # ── Install Docker CE from official apt repo (V-001: set -eu) ──
   # Uses docker-ce + containerd.io for correct runc version (avoids
   # Ubuntu's docker.io which ships runc 1.3.x conflicting with Sysbox).
   # GPG fingerprint verified against known-good value (Req 1.2).
   - |
-    set -euo pipefail
+    set -eu
     DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | tee /etc/apt/keyrings/docker.asc > /dev/null
@@ -165,7 +161,7 @@ runcmd:
   # support arm64 as of v0.6.7.
   # SHA256 for sysbox-ce_0.6.7-0.linux_amd64.deb from downloads.nestybox.com
   - |
-    set -euo pipefail
+    set -eu
     SYSBOX_VERSION="0.6.7-0"
     SYSBOX_DEB="sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
     SYSBOX_URL="https://downloads.nestybox.com/sysbox/releases/v0.6.7/${SYSBOX_DEB}"
@@ -195,7 +191,7 @@ runcmd:
   # Sysbox postinst stops Docker — restart cleanly with fresh netns state.
   # live-restore is intentionally omitted from daemon.json (Sysbox issue #270).
   - |
-    set -euo pipefail
+    set -eu
     systemctl stop docker.socket docker || true
     systemctl stop sysbox sysbox-mgr sysbox-fs || true
     rm -f /var/run/docker/netns/*
@@ -206,7 +202,7 @@ runcmd:
 
   # ── Apply VM hardening ────────────────────────────────────────────────────
   - |
-    set -euo pipefail
+    set -eu
     sysctl --system
     systemctl enable apparmor
     systemctl start apparmor || true
@@ -215,13 +211,13 @@ runcmd:
 
   # ── Install and enable polis.service ─────────────────────────────────────
   - |
-    set -euo pipefail
+    set -eu
     systemctl daemon-reload
     systemctl enable polis.service
 
   # ── Create polis directory structure ─────────────────────────────────────
   - |
-    set -euo pipefail
+    set -eu
     mkdir -p /opt/polis
     chown ubuntu:ubuntu /opt/polis
 
@@ -229,7 +225,7 @@ runcmd:
   # ubuntu user is locked via lock_passwd: true in users block above.
   # root account is locked here explicitly.
   - |
-    set -euo pipefail
+    set -eu
     passwd -l root
 
 final_message: "Polis VM provisioned in $UPTIME seconds"

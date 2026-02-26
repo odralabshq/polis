@@ -1,4 +1,4 @@
-//! Integration tests for `polis connect` (issue 13).
+//! Integration tests for `polis connect`.
 
 #![allow(clippy::expect_used)]
 
@@ -17,10 +17,20 @@ fn test_connect_help_is_accessible() {
 }
 
 #[test]
-fn test_connect_unknown_ide_exits_with_error() {
+fn test_connect_help_does_not_mention_ide() {
     polis()
-        .args(["connect", "--ide", "emacs"])
+        .args(["connect", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--ide").not());
+}
+
+#[test]
+fn test_connect_ide_flag_is_rejected() {
+    // --ide was removed; clap must reject it as an unknown argument.
+    polis()
+        .args(["connect", "--ide", "vscode"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("emacs").or(predicate::str::contains("invalid")));
+        .stderr(predicate::str::contains("--ide").or(predicate::str::contains("unexpected")));
 }

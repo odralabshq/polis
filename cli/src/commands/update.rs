@@ -1,6 +1,6 @@
-//! `polis update` — self-update with checksum verification.
+//! `polis update` — self-update with checksum and signature verification.
 
-use std::io::Read;
+use std::io::{Cursor, Read};
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -20,7 +20,11 @@ pub struct UpdateArgs {
     pub check: bool,
 }
 
-/// Embedded ed25519 public key for VM image verification.
+/// Embedded ed25519 public key (base64) for verifying signed CLI release archives.
+///
+/// The corresponding private key is stored as `POLIS_SIGNING_KEY` in GitHub
+/// Actions secrets and used by the release workflow to sign `.tar.gz` / `.zip`
+/// archives via `zipsign`.
 pub(crate) const POLIS_PUBLIC_KEY_B64: &str = "0p+AGW1jqNEos8o6cxDUl2objZhZFOXy4BQseFNHIqI=";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -375,13 +379,16 @@ fn parse_release_notes(body: &str) -> Vec<String> {
         .collect()
 }
 
-/// Verifies the SHA-256 checksum of a release asset.
+/// Verifies the SHA-256 checksum and ed25519 signature of a release asset.
 ///
-/// Downloads the asset and its .sha256 file, verifies they match.
+/// Downloads the `.tar.gz` archive and its `.sha256` sidecar, verifies the
+/// checksum matches, then verifies the embedded `zipsign` ed25519 signature
+/// using the compile-time public key.
 ///
 /// # Errors
 ///
-/// Returns an error if download fails or checksum mismatch.
+/// Returns an error if download fails, checksum mismatches, or signature is
+/// missing/invalid.
 fn verify_signature(download_url: &str) -> Result<SignatureInfo> {
     // Download the release asset
     let response = ureq::get(download_url)
@@ -419,6 +426,19 @@ fn verify_signature(download_url: &str) -> Result<SignatureInfo> {
         actual_sha256 == expected_sha256,
         "checksum mismatch: expected {expected_sha256}, got {actual_sha256}"
     );
+
+    // Verify zipsign ed25519 signature embedded in the .tar.gz
+    let public_key_bytes =
+        base64_decode(POLIS_PUBLIC_KEY_B64).context("decoding embedded public key")?;
+    let key_array: [u8; 32] = public_key_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("public key must be 32 bytes"))?;
+    let keys = zipsign_api::verify::collect_keys([Ok(key_array)])
+        .map_err(|e| anyhow::anyhow!("invalid public key: {e}"))?;
+
+    let mut cursor = Cursor::new(&data);
+    zipsign_api::verify::verify_tar(&mut cursor, &keys, Some(b""))
+        .map_err(|e| anyhow::anyhow!("signature verification failed: {e}"))?;
 
     Ok(SignatureInfo {
         sha256: actual_sha256,

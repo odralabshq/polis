@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::LazyLock;
 
-use crate::multipass::{Multipass, VM_NAME};
+use crate::multipass::Multipass;
 use crate::output::OutputContext;
 use crate::state::StateManager;
 use crate::workspace::{CONTAINER_NAME, vm};
@@ -550,12 +550,12 @@ fn parse_agent_manifest(path: &Path) -> Result<FullAgentManifest> {
 /// # Errors
 ///
 /// Returns an error if the manifest is invalid or any file cannot be written.
-pub fn generate_agent_artifacts(polis_dir: &Path, agent_name: &str) -> Result<()> {
+pub(crate) fn generate_agent_artifacts(polis_dir: &Path, agent_name: &str) -> Result<()> {
     let agent_dir = polis_dir.join("agents").join(agent_name);
     let manifest = parse_agent_manifest(&agent_dir.join("agent.yaml"))?;
     validate_full_manifest(&manifest)?;
     let out_dir = agent_dir.join(".generated");
-    std::fs::create_dir_all(&out_dir)?;
+    std::fs::create_dir_all(&out_dir).context("creating .generated directory")?;
 
     generate_compose_overlay(&manifest, &out_dir)?;
     generate_systemd_unit(&manifest, &out_dir)?;
@@ -631,65 +631,6 @@ struct AgentManifestMetadata {
     name: String,
 }
 
-/// Agent metadata extracted from a parsed `agent.yaml` manifest.
-///
-/// Replaces runtime yq shell-outs with direct `serde_yaml` parsing (Requirement 8.3).
-#[derive(Debug)]
-pub struct AgentMetadata {
-    /// The compose project name, derived from `metadata.name` in `agent.yaml`.
-    pub compose_project: String,
-    /// The runtime user for the agent workspace container, from `spec.runtime.user`.
-    pub runtime_user: String,
-}
-
-impl AgentMetadata {
-    /// Parse an `AgentMetadata` from a `serde_yaml::Value` representing the
-    /// full contents of an `agent.yaml` manifest.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `metadata.name` or `spec.runtime.user` is missing
-    /// or not a string.
-    pub fn from_manifest(manifest: &serde_yaml::Value) -> Result<Self> {
-        let compose_project = manifest
-            .get("metadata")
-            .and_then(|m| m.get("name"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("agent.yaml: metadata.name is missing or empty"))?
-            .to_string();
-
-        let runtime_user = manifest
-            .get("spec")
-            .and_then(|s| s.get("runtime"))
-            .and_then(|r| r.get("user"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("agent.yaml: spec.runtime.user is missing or empty"))?
-            .to_string();
-
-        Ok(Self {
-            compose_project,
-            runtime_user,
-        })
-    }
-}
-
-/// Read and parse agent metadata from `agents/<name>/agent.yaml` inside the
-/// polis directory.
-///
-/// # Errors
-///
-/// Returns an error if the manifest file cannot be read or parsed.
-pub fn read_agent_metadata(polis_dir: &std::path::Path, agent_name: &str) -> Result<AgentMetadata> {
-    let manifest_path = polis_dir.join("agents").join(agent_name).join("agent.yaml");
-    let content = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("reading agent manifest: {}", manifest_path.display()))?;
-    let manifest: serde_yaml::Value =
-        serde_yaml::from_str(&content).context("parsing agent.yaml")?;
-    AgentMetadata::from_manifest(&manifest)
-}
-
 /// Run the given agent subcommand.
 ///
 /// # Errors
@@ -719,28 +660,16 @@ async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result
     require_vm_running(mp).await?;
     ensure_agent_not_exists(mp, &name).await?;
 
-    // Generate artifacts locally (Rust, no yq) before transferring to VM.
-    // Use the agent folder itself as the polis_dir root so paths resolve correctly.
     let agent_folder = std::path::Path::new(&args.path);
     let parent_dir = agent_folder
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of agent folder"))?;
-    // generate_agent_artifacts expects polis_dir/agents/<name>/agent.yaml
-    // If the user passed the agent folder directly, we need to treat its parent as
-    // the agents/ dir and its grandparent as polis_dir.
     let polis_dir = parent_dir.parent().unwrap_or(parent_dir);
-    // Fallback: generate into the agent folder's .generated/ directly
-    let out_dir = agent_folder.join(".generated");
-    std::fs::create_dir_all(&out_dir).context("creating .generated directory")?;
-    let manifest = parse_agent_manifest(&agent_folder.join("agent.yaml"))?;
-    validate_full_manifest(&manifest)?;
+
     if !ctx.quiet {
         println!("Generating artifacts...");
     }
-    generate_compose_overlay(&manifest, &out_dir)?;
-    generate_systemd_unit(&manifest, &out_dir)?;
-    generate_service_hash(&manifest, &out_dir)?;
-    generate_filtered_env(&manifest, &out_dir, polis_dir)?;
+    generate_agent_artifacts(polis_dir, &name)?;
 
     transfer_agent_to_vm(mp, ctx, &args.path, &name).await?;
 
@@ -1038,25 +967,18 @@ async fn update(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     // Write manifest to a temp dir and run the Rust generator.
     let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
     let agent_dir = tmp.path().join("agents").join(&name);
-    let generated_dir = agent_dir.join(".generated");
     std::fs::create_dir_all(&agent_dir).context("creating temp agent dir")?;
     std::fs::write(agent_dir.join("agent.yaml"), &cat_out.stdout)
         .context("writing agent.yaml to temp dir")?;
 
-    let manifest = parse_agent_manifest(&agent_dir.join("agent.yaml"))?;
-    validate_full_manifest(&manifest)?;
-    std::fs::create_dir_all(&generated_dir).context("creating .generated dir")?;
-    generate_compose_overlay(&manifest, &generated_dir)?;
-    generate_systemd_unit(&manifest, &generated_dir)?;
-    generate_service_hash(&manifest, &generated_dir)?;
-    // For env generation, use the temp dir as polis_dir (no env file expected in VM context)
-    generate_filtered_env(&manifest, &generated_dir, tmp.path())?;
+    generate_agent_artifacts(tmp.path(), &name)?;
 
     // Transfer the regenerated .generated/ folder back into the VM.
-    let generated_src = generated_dir.to_string_lossy().into_owned();
+    let generated_src = agent_dir.join(".generated");
+    let generated_src_str = generated_src.to_string_lossy();
     let generated_dest = format!("{VM_ROOT}/agents/{name}/.generated");
     let transfer_out = mp
-        .transfer_recursive(&generated_src, &generated_dest)
+        .transfer_recursive(&generated_src_str, &generated_dest)
         .await
         .context("transferring regenerated artifacts to VM")?;
     anyhow::ensure!(
@@ -1133,33 +1055,18 @@ async fn shell(mp: &impl Multipass) -> Result<()> {
         "root".to_string()
     };
 
-    let status = std::process::Command::new("multipass")
-        .args([
-            "exec",
-            VM_NAME,
-            "--",
-            "docker",
-            "exec",
-            "-it",
-            "-u",
-            &user,
-            CONTAINER_NAME,
-            "bash",
-        ])
-        .status()
-        .context("failed to spawn multipass")?;
+    let status = mp
+        .exec_status(&["docker", "exec", "-it", "-u", &user, CONTAINER_NAME, "bash"])
+        .await?;
     std::process::exit(status.code().unwrap_or(1));
 }
 
 async fn exec_cmd(mp: &impl Multipass, args: &ExecArgs) -> Result<()> {
     require_running(mp).await?;
-    let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--", "docker", "exec", CONTAINER_NAME];
+    let mut cmd_args: Vec<&str> = vec!["docker", "exec", CONTAINER_NAME];
     let refs: Vec<&str> = args.command.iter().map(String::as_str).collect();
     cmd_args.extend(&refs);
-    let status = std::process::Command::new("multipass")
-        .args(&cmd_args)
-        .status()
-        .context("failed to spawn multipass")?;
+    let status = mp.exec_status(&cmd_args).await?;
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
     }
@@ -1175,13 +1082,10 @@ async fn agent_cmd(mp: &impl Multipass, args: &CmdArgs) -> Result<()> {
     let check = mp.exec(&["test", "-f", &commands_sh]).await?;
     anyhow::ensure!(check.status.success(), "Agent '{name}' has no commands.sh");
 
-    let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--", "bash", &commands_sh, CONTAINER_NAME];
+    let mut cmd_args: Vec<&str> = vec!["bash", &commands_sh, CONTAINER_NAME];
     let refs: Vec<&str> = args.args.iter().map(String::as_str).collect();
     cmd_args.extend(&refs);
-    let status = std::process::Command::new("multipass")
-        .args(&cmd_args)
-        .status()
-        .context("failed to spawn multipass")?;
+    let status = mp.exec_status(&cmd_args).await?;
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
     }
@@ -1191,6 +1095,54 @@ async fn agent_cmd(mp: &impl Multipass, args: &CmdArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // AgentMetadata is test-only: validates that agent.yaml can be parsed
+    // via serde_yaml without yq (Requirement 8.3 validation).
+    #[derive(Debug)]
+    struct AgentMetadata {
+        compose_project: String,
+        runtime_user: String,
+    }
+
+    impl AgentMetadata {
+        fn from_manifest(manifest: &serde_yaml::Value) -> anyhow::Result<Self> {
+            let compose_project = manifest
+                .get("metadata")
+                .and_then(|m| m.get("name"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("agent.yaml: metadata.name is missing or empty"))?
+                .to_string();
+
+            let runtime_user = manifest
+                .get("spec")
+                .and_then(|s| s.get("runtime"))
+                .and_then(|r| r.get("user"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("agent.yaml: spec.runtime.user is missing or empty")
+                })?
+                .to_string();
+
+            Ok(Self {
+                compose_project,
+                runtime_user,
+            })
+        }
+    }
+
+    fn read_agent_metadata(
+        polis_dir: &std::path::Path,
+        agent_name: &str,
+    ) -> anyhow::Result<AgentMetadata> {
+        let manifest_path = polis_dir.join("agents").join(agent_name).join("agent.yaml");
+        let content = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("reading agent manifest: {}", manifest_path.display()))?;
+        let manifest: serde_yaml::Value =
+            serde_yaml::from_str(&content).context("parsing agent.yaml")?;
+        AgentMetadata::from_manifest(&manifest)
+    }
 
     #[test]
     fn test_agent_manifest_parses_name() {

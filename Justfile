@@ -145,11 +145,16 @@ prepare-config:
 		echo "→ Generating artifacts for agent: $name"
 		./scripts/generate-agent.sh "$name" agents
 	done
-	# Build config tarball
-	tar cf .build/assets/polis-setup.config.tar \
+	# Build config tarball (sudo needed to read keys owned by container uid 65532)
+	sudo tar cf .build/assets/polis-setup.config.tar \
 		docker-compose.yml \
 		scripts/ \
-		agents/
+		agents/ \
+		services/*/config/ \
+		services/*/scripts/ \
+		$([ -d certs ] && echo "certs/") \
+		$([ -d secrets ] && echo "secrets/")
+	sudo chown "$(id -u):$(id -g)" .build/assets/polis-setup.config.tar
 	echo "✓ Built .build/assets/polis-setup.config.tar"
 	# Copy cloud-init.yaml
 	cp cloud-init.yaml .build/assets/cloud-init.yaml
@@ -160,7 +165,7 @@ prepare-config:
 		echo "✓ Created stub image-digests.json"
 	fi
 
-build: prepare-config build-cli build-docker
+build: prepare-config build-cli build-docker save-docker-images
 
 # Windows-only: Build all components
 build-windows: prepare-config build-cli build-docker
@@ -175,6 +180,25 @@ build-cli:
 # Build Docker images
 build-docker:
 	docker compose build
+
+# Save all Docker images as a compressed tarball for dev VM loading
+save-docker-images:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p .build/assets
+	VERSION="v$(cargo metadata --no-deps --format-version 1 --manifest-path cli/Cargo.toml \
+		| jq -r '.packages[0].version')"
+	IMAGES=$(docker compose config --images | sort -u)
+	# Tag all images with the CLI version so docker-compose .env resolves
+	for img in $IMAGES; do
+		base="${img%%:*}"
+		if [ "$base" != "$img" ] && docker image inspect "$base:latest" &>/dev/null; then
+			docker tag "$base:latest" "$base:$VERSION"
+		fi
+	done
+	echo "→ Saving $(echo "$IMAGES" | wc -w) images..."
+	docker save $IMAGES | zstd -T0 -3 -o .build/polis-images.tar.zst --force
+	echo "✓ Saved .build/polis-images.tar.zst ($(du -h .build/polis-images.tar.zst | cut -f1))"
 
 # Build a specific service
 build-service service:

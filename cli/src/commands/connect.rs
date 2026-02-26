@@ -1,4 +1,4 @@
-//! `polis connect` — SSH config management and IDE integration.
+//! `polis connect` — SSH config management.
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -9,31 +9,21 @@ use crate::workspace::CONTAINER_NAME;
 
 /// Arguments for the connect command.
 #[derive(Args)]
-pub struct ConnectArgs {
-    /// Open in IDE: vscode, cursor
-    #[arg(long)]
-    pub ide: Option<String>,
-}
+pub struct ConnectArgs {}
 
-/// Run `polis connect [--ide <name>]`.
+/// Run `polis connect`.
 ///
-/// Sets up SSH config on first run, validates permissions, then either opens
-/// an IDE or prints connection instructions.
+/// Sets up SSH config on first run, validates permissions, then prints
+/// connection instructions.
 ///
 /// # Errors
 ///
-/// Returns an error if SSH config setup fails, permissions are unsafe, or the
-/// IDE cannot be launched.
+/// Returns an error if SSH config setup fails or permissions are unsafe.
 pub async fn run(
     ctx: &OutputContext,
-    args: ConnectArgs,
+    _args: ConnectArgs,
     mp: &impl crate::multipass::Multipass,
 ) -> Result<()> {
-    // Validate IDE name early — fail fast before any interactive prompts.
-    if let Some(ref ide) = args.ide {
-        resolve_ide(ide)?;
-    }
-
     let ssh_mgr = SshConfigManager::new()?;
 
     if ssh_mgr.is_configured()? {
@@ -53,12 +43,8 @@ pub async fn run(
     // Pin the workspace host key so StrictHostKeyChecking can verify it.
     pin_host_key(mp).await;
 
-    if let Some(ref ide) = args.ide {
-        open_ide(ide).await
-    } else {
-        show_connection_options(ctx);
-        Ok(())
-    }
+    show_connection_options(ctx);
+    Ok(())
 }
 
 fn setup_ssh_config(ssh_mgr: &SshConfigManager) -> Result<()> {
@@ -93,22 +79,6 @@ fn show_connection_options(_ctx: &OutputContext) {
     println!("    code --remote ssh-remote+workspace /workspace");
     println!("    cursor --remote ssh-remote+workspace /workspace");
     println!();
-}
-
-/// Resolves an IDE name to its binary and arguments.
-///
-/// # Errors
-///
-/// Returns an error if the IDE name is not recognised.
-pub fn resolve_ide(name: &str) -> Result<(&'static str, &'static [&'static str])> {
-    match name.to_lowercase().as_str() {
-        "vscode" | "code" => Ok(("code", &["--remote", "ssh-remote+workspace", "/workspace"])),
-        "cursor" => Ok((
-            "cursor",
-            &["--remote", "ssh-remote+workspace", "/workspace"],
-        )),
-        _ => anyhow::bail!("Unknown IDE: {name}. Supported: vscode, cursor"),
-    }
 }
 
 /// Validates that a public key has a safe format for use in shell commands.
@@ -215,61 +185,9 @@ async fn pin_host_key(mp: &impl crate::multipass::Multipass) {
     }
 }
 
-async fn open_ide(ide: &str) -> Result<()> {
-    let (cmd, args) = resolve_ide(ide)?;
-    let status = tokio::process::Command::new(cmd)
-        .args(args)
-        .status()
-        .await
-        .with_context(|| format!("{cmd} is not installed or not in PATH"))?;
-    anyhow::ensure!(status.success(), "{cmd} exited with failure");
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_resolve_ide_vscode() {
-        let (cmd, args) = resolve_ide("vscode").expect("should resolve");
-        assert_eq!(cmd, "code");
-        assert_eq!(args, &["--remote", "ssh-remote+workspace", "/workspace"]);
-    }
-
-    #[test]
-    fn test_resolve_ide_code() {
-        let (cmd, args) = resolve_ide("code").expect("should resolve");
-        assert_eq!(cmd, "code");
-        assert_eq!(args, &["--remote", "ssh-remote+workspace", "/workspace"]);
-    }
-
-    #[test]
-    fn test_resolve_ide_cursor() {
-        let (cmd, args) = resolve_ide("cursor").expect("should resolve");
-        assert_eq!(cmd, "cursor");
-        assert_eq!(args, &["--remote", "ssh-remote+workspace", "/workspace"]);
-    }
-
-    #[test]
-    fn test_resolve_ide_unknown() {
-        let result = resolve_ide("unknown-ide");
-        assert!(result.is_err());
-        assert!(
-            result
-                .expect_err("should fail")
-                .to_string()
-                .contains("Unknown IDE")
-        );
-    }
-
-    #[test]
-    fn test_resolve_ide_case_insensitive() {
-        let (cmd, _) = resolve_ide("VsCode").expect("should resolve");
-        assert_eq!(cmd, "code");
-        let (cmd, _) = resolve_ide("CURSOR").expect("should resolve");
-        assert_eq!(cmd, "cursor");
-    }
 
     // -----------------------------------------------------------------------
     // write_host_key

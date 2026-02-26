@@ -12,11 +12,15 @@ use crate::workspace::{digest, health, vm};
 const VM_POLIS_ROOT: &str = "/opt/polis";
 
 /// Arguments for the start command.
-#[derive(Args)]
+#[derive(Args, Default)]
 pub struct StartArgs {
     /// Agent to activate (must match agents/<name>/ directory inside the VM)
     #[arg(long)]
     pub agent: Option<String>,
+
+    /// Dev mode: load images from local build instead of pulling from GHCR
+    #[arg(long)]
+    pub dev: bool,
 }
 
 /// Check that the host architecture is amd64.
@@ -120,21 +124,23 @@ async fn create_and_start_vm(
         .context("transferring config to VM")?;
 
     // Step 4: Pull all Docker images (10-minute timeout).
-    vm::pull_images(mp).await.context("pulling Docker images")?;
+    if !args.dev {
+        vm::pull_images(mp).await.context("pulling Docker images")?;
 
-    // Step 5: Verify pulled image digests against embedded manifest.
-    digest::verify_image_digests(mp)
-        .await
-        .context("verifying image digests")?;
+        // Step 5: Verify pulled image digests against embedded manifest.
+        digest::verify_image_digests(mp)
+            .await
+            .context("verifying image digests")?;
 
-    // Step 6: Set up agent artifacts if requested.
-    setup_agent_if_requested(mp, args.agent.as_deref()).await?;
+        // Step 6: Set up agent artifacts if requested.
+        setup_agent_if_requested(mp, args.agent.as_deref()).await?;
 
-    // Step 7: Start docker compose (with optional agent overlay).
-    start_compose(mp, args.agent.as_deref()).await?;
+        // Step 7: Start docker compose (with optional agent overlay).
+        start_compose(mp, args.agent.as_deref()).await?;
 
-    // Step 8: Wait for all services to become healthy.
-    health::wait_ready(mp, quiet).await?;
+        // Step 8: Wait for all services to become healthy.
+        health::wait_ready(mp, quiet).await?;
+    }
 
     // Step 9: Write config hash AFTER successful startup so failed provisioning
     // can be retried (Requirements 15.1, 15.3).

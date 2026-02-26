@@ -121,6 +121,21 @@ pub async fn create(mp: &impl Multipass, quiet: bool) -> Result<()> {
     // The TempDir guard must be held until launch completes.
     let (assets_path, _assets_guard) =
         crate::assets::extract_assets().context("extracting embedded assets")?;
+
+    // The Multipass daemon (especially snap-confined) runs as a separate user
+    // and needs read access to the cloud-init file and its parent directory.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&assets_path, std::fs::Permissions::from_mode(0o755))
+            .context("setting temp dir permissions for multipass")?;
+        std::fs::set_permissions(
+            assets_path.join("cloud-init.yaml"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .context("setting cloud-init.yaml permissions for multipass")?;
+    }
+
     let cloud_init_path = assets_path.join("cloud-init.yaml");
     let cloud_init_str = cloud_init_path
         .to_str()
@@ -273,21 +288,31 @@ pub async fn transfer_config(mp: &impl Multipass, assets_dir: &Path, version: &s
     let tar_str = tar_path
         .to_str()
         .context("config tarball path is not valid UTF-8")?;
-    mp.transfer(tar_str, "polis:/tmp/polis-setup.config.tar")
+    let output = mp
+        .transfer(tar_str, "/tmp/polis-setup.config.tar")
         .await
         .context("transferring config tarball to VM")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("multipass transfer failed: {stderr}");
+    }
 
     // 3. Extract inside VM to /opt/polis (--no-same-owner prevents ownership manipulation).
-    mp.exec(&[
-        "tar",
-        "xf",
-        "/tmp/polis-setup.config.tar",
-        "-C",
-        "/opt/polis",
-        "--no-same-owner",
-    ])
-    .await
-    .context("extracting config tarball in VM")?;
+    let output = mp
+        .exec(&[
+            "tar",
+            "xf",
+            "/tmp/polis-setup.config.tar",
+            "-C",
+            "/opt/polis",
+            "--no-same-owner",
+        ])
+        .await
+        .context("extracting config tarball in VM")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("tar extraction failed: {stderr}");
+    }
 
     // Clean up the temp tarball inside the VM.
     let _ = mp.exec(&["rm", "-f", "/tmp/polis-setup.config.tar"]).await;

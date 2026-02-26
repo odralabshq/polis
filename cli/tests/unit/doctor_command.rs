@@ -20,7 +20,6 @@ impl HealthProbe for MockHealthyProbe {
             multipass_found: true,
             multipass_version: Some("1.16.0".to_string()),
             multipass_version_ok: true,
-            removable_media_connected: Some(false),
         })
     }
 
@@ -81,7 +80,6 @@ impl HealthProbe for MockUnhealthyProbe {
             multipass_found: false,
             multipass_version: None,
             multipass_version_ok: false,
-            removable_media_connected: None,
         })
     }
 

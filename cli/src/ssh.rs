@@ -476,10 +476,6 @@ Host workspace
 // `with_paths(polis_config: PathBuf, user_config: PathBuf, sockets_dir: PathBuf) -> Self`
 // constructor so tests can inject temp directories instead of `$HOME`.
 // The production `new()` delegates to `with_paths(...)`.
-//
-// ⚠️  Testability requirement: extract `fn resolve_ide(name: &str) -> Result<(...)>`
-// from `open_ide` so the unknown-IDE error path can be tested without spawning
-// a real process.  Hand off to Senior Rust Engineer.
 #[cfg(test)]
 mod ssh_config_manager_tests {
     use super::SshConfigManager;

@@ -224,14 +224,14 @@ fn test_delete_accepts_all_flag() {
 }
 
 #[test]
-fn test_connect_accepts_ide_option() {
-    // connect is implemented: --ide vscode is accepted (fails because no TTY/IDE in CI,
-    // not because the command is unrecognised).
+fn test_connect_accepts_no_args() {
+    // connect with no args is valid (it will fail at runtime without a VM,
+    // but clap must not reject it as a usage error).
     polis()
-        .args(["connect", "--ide", "vscode"])
+        .args(["connect"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("not yet implemented").not());
+        .stderr(predicate::str::contains("unrecognized").not())
+        .stderr(predicate::str::contains("unexpected argument").not());
 }
 
 #[test]

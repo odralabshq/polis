@@ -25,6 +25,7 @@ pub struct DoctorChecks {
 
 /// Prerequisite checks — multipass version and platform hypervisor.
 #[derive(Debug)]
+#[allow(clippy::struct_field_names)]
 pub struct PrerequisiteChecks {
     /// Whether `multipass` is on PATH.
     pub multipass_found: bool,
@@ -32,8 +33,6 @@ pub struct PrerequisiteChecks {
     pub multipass_version: Option<String>,
     /// Whether the installed version meets the minimum (1.16.0).
     pub multipass_version_ok: bool,
-    /// Linux only: whether the `removable-media` snap interface is connected.
-    pub removable_media_connected: Option<bool>,
 }
 
 /// Workspace health checks.
@@ -269,7 +268,6 @@ fn print_json_output(checks: &DoctorChecks, issues: &[String]) -> Result<()> {
                 "multipass_found": checks.prerequisites.multipass_found,
                 "multipass_version": checks.prerequisites.multipass_version,
                 "multipass_version_ok": checks.prerequisites.multipass_version_ok,
-                "removable_media_connected": checks.prerequisites.removable_media_connected,
             },
             "workspace": {
                 "ready": checks.workspace.ready,
@@ -376,12 +374,6 @@ fn print_prerequisites_section(ctx: &OutputContext, pre: &PrerequisiteChecks) {
         #[cfg(not(target_os = "linux"))]
         println!("      Update: https://multipass.run/install");
     }
-    if let Some(connected) = pre.removable_media_connected {
-        print_check(ctx, connected, "removable-media interface connected");
-        if !connected {
-            println!("      Fix: sudo snap connect multipass:removable-media");
-        }
-    }
     println!();
 }
 
@@ -389,28 +381,6 @@ fn print_prerequisites_section(ctx: &OutputContext, pre: &PrerequisiteChecks) {
 fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
     println!("  Workspace:");
     print_check(ctx, ws.ready, "Ready to start");
-
-    let img = &ws.image;
-    if img.cached {
-        let version_str = img.version.as_deref().unwrap_or("unknown");
-        let sha_str = img
-            .sha256_preview
-            .as_deref()
-            .map(|s| format!(" (SHA256: {s}...)"))
-            .unwrap_or_default();
-        print_check(ctx, true, &format!("Image cached: {version_str}{sha_str}"));
-        if let Some(drift) = &img.version_drift {
-            println!(
-                "    {} Newer image available: {}",
-                "⚠".style(ctx.styles.warning),
-                drift.latest
-            );
-            println!("      Update with: polis delete --all && polis start");
-        }
-    } else {
-        print_check(ctx, false, "No workspace image cached");
-        println!("      Run 'polis start' to download the image (~3.2 GB)");
-    }
 
     if ws.disk_space_ok {
         print_check(
@@ -429,24 +399,6 @@ fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
         );
     }
     println!();
-
-    // POLIS_IMAGE override warning (V-011, F-006)
-    if let Some(override_path) = &img.polis_image_override {
-        println!(
-            "  {} POLIS_IMAGE override active: {override_path}",
-            "⚠".style(ctx.styles.warning)
-        );
-        if std::path::Path::new(override_path).exists() {
-            println!("    This overrides the default image in ~/.polis/images/");
-        } else {
-            println!(
-                "    {} POLIS_IMAGE set but file not found: {override_path}",
-                "⚠".style(ctx.styles.warning)
-            );
-        }
-        println!("    Unset with: unset POLIS_IMAGE");
-        println!();
-    }
 }
 
 /// Print the security section of the human-readable health report.
@@ -542,7 +494,6 @@ fn probe_prerequisites() -> PrerequisiteChecks {
             multipass_found: false,
             multipass_version: None,
             multipass_version_ok: false,
-            removable_media_connected: None,
         };
     };
 
@@ -559,27 +510,13 @@ fn probe_prerequisites() -> PrerequisiteChecks {
         .is_none_or(|v| v >= semver::Version::new(1, 16, 0));
 
     // Linux only: check removable-media snap interface
-    #[cfg(target_os = "linux")]
-    let removable_media_connected = {
-        let conn = Command::new("snap")
-            .args(["connections", "multipass"])
-            .output()
-            .ok();
-        conn.map(|o| {
-            let text = String::from_utf8_lossy(&o.stdout);
-            // Slot column reads " :removable-media" when connected; plug name
-            // "multipass:removable-media" has no leading space before ":".
-            text.contains(" :removable-media")
-        })
-    };
-    #[cfg(not(target_os = "linux"))]
-    let removable_media_connected = None;
+    // Not needed — assets are extracted to ~/polis/tmp/ which is accessible
+    // via the snap home interface.
 
     PrerequisiteChecks {
         multipass_found: true,
         multipass_version: version_str,
         multipass_version_ok: version_ok,
-        removable_media_connected,
     }
 }
 
@@ -834,7 +771,6 @@ mod tests {
                 multipass_found: true,
                 multipass_version: Some("1.16.1".to_string()),
                 multipass_version_ok: true,
-                removable_media_connected: None,
             },
             workspace: WorkspaceChecks {
                 ready: true,
@@ -950,7 +886,6 @@ mod tests {
                 multipass_found: true,
                 multipass_version: Some("1.16.1".to_string()),
                 multipass_version_ok: true,
-                removable_media_connected: None,
             },
             workspace: WorkspaceChecks {
                 ready: true,
@@ -1084,28 +1019,6 @@ mod tests {
             issues
                 .iter()
                 .any(|i| i.contains("1.15.0") || i.to_lowercase().contains("old")),
-            "got: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn test_collect_issues_removable_media_connected_no_issue() {
-        let mut checks = all_healthy();
-        checks.prerequisites.removable_media_connected = Some(true);
-        let issues = collect_issues(&checks);
-        assert!(
-            !issues.iter().any(|i| i.contains("removable-media")),
-            "got: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn test_collect_issues_removable_media_none_no_issue() {
-        let mut checks = all_healthy();
-        checks.prerequisites.removable_media_connected = None;
-        let issues = collect_issues(&checks);
-        assert!(
-            !issues.iter().any(|i| i.contains("removable-media")),
             "got: {issues:?}"
         );
     }

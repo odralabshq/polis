@@ -91,7 +91,7 @@ install_cli() {
     local cli_bin="${REPO_DIR}/cli/target/release/polis"
     if [[ ! -f "${cli_bin}" ]]; then
         log_error "CLI binary not found at ${cli_bin}"
-        echo "  Build it first: cd ${REPO_DIR}/cli && cargo build --release"
+        echo "  Build it first: cd ${REPO_DIR} && just build"
         exit 1
     fi
     mkdir -p "${INSTALL_DIR}/bin"
@@ -102,34 +102,63 @@ install_cli() {
 }
 
 run_init() {
-    local image
-    image=$(find "${REPO_DIR}/packer/output" -name "*.qcow2" | sort | tail -1)
-    if [[ -z "${image}" ]]; then
-        log_error "No VM image found in ${REPO_DIR}/packer/output"
-        echo "  Build it first: just build-vm"
-        exit 1
+    local images_tar="${REPO_DIR}/.build/polis-images.tar.zst"
+    if [[ ! -f "${images_tar}" ]]; then
+        log_error "Docker images tarball not found: ${images_tar}"
+        echo "  Build it first: cd ${REPO_DIR} && just build-docker save-docker-images"
+        return 1
     fi
-    local sidecar="${image%.qcow2}.qcow2.sha256"
-    if [[ ! -f "${sidecar}" ]]; then
-        log_error "No signed sidecar found at ${sidecar}"
-        echo "  Run: just build-vm  (signing happens automatically)"
-        exit 1
-    fi
-    local pub_key="${REPO_DIR}/.secrets/polis-release.pub"
-    if [[ ! -f "${pub_key}" ]]; then
-        log_error "Dev public key not found at ${pub_key}"
-        echo "  Run: just build-vm  (keypair is generated automatically)"
-        exit 1
-    fi
-    local verifying_key_b64
-    verifying_key_b64=$(base64 -w0 "${pub_key}")
-    log_info "Running: polis start --image ${image}"
-    POLIS_VERIFYING_KEY_B64="${verifying_key_b64}" \
-        "${INSTALL_DIR}/bin/polis" start --image "${image}" || {
-        log_error "polis start failed. Run manually:"
-        echo "  POLIS_VERIFYING_KEY_B64=$(base64 -w0 "${pub_key}") polis start --image ${image}"
+
+    log_info "Running: polis start --dev"
+    "${INSTALL_DIR}/bin/polis" start --dev || {
+        log_error "polis start --dev failed. Run manually:"
+        echo "  ${INSTALL_DIR}/bin/polis start --dev"
         return 1
     }
+
+    log_info "Loading Docker images into VM..."
+    multipass transfer "${images_tar}" polis:/tmp/polis-images.tar.zst || {
+        log_error "Failed to transfer images tarball to VM"
+        return 1
+    }
+    multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst' || {
+        log_error "Failed to load Docker images in VM"
+        return 1
+    }
+    log_ok "Docker images loaded"
+
+    # Tag loaded images with the CLI version so docker-compose .env resolves
+    local cli_version
+    cli_version=$("${INSTALL_DIR}/bin/polis" --version 2>&1 | awk '{print $2}')
+    local tag="v${cli_version}"
+    log_info "Tagging images as ${tag}..."
+    multipass exec polis -- bash -c "
+        docker images --format '{{.Repository}}:{{.Tag}}' | grep ':latest$' | while read -r img; do
+            base=\"\${img%%:*}\"
+            docker tag \"\$img\" \"\${base}:${tag}\"
+        done
+    " || {
+        log_error "Failed to tag images"
+        return 1
+    }
+
+    # Also pull go-httpbin (small third-party image not built locally)
+    multipass exec polis -- docker pull mccutchen/go-httpbin 2>/dev/null || true
+
+    # Fix ownership of key files for container uid 65532
+    multipass exec polis -- sudo chown 65532:65532 \
+        /opt/polis/certs/valkey/server.key \
+        /opt/polis/certs/valkey/client.key \
+        /opt/polis/certs/toolbox/toolbox.key 2>/dev/null || true
+    multipass exec polis -- sudo chown 65532:65532 \
+        /opt/polis/certs/ca/ca.key 2>/dev/null || true
+
+    log_info "Starting services..."
+    multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans' || {
+        log_error "Failed to start services"
+        return 1
+    }
+    log_ok "Services started"
     return 0
 }
 
