@@ -41,7 +41,7 @@ if (-not $zstd) {
     if (Test-Path $anacondaZstd) { $zstd = Get-Item $anacondaZstd }
 }
 if (-not $zstd) {
-    throw "zstd not found. Install via: winget install Facebook.zstd  (or use Anaconda)"
+    throw "zstd not found. Install via: winget install Meta.Zstandard  (or use Anaconda)"
 }
 $zstdPath = if ($zstd -is [System.Management.Automation.ApplicationInfo]) { $zstd.Source } else { $zstd.FullName }
 Write-Host "[INFO] Using zstd: $zstdPath" -ForegroundColor Cyan

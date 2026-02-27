@@ -3,19 +3,22 @@
 //! These are invoked by tooling (e.g. SSH client via `ProxyCommand`), not by users.
 
 use anyhow::{Context, Result};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::workspace::CONTAINER_NAME;
 
 // ---------------------------------------------------------------------------
-// STDIO bridge
+// STDIO bridge (async — used by tests)
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Copies bytes from `reader` to `writer` until EOF.
 ///
 /// # Errors
 ///
 /// Returns an error if reading or writing fails.
+#[cfg(test)]
 pub async fn bridge_io<R, W>(reader: &mut R, writer: &mut W) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -34,53 +37,66 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Proxy implementation
+// Proxy implementation — Stdio::inherit
+//
+// Spawns `ssh ubuntu@vm docker exec -i <container> sshd -i` with inherited
+// stdin/stdout/stderr. The SSH client's pipe handles pass directly to the
+// child ssh process — no Rust-side bridging, no pipe forwarding issues.
 // ---------------------------------------------------------------------------
-
-async fn bridge_stdio(child: &mut tokio::process::Child) -> Result<()> {
-    let mut child_stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("child stdin unavailable"))?;
-    let mut child_stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("child stdout unavailable"))?;
-
-    let mut stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
-
-    tokio::select! {
-        r = bridge_io(&mut stdin, &mut child_stdin) => r?,
-        r = bridge_io(&mut child_stdout, &mut stdout) => r?,
-    }
-
-    let _ = child.start_kill();
-    child.wait().await?;
-    Ok(())
-}
 
 /// SSH `ProxyCommand` helper — bridges SSH client STDIO to workspace sshd.
 ///
 /// Invoked by the SSH client via `ProxyCommand polis _ssh-proxy`.
 ///
+/// Spawns `ssh ubuntu@<vm-ip> docker exec -i <container> /usr/sbin/sshd -i`
+/// with inherited stdin/stdout/stderr. The SSH client's pipe handles pass
+/// directly to the child `ssh` process with zero Rust-side bridging.
+///
 /// # Errors
 ///
-/// Returns an error if multipass cannot be spawned or STDIO bridging fails.
-#[allow(clippy::large_futures)]
+/// Returns an error if the VM IP cannot be resolved or SSH cannot be spawned.
 pub async fn ssh_proxy(mp: &impl crate::multipass::Multipass) -> Result<()> {
-    let mut child = mp
-        .exec_spawn(&[
-            "docker",
-            "exec",
+    let vm_ip = crate::multipass::resolve_vm_ip(mp).await?;
+
+    let identity_key = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join(".polis")
+        .join("id_ed25519");
+
+    #[cfg(windows)]
+    let devnull = "NUL";
+    #[cfg(not(windows))]
+    let devnull = "/dev/null";
+
+    let docker_cmd = format!("docker exec -i {} /usr/sbin/sshd -i", CONTAINER_NAME);
+
+    // Inherit stdin/stdout/stderr directly — no Rust-side piping.
+    // The SSH client's pipe handles pass straight through to the child
+    // ssh process, avoiding any Windows pipe forwarding issues in Rust.
+    let status = std::process::Command::new("ssh")
+        .args([
             "-i",
-            CONTAINER_NAME,
-            "/usr/sbin/sshd",
-            "-i",
+            &identity_key.to_string_lossy(),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            &format!("UserKnownHostsFile={devnull}"),
+            "-o",
+            "LogLevel=ERROR",
+            "-o",
+            "BatchMode=yes",
+            &format!("ubuntu@{vm_ip}"),
+            &docker_cmd,
         ])
-        .context("failed to spawn multipass")?;
-    bridge_stdio(&mut child).await
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .context("failed to spawn ssh")?;
+
+    std::process::exit(status.code().unwrap_or(255));
 }
+
 
 // ---------------------------------------------------------------------------
 // Host key extraction
@@ -124,6 +140,7 @@ pub async fn extract_host_key(mp: &impl crate::multipass::Multipass) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::bridge_io;
+    use proptest::prelude::*;
 
     #[tokio::test]
     async fn test_bridge_io_forwards_bytes_from_reader_to_writer() {
@@ -150,5 +167,58 @@ mod tests {
             .await
             .expect("bridge should succeed");
         assert_eq!(buf.get_ref(), b"hello");
+    }
+
+    // -----------------------------------------------------------------------
+    // Property 1: Fault Condition — Blocking Bridge Completes Byte Forwarding
+    //
+    // **Validates: Requirements 1.1, 1.2, 2.1, 2.2**
+    //
+    // For all byte sequences `bs`, `bridge_io(&mut bs.as_ref(), &mut writer)`
+    // completes and `writer == bs` — i.e. every byte is forwarded without
+    // data loss or stalling.
+    // -----------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn prop_bridge_io_forwards_all_bytes(bs in proptest::collection::vec(any::<u8>(), 0..4096)) {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                let mut writer: Vec<u8> = Vec::new();
+                bridge_io(&mut bs.as_slice(), &mut writer)
+                    .await
+                    .expect("bridge_io should complete without stalling");
+                prop_assert_eq!(writer, bs);
+                Ok(())
+            })?;
+        }
+    }
+}
+
+#[cfg(test)]
+mod preservation_tests {
+    use super::bridge_io;
+    use proptest::prelude::*;
+
+    // -------------------------------------------------------------------
+    // Property 2 (Part B): Preservation — Bridge Byte Fidelity
+    //
+    // **Validates: Requirements 3.1, 3.2, 3.3**
+    //
+    // For all byte sequences `bs`, the async `bridge_io` forwards every
+    // byte exactly from reader to writer.
+    // -------------------------------------------------------------------
+    proptest! {
+        #[test]
+        fn prop_bridge_byte_fidelity_preservation(bs in proptest::collection::vec(any::<u8>(), 0..4096)) {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                let mut writer: Vec<u8> = Vec::new();
+                bridge_io(&mut bs.as_slice(), &mut writer)
+                    .await
+                    .expect("bridge_io should complete without error");
+                prop_assert_eq!(&writer, &bs, "bridge must preserve every byte exactly");
+                Ok(())
+            })?;
+        }
     }
 }

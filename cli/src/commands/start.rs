@@ -17,10 +17,6 @@ pub struct StartArgs {
     /// Agent to activate (must match agents/<name>/ directory inside the VM)
     #[arg(long)]
     pub agent: Option<String>,
-
-    /// Dev mode: load images from local build instead of pulling from GHCR
-    #[arg(long)]
-    pub dev: bool,
 }
 
 /// Check that the host architecture is amd64.
@@ -88,16 +84,16 @@ fn handle_running_vm(state_mgr: &StateManager, args: &StartArgs, quiet: bool) ->
 /// Create a new VM and start the workspace.
 ///
 /// Full provisioning flow (Phase 1 + Phase 2):
-/// 1. `extract_assets()` — extract 3 embedded files to temp dir, hold `TempDir` guard
-/// 2. `vm::create()` — launch VM with cloud-init, verify cloud-init
+/// 1. `extract_assets()` — extract embedded files to temp dir
+/// 2. `vm::create()` — launch VM with cloud-init, verify, start services
 /// 3. `vm::transfer_config()` — transfer tarball, extract, write .env
-/// 4. `vm::pull_images()` — docker compose pull with 10-min timeout
-/// 5. `digest::verify_image_digests()` — verify pulled images against manifest
-/// 6. `setup_agent_if_requested()` — if agent specified
-/// 7. `start_compose()` — docker compose up -d
-/// 8. `health::wait_ready()` — wait for health check
-/// 9. `vm::write_config_hash()` — write hash AFTER successful startup
-/// 10. `TempDir` guard dropped automatically for cleanup
+/// 4. `vm::generate_certs_and_secrets()` — generate TLS certs and Valkey secrets
+/// 5. `vm::pull_images()` — docker compose pull with 10-min timeout
+/// 6. `digest::verify_image_digests()` — verify pulled images against manifest
+/// 7. `setup_agent_if_requested()` — if agent specified
+/// 8. `start_compose()` — docker compose up -d
+/// 9. `health::wait_ready()` — wait for health check
+/// 10. `vm::write_config_hash()` — write hash AFTER successful startup
 async fn create_and_start_vm(
     state_mgr: &StateManager,
     args: &StartArgs,
@@ -115,7 +111,7 @@ async fn create_and_start_vm(
     let config_hash = vm::sha256_file(&tar_path).context("computing config tarball SHA256")?;
 
     // Step 2: Launch VM with cloud-init and verify cloud-init completed.
-    vm::create(mp, quiet, args.dev).await?;
+    vm::create(mp, quiet).await?;
 
     // Step 3: Transfer config tarball into VM, extract to /opt/polis, write .env.
     let version = env!("CARGO_PKG_VERSION");
@@ -123,24 +119,27 @@ async fn create_and_start_vm(
         .await
         .context("transferring config to VM")?;
 
+    // Step 3.5: Generate certificates and secrets inside the VM.
+    vm::generate_certs_and_secrets(mp)
+        .await
+        .context("generating certificates and secrets")?;
+
     // Step 4: Pull all Docker images (10-minute timeout).
-    if !args.dev {
-        vm::pull_images(mp).await.context("pulling Docker images")?;
+    vm::pull_images(mp).await.context("pulling Docker images")?;
 
-        // Step 5: Verify pulled image digests against embedded manifest.
-        digest::verify_image_digests(mp)
-            .await
-            .context("verifying image digests")?;
+    // Step 5: Verify pulled image digests against embedded manifest.
+    digest::verify_image_digests(mp)
+        .await
+        .context("verifying image digests")?;
 
-        // Step 6: Set up agent artifacts if requested.
-        setup_agent_if_requested(mp, args.agent.as_deref()).await?;
+    // Step 6: Set up agent artifacts if requested.
+    setup_agent_if_requested(mp, args.agent.as_deref()).await?;
 
-        // Step 7: Start docker compose (with optional agent overlay).
-        start_compose(mp, args.agent.as_deref()).await?;
+    // Step 7: Start docker compose (with optional agent overlay).
+    start_compose(mp, args.agent.as_deref()).await?;
 
-        // Step 8: Wait for all services to become healthy.
-        health::wait_ready(mp, quiet).await?;
-    }
+    // Step 8: Wait for all services to become healthy.
+    health::wait_ready(mp, quiet).await?;
 
     // Step 9: Write config hash AFTER successful startup so failed provisioning
     // can be retried (Requirements 15.1, 15.3).

@@ -9,6 +9,7 @@
 #   hadolint     — Dockerfile linting
 #   Rust toolchain   — CLI + toolbox service builds
 #   Git          — if not already present
+#   zstd         — image tarball compression
 #   zipsign      — artifact signing
 
 $ErrorActionPreference = "Stop"
@@ -82,6 +83,11 @@ else {
     Invoke-WebRequest $url -OutFile $target
     Write-Ok "hadolint installed at $target"
 }
+
+# ─── zstd ───────────────────────────────────────────────────────────────────
+Write-Step "zstd (image compression)"
+if (Test-Command zstd) { Write-Skip "zstd" }
+else { Install-WinGet "Meta.Zstandard" "zstd" }
 
 # ─── zipsign ────────────────────────────────────────────────────────────────
 Write-Step "zipsign"

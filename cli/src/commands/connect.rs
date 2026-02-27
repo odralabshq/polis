@@ -1,11 +1,17 @@
 //! `polis connect` — SSH config management.
 
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::output::OutputContext;
 use crate::ssh::{SshConfigManager, ensure_identity_key};
 use crate::workspace::CONTAINER_NAME;
+
+/// Timeout for exec calls during connect setup.
+/// Prevents `polis connect` from hanging when Docker/containers are unresponsive.
+const CONNECT_EXEC_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Arguments for the connect command.
 #[derive(Args)]
@@ -38,6 +44,12 @@ pub async fn run(
 
     // Ensure a passphrase-free identity key exists and is installed in the workspace.
     let pubkey = ensure_identity_key()?;
+
+    // Install pubkey into the VM's ubuntu user so `polis _ssh-proxy` can SSH
+    // to the VM directly (bypasses multipass exec stdin bug on Windows).
+    install_vm_pubkey(&pubkey, mp).await?;
+
+    // Install pubkey into the workspace container's polis user.
     install_pubkey(&pubkey, mp).await?;
 
     // Pin the workspace host key so StrictHostKeyChecking can verify it.
@@ -99,51 +111,66 @@ fn validate_pubkey(key: &str) -> Result<()> {
     Ok(())
 }
 
-/// Installs `pubkey` into `~/.ssh/authorized_keys` of the `polis` user inside
-/// the workspace container. Idempotent.
-async fn install_pubkey(pubkey: &str, mp: &impl crate::multipass::Multipass) -> Result<()> {
-    // SEC-001: Validate pubkey format before use to prevent shell injection
+/// Installs `pubkey` into `~/.ssh/authorized_keys` of the VM's `ubuntu` user.
+///
+/// This enables `polis _ssh-proxy` to SSH directly to the VM (bypassing
+/// `multipass exec` which has a stdin pipe bug on Windows).
+/// Idempotent — skips if key already present.
+async fn install_vm_pubkey(pubkey: &str, _mp: &impl crate::multipass::Multipass) -> Result<()> {
     validate_pubkey(pubkey)?;
+    let key = pubkey.trim();
 
-    // SEC-001: Use stdin to pass pubkey instead of shell interpolation
-    let setup_script = "mkdir -p /home/polis/.ssh && chmod 700 /home/polis/.ssh && chown polis:polis /home/polis/.ssh";
-    let install_script = "cat >> /home/polis/.ssh/authorized_keys && \
-         chmod 600 /home/polis/.ssh/authorized_keys && \
-         chown polis:polis /home/polis/.ssh/authorized_keys";
-
-    // First ensure .ssh directory exists
-    let setup_output = mp
-        .exec(&["docker", "exec", CONTAINER_NAME, "bash", "-c", setup_script])
-        .await
-        .context("multipass exec failed")?;
-    anyhow::ensure!(
-        setup_output.status.success(),
-        "failed to setup .ssh directory"
+    let script = format!(
+        "grep -qxF '{key}' /home/ubuntu/.ssh/authorized_keys 2>/dev/null || \
+         printf '%s\\n' '{key}' >> /home/ubuntu/.ssh/authorized_keys"
     );
 
-    // Add newline if not present
-    let key_line = if pubkey.ends_with('\n') {
-        pubkey.as_bytes().to_vec()
-    } else {
-        format!("{pubkey}\n").into_bytes()
-    };
+    let output = crate::multipass::exec_with_timeout(
+        &["bash", "-c", &script],
+        CONNECT_EXEC_TIMEOUT,
+    )
+    .await
+    .context("installing public key in VM")?;
 
-    // Install pubkey via stdin (no shell interpolation)
-    let output = mp
-        .exec_with_stdin(
-            &[
-                "docker",
-                "exec",
-                "-i",
-                CONTAINER_NAME,
-                "bash",
-                "-c",
-                install_script,
-            ],
-            &key_line,
-        )
-        .await
-        .context("multipass exec failed")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to install public key in VM"
+    );
+    Ok(())
+}
+
+/// Installs `pubkey` into `~/.ssh/authorized_keys` of the `polis` user inside
+/// the workspace container. Idempotent.
+///
+/// Uses `printf` + shell command instead of stdin piping because
+/// `multipass exec ... docker exec -i ...` stdin pipes hang on Windows
+/// (the EOF is never propagated through the double-pipe chain).
+async fn install_pubkey(pubkey: &str, _mp: &impl crate::multipass::Multipass) -> Result<()> {
+    // SEC-001: Validate pubkey format before use to prevent shell injection.
+    // validate_pubkey ensures only [a-zA-Z0-9 +/=@.-\n] — no quotes or
+    // shell metacharacters — so embedding in single-quoted printf is safe.
+    validate_pubkey(pubkey)?;
+
+    let key = pubkey.trim();
+
+    // Single command: create .ssh dir, append key (idempotent via grep guard),
+    // fix permissions — all without stdin piping.
+    let script = format!(
+        "mkdir -p /home/polis/.ssh && \
+         chmod 700 /home/polis/.ssh && \
+         chown polis:polis /home/polis/.ssh && \
+         grep -qxF '{key}' /home/polis/.ssh/authorized_keys 2>/dev/null || \
+         printf '%s\\n' '{key}' >> /home/polis/.ssh/authorized_keys && \
+         chmod 600 /home/polis/.ssh/authorized_keys && \
+         chown polis:polis /home/polis/.ssh/authorized_keys"
+    );
+
+    let output = crate::multipass::exec_with_timeout(
+        &["docker", "exec", CONTAINER_NAME, "bash", "-c", &script],
+        CONNECT_EXEC_TIMEOUT,
+    )
+    .await
+    .context("installing public key in workspace")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -163,16 +190,18 @@ fn write_host_key(mgr: &crate::ssh::KnownHostsManager, raw_key: &str) -> Result<
 }
 
 /// Extracts the workspace SSH host key and writes it to `~/.polis/known_hosts`.
-async fn pin_host_key(mp: &impl crate::multipass::Multipass) {
-    let Ok(output) = mp
-        .exec(&[
+async fn pin_host_key(_mp: &impl crate::multipass::Multipass) {
+    let Ok(output) = crate::multipass::exec_with_timeout(
+        &[
             "docker",
             "exec",
             CONTAINER_NAME,
             "cat",
             "/etc/ssh/ssh_host_ed25519_key.pub",
-        ])
-        .await
+        ],
+        CONNECT_EXEC_TIMEOUT,
+    )
+    .await
     else {
         return;
     };

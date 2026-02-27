@@ -2,17 +2,35 @@
 
 #![allow(dead_code)]
 
-use std::os::unix::process::ExitStatusExt;
 use std::process::{ExitStatus, Output};
 
 use anyhow::Result;
 use polis_cli::multipass::Multipass;
 
+// ── Cross-platform ExitStatus construction ───────────────────────────────────
+
+/// Build an `ExitStatus` from a logical exit code (0 = success, non-zero = failure).
+///
+/// On Unix the raw wait-status encodes the exit code in bits 8–15, so we shift.
+/// On Windows `ExitStatusExt::from_raw` takes the exit code directly.
+#[cfg(unix)]
+pub fn exit_status(code: i32) -> ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    ExitStatus::from_raw(code << 8)
+}
+
+#[cfg(windows)]
+pub fn exit_status(code: i32) -> ExitStatus {
+    use std::os::windows::process::ExitStatusExt;
+    #[allow(clippy::cast_sign_loss)]
+    ExitStatus::from_raw(code as u32)
+}
+
 // ── Output constructors ──────────────────────────────────────────────────────
 
 pub fn ok_output(stdout: &[u8]) -> Output {
     Output {
-        status: ExitStatus::from_raw(0),
+        status: exit_status(0),
         stdout: stdout.to_vec(),
         stderr: Vec::new(),
     }
@@ -20,7 +38,7 @@ pub fn ok_output(stdout: &[u8]) -> Output {
 
 pub fn err_output(code: i32, stderr: &[u8]) -> Output {
     Output {
-        status: ExitStatus::from_raw(code << 8),
+        status: exit_status(code),
         stdout: Vec::new(),
         stderr: stderr.to_vec(),
     }

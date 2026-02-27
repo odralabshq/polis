@@ -57,6 +57,9 @@ pub enum Command {
         /// Show remediation details for each issue
         #[arg(long)]
         verbose: bool,
+        /// Attempt to automatically repair detected issues
+        #[arg(long)]
+        fix: bool,
     },
 
     /// Run a command in the workspace
@@ -130,9 +133,9 @@ impl Cli {
                     .await
             }
 
-            Command::Doctor { verbose } => {
+            Command::Doctor { verbose, fix } => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::doctor::run(&ctx, json, verbose, &mp).await
+                commands::doctor::run(&ctx, json, verbose, fix, &mp).await
             }
 
             Command::Exec(args) => commands::exec::run(&args, &mp).await,

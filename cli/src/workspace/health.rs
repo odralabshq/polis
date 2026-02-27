@@ -137,7 +137,6 @@ pub async fn check(mp: &impl Multipass) -> HealthStatus {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};
 
     use anyhow::Result;
@@ -145,9 +144,22 @@ mod tests {
     use super::*;
     use crate::multipass::Multipass;
 
+    #[cfg(unix)]
+    fn exit_status(code: i32) -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn exit_status(code: i32) -> ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+        #[allow(clippy::cast_sign_loss)]
+        ExitStatus::from_raw(code as u32)
+    }
+
     fn mock_output(stdout: &[u8]) -> Output {
         Output {
-            status: ExitStatus::from_raw(0),
+            status: exit_status(0),
             stdout: stdout.to_vec(),
             stderr: Vec::new(),
         }

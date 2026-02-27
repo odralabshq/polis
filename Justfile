@@ -219,27 +219,15 @@ setup: setup-ca setup-valkey setup-toolbox
 setup-ca:
 	#!/usr/bin/env bash
 	set -euo pipefail
-	CA_DIR=certs/ca
-	CA_KEY="${CA_DIR}/ca.key"
-	CA_PEM="${CA_DIR}/ca.pem"
-	if [[ -f "$CA_KEY" && -f "$CA_PEM" ]]; then echo "✓ CA exists"; exit 0; fi
-	echo "→ Generating CA..."
-	rm -f "$CA_KEY" "$CA_PEM"
-	mkdir -p "$CA_DIR"
-	openssl genrsa -out "$CA_KEY" 4096 2>/dev/null
-	openssl req -new -x509 -days 3650 -key "$CA_KEY" -out "$CA_PEM" \
-		-subj "/C=US/ST=Local/L=Local/O=Polis/OU=Gateway/CN=Polis CA" 2>/dev/null
-	chmod 600 "$CA_KEY"
-	chmod 644 "$CA_PEM"
-	sudo chown "$(id -u):65532" "$CA_KEY"
-	chmod 640 "$CA_KEY"
-	echo "✓ CA generated"
+	./scripts/generate-ca.sh ./certs/ca
+	sudo chown root:root ./certs/ca/ca.key
+	chmod 600 ./certs/ca/ca.key
+	echo "✓ CA ready"
 
 setup-valkey:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	echo "→ Generating Valkey certs and secrets..."
-	sudo rm -f ./certs/valkey/*.key ./certs/valkey/*.crt 2>/dev/null || true
 	./services/state/scripts/generate-certs.sh ./certs/valkey &>/dev/null
 	./services/state/scripts/generate-secrets.sh ./secrets . &>/dev/null
 	sudo chown 65532:65532 ./certs/valkey/server.key ./certs/valkey/client.key
@@ -252,6 +240,28 @@ setup-toolbox:
 	sudo rm -f ./certs/toolbox/*.key ./certs/toolbox/*.pem 2>/dev/null || true
 	./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca >/dev/null
 	sudo chown 65532:65532 ./certs/toolbox/toolbox.key
+	echo "✓ Toolbox certs ready"
+
+# Windows-only: Generate certs on HOST (dev flow) — mirrors just setup
+setup-windows: setup-ca-windows setup-valkey-windows setup-toolbox-windows
+	@echo "✓ Setup complete"
+
+setup-ca-windows:
+	bash -c './scripts/generate-ca.sh ./certs/ca'
+
+setup-valkey-windows:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	echo "→ Generating Valkey certs and secrets..."
+	./services/state/scripts/generate-certs.sh ./certs/valkey
+	./services/state/scripts/generate-secrets.sh ./secrets .
+	echo "✓ Valkey certs and secrets ready"
+
+setup-toolbox-windows:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	echo "→ Generating Toolbox certs..."
+	./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
 	echo "✓ Toolbox certs ready"
 
 

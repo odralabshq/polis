@@ -8,20 +8,22 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, unsafe_code)]
 
-use std::os::unix::process::ExitStatusExt;
-use std::process::{ExitStatus, Output};
+use std::process::Output;
 
 use anyhow::Result;
 use polis_cli::commands::config::{self, ConfigCommand};
 use polis_cli::multipass::Multipass;
 use polis_cli::output::OutputContext;
+use serial_test::serial;
 use tempfile::TempDir;
+
+use crate::helpers::exit_status;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn ok_output(stdout: &[u8]) -> Output {
     Output {
-        status: ExitStatus::from_raw(0),
+        status: exit_status(0),
         stdout: stdout.to_vec(),
         stderr: Vec::new(),
     }
@@ -29,7 +31,7 @@ fn ok_output(stdout: &[u8]) -> Output {
 
 fn err_output(stderr: &[u8]) -> Output {
     Output {
-        status: ExitStatus::from_raw(1 << 8),
+        status: exit_status(1),
         stdout: Vec::new(),
         stderr: stderr.to_vec(),
     }
@@ -63,7 +65,7 @@ macro_rules! multipass_stub_methods {
         async fn vm_info(&self) -> Result<Output> {
             // Propagation tests require a running VM
             Ok(Output {
-                status: ExitStatus::from_raw(0),
+                status: exit_status(0),
                 stdout: br#"{"info":{"polis":{"state":"Running"}}}"#.to_vec(),
                 stderr: Vec::new(),
             })
@@ -204,6 +206,7 @@ impl Multipass for MockCaptureArgs {
 // ── Tests: propagation succeeds ──────────────────────────────────────────────
 
 #[tokio::test]
+#[serial]
 async fn test_config_set_security_level_propagates_on_success() {
     let (_dir, cmd) = set_cmd("strict");
     let result = config::run(&ctx(), cmd, false, &MockPropagateOk).await;
@@ -211,6 +214,7 @@ async fn test_config_set_security_level_propagates_on_success() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_config_set_security_level_saves_file_on_success() {
     let (dir, cmd) = set_cmd("strict");
     let path = dir.path().join("config.yaml");
@@ -224,6 +228,7 @@ async fn test_config_set_security_level_saves_file_on_success() {
 // ── Tests: propagation fails gracefully ──────────────────────────────────────
 
 #[tokio::test]
+#[serial]
 async fn test_config_set_succeeds_when_password_read_fails() {
     let (_dir, cmd) = set_cmd("strict");
     let result = config::run(&ctx(), cmd, false, &MockPasswordReadFails).await;
@@ -234,6 +239,7 @@ async fn test_config_set_succeeds_when_password_read_fails() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_config_set_succeeds_when_valkey_set_fails() {
     let (_dir, cmd) = set_cmd("balanced");
     let result = config::run(&ctx(), cmd, false, &MockValkeySetFails).await;
@@ -244,6 +250,7 @@ async fn test_config_set_succeeds_when_valkey_set_fails() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_config_set_succeeds_when_exec_errors() {
     let (_dir, cmd) = set_cmd("balanced");
     let result = config::run(&ctx(), cmd, false, &MockExecErrors).await;
@@ -254,6 +261,7 @@ async fn test_config_set_succeeds_when_exec_errors() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_config_set_saves_file_even_when_propagation_fails() {
     let (dir, cmd) = set_cmd("strict");
     let path = dir.path().join("config.yaml");
@@ -270,6 +278,7 @@ async fn test_config_set_saves_file_even_when_propagation_fails() {
 // ── Tests: show does not call exec ───────────────────────────────────────────
 
 #[tokio::test]
+#[serial]
 async fn test_config_show_does_not_interact_with_multipass() {
     let (_dir, _) = set_cmd("balanced"); // sets POLIS_CONFIG
     let cmd = ConfigCommand::Show;
@@ -279,6 +288,7 @@ async fn test_config_show_does_not_interact_with_multipass() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_config_show_json_does_not_interact_with_multipass() {
     let (_dir, _) = set_cmd("balanced");
     let cmd = ConfigCommand::Show;
@@ -289,6 +299,7 @@ async fn test_config_show_json_does_not_interact_with_multipass() {
 // ── Tests: exec receives correct arguments ───────────────────────────────────
 
 #[tokio::test]
+#[serial]
 async fn test_config_set_propagation_passes_level_as_separate_arg() {
     let (_dir, cmd) = set_cmd("strict");
     let mock = MockCaptureArgs::new();
@@ -318,6 +329,7 @@ async fn test_config_set_propagation_passes_level_as_separate_arg() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_config_set_propagation_does_not_use_shell() {
     let (_dir, cmd) = set_cmd("balanced");
     let mock = MockCaptureArgs::new();

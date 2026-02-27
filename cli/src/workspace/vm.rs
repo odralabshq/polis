@@ -110,7 +110,7 @@ pub async fn verify_cloud_init(mp: &impl Multipass) -> Result<()> {
 ///
 /// Returns an error if prerequisites are not met, asset extraction fails,
 /// the multipass launch fails, or cloud-init reports a failure.
-pub async fn create(mp: &impl Multipass, quiet: bool, dev: bool) -> Result<()> {
+pub async fn create(mp: &impl Multipass, quiet: bool) -> Result<()> {
     check_prerequisites(mp).await?;
 
     if !quiet {
@@ -176,13 +176,7 @@ pub async fn create(mp: &impl Multipass, quiet: bool, dev: bool) -> Result<()> {
     verify_cloud_init(mp).await?;
 
     configure_credentials(mp).await;
-
-    // In dev mode, skip starting services — images will be loaded manually
-    // by the install-dev script after this function returns.
-    if !dev {
-        start_services_with_progress(mp, quiet).await;
-    }
-
+    start_services_with_progress(mp, quiet).await;
     pin_host_key().await;
     Ok(())
 }
@@ -339,10 +333,28 @@ pub async fn transfer_config(mp: &impl Multipass, assets_dir: &Path, version: &s
         "chmod",
         "+x",
         "{}",
-        ";",
+        "+",
     ])
     .await
     .context("fixing script permissions in VM")?;
+
+    // 6. Strip Windows CRLF line endings from shell scripts.
+    // Windows tar preserves CRLF from the working tree; bash fails with
+    // "$'\r': command not found" if not stripped.
+    mp.exec(&[
+        "find",
+        "/opt/polis",
+        "-name",
+        "*.sh",
+        "-exec",
+        "sed",
+        "-i",
+        "s/\\r//",
+        "{}",
+        "+",
+    ])
+    .await
+    .context("stripping CRLF from shell scripts in VM")?;
 
     Ok(())
 }
@@ -479,6 +491,95 @@ pub async fn pull_images(mp: &impl Multipass) -> Result<()> {
     );
 }
 
+/// Generate certificates and secrets inside the VM.
+///
+/// Calls scripts in dependency order:
+/// 1. scripts/generate-ca.sh — CA key + cert (idempotent skip)
+/// 2. services/state/scripts/generate-certs.sh — Valkey certs (needs CA)
+/// 3. services/state/scripts/generate-secrets.sh — Valkey secrets
+/// 4. services/toolbox/scripts/generate-certs.sh — Toolbox certs (idempotent skip)
+/// 5. scripts/fix-cert-ownership.sh — fix key ownership (service keys to uid 65532, CA key to root)
+///
+/// All scripts are idempotent: they skip generation if files exist.
+/// For dev flow, the tarball already contains certs so this is a no-op.
+/// For user flow, no certs in tarball so generates fresh unique ones.
+///
+/// Logs to VM syslog for support diagnostics (not to stdout).
+///
+/// # Errors
+/// Returns an error if any generation script fails.
+pub async fn generate_certs_and_secrets(mp: &impl Multipass) -> Result<()> {
+    // SAFETY: polis_root is a compile-time constant. If this is ever parameterized,
+    // switch to explicit argument arrays to prevent shell injection (see V-004 in transfer_config).
+    let polis_root = "/opt/polis";
+
+    // Step 1: Generate CA (if not present)
+    mp.exec(&[
+        "sudo",
+        "bash",
+        "-c",
+        &format!("{polis_root}/scripts/generate-ca.sh {polis_root}/certs/ca"),
+    ])
+    .await
+    .context("generating CA certificate")?;
+
+    // Step 2: Generate Valkey certs (needs CA)
+    mp.exec(&[
+        "sudo",
+        "bash",
+        "-c",
+        &format!("{polis_root}/services/state/scripts/generate-certs.sh {polis_root}/certs/valkey"),
+    ])
+    .await
+    .context("generating Valkey certificates")?;
+
+    // Step 3: Generate Valkey secrets
+    mp.exec(&[
+        "sudo",
+        "bash",
+        "-c",
+        &format!(
+            "{polis_root}/services/state/scripts/generate-secrets.sh {polis_root}/secrets {polis_root}"
+        ),
+    ])
+    .await
+    .context("generating Valkey secrets")?;
+
+    // Step 4: Generate Toolbox certs (needs CA, idempotent skip built-in)
+    mp.exec(&[
+        "sudo",
+        "bash",
+        "-c",
+        &format!(
+            "{polis_root}/services/toolbox/scripts/generate-certs.sh \
+             {polis_root}/certs/toolbox {polis_root}/certs/ca"
+        ),
+    ])
+    .await
+    .context("generating Toolbox certificates")?;
+
+    // Step 5: Fix ownership for container uid 65532
+    mp.exec(&[
+        "sudo",
+        "bash",
+        "-c",
+        &format!("{polis_root}/scripts/fix-cert-ownership.sh {polis_root}"),
+    ])
+    .await
+    .context("fixing certificate ownership")?;
+
+    // Log for support diagnostics (not to stdout)
+    mp.exec(&[
+        "bash",
+        "-c",
+        "logger -t polis 'Certificate and secret generation completed'",
+    ])
+    .await
+    .ok();
+
+    Ok(())
+}
+
 // ── Private helpers ──────────────────────────────────────────────────────────
 
 const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
@@ -541,7 +642,6 @@ async fn pin_host_key() {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};
 
     use anyhow::Result;
@@ -549,16 +649,30 @@ mod tests {
     use super::*;
     use crate::multipass::Multipass;
 
+    /// Build an `ExitStatus` from a logical exit code (cross-platform).
+    #[cfg(unix)]
+    fn exit_status(code: i32) -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn exit_status(code: i32) -> ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+        #[allow(clippy::cast_sign_loss)]
+        ExitStatus::from_raw(code as u32)
+    }
+
     fn ok(stdout: &[u8]) -> Output {
         Output {
-            status: ExitStatus::from_raw(0),
+            status: exit_status(0),
             stdout: stdout.to_vec(),
             stderr: Vec::new(),
         }
     }
     fn fail() -> Output {
         Output {
-            status: ExitStatus::from_raw(1 << 8),
+            status: exit_status(1),
             stdout: Vec::new(),
             stderr: Vec::new(),
         }
@@ -751,7 +865,7 @@ mod tests {
             unimplemented!()
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            Ok(std::process::ExitStatus::from_raw(self.0 << 8))
+            Ok(exit_status(self.0))
         }
     }
 
@@ -1311,7 +1425,7 @@ mod tests {
         }
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             Ok(Output {
-                status: std::process::ExitStatus::from_raw(self.exit_code << 8),
+                status: exit_status(self.exit_code),
                 stdout: vec![],
                 stderr: self.stderr.clone(),
             })

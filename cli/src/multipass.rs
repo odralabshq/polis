@@ -294,3 +294,86 @@ impl Multipass for MultipassCli {
             .context("failed to run multipass exec")
     }
 }
+
+/// Run `multipass exec polis -- <args>` with a hard timeout that kills the
+/// child process if it doesn't complete in time.
+///
+/// On Windows, `tokio::time::timeout` around `.output().await` does NOT kill
+/// the child process when the timeout fires — the future is dropped but the
+/// OS process keeps running, causing the await to never resolve. This helper
+/// uses `tokio::select!` with explicit `child.kill()` to guarantee the process
+/// is terminated on both platforms.
+///
+/// Returns `Ok(Output)` on success, or `Err` on spawn failure / timeout.
+pub async fn exec_with_timeout(
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<Output> {
+    use tokio::io::AsyncReadExt;
+
+    let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--"];
+    cmd_args.extend_from_slice(args);
+
+    let mut child = tokio::process::Command::new("multipass")
+        .args(&cmd_args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("failed to spawn multipass exec")?;
+
+    // Take stdout/stderr handles before entering select! so we can read
+    // them regardless of which branch wins.
+    let mut stdout_handle = child.stdout.take();
+    let mut stderr_handle = child.stderr.take();
+
+    tokio::select! {
+        status = child.wait() => {
+            // Process exited normally — drain remaining pipe data.
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            if let Some(ref mut h) = stdout_handle {
+                let _ = h.read_to_end(&mut stdout).await;
+            }
+            if let Some(ref mut h) = stderr_handle {
+                let _ = h.read_to_end(&mut stderr).await;
+            }
+            Ok(Output {
+                status: status.context("waiting for multipass exec")?,
+                stdout,
+                stderr,
+            })
+        }
+        _ = tokio::time::sleep(timeout) => {
+            // Explicitly kill — works on both Windows (TerminateProcess) and Unix (SIGKILL).
+            let _ = child.kill().await;
+            anyhow::bail!("multipass exec timed out after {}s", timeout.as_secs())
+        }
+    }
+}
+
+
+/// Extracts the primary IPv4 address of the `polis` VM from `multipass info`.
+///
+/// The JSON structure is `{ "info": { "polis": { "ipv4": ["172.x.x.x", ...] } } }`.
+/// Returns the first address, which is the primary interface on the host-VM bridge.
+///
+/// # Errors
+///
+/// Returns an error if `multipass info` fails or no IPv4 address is found.
+pub async fn resolve_vm_ip(mp: &impl Multipass) -> Result<String> {
+    let output = mp.vm_info().await.context("failed to query VM info")?;
+    anyhow::ensure!(output.status.success(), "multipass info failed");
+
+    let info: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("invalid JSON from multipass info")?;
+
+    info.get("info")
+        .and_then(|i| i.get(VM_NAME))
+        .and_then(|p| p.get("ipv4"))
+        .and_then(|arr| arr.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| anyhow::anyhow!("no IPv4 address found for polis VM"))
+}

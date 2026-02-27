@@ -8,6 +8,9 @@ use proptest::prelude::*;
 
 use polis_cli::commands::config::{validate_config_key, validate_config_value};
 use polis_cli::commands::start::generate_workspace_id;
+use polis_cli::workspace::vm::generate_certs_and_secrets;
+
+use crate::mocks::MultipassExecRecorder;
 
 // ============================================================================
 // generate_workspace_id() property tests
@@ -76,4 +79,85 @@ fn test_config_value_whitelist() {
     assert!(validate_config_value("security.level", "strict").is_ok());
     assert!(validate_config_value("security.level", "relaxed").is_ok());
     assert!(validate_config_value("security.level", "").is_err());
+}
+
+// ============================================================================
+// generate_certs_and_secrets() property tests
+// ============================================================================
+
+proptest! {
+    /// **Validates: Requirements 3.2, 3.3**
+    ///
+    /// Property: `generate_certs_and_secrets()` always calls all 5 scripts in
+    /// the correct order, regardless of any pre-existing cert file state.
+    ///
+    /// The Rust function is unconditional — idempotency is handled inside the
+    /// scripts themselves. The proptest inputs simulate arbitrary combinations
+    /// of pre-existing cert files (present/absent) but the function's behaviour
+    /// must be invariant across all of them.
+    #[test]
+    fn prop_generate_certs_always_calls_5_scripts_in_order(
+        // Simulate arbitrary combinations of pre-existing cert files
+        // (the Rust function doesn't check these — scripts do)
+        _ca_exists in proptest::bool::ANY,
+        _valkey_certs_exist in proptest::bool::ANY,
+        _valkey_secrets_exist in proptest::bool::ANY,
+        _toolbox_certs_exist in proptest::bool::ANY,
+    ) {
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        rt.block_on(async {
+            let mp = MultipassExecRecorder::new();
+            generate_certs_and_secrets(&mp).await.expect("should succeed");
+            let calls = mp.recorded_calls();
+
+            // Always exactly 6 calls (5 scripts + 1 logger)
+            prop_assert_eq!(calls.len(), 6);
+
+            // Script calls must be in correct order
+            let script_names = [
+                "generate-ca.sh",
+                "generate-certs.sh",
+                "generate-secrets.sh",
+                "generate-certs.sh",  // toolbox
+                "fix-cert-ownership.sh",
+            ];
+            for (i, name) in script_names.iter().enumerate() {
+                let cmd = calls[i].get(3).map_or("", String::as_str);
+                prop_assert!(cmd.contains(name), "call {} should contain {}, got: {}", i, name, cmd);
+            }
+
+            Ok(())
+        })?;
+    }
+
+    /// **Validates: Requirements 3.2, 3.3**
+    ///
+    /// Property: all script paths are rooted at `/opt/polis/` and use
+    /// `sudo bash -c` as the invocation pattern.
+    #[test]
+    fn prop_generate_certs_all_script_paths_rooted_at_opt_polis(
+        _any_bool in proptest::bool::ANY,
+    ) {
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        rt.block_on(async {
+            let mp = MultipassExecRecorder::new();
+            generate_certs_and_secrets(&mp).await.expect("should succeed");
+            let calls = mp.recorded_calls();
+
+            // All 5 script calls must use sudo bash -c and paths rooted at /opt/polis/
+            for (i, call) in calls.iter().take(5).enumerate() {
+                prop_assert_eq!(call.first().map(String::as_str), Some("sudo"),
+                    "call {} should start with sudo", i);
+                prop_assert_eq!(call.get(1).map(String::as_str), Some("bash"),
+                    "call {} second arg should be bash", i);
+                prop_assert_eq!(call.get(2).map(String::as_str), Some("-c"),
+                    "call {} third arg should be -c", i);
+                let cmd = call.get(3).map_or("", String::as_str);
+                prop_assert!(cmd.starts_with("/opt/polis/"),
+                    "call {} path should start with /opt/polis/, got: {}", i, cmd);
+            }
+
+            Ok(())
+        })?;
+    }
 }

@@ -216,9 +216,10 @@ pub async fn run(
     ctx: &OutputContext,
     json: bool,
     verbose: bool,
+    fix: bool,
     mp: &impl crate::multipass::Multipass,
 ) -> Result<()> {
-    run_with(ctx, json, verbose, &SystemProbe::new(mp)).await
+    run_with(ctx, json, verbose, fix, &SystemProbe::new(mp), mp).await
 }
 
 /// Run doctor with a custom health probe (for testing).
@@ -230,27 +231,52 @@ pub async fn run_with(
     ctx: &OutputContext,
     json: bool,
     verbose: bool,
+    fix: bool,
     probe: &impl HealthProbe,
+    mp: &impl crate::multipass::Multipass,
 ) -> Result<()> {
-    let (prerequisites, workspace, network, security) = tokio::try_join!(
+    let checks_result = tokio::try_join!(
         probe.check_prerequisites(),
         probe.check_workspace(),
         probe.check_network(),
         probe.check_security(),
-    )?;
-    let checks = DoctorChecks {
-        prerequisites,
-        workspace,
-        network,
-        security,
-    };
-    let issues = collect_issues(&checks);
+    );
 
-    if json {
-        print_json_output(&checks, &issues)?;
-    } else {
-        print_human_output(ctx, &checks, &issues, verbose);
+    match checks_result {
+        Ok((prerequisites, workspace, network, security)) => {
+            let checks = DoctorChecks {
+                prerequisites,
+                workspace,
+                network,
+                security,
+            };
+            let issues = collect_issues(&checks);
+
+            if json {
+                print_json_output(&checks, &issues)?;
+            } else {
+                print_human_output(ctx, &checks, &issues, verbose);
+            }
+
+            if fix && !issues.is_empty() {
+                repair(ctx, mp, false).await?;
+            }
+        }
+        Err(e) => {
+            if !ctx.quiet {
+                println!(
+                    "  {} Health checks failed: {e}. Attempting repair...",
+                    "⚠".yellow()
+                );
+            }
+            if fix {
+                repair(ctx, mp, true).await?;
+            } else {
+                return Err(e);
+            }
+        }
     }
+
     Ok(())
 }
 
@@ -483,6 +509,206 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
 }
 
 // ── System check helpers ──────────────────────────────────────────────────────
+
+// ── Repair ───────────────────────────────────────────────────────────────────
+
+/// Attempt to repair detected issues without destroying user data.
+///
+/// Repairs (in order):
+/// 1. Docker not running → `systemctl restart docker`
+/// 2. sysbox not registered → `systemctl restart sysbox && restart docker`
+/// 3. `/opt/polis` missing or config stale → re-transfer config tarball
+///    3.5. Certs missing or expiring → regenerate via `generate_certs_and_secrets`
+/// 4. `polis.service` not enabled → `systemctl enable --now polis.service`
+/// 5. Restart compose services (compose down first if certs were regenerated)
+///
+/// When `health_checks_failed` is true, config is always re-transferred from
+/// host before any other repair steps (VM state is untrusted — prevents
+/// tampered scripts from persisting and running as root during repair).
+///
+/// # Errors
+///
+/// Returns an error if the VM is not running or a repair step fails fatally.
+#[allow(clippy::too_many_lines)]
+pub async fn repair(
+    ctx: &OutputContext,
+    mp: &impl crate::multipass::Multipass,
+    health_checks_failed: bool,
+) -> Result<()> {
+    use owo_colors::OwoColorize;
+
+    let print_step = |msg: &str| {
+        if !ctx.quiet {
+            println!("  {} {msg}", "→".cyan());
+        }
+    };
+    let print_ok = |msg: &str| {
+        if !ctx.quiet {
+            println!("  {} {msg}", "✓".green());
+        }
+    };
+    let print_skip = |msg: &str| {
+        if !ctx.quiet {
+            println!("  {} {msg}", "–".dimmed());
+        }
+    };
+
+    if !ctx.quiet {
+        println!("\n{}", "Repairing...".cyan());
+    }
+
+    // When health checks failed, VM state is untrusted — always re-transfer config
+    // from host to prevent tampered scripts from persisting and running as root.
+    if health_checks_failed {
+        print_step("Re-transferring config (health checks failed, VM state untrusted)...");
+        let (assets_dir, _guard) =
+            crate::assets::extract_assets().context("extracting embedded assets")?;
+        let version = env!("CARGO_PKG_VERSION");
+        crate::workspace::vm::transfer_config(mp, &assets_dir, version)
+            .await
+            .context("re-transferring config to VM")?;
+        print_ok("Config re-transferred");
+    }
+
+    // 1. Ensure Docker is running
+    print_step("Checking Docker daemon...");
+    let docker_ok = mp
+        .exec(&["docker", "info"])
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if docker_ok {
+        print_skip("Docker already running");
+    } else {
+        print_step("Restarting Docker...");
+        mp.exec(&["sudo", "systemctl", "restart", "docker"])
+            .await
+            .context("restarting docker")?;
+        print_ok("Docker restarted");
+    }
+
+    // 2. Ensure sysbox runtime is registered
+    print_step("Checking sysbox runtime...");
+    let sysbox_ok = mp
+        .exec(&["docker", "info", "--format", "{{.Runtimes}}"])
+        .await
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("sysbox-runc"))
+        .unwrap_or(false);
+    if sysbox_ok {
+        print_skip("sysbox-runc already registered");
+    } else {
+        print_step("Restarting sysbox and Docker...");
+        mp.exec(&["sudo", "systemctl", "restart", "sysbox"])
+            .await
+            .context("restarting sysbox")?;
+        mp.exec(&["sudo", "systemctl", "restart", "docker"])
+            .await
+            .context("restarting docker after sysbox")?;
+        print_ok("sysbox and Docker restarted");
+    }
+
+    // 3. Re-transfer config if /opt/polis is missing or .env is absent
+    print_step("Checking /opt/polis config...");
+    let config_ok = mp
+        .exec(&["test", "-f", "/opt/polis/.env"])
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if config_ok {
+        print_skip("/opt/polis config present");
+    } else {
+        print_step("Re-transferring config...");
+        let (assets_dir, _guard) =
+            crate::assets::extract_assets().context("extracting embedded assets")?;
+        let version = env!("CARGO_PKG_VERSION");
+        crate::workspace::vm::transfer_config(mp, &assets_dir, version)
+            .await
+            .context("re-transferring config to VM")?;
+        print_ok("Config re-transferred");
+    }
+
+    // 3.5: Ensure certs exist and are not expiring within 7 days
+    let mut certs_regenerated = false;
+    print_step("Checking certificates...");
+    let sentinel_ok = mp
+        .exec(&["test", "-f", "/opt/polis/.certs-ready"])
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    // Also check cert expiry — regenerate if expiring within 7 days (604800 seconds)
+    let cert_expiry_ok = if sentinel_ok {
+        mp.exec(&[
+            "bash",
+            "-c",
+            "openssl x509 -in /opt/polis/certs/valkey/server.crt -checkend 604800 -noout 2>/dev/null",
+        ])
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if sentinel_ok && cert_expiry_ok {
+        print_skip("Certificates present and valid");
+    } else {
+        if sentinel_ok && !cert_expiry_ok {
+            print_step("Certificates expiring soon, forcing regeneration...");
+            mp.exec(&["rm", "-f", "/opt/polis/.certs-ready"]).await.ok();
+        }
+        print_step("Generating certificates and secrets...");
+        crate::workspace::vm::generate_certs_and_secrets(mp)
+            .await
+            .context("generating certificates during repair")?;
+        certs_regenerated = true;
+        print_ok("Certificates generated");
+    }
+
+    // 4. Ensure polis.service is enabled
+    print_step("Checking polis.service...");
+    let service_enabled = mp
+        .exec(&["systemctl", "is-enabled", "polis.service"])
+        .await
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "enabled")
+        .unwrap_or(false);
+    if service_enabled {
+        print_skip("polis.service already enabled");
+    } else {
+        print_step("Enabling polis.service...");
+        mp.exec(&["sudo", "systemctl", "enable", "polis.service"])
+            .await
+            .context("enabling polis.service")?;
+        print_ok("polis.service enabled");
+    }
+
+    // 5. Restart compose services — use compose down when certs were regenerated
+    // to ensure credential consistency (prevents rolling restart mismatch where
+    // some containers read new secrets while Valkey still has old ones).
+    if certs_regenerated {
+        print_step("Stopping services for clean restart...");
+        mp.exec(&["bash", "-c", "cd /opt/polis && docker compose down"])
+            .await
+            .context("stopping services before restart")?;
+    }
+    print_step("Restarting services...");
+    mp.exec(&[
+        "bash",
+        "-c",
+        "cd /opt/polis && docker compose --env-file .env up -d --remove-orphans",
+    ])
+    .await
+    .context("restarting compose services")?;
+    print_ok("Services restarted");
+
+    if !ctx.quiet {
+        println!(
+            "\n{}",
+            "Repair complete. Run 'polis doctor' to verify.".green()
+        );
+    }
+    Ok(())
+}
 
 /// Blocking probe for prerequisite checks (runs in `spawn_blocking`).
 fn probe_prerequisites() -> PrerequisiteChecks {

@@ -56,8 +56,6 @@ Get-ChildItem "services" -Directory | ForEach-Object {
 if (Test-Path "certs")   { $includes += "certs" }
 if (Test-Path "secrets") { $includes += "secrets" }
 
-# tar on Windows doesn't support --force-local but works fine for creation
-# Use -c (create), -f (file) — no sudo needed
 $tarArgs = @("-cf", $tarDest) + $includes
 & tar @tarArgs
 if ($LASTEXITCODE -ne 0) { throw "tar failed" }

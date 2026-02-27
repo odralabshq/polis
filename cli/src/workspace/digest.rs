@@ -84,7 +84,6 @@ pub async fn verify_image_digests(mp: &impl Multipass) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};
     use std::sync::Mutex;
 
@@ -93,11 +92,26 @@ mod tests {
     use super::*;
     use crate::multipass::Multipass;
 
+    // ── Cross-platform ExitStatus helper ─────────────────────────────────────
+
+    #[cfg(unix)]
+    fn exit_status(code: i32) -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn exit_status(code: i32) -> ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+        #[allow(clippy::cast_sign_loss)]
+        ExitStatus::from_raw(code as u32)
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     fn ok_output(stdout: &str) -> Output {
         Output {
-            status: ExitStatus::from_raw(0),
+            status: exit_status(0),
             stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
         }
@@ -105,7 +119,7 @@ mod tests {
 
     fn fail_output() -> Output {
         Output {
-            status: ExitStatus::from_raw(1 << 8),
+            status: exit_status(1),
             stdout: Vec::new(),
             stderr: b"docker inspect failed".to_vec(),
         }

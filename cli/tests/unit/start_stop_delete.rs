@@ -61,19 +61,12 @@ async fn test_delete_all_no_workspace_succeeds() {
 
 #[tokio::test]
 async fn test_start_already_running_returns_ok() {
-    let args = StartArgs {
-        agent: None,
-        dev: false,
-    };
+    let args = StartArgs { agent: None };
     assert!(start::run(&args, &MultipassVmRunning, true).await.is_ok());
 }
 
 #[tokio::test]
-async fn test_start_dev_mode_skips_pull_and_returns_ok() {
-    // --dev skips pull/verify/compose/health; VM already running → returns Ok immediately.
-    let args = StartArgs {
-        agent: None,
-        dev: true,
-    };
+async fn test_start_returns_ok_when_already_running() {
+    let args = StartArgs { agent: None };
     assert!(start::run(&args, &MultipassVmRunning, true).await.is_ok());
 }

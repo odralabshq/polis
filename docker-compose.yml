@@ -416,9 +416,6 @@ services:
   # SCANNER INIT (ClamAV Volume permission setup)
   # =========================================================
   scanner-init:
-    build:
-      context: .
-      dockerfile: services/init/Dockerfile
     image: ghcr.io/odralabshq/polis-init-oss:${POLIS_HOST_INIT_VERSION:-latest}
     container_name: polis-scanner-init
     cap_drop:
@@ -443,9 +440,6 @@ services:
   # STATE INIT (Valkey Volume permission setup)
   # =========================================================
   state-init:
-    build:
-      context: .
-      dockerfile: services/init/Dockerfile
     image: ghcr.io/odralabshq/polis-init-oss:${POLIS_HOST_INIT_VERSION:-latest}
     container_name: polis-state-init
     cap_drop:

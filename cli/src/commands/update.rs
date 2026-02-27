@@ -361,6 +361,7 @@ fn get_asset_name() -> Result<String> {
         ("linux", "aarch64") => "polis-linux-arm64.tar.gz",
         ("macos", "x86_64") => "polis-darwin-amd64.tar.gz",
         ("macos", "aarch64") => "polis-darwin-arm64.tar.gz",
+        ("windows", "x86_64") => "polis-windows-amd64.tar.gz",
         _ => anyhow::bail!("unsupported platform: {os}-{arch}"),
     };
     Ok(name.to_string())

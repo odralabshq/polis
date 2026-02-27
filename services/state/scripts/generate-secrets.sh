@@ -20,6 +20,19 @@ echo "Output directory: ${OUTPUT_DIR}"
 # Create output directory if it doesn't exist
 mkdir -p "${OUTPUT_DIR}"
 
+# Idempotency guard: skip generation if secrets already exist
+if [[ -f "${OUTPUT_DIR}/valkey_users.acl" && -f "${OUTPUT_DIR}/valkey_password.txt" ]]; then
+    # Still run .env migration cleanup for older installations that stored passwords in env vars
+    if [[ -f "$ENV_FILE" ]]; then
+        sed -i '/^VALKEY_MCP_AGENT_PASS=/d' "$ENV_FILE"
+        sed -i '/^VALKEY_MCP_ADMIN_PASS=/d' "$ENV_FILE"
+        sed -i '/^VALKEY_REQMOD_PASS=/d' "$ENV_FILE"
+        sed -i '/^VALKEY_RESPMOD_PASS=/d' "$ENV_FILE"
+    fi
+    echo "Valkey secrets already exist. Skipping."
+    exit 0
+fi
+
 # =============================================================================
 # Password Generation
 # Generate unique 32-character alphanumeric passwords for each user

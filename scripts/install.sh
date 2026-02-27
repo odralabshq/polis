@@ -12,7 +12,10 @@ INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 CURL_PROTO="=https"
-CDN_BASE_URL="${POLIS_CDN_URL:-https://d1qggvwquwdnma.cloudfront.net}"
+
+# SHA256 hashes for Multipass downloads — update when bumping MULTIPASS_VERSION
+MULTIPASS_SHA256_LINUX_AMD64="${MULTIPASS_SHA256_LINUX_AMD64:-PLACEHOLDER_UPDATE_WHEN_BUMPING_VERSION}"
+MULTIPASS_SHA256_MACOS="${MULTIPASS_SHA256_MACOS:-PLACEHOLDER_UPDATE_WHEN_BUMPING_VERSION}"
 
 # Colors
 RED='\033[0;31m'
@@ -87,20 +90,48 @@ install_multipass_linux() {
         echo "  Install snapd: https://snapcraft.io/docs/installing-snapd"
         exit 1
     fi
-    local snap_file="/tmp/multipass_${MULTIPASS_VERSION}_amd64.snap"
+    local snap_file
+    snap_file=$(mktemp --suffix=".snap")
+    trap 'rm -f "${snap_file}"' EXIT
     curl -fsSL --proto "${CURL_PROTO}" \
         "https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass_${MULTIPASS_VERSION}_amd64.snap" \
         -o "${snap_file}"
+
+    local snap_sha256
+    snap_sha256=$(sha256sum "${snap_file}" | cut -d' ' -f1)
+    if [[ "${snap_sha256}" != "${MULTIPASS_SHA256_LINUX_AMD64}" ]]; then
+        log_error "Multipass snap SHA256 mismatch!"
+        echo "  Expected: ${MULTIPASS_SHA256_LINUX_AMD64}" >&2
+        echo "  Actual:   ${snap_sha256}" >&2
+        rm -f "${snap_file}"
+        exit 1
+    fi
+    log_ok "Multipass snap SHA256 verified"
+
     sudo snap install "${snap_file}" --dangerous
     rm -f "${snap_file}"
     return 0
 }
 
 install_multipass_macos() {
-    local pkg_file="/tmp/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg"
+    local pkg_file
+    pkg_file=$(mktemp --suffix=".pkg")
+    trap 'rm -f "${pkg_file}"' EXIT
     curl -fsSL --proto "${CURL_PROTO}" \
         "https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg" \
         -o "${pkg_file}"
+
+    local pkg_sha256
+    pkg_sha256=$(shasum -a 256 "${pkg_file}" | cut -d' ' -f1)
+    if [[ "${pkg_sha256}" != "${MULTIPASS_SHA256_MACOS}" ]]; then
+        log_error "Multipass pkg SHA256 mismatch!"
+        echo "  Expected: ${MULTIPASS_SHA256_MACOS}" >&2
+        echo "  Actual:   ${pkg_sha256}" >&2
+        rm -f "${pkg_file}"
+        exit 1
+    fi
+    log_ok "Multipass pkg SHA256 verified"
+
     sudo installer -pkg "${pkg_file}" -target /
     rm -f "${pkg_file}"
     return 0
@@ -153,8 +184,6 @@ check_multipass() {
     return 0
 }
 
-
-
 download_cli() {
     local arch base_url bin_dir binary_name checksum_file expected actual
     arch=$(check_arch)
@@ -162,7 +191,8 @@ download_cli() {
     bin_dir="${INSTALL_DIR}/bin"
     binary_name="polis-linux-${arch}"
     tarball="${binary_name}.tar.gz"
-    checksum_file="/tmp/polis.sha256.$$"
+    checksum_file=$(mktemp)
+    trap 'rm -f "${checksum_file}"' EXIT
 
     mkdir -p "${bin_dir}"
 
@@ -178,7 +208,6 @@ download_cli() {
     log_info "Verifying CLI SHA256..."
     expected=$(cut -d' ' -f1 < "${checksum_file}")
     actual=$(sha256sum "${bin_dir}/polis" | cut -d' ' -f1)
-    rm -f "${checksum_file}"
 
     if [[ "${actual}" != "${expected}" ]]; then
         log_error "SHA256 checksum mismatch!"
@@ -202,67 +231,31 @@ create_symlink() {
     return 0
 }
 
-download_image() {
-    local arch gh_base_url image_name dest expected actual
-    arch=$(check_arch)
-    gh_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
-
-    # Construct image filename from version and arch (VM images have v prefix)
-    image_name="polis-v${VERSION}-${arch}.qcow2"
-
-    dest="${INSTALL_DIR}/images/${image_name}"
-    mkdir -p "${INSTALL_DIR}/images"
-
-    log_info "Downloading VM image from CDN..." >&2
-    if ! curl -fL --proto "${CURL_PROTO}" --http2 --retry 3 --retry-delay 2 --progress-bar \
-        "${CDN_BASE_URL}/v${VERSION}/${image_name}" -o "${dest}" >&2; then
-        log_warn "CDN unavailable, falling back to GitHub..." >&2
-        curl -fL --proto "${CURL_PROTO}" --retry 3 --retry-delay 2 --progress-bar \
-            "${gh_base_url}/${image_name}" -o "${dest}" >&2
-    fi
-
-    echo "${dest}"
-    return 0
-}
-
-run_init() {
-    local image_path="$1"
-    local bin="${INSTALL_DIR}/bin/polis"
-
-    log_info "Running: polis start --image ${image_path}"
-    if ! "${bin}" start --image "${image_path}"; then
-        log_error "polis start failed. Run manually:"
-        echo "  polis start --image ${image_path}"
-        return 1
-    fi
-    return 0
-}
-
 main() {
     print_logo
-
     check_arch >/dev/null
     check_multipass
     log_info "Installing Polis ${VERSION}"
     download_cli
     create_symlink
 
-    local image_path
-    image_path=$(download_image)
-
+    # Repair existing VM instead of destroying it
     if multipass info polis &>/dev/null 2>&1; then
-        log_warn "An existing polis VM was found."
-        read -r -p "Remove it and start fresh? [y/N] " confirm
-        if [[ "${confirm,,}" == "y" ]]; then
-            log_info "Removing existing polis VM..."
-            multipass delete polis && multipass purge
+        log_warn "Existing polis VM found, attempting repair..."
+        if "${INSTALL_DIR}/bin/polis" doctor --fix; then
+            log_ok "VM repaired and running"
+            exit 0
         else
-            log_info "Keeping existing VM. Skipping removal."
+            log_error "Repair failed. To start fresh (destroys VM data):"
+            log_error "  polis delete && polis start"
+            exit 1
         fi
     fi
+
     rm -f "${INSTALL_DIR}/state.json"
 
-    run_init "${image_path}"
+    # Start (creates VM, generates certs inside VM)
+    "${INSTALL_DIR}/bin/polis" start
 
     echo ""
     log_ok "Polis installed successfully!"

@@ -2,6 +2,8 @@
 //!
 //! Displays workspace state, agent health, security status, and metrics.
 
+use std::time::Duration;
+
 use anyhow::Result;
 use polis_common::types::{
     AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
@@ -11,6 +13,10 @@ use polis_common::types::{
 use crate::multipass::Multipass;
 use crate::output::OutputContext;
 use crate::workspace::COMPOSE_PATH;
+
+/// Timeout for individual exec calls during status gathering.
+/// Prevents `polis status` from hanging when Docker is unresponsive.
+const STATUS_EXEC_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Run the status command.
 ///
@@ -85,9 +91,12 @@ async fn get_workspace_status(mp: &impl Multipass) -> WorkspaceStatus {
     }
 }
 
-/// Check multipass VM state.
+/// Check multipass VM state (with timeout to prevent hanging).
 async fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
-    let output = mp.vm_info().await.ok()?;
+    let output = tokio::time::timeout(STATUS_EXEC_TIMEOUT, mp.vm_info())
+        .await
+        .ok()?  // timeout elapsed
+        .ok()?; // vm_info error
 
     if !output.status.success() {
         return None;
@@ -106,9 +115,13 @@ async fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
 }
 
 /// Check if polis-workspace container is running inside VM.
-async fn check_workspace_container(mp: &impl Multipass) -> bool {
-    let output = mp
-        .exec(&[
+///
+/// Uses `exec_with_timeout` which spawns the child process and explicitly
+/// kills it on timeout — required on Windows where dropping a tokio process
+/// future does NOT terminate the child.
+async fn check_workspace_container(_mp: &impl Multipass) -> bool {
+    let output = crate::multipass::exec_with_timeout(
+        &[
             "docker",
             "compose",
             "-f",
@@ -117,8 +130,10 @@ async fn check_workspace_container(mp: &impl Multipass) -> bool {
             "--format",
             "json",
             "workspace",
-        ])
-        .await;
+        ],
+        STATUS_EXEC_TIMEOUT,
+    )
+    .await;
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -137,50 +152,16 @@ async fn check_workspace_container(mp: &impl Multipass) -> bool {
 }
 
 /// Check security services inside multipass VM.
-async fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
-    let output = mp
-        .exec(&[
-            "docker",
-            "compose",
-            "-f",
-            COMPOSE_PATH,
-            "ps",
-            "--format",
-            "json",
-        ])
-        .await;
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => {
-            return SecurityStatus {
-                traffic_inspection: false,
-                credential_protection: false,
-                malware_scanning: false,
-            };
-        }
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut gate = false;
-    let mut sentinel = false;
-    let mut scanner = false;
-
-    for line in stdout.lines() {
-        if let Ok(container) = serde_json::from_str::<serde_json::Value>(line) {
-            let service = container.get("Service").and_then(|s| s.as_str());
-            let state = container.get("State").and_then(|s| s.as_str());
-
-            if state == Some("running") {
-                match service {
-                    Some("gate") => gate = true,
-                    Some("sentinel") => sentinel = true,
-                    Some("scanner") => scanner = true,
-                    _ => {}
-                }
-            }
-        }
-    }
+///
+/// Queries each security service individually to avoid the unfiltered
+/// `docker compose ps --format json` call which hangs on Windows when
+/// run through `multipass exec` (the host process never closes stdout).
+async fn get_security_status(_mp: &impl Multipass) -> SecurityStatus {
+    let (gate, sentinel, scanner) = tokio::join!(
+        is_service_running("gate"),
+        is_service_running("sentinel"),
+        is_service_running("scanner"),
+    );
 
     SecurityStatus {
         traffic_inspection: gate,
@@ -189,10 +170,45 @@ async fn get_security_status(mp: &impl Multipass) -> SecurityStatus {
     }
 }
 
+/// Check if a single docker compose service is running inside the VM.
+async fn is_service_running(service: &str) -> bool {
+    let output = crate::multipass::exec_with_timeout(
+        &[
+            "docker",
+            "compose",
+            "-f",
+            COMPOSE_PATH,
+            "ps",
+            "--format",
+            "json",
+            service,
+        ],
+        STATUS_EXEC_TIMEOUT,
+    )
+    .await;
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return false,
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Some(first_line) = stdout.lines().next() else {
+        return false;
+    };
+
+    serde_json::from_str::<serde_json::Value>(first_line)
+        .ok()
+        .and_then(|c| c.get("State")?.as_str().map(|s| s == "running"))
+        .unwrap_or(false)
+}
+
 /// Check agent status inside multipass VM.
-async fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
-    let output = mp
-        .exec(&[
+///
+/// Uses `exec_with_timeout` for cross-platform process kill on timeout.
+async fn get_agent_status(_mp: &impl Multipass) -> Option<AgentStatus> {
+    let output = crate::multipass::exec_with_timeout(
+        &[
             "docker",
             "compose",
             "-f",
@@ -201,9 +217,11 @@ async fn get_agent_status(mp: &impl Multipass) -> Option<AgentStatus> {
             "--format",
             "json",
             "workspace",
-        ])
-        .await
-        .ok()?;
+        ],
+        STATUS_EXEC_TIMEOUT,
+    )
+    .await
+    .ok()?;
 
     if !output.status.success() {
         return None;

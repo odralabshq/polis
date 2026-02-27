@@ -3,6 +3,9 @@
 # Polis Dev Installer — installs from local build artifacts
 # =============================================================================
 # Usage: ./scripts/install-dev.sh [--repo /path/to/polis]
+#
+# Does NOT use `polis start`. Creates the VM and provisions it directly via
+# multipass commands so the dev flow is fully self-contained and debuggable.
 # =============================================================================
 
 set -euo pipefail
@@ -101,73 +104,147 @@ install_cli() {
     return 0
 }
 
-run_init() {
-    local images_tar="${REPO_DIR}/.build/polis-images.tar.zst"
-    if [[ ! -f "${images_tar}" ]]; then
-        log_error "Docker images tarball not found: ${images_tar}"
-        echo "  Build it first: cd ${REPO_DIR} && just build"
-        return 1
-    fi
-
-    log_info "Running: polis start --dev"
-    "${INSTALL_DIR}/bin/polis" start --dev || {
-        log_error "polis start --dev failed. Run manually:"
-        echo "  ${INSTALL_DIR}/bin/polis start --dev"
-        return 1
-    }
-
-    log_info "Loading Docker images into VM..."
-    multipass transfer "${images_tar}" polis:/tmp/polis-images.tar.zst || {
-        log_error "Failed to transfer images tarball to VM"
-        return 1
-    }
-    multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst' || {
-        log_error "Failed to load Docker images in VM"
-        return 1
-    }
-    log_ok "Docker images loaded"
-
-    # Tag loaded images with the CLI version so docker-compose .env resolves
-    local cli_version
-    cli_version=$("${INSTALL_DIR}/bin/polis" --version 2>&1 | awk '{print $2}')
-    local tag="v${cli_version}"
-    log_info "Tagging images as ${tag}..."
-    multipass exec polis -- bash -c "
-        docker images --format '{{.Repository}}:{{.Tag}}' | grep ':latest$' | while read -r img; do
-            base=\"\${img%%:*}\"
-            docker tag \"\$img\" \"\${base}:${tag}\"
-        done
-    " || {
-        log_error "Failed to tag images"
-        return 1
-    }
-
-    # Also pull go-httpbin (small third-party image not built locally)
-    multipass exec polis -- docker pull mccutchen/go-httpbin 2>/dev/null || true
-
-    # Fix ownership of key files for container uid 65532
-    multipass exec polis -- sudo chown 65532:65532 \
-        /opt/polis/certs/valkey/server.key \
-        /opt/polis/certs/valkey/client.key \
-        /opt/polis/certs/toolbox/toolbox.key 2>/dev/null || true
-    multipass exec polis -- sudo chown 65532:65532 \
-        /opt/polis/certs/ca/ca.key 2>/dev/null || true
-
-    log_info "Starting services..."
-    multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans' || {
-        log_error "Failed to start services"
-        return 1
-    }
-    log_ok "Services started"
-    return 0
-}
-
 create_symlink() {
     mkdir -p "$HOME/.local/bin"
     ln -sf "${INSTALL_DIR}/bin/polis" "$HOME/.local/bin/polis"
     log_ok "Symlinked: ~/.local/bin/polis"
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
         log_warn "\$HOME/.local/bin is not in PATH — add it to your shell rc"
+    fi
+    return 0
+}
+
+run_init() {
+    local images_tar="${REPO_DIR}/.build/polis-images.tar.zst"
+    local config_tar="${REPO_DIR}/.build/assets/polis-setup.config.tar"
+    local cloud_init="${REPO_DIR}/cloud-init.yaml"
+
+    for f in "${images_tar}" "${config_tar}" "${cloud_init}"; do
+        if [[ ! -f "${f}" ]]; then
+            log_error "Required file not found: ${f}"
+            echo "  Build first: cd ${REPO_DIR} && just build"
+            return 1
+        fi
+    done
+
+    # ── Step 1: Create VM ─────────────────────────────────────────────────
+    log_info "Creating VM with cloud-init..."
+    multipass launch 24.04 \
+        --name polis \
+        --cpus 2 \
+        --memory 8G \
+        --disk 40G \
+        --cloud-init "${cloud_init}" \
+        --timeout 900 || {
+        log_error "VM creation failed"
+        return 1
+    }
+    log_ok "VM created"
+
+    log_info "Waiting for cloud-init..."
+    multipass exec polis -- cloud-init status --wait || {
+        log_error "cloud-init failed"
+        return 1
+    }
+    log_ok "cloud-init complete"
+
+    # ── Step 2: Transfer config ───────────────────────────────────────────
+    log_info "Transferring config tarball..."
+    multipass transfer "${config_tar}" polis:/tmp/polis-setup.config.tar || {
+        log_error "Failed to transfer config tarball"
+        return 1
+    }
+    multipass exec polis -- tar xf /tmp/polis-setup.config.tar -C /opt/polis --no-same-owner || {
+        log_error "Failed to extract config tarball"
+        return 1
+    }
+    multipass exec polis -- rm -f /tmp/polis-setup.config.tar
+
+    # Write .env with version
+    local cli_version
+    cli_version=$("${INSTALL_DIR}/bin/polis" --version 2>&1 | awk '{print $2}')
+    local tag="v${cli_version}"
+    multipass exec polis -- bash -c "cat > /opt/polis/.env << 'ENVEOF'
+# Generated by install-dev.sh
+POLIS_RESOLVER_VERSION=${tag}
+POLIS_CERTGEN_VERSION=${tag}
+POLIS_GATE_VERSION=${tag}
+POLIS_SENTINEL_VERSION=${tag}
+POLIS_SCANNER_VERSION=${tag}
+POLIS_WORKSPACE_VERSION=${tag}
+POLIS_HOST_INIT_VERSION=${tag}
+POLIS_STATE_VERSION=${tag}
+POLIS_TOOLBOX_VERSION=${tag}
+ENVEOF"
+
+    # Fix script permissions and strip Windows CRLF line endings
+    multipass exec polis -- find /opt/polis -name '*.sh' -exec chmod +x {} +
+    multipass exec polis -- find /opt/polis -name '*.sh' -exec sed -i 's/\r//' {} +
+    log_ok "Config transferred"
+
+    # ── Step 3: Load Docker images ────────────────────────────────────────
+    log_info "Loading Docker images into VM..."
+    multipass transfer "${images_tar}" polis:/tmp/polis-images.tar.zst || {
+        log_error "Failed to transfer images tarball"
+        return 1
+    }
+    multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst' || {
+        log_error "Failed to load Docker images"
+        return 1
+    }
+    log_ok "Docker images loaded"
+
+    # Tag images with CLI version
+    log_info "Tagging images as ${tag}..."
+    multipass exec polis -- bash -c "
+        docker images --format '{{.Repository}}:{{.Tag}}' | grep ':latest' | while read -r img; do
+            base=\"\${img%%:*}\"
+            docker tag \"\$img\" \"\${base}:${tag}\"
+        done
+    "
+
+    # Pull go-httpbin (small third-party test image)
+    multipass exec polis -- docker pull mccutchen/go-httpbin 2>/dev/null || true
+
+    # ── Step 4: Generate certs and secrets ────────────────────────────────
+    log_info "Generating certificates and secrets..."
+    multipass exec polis -- sudo bash -c '/opt/polis/scripts/generate-ca.sh /opt/polis/certs/ca'
+    multipass exec polis -- sudo bash -c '/opt/polis/services/state/scripts/generate-certs.sh /opt/polis/certs/valkey'
+    multipass exec polis -- sudo bash -c '/opt/polis/services/state/scripts/generate-secrets.sh /opt/polis/secrets /opt/polis'
+    multipass exec polis -- sudo bash -c '/opt/polis/services/toolbox/scripts/generate-certs.sh /opt/polis/certs/toolbox /opt/polis/certs/ca'
+    multipass exec polis -- sudo bash -c '/opt/polis/scripts/fix-cert-ownership.sh /opt/polis'
+    log_ok "Certificates and secrets ready"
+
+    # ── Step 5: Start services ────────────────────────────────────────────
+    log_info "Starting services..."
+    multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans' || {
+        log_error "Failed to start services"
+        return 1
+    }
+    log_ok "Services started"
+
+    # ── Step 6: Wait for workspace container to become healthy ────────────
+    log_info "Waiting for workspace to become healthy (up to 120s)..."
+    local max_attempts=60
+    local healthy=false
+    for ((i=1; i<=max_attempts; i++)); do
+        local json
+        json=$(multipass exec polis -- docker compose -f /opt/polis/docker-compose.yml ps --format json workspace 2>/dev/null || true)
+        if [[ -n "${json}" ]]; then
+            local first_line
+            first_line=$(echo "${json}" | head -1)
+            # Check for both "running" state and "healthy" health in the JSON line
+            if echo "${first_line}" | grep -q '"State".*"running"' && echo "${first_line}" | grep -q '"Health".*"healthy"'; then
+                healthy=true
+                break
+            fi
+        fi
+        sleep 2
+    done
+    if ${healthy}; then
+        log_ok "Workspace is healthy"
+    else
+        log_warn "Workspace did not become healthy within 120s — check with: polis status"
     fi
     return 0
 }
@@ -191,16 +268,11 @@ check_multipass
 install_cli
 create_symlink
 
-# Clean up any existing workspace for a fresh test environment
+# Remove any existing VM for a clean reinstall
 if multipass info polis &>/dev/null 2>&1; then
-    log_warn "An existing polis VM was found."
-    read -r -p "Remove it and start fresh? [y/N] " confirm
-    if [[ "${confirm,,}" != "y" ]]; then
-        log_info "Keeping existing VM. Skipping removal."
-    else
-        log_info "Removing existing polis VM..."
-        multipass delete polis && multipass purge
-    fi
+    log_info "Existing polis VM found — deleting for clean reinstall..."
+    multipass delete polis && multipass purge
+    log_ok "VM deleted"
 fi
 rm -f "${INSTALL_DIR}/state.json"
 
