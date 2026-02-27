@@ -169,7 +169,7 @@ pub async fn create(mp: &impl Multipass, quiet: bool) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to create workspace.\n\nRun 'polis doctor' to diagnose.\n{stderr}");
+        anyhow::bail!("failed to create workspace.\n\nRun 'polis doctor' to diagnose.\n{stderr}");
     }
 
     // Verify cloud-init completed successfully before proceeding to Phase 2.
@@ -205,7 +205,7 @@ pub async fn start(mp: &impl Multipass) -> Result<()> {
     let output = mp.start().await.context("starting workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to start workspace: {stderr}");
+        anyhow::bail!("failed to start workspace: {stderr}");
     }
     Ok(())
 }
@@ -229,7 +229,7 @@ pub async fn stop(mp: &impl Multipass) -> Result<()> {
     let output = mp.stop().await.context("stopping workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to stop workspace: {stderr}");
+        anyhow::bail!("failed to stop workspace: {stderr}");
     }
     Ok(())
 }
@@ -485,7 +485,7 @@ pub async fn pull_images(mp: &impl Multipass) -> Result<()> {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     anyhow::bail!(
-        "Failed to pull Docker images.\n\
+        "failed to pull Docker images.\n\
          {stderr}\n\
          Check your network connectivity and retry with: polis start"
     );
@@ -598,7 +598,7 @@ async fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
         && let Ok(v) = semver::Version::parse(ver_str)
         && v < MULTIPASS_MIN_VERSION
     {
-        anyhow::bail!("Workspace runtime needs update.\n\nRun 'polis doctor' to diagnose and fix.");
+        anyhow::bail!("workspace runtime needs update.\n\nRun 'polis doctor' to diagnose and fix.");
     }
     Ok(())
 }
@@ -641,6 +641,7 @@ async fn pin_host_key() {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::process::{ExitStatus, Output};
 
@@ -689,40 +690,40 @@ mod tests {
             })
         }
         async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn start(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn stop(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn delete(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn purge(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec(&self, _: &[&str]) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn version(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
     }
 
@@ -771,45 +772,45 @@ mod tests {
     }
     impl Multipass for MultipassRestartSpy {
         async fn vm_info(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn start(&self) -> Result<Output> {
             self.start_called.set(true);
             Ok(ok(b""))
         }
         async fn stop(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn delete(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn purge(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             self.exec_called.set(true);
             Ok(ok(b""))
         }
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn version(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
     }
 
@@ -829,40 +830,40 @@ mod tests {
     struct MultipassExitStatusStub(i32);
     impl Multipass for MultipassExitStatusStub {
         async fn vm_info(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn start(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn stop(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn delete(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn purge(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec(&self, _: &[&str]) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn version(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             Ok(exit_status(self.0))
@@ -1085,22 +1086,22 @@ mod tests {
 
     impl Multipass for TransferConfigSpy {
         async fn vm_info(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn start(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn stop(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn delete(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn purge(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer(&self, src: &str, dst: &str) -> Result<Output> {
             self.transferred
@@ -1109,7 +1110,7 @@ mod tests {
             Ok(ok(b""))
         }
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             self.exec_calls
@@ -1125,13 +1126,13 @@ mod tests {
             Ok(ok(b""))
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn version(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
     }
 
@@ -1400,28 +1401,28 @@ mod tests {
 
     impl Multipass for PullImagesStub {
         async fn vm_info(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn start(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn stop(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn delete(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn purge(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             Ok(Output {
@@ -1431,16 +1432,16 @@ mod tests {
             })
         }
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn version(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
     }
 

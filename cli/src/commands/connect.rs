@@ -60,9 +60,11 @@ pub async fn run(
 }
 
 fn setup_ssh_config(ssh_mgr: &SshConfigManager) -> Result<()> {
-    println!();
-    println!("Setting up SSH access...");
-    println!();
+    // setup_ssh_config is interactive (dialoguer prompt) — uses eprintln for
+    // user-facing messages since OutputContext is not available here.
+    eprintln!();
+    eprintln!("Setting up SSH access...");
+    eprintln!();
 
     let confirmed = dialoguer::Confirm::new()
         .with_prompt("Add SSH configuration to ~/.ssh/config?")
@@ -71,7 +73,7 @@ fn setup_ssh_config(ssh_mgr: &SshConfigManager) -> Result<()> {
         .context("reading confirmation")?;
 
     if !confirmed {
-        println!("Skipped. You can set up SSH manually later.");
+        eprintln!("Skipped. You can set up SSH manually later.");
         return Ok(());
     }
 
@@ -79,18 +81,16 @@ fn setup_ssh_config(ssh_mgr: &SshConfigManager) -> Result<()> {
     ssh_mgr.add_include_directive()?;
     ssh_mgr.create_sockets_dir()?;
 
-    println!("SSH configured");
-    println!();
+    eprintln!("SSH configured");
+    eprintln!();
     Ok(())
 }
 
-fn show_connection_options(_ctx: &OutputContext) {
-    println!();
-    println!("Connect with:");
-    println!("    ssh workspace");
-    println!("    code --remote ssh-remote+workspace /workspace");
-    println!("    cursor --remote ssh-remote+workspace /workspace");
-    println!();
+fn show_connection_options(ctx: &OutputContext) {
+    ctx.info("Connect with:");
+    ctx.info("    ssh workspace");
+    ctx.info("    code --remote ssh-remote+workspace /workspace");
+    ctx.info("    cursor --remote ssh-remote+workspace /workspace");
 }
 
 /// Validates that a public key has a safe format for use in shell commands.
@@ -125,12 +125,10 @@ async fn install_vm_pubkey(pubkey: &str, _mp: &impl crate::multipass::Multipass)
          printf '%s\\n' '{key}' >> /home/ubuntu/.ssh/authorized_keys"
     );
 
-    let output = crate::multipass::exec_with_timeout(
-        &["bash", "-c", &script],
-        CONNECT_EXEC_TIMEOUT,
-    )
-    .await
-    .context("installing public key in VM")?;
+    let output =
+        crate::multipass::exec_with_timeout(&["bash", "-c", &script], CONNECT_EXEC_TIMEOUT)
+            .await
+            .context("installing public key in VM")?;
 
     anyhow::ensure!(
         output.status.success(),

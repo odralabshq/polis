@@ -168,7 +168,7 @@ async fn test_validate_agent_manifest_missing_returns_error() {
     let result: anyhow::Result<()> = validate_agent(&VmRunningExecFail, "nonexistent").await;
     assert!(result.is_err());
     let msg = result.expect_err("expected error").to_string();
-    assert!(msg.contains("Unknown agent"), "got: {msg}");
+    assert!(msg.contains("unknown agent"), "got: {msg}");
 }
 
 // ============================================================================
@@ -223,7 +223,7 @@ async fn test_start_compose_failure_returns_error() {
     assert!(result.is_err());
     let msg = result.expect_err("expected error").to_string();
     assert!(
-        msg.contains("Failed to start platform") || msg.contains("platform"),
+        msg.contains("failed to start platform") || msg.contains("platform"),
         "got: {msg}"
     );
 }

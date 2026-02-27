@@ -5,7 +5,6 @@ use std::io::{Cursor, Read};
 use anyhow::{Context, Result};
 use clap::Args;
 use dialoguer::Confirm;
-use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
 
 use crate::multipass::Multipass;
@@ -113,27 +112,22 @@ pub async fn run(
     let current = env!("CARGO_PKG_VERSION");
 
     if !ctx.quiet {
-        println!("Checking for updates...");
-        println!();
+        ctx.info("Checking for updates...");
     }
 
     let cli_update = checker.check(current)?;
 
     match &cli_update {
         UpdateInfo::UpToDate => {
-            println!(
-                "  {} CLI v{current} (latest)",
-                "✓".style(ctx.styles.success),
-            );
+            ctx.success(&format!("CLI v{current} (latest)"));
         }
         UpdateInfo::Available {
             version,
             release_notes,
             ..
         } => {
-            println!("  CLI v{current} → v{version} available");
-            if !release_notes.is_empty() {
-                println!();
+            ctx.info(&format!("CLI v{current} → v{version} available"));
+            if !release_notes.is_empty() && !ctx.quiet {
                 println!("  Changes in v{version}:");
                 for note in release_notes {
                     println!("    • {note}");
@@ -143,8 +137,7 @@ pub async fn run(
     }
 
     if args.check {
-        println!();
-        println!("Run 'polis update' to apply the update.");
+        ctx.info("Run 'polis update' to apply the update.");
         return Ok(());
     }
 
@@ -156,13 +149,11 @@ pub async fn run(
     let vm_state = vm::state(mp).await?;
     if vm_state == vm::VmState::Running {
         if !ctx.quiet {
-            println!();
-            println!("Updating VM config...");
+            ctx.info("Updating VM config...");
         }
-        update_config(mp, ctx.quiet).await?;
+        update_config(mp, ctx).await?;
     }
 
-    println!();
     Ok(())
 }
 
@@ -176,7 +167,7 @@ pub async fn run(
 /// # Errors
 ///
 /// Returns an error if any step of the update cycle fails.
-pub async fn update_config(mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn update_config(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     // 1. Extract embedded assets (new version's tarball)
     let (assets_dir, _guard) =
         crate::assets::extract_assets().context("extracting embedded assets")?;
@@ -196,16 +187,12 @@ pub async fn update_config(mp: &impl Multipass, quiet: bool) -> Result<()> {
 
     // 4. If hashes match, config is up to date
     if new_hash == current_hash {
-        if !quiet {
-            println!("  Config is up to date");
-        }
+        ctx.success("Config is up to date");
         return Ok(());
     }
 
     // 5. Hashes differ — perform full config update cycle
-    if !quiet {
-        println!("  Config changed — updating...");
-    }
+    ctx.info("Config changed — updating...");
 
     // 5a. Stop services
     mp.exec(&[
@@ -249,9 +236,7 @@ pub async fn update_config(mp: &impl Multipass, quiet: bool) -> Result<()> {
         .await
         .context("writing new config hash")?;
 
-    if !quiet {
-        println!("  Config updated successfully");
-    }
+    ctx.success("Config updated successfully");
 
     Ok(())
 }
@@ -270,20 +255,15 @@ fn apply_cli_update(
         return Ok(());
     };
 
-    println!();
     if !ctx.quiet {
-        println!("  Verifying checksum...");
+        ctx.info("Verifying checksum...");
     }
     let sig = checker
         .verify_signature(&download_url)
         .context("checksum verification failed")?;
 
     let sha_preview = sig.sha256.get(..12).unwrap_or(&sig.sha256);
-    println!(
-        "    {} SHA-256: {sha_preview}...",
-        "✓".style(ctx.styles.success),
-    );
-    println!();
+    ctx.success(&format!("SHA-256: {sha_preview}..."));
 
     let confirmed = Confirm::new()
         .with_prompt("Update CLI now?")
@@ -293,16 +273,11 @@ fn apply_cli_update(
 
     if confirmed {
         if !ctx.quiet {
-            println!("  Downloading...");
+            ctx.info("Downloading...");
         }
         checker.perform_update(&version).context("update failed")?;
-        println!();
-        println!(
-            "  {} CLI updated to v{version}",
-            "✓".style(ctx.styles.success)
-        );
-        println!();
-        println!("  Restart your terminal or run: exec polis");
+        ctx.success(&format!("CLI updated to v{version}"));
+        ctx.info("Restart your terminal or run: exec polis");
     }
     Ok(())
 }
@@ -647,10 +622,10 @@ mod tests {
                 Ok(UpdateInfo::UpToDate)
             }
             fn verify_signature(&self, _url: &str) -> anyhow::Result<SignatureInfo> {
-                unreachable!("should not verify when up to date")
+                anyhow::bail!("not expected: should not verify when up to date")
             }
             fn perform_update(&self, _version: &str) -> anyhow::Result<()> {
-                unreachable!("should not update when up to date")
+                anyhow::bail!("not expected: should not update when up to date")
             }
         }
 
@@ -677,7 +652,7 @@ mod tests {
                 Err(anyhow::anyhow!("checksum verification failed"))
             }
             fn perform_update(&self, _version: &str) -> anyhow::Result<()> {
-                unreachable!("should not update when checksum is invalid")
+                anyhow::bail!("not expected: should not update when checksum is invalid")
             }
         }
 

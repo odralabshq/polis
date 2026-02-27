@@ -663,7 +663,7 @@ async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result
     let agent_folder = std::path::Path::new(&args.path);
     let parent_dir = agent_folder
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of agent folder"))?;
+        .ok_or_else(|| anyhow::anyhow!("cannot determine parent directory of agent folder"))?;
     let polis_dir = parent_dir.parent().unwrap_or(parent_dir);
 
     if !ctx.quiet {
@@ -908,7 +908,7 @@ async fn restart(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     let name = state_mgr
         .load()?
         .and_then(|s| s.active_agent)
-        .ok_or_else(|| anyhow::anyhow!("No active agent. Start one: polis start --agent <name>"))?;
+        .ok_or_else(|| anyhow::anyhow!("no active agent. Start one: polis start --agent <name>"))?;
 
     anyhow::ensure!(
         vm::state(mp).await? == vm::VmState::Running,
@@ -946,7 +946,7 @@ async fn update(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     let name = state_mgr
         .load()?
         .and_then(|s| s.active_agent)
-        .ok_or_else(|| anyhow::anyhow!("No active agent. Start one: polis start --agent <name>"))?;
+        .ok_or_else(|| anyhow::anyhow!("no active agent. Start one: polis start --agent <name>"))?;
 
     if !ctx.quiet {
         println!("Regenerating artifacts for '{name}'...");
@@ -1029,7 +1029,7 @@ fn require_active_agent() -> Result<String> {
     StateManager::new()?
         .load()?
         .and_then(|s| s.active_agent)
-        .ok_or_else(|| anyhow::anyhow!("No active agent. Start one: polis start --agent <name>"))
+        .ok_or_else(|| anyhow::anyhow!("no active agent. Start one: polis start --agent <name>"))
 }
 
 async fn shell(mp: &impl Multipass) -> Result<()> {

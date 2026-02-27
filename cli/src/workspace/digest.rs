@@ -156,31 +156,31 @@ mod tests {
 
     impl Multipass for DigestMock {
         async fn vm_info(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn start(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn stop(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn delete(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn purge(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn version(&self) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             let args_owned: Vec<String> =
@@ -196,13 +196,13 @@ mod tests {
             Ok(fail_output())
         }
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            unimplemented!()
+            anyhow::bail!("not expected")
         }
     }
 
@@ -339,43 +339,43 @@ mod tests {
         #[allow(clippy::items_after_statements)]
         impl Multipass for FailingMock {
             async fn vm_info(&self) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn start(&self) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn stop(&self) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn delete(&self) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn purge(&self) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn version(&self) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn exec(&self, _: &[&str]) -> Result<Output> {
                 Err(anyhow::anyhow!("multipass exec failed"))
             }
             async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
             async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-                unimplemented!()
+                anyhow::bail!("not expected")
             }
         }
 

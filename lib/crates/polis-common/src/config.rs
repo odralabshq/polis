@@ -1,5 +1,6 @@
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+
 use serde::Deserialize;
-use std::net::SocketAddr;
 
 /// MCP-Agent server configuration
 #[derive(Debug, Deserialize)]
@@ -29,12 +30,14 @@ pub struct AdminServerConfig {
     pub redis_url: String,
 }
 
-fn default_agent_addr() -> SocketAddr {
-    "0.0.0.0:8080".parse().unwrap()
+/// Default agent listen address: 0.0.0.0:8080 (all interfaces).
+const fn default_agent_addr() -> SocketAddr {
+    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080))
 }
 
-fn default_admin_addr() -> SocketAddr {
-    "127.0.0.1:8765".parse().unwrap()
+/// Default admin listen address: 127.0.0.1:8765 (loopback only).
+const fn default_admin_addr() -> SocketAddr {
+    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8765))
 }
 
 fn default_redis_url() -> String {
@@ -62,14 +65,14 @@ impl Default for AdminServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
     #[test]
     fn agent_default_listen_addr() {
         let cfg = AgentServerConfig::default();
         assert_eq!(
             cfg.listen_addr,
-            "0.0.0.0:8080".parse::<SocketAddr>().unwrap()
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080))
         );
     }
 
@@ -84,7 +87,7 @@ mod tests {
         let cfg = AdminServerConfig::default();
         assert_eq!(
             cfg.listen_addr,
-            "127.0.0.1:8765".parse::<SocketAddr>().unwrap()
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8765))
         );
     }
 

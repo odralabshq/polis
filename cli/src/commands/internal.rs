@@ -68,7 +68,7 @@ pub async fn ssh_proxy(mp: &impl crate::multipass::Multipass) -> Result<()> {
     #[cfg(not(windows))]
     let devnull = "/dev/null";
 
-    let docker_cmd = format!("docker exec -i {} /usr/sbin/sshd -i", CONTAINER_NAME);
+    let docker_cmd = format!("docker exec -i {CONTAINER_NAME} /usr/sbin/sshd -i");
 
     // Inherit stdin/stdout/stderr directly — no Rust-side piping.
     // The SSH client's pipe handles pass straight through to the child
@@ -96,7 +96,6 @@ pub async fn ssh_proxy(mp: &impl crate::multipass::Multipass) -> Result<()> {
 
     std::process::exit(status.code().unwrap_or(255));
 }
-
 
 // ---------------------------------------------------------------------------
 // Host key extraction

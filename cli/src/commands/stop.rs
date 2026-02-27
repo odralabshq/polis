@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use crate::multipass::Multipass;
+use crate::output::OutputContext;
 use crate::workspace::vm;
 
 /// Run `polis stop`.
@@ -10,37 +11,23 @@ use crate::workspace::vm;
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be stopped.
-pub async fn run(mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn run(ctx: &OutputContext, mp: &impl Multipass) -> Result<()> {
     let state = vm::state(mp).await?;
 
     match state {
         vm::VmState::NotFound => {
-            if !quiet {
-                println!();
-                println!("No workspace to stop.");
-                println!();
-                println!("Create one: polis start");
-            }
+            ctx.info("No workspace to stop.");
+            ctx.info("Create one: polis start");
         }
         vm::VmState::Stopped => {
-            if !quiet {
-                println!();
-                println!("Workspace is already stopped.");
-                println!();
-                println!("Resume: polis start");
-            }
+            ctx.info("Workspace is already stopped.");
+            ctx.info("Resume: polis start");
         }
         vm::VmState::Running | vm::VmState::Starting => {
-            if !quiet {
-                println!("Stopping workspace...");
-            }
+            ctx.info("Stopping workspace...");
             vm::stop(mp).await?;
-            if !quiet {
-                println!();
-                println!("Workspace stopped. Your data is preserved.");
-                println!();
-                println!("Resume: polis start");
-            }
+            ctx.success("Workspace stopped. Your data is preserved.");
+            ctx.info("Resume: polis start");
         }
     }
 

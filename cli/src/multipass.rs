@@ -305,10 +305,11 @@ impl Multipass for MultipassCli {
 /// is terminated on both platforms.
 ///
 /// Returns `Ok(Output)` on success, or `Err` on spawn failure / timeout.
-pub async fn exec_with_timeout(
-    args: &[&str],
-    timeout: std::time::Duration,
-) -> Result<Output> {
+/// # Errors
+///
+/// Returns an error if the command fails to spawn, or if it exceeds the
+/// specified timeout.
+pub async fn exec_with_timeout(args: &[&str], timeout: std::time::Duration) -> Result<Output> {
     use tokio::io::AsyncReadExt;
 
     let mut cmd_args: Vec<&str> = vec!["exec", VM_NAME, "--"];
@@ -344,14 +345,13 @@ pub async fn exec_with_timeout(
                 stderr,
             })
         }
-        _ = tokio::time::sleep(timeout) => {
+        () = tokio::time::sleep(timeout) => {
             // Explicitly kill — works on both Windows (TerminateProcess) and Unix (SIGKILL).
             let _ = child.kill().await;
             anyhow::bail!("multipass exec timed out after {}s", timeout.as_secs())
         }
     }
 }
-
 
 /// Extracts the primary IPv4 address of the `polis` VM from `multipass info`.
 ///

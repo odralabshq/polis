@@ -57,7 +57,7 @@ impl StateManager {
     /// Returns an error if the home directory cannot be determined.
     pub fn new() -> Result<Self> {
         let home =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
         Ok(Self::with_path(home.join(".polis").join("state.json")))
     }
 

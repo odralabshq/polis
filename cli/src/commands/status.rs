@@ -95,7 +95,7 @@ async fn get_workspace_status(mp: &impl Multipass) -> WorkspaceStatus {
 async fn check_multipass_status(mp: &impl Multipass) -> Option<WorkspaceState> {
     let output = tokio::time::timeout(STATUS_EXEC_TIMEOUT, mp.vm_info())
         .await
-        .ok()?  // timeout elapsed
+        .ok()? // timeout elapsed
         .ok()?; // vm_info error
 
     if !output.status.success() {

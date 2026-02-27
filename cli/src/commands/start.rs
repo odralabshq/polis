@@ -5,6 +5,7 @@ use chrono::Utc;
 use clap::Args;
 
 use crate::multipass::Multipass;
+use crate::output::OutputContext;
 use crate::state::{StateManager, WorkspaceState};
 use crate::workspace::{digest, health, vm};
 
@@ -42,33 +43,37 @@ Please use an amd64 machine."
 /// # Errors
 ///
 /// Returns an error if image acquisition, VM creation, or health check fails.
-pub async fn run(args: &StartArgs, mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn run(args: &StartArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     check_architecture()?;
     let state_mgr = StateManager::new()?;
     let vm_state = vm::state(mp).await?;
 
     match vm_state {
-        vm::VmState::Running => return handle_running_vm(&state_mgr, args, quiet),
+        vm::VmState::Running => return handle_running_vm(&state_mgr, args, ctx),
         vm::VmState::NotFound => {
             // create_and_start_vm handles the full provisioning flow including
             // health check and config hash write.
-            create_and_start_vm(&state_mgr, args, mp, quiet).await?;
-            print_success_message(args.agent.as_deref(), quiet);
+            create_and_start_vm(&state_mgr, args, mp, ctx).await?;
+            print_success_message(args.agent.as_deref(), ctx);
             return Ok(());
         }
-        _ => restart_vm(&state_mgr, args, mp, quiet).await?,
+        _ => restart_vm(&state_mgr, args, mp, ctx).await?,
     }
 
-    health::wait_ready(mp, quiet).await?;
-    print_success_message(args.agent.as_deref(), quiet);
+    health::wait_ready(mp, ctx.quiet).await?;
+    print_success_message(args.agent.as_deref(), ctx);
     Ok(())
 }
 
 /// Handle the case where the VM is already running.
-fn handle_running_vm(state_mgr: &StateManager, args: &StartArgs, quiet: bool) -> Result<()> {
+fn handle_running_vm(
+    state_mgr: &StateManager,
+    args: &StartArgs,
+    ctx: &OutputContext,
+) -> Result<()> {
     let current_agent = state_mgr.load()?.and_then(|s| s.active_agent);
     if current_agent == args.agent {
-        print_already_running_message(args.agent.as_deref(), quiet);
+        print_already_running_message(args.agent.as_deref(), ctx);
         return Ok(());
     }
     let current_desc = agent_description(current_agent.as_deref());
@@ -98,7 +103,7 @@ async fn create_and_start_vm(
     state_mgr: &StateManager,
     args: &StartArgs,
     mp: &impl Multipass,
-    quiet: bool,
+    ctx: &OutputContext,
 ) -> Result<()> {
     // Step 1: Extract all 3 embedded assets to a temp dir.
     // The TempDir guard must be held until all operations complete.
@@ -111,7 +116,7 @@ async fn create_and_start_vm(
     let config_hash = vm::sha256_file(&tar_path).context("computing config tarball SHA256")?;
 
     // Step 2: Launch VM with cloud-init and verify cloud-init completed.
-    vm::create(mp, quiet).await?;
+    vm::create(mp, ctx.quiet).await?;
 
     // Step 3: Transfer config tarball into VM, extract to /opt/polis, write .env.
     let version = env!("CARGO_PKG_VERSION");
@@ -139,7 +144,7 @@ async fn create_and_start_vm(
     start_compose(mp, args.agent.as_deref()).await?;
 
     // Step 8: Wait for all services to become healthy.
-    health::wait_ready(mp, quiet).await?;
+    health::wait_ready(mp, ctx.quiet).await?;
 
     // Step 9: Write config hash AFTER successful startup so failed provisioning
     // can be retried (Requirements 15.1, 15.3).
@@ -164,9 +169,9 @@ async fn restart_vm(
     state_mgr: &StateManager,
     args: &StartArgs,
     mp: &impl Multipass,
-    quiet: bool,
+    ctx: &OutputContext,
 ) -> Result<()> {
-    vm::restart(mp, quiet).await?;
+    vm::restart(mp, ctx.quiet).await?;
 
     if args.agent.is_some() {
         setup_agent_if_requested(mp, args.agent.as_deref()).await?;
@@ -199,41 +204,34 @@ fn agent_description(agent: Option<&str>) -> String {
 }
 
 /// Print message when workspace is already running with matching config.
-fn print_already_running_message(agent: Option<&str>, quiet: bool) {
-    if quiet {
+fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
+    if ctx.quiet {
         return;
     }
-    println!();
-    println!("Workspace is running.");
+    ctx.info("Workspace is running.");
     if let Some(name) = agent {
-        println!("Agent: {name}");
+        ctx.kv("Agent", name);
     }
-    println!();
-    print_guarantees();
-    println!();
-    println!("Connect: polis connect");
-    println!("Status:  polis status");
+    print_guarantees(ctx);
+    ctx.kv("Connect", "polis connect");
+    ctx.kv("Status", "polis status");
 }
 
 /// Print success message after workspace is ready.
-fn print_success_message(agent: Option<&str>, quiet: bool) {
-    if quiet {
+fn print_success_message(agent: Option<&str>, ctx: &OutputContext) {
+    if ctx.quiet {
         return;
     }
-    println!();
-    print_guarantees();
-    println!();
+    print_guarantees(ctx);
     if let Some(name) = agent {
-        println!("Workspace ready. Agent: {name}");
-        println!();
-        println!("Agent shell:    polis agent shell");
-        println!("Agent commands: polis agent cmd help");
+        ctx.success(&format!("Workspace ready. Agent: {name}"));
+        ctx.kv("Agent shell", "polis agent shell");
+        ctx.kv("Agent commands", "polis agent cmd help");
     } else {
-        println!("Workspace ready.");
+        ctx.success("Workspace ready.");
     }
-    println!();
-    println!("Connect: polis connect");
-    println!("Status:  polis status");
+    ctx.kv("Connect", "polis connect");
+    ctx.kv("Status", "polis status");
 }
 
 /// Validate that the agent directory and manifest exist inside the VM.
@@ -271,7 +269,7 @@ pub async fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()>
         } else {
             format!("Available agents: {available}")
         };
-        anyhow::bail!("Unknown agent '{agent_name}'. {hint}");
+        anyhow::bail!("unknown agent '{agent_name}'. {hint}");
     }
     Ok(())
 }
@@ -299,10 +297,10 @@ pub async fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> 
         // Exit code 2 = missing yq
         if output.status.code() == Some(2) {
             anyhow::bail!(
-                "Error: yq v4+ is required inside the VM.\nInstall: sudo apt install yq\n\n{detail}"
+                "yq v4+ is required inside the VM.\nInstall: sudo apt install yq\n\n{detail}"
             );
         }
-        anyhow::bail!("Error: Agent artifact generation failed for '{agent_name}'.\n{detail}");
+        anyhow::bail!("agent artifact generation failed for '{agent_name}'.\n{detail}");
     }
     Ok(())
 }
@@ -326,13 +324,16 @@ pub async fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Res
     let output = mp.exec(&arg_refs).await.context("starting platform")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Error: Failed to start platform.\n{stderr}");
+        anyhow::bail!("failed to start platform.\n{stderr}");
     }
     Ok(())
 }
 
-fn print_guarantees() {
+fn print_guarantees(ctx: &OutputContext) {
     use owo_colors::{OwoColorize, Stream::Stdout, Style};
+    if ctx.quiet {
+        return;
+    }
     let gov = Style::new().truecolor(37, 56, 144);
     let sec = Style::new().truecolor(26, 107, 160);
     let obs = Style::new().truecolor(26, 151, 179);

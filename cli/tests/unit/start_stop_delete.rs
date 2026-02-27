@@ -5,6 +5,7 @@
 use polis_cli::commands::delete;
 use polis_cli::commands::start::{self, StartArgs};
 use polis_cli::commands::{DeleteArgs, stop};
+use polis_cli::output::OutputContext;
 use polis_cli::state::StateManager;
 
 use crate::mocks::{MultipassVmNotFound, MultipassVmRunning, MultipassVmStopped};
@@ -15,16 +16,20 @@ fn isolated_state() -> (tempfile::TempDir, StateManager) {
     (dir, mgr)
 }
 
+fn quiet_ctx() -> OutputContext {
+    OutputContext::new(true, true)
+}
+
 // ── polis stop ────────────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn test_stop_no_workspace_succeeds() {
-    assert!(stop::run(&MultipassVmNotFound, true).await.is_ok());
+    assert!(stop::run(&quiet_ctx(), &MultipassVmNotFound).await.is_ok());
 }
 
 #[tokio::test]
 async fn test_stop_already_stopped_succeeds() {
-    assert!(stop::run(&MultipassVmStopped, true).await.is_ok());
+    assert!(stop::run(&quiet_ctx(), &MultipassVmStopped).await.is_ok());
 }
 
 // ── polis delete ──────────────────────────────────────────────────────────────
@@ -62,11 +67,19 @@ async fn test_delete_all_no_workspace_succeeds() {
 #[tokio::test]
 async fn test_start_already_running_returns_ok() {
     let args = StartArgs { agent: None };
-    assert!(start::run(&args, &MultipassVmRunning, true).await.is_ok());
+    assert!(
+        start::run(&args, &MultipassVmRunning, &quiet_ctx())
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]
 async fn test_start_returns_ok_when_already_running() {
     let args = StartArgs { agent: None };
-    assert!(start::run(&args, &MultipassVmRunning, true).await.is_ok());
+    assert!(
+        start::run(&args, &MultipassVmRunning, &quiet_ctx())
+            .await
+            .is_ok()
+    );
 }

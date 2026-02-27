@@ -99,13 +99,13 @@ pub fn resolve_latest_image_url() -> Result<ResolvedRelease> {
         Ok(resp) => serde_json::from_str(&resp.into_string().context("reading response")?)
             .context("parsing response")?,
         Err(ureq::Error::Status(403, _)) => anyhow::bail!(
-            "Cannot check for updates: rate limited.\n\nTry again in a few minutes, or set GITHUB_TOKEN."
+            "cannot check for updates: rate limited.\n\nTry again in a few minutes, or set GITHUB_TOKEN."
         ),
         Err(ureq::Error::Status(code, _)) => {
-            anyhow::bail!("Cannot check for updates: HTTP {code}")
+            anyhow::bail!("cannot check for updates: HTTP {code}")
         }
         Err(_) => anyhow::bail!(
-            "Cannot check for updates: no network connection.\n\nFor offline setup: https://polis.dev/docs/offline"
+            "cannot check for updates: no network connection.\n\nFor offline setup: https://polis.dev/docs/offline"
         ),
     };
 
@@ -120,5 +120,5 @@ pub fn resolve_latest_image_url() -> Result<ResolvedRelease> {
             });
         }
     }
-    anyhow::bail!("No releases found in recent GitHub releases.")
+    anyhow::bail!("no releases found in recent GitHub releases")
 }
