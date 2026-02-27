@@ -7,8 +7,8 @@ use clap::Subcommand;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 
-use crate::multipass::Multipass;
 use crate::output::OutputContext;
+use crate::provisioner::{InstanceInspector, ShellExecutor};
 
 // ── Subcommand enum ──────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ pub async fn run(
     ctx: &OutputContext,
     cmd: ConfigCommand,
     json: bool,
-    mp: &impl Multipass,
+    mp: &(impl InstanceInspector + ShellExecutor),
 ) -> Result<()> {
     match cmd {
         ConfigCommand::Show => show_config(ctx, json),
@@ -118,7 +118,7 @@ async fn set_config(
     ctx: &OutputContext,
     key: &str,
     value: &str,
-    mp: &impl Multipass,
+    mp: &(impl InstanceInspector + ShellExecutor),
 ) -> Result<()> {
     validate_config_key(key)?;
     validate_config_value(key, value)?;
@@ -155,7 +155,11 @@ async fn set_config(
 /// `REDISCLI_AUTH` env var to avoid command-line exposure (visible in ps/proc).
 ///
 /// Warns on failure instead of returning an error — the local config is already saved.
-async fn propagate_security_level(ctx: &OutputContext, level: &str, mp: &impl Multipass) {
+async fn propagate_security_level(
+    ctx: &OutputContext,
+    level: &str,
+    mp: &(impl InstanceInspector + ShellExecutor),
+) {
     // Fast check: skip if VM is not running (vm_info returns immediately)
     if crate::workspace::vm::state(mp).await.ok() != Some(crate::workspace::vm::VmState::Running) {
         return;

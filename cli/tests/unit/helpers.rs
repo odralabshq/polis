@@ -1,11 +1,13 @@
-//! Shared test helpers: mock Multipass implementations and output constructors.
+//! Shared test helpers: mock sub-trait implementations and output constructors.
 
 #![allow(dead_code)]
 
 use std::process::{ExitStatus, Output};
 
 use anyhow::Result;
-use polis_cli::multipass::Multipass;
+use polis_cli::provisioner::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
+};
 
 // ── Cross-platform ExitStatus construction ───────────────────────────────────
 
@@ -46,14 +48,20 @@ pub fn err_output(code: i32, stderr: &[u8]) -> Output {
 
 // ── Shared mock implementations ──────────────────────────────────────────────
 
-/// VM does not exist (multipass info exits 1).
+/// VM does not exist (info exits 1).
 pub struct VmNotFound;
 
-impl Multipass for VmNotFound {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for VmNotFound {
+    async fn info(&self) -> Result<Output> {
         Ok(err_output(1, b"instance \"polis\" does not exist"))
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("version not expected in this test")
+    }
+}
+
+impl InstanceLifecycle for VmNotFound {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         anyhow::bail!("launch not expected in this test")
     }
     async fn start(&self) -> Result<Output> {
@@ -68,12 +76,18 @@ impl Multipass for VmNotFound {
     async fn purge(&self) -> Result<Output> {
         Ok(ok_output(b""))
     }
+}
+
+impl FileTransfer for VmNotFound {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("transfer not expected in this test")
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("transfer_recursive not expected in this test")
     }
+}
+
+impl ShellExecutor for VmNotFound {
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(err_output(1, b""))
     }
@@ -82,9 +96,6 @@ impl Multipass for VmNotFound {
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
         anyhow::bail!("exec_spawn not expected in this test")
-    }
-    async fn version(&self) -> Result<Output> {
-        anyhow::bail!("version not expected in this test")
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
         anyhow::bail!("exec_status not expected in this test")
@@ -94,11 +105,17 @@ impl Multipass for VmNotFound {
 /// VM exists and is stopped.
 pub struct VmStopped;
 
-impl Multipass for VmStopped {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for VmStopped {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Stopped"}}}"#))
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("version not expected in this test")
+    }
+}
+
+impl InstanceLifecycle for VmStopped {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         anyhow::bail!("launch not expected in this test")
     }
     async fn start(&self) -> Result<Output> {
@@ -113,12 +130,18 @@ impl Multipass for VmStopped {
     async fn purge(&self) -> Result<Output> {
         Ok(ok_output(b""))
     }
+}
+
+impl FileTransfer for VmStopped {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("transfer not expected in this test")
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("transfer_recursive not expected in this test")
     }
+}
+
+impl ShellExecutor for VmStopped {
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(err_output(1, b""))
     }
@@ -128,9 +151,6 @@ impl Multipass for VmStopped {
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
         anyhow::bail!("exec_spawn not expected in this test")
     }
-    async fn version(&self) -> Result<Output> {
-        anyhow::bail!("version not expected in this test")
-    }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
         anyhow::bail!("exec_status not expected in this test")
     }
@@ -139,11 +159,17 @@ impl Multipass for VmStopped {
 /// VM exists and is running.
 pub struct VmRunning;
 
-impl Multipass for VmRunning {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for VmRunning {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("version not expected in this test")
+    }
+}
+
+impl InstanceLifecycle for VmRunning {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         anyhow::bail!("launch not expected in this test")
     }
     async fn start(&self) -> Result<Output> {
@@ -158,12 +184,18 @@ impl Multipass for VmRunning {
     async fn purge(&self) -> Result<Output> {
         Ok(ok_output(b""))
     }
+}
+
+impl FileTransfer for VmRunning {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("transfer not expected in this test")
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("transfer_recursive not expected in this test")
     }
+}
+
+impl ShellExecutor for VmRunning {
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(ok_output(b""))
     }
@@ -172,9 +204,6 @@ impl Multipass for VmRunning {
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
         anyhow::bail!("exec_spawn not expected in this test")
-    }
-    async fn version(&self) -> Result<Output> {
-        anyhow::bail!("version not expected in this test")
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
         anyhow::bail!("exec_status not expected in this test")

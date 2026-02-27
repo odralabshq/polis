@@ -9,8 +9,10 @@ use polis_cli::commands::doctor::{
     self, HealthProbe, ImageCheckResult, NetworkChecks, PrerequisiteChecks, SecurityChecks,
     WorkspaceChecks,
 };
-use polis_cli::multipass::Multipass;
 use polis_cli::output::OutputContext;
+use polis_cli::provisioner::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
+};
 
 use crate::helpers::{err_output, ok_output};
 
@@ -162,11 +164,43 @@ impl RepairMockMp {
     }
 }
 
-impl Multipass for RepairMockMp {
-    async fn vm_info(&self) -> Result<std::process::Output> {
+impl InstanceInspector for RepairMockMp {
+    async fn info(&self) -> Result<std::process::Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
+    async fn version(&self) -> Result<std::process::Output> {
+        anyhow::bail!("version not expected")
+    }
+}
 
+impl InstanceLifecycle for RepairMockMp {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<std::process::Output> {
+        anyhow::bail!("launch not expected")
+    }
+    async fn start(&self) -> Result<std::process::Output> {
+        anyhow::bail!("start not expected")
+    }
+    async fn stop(&self) -> Result<std::process::Output> {
+        anyhow::bail!("stop not expected")
+    }
+    async fn delete(&self) -> Result<std::process::Output> {
+        anyhow::bail!("delete not expected")
+    }
+    async fn purge(&self) -> Result<std::process::Output> {
+        anyhow::bail!("purge not expected")
+    }
+}
+
+impl FileTransfer for RepairMockMp {
+    async fn transfer(&self, _: &str, _: &str) -> Result<std::process::Output> {
+        Ok(ok_output(b""))
+    }
+    async fn transfer_recursive(&self, _: &str, _: &str) -> Result<std::process::Output> {
+        Ok(ok_output(b""))
+    }
+}
+
+impl ShellExecutor for RepairMockMp {
     async fn exec(&self, args: &[&str]) -> Result<std::process::Output> {
         let call: Vec<String> = args.iter().map(std::string::ToString::to_string).collect();
         self.calls.lock().expect("lock").push(call.clone());
@@ -195,30 +229,6 @@ impl Multipass for RepairMockMp {
         Ok(ok_output(b""))
     }
 
-    async fn launch(
-        &self,
-        _: &polis_cli::multipass::LaunchParams<'_>,
-    ) -> Result<std::process::Output> {
-        anyhow::bail!("launch not expected")
-    }
-    async fn start(&self) -> Result<std::process::Output> {
-        anyhow::bail!("start not expected")
-    }
-    async fn stop(&self) -> Result<std::process::Output> {
-        anyhow::bail!("stop not expected")
-    }
-    async fn delete(&self) -> Result<std::process::Output> {
-        anyhow::bail!("delete not expected")
-    }
-    async fn purge(&self) -> Result<std::process::Output> {
-        anyhow::bail!("purge not expected")
-    }
-    async fn transfer(&self, _: &str, _: &str) -> Result<std::process::Output> {
-        Ok(ok_output(b""))
-    }
-    async fn transfer_recursive(&self, _: &str, _: &str) -> Result<std::process::Output> {
-        Ok(ok_output(b""))
-    }
     async fn exec_with_stdin(&self, args: &[&str], _: &[u8]) -> Result<std::process::Output> {
         let call: Vec<String> = args.iter().map(std::string::ToString::to_string).collect();
         self.calls.lock().expect("lock").push(call);
@@ -226,9 +236,6 @@ impl Multipass for RepairMockMp {
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
         anyhow::bail!("exec_spawn not expected")
-    }
-    async fn version(&self) -> Result<std::process::Output> {
-        anyhow::bail!("version not expected")
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
         anyhow::bail!("exec_status not expected")

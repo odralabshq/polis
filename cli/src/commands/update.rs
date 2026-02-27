@@ -7,8 +7,8 @@ use clap::Args;
 use dialoguer::Confirm;
 use sha2::{Digest, Sha256};
 
-use crate::multipass::Multipass;
 use crate::output::OutputContext;
+use crate::provisioner::{FileTransfer, InstanceInspector, ShellExecutor};
 use crate::workspace::{digest, vm};
 
 /// Arguments for the update command.
@@ -107,7 +107,7 @@ pub async fn run(
     args: &UpdateArgs,
     ctx: &OutputContext,
     checker: &impl UpdateChecker,
-    mp: &impl Multipass,
+    mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
 ) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
 
@@ -167,7 +167,10 @@ pub async fn run(
 /// # Errors
 ///
 /// Returns an error if any step of the update cycle fails.
-pub async fn update_config(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
+pub async fn update_config(
+    mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
+    ctx: &OutputContext,
+) -> Result<()> {
     // 1. Extract embedded assets (new version's tarball)
     let (assets_dir, _guard) =
         crate::assets::extract_assets().context("extracting embedded assets")?;
@@ -484,40 +487,19 @@ fn perform_update(version: &str) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// Stub multipass that fails on any call (for tests that shouldn't reach multipass).
+    /// Stub that fails on any call (for tests that shouldn't reach multipass).
     struct MultipassUnreachableStub;
-    impl Multipass for MultipassUnreachableStub {
-        async fn vm_info(&self) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: vm_info not expected")
+
+    impl crate::provisioner::InstanceInspector for MultipassUnreachableStub {
+        async fn info(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: info not expected")
         }
-        async fn launch(
-            &self,
-            _: &crate::multipass::LaunchParams<'_>,
-        ) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: launch not expected")
+        async fn version(&self) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: version not expected")
         }
-        async fn start(&self) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: start not expected")
-        }
-        async fn stop(&self) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: stop not expected")
-        }
-        async fn delete(&self) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: delete not expected")
-        }
-        async fn purge(&self) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: purge not expected")
-        }
-        async fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: transfer not expected")
-        }
-        async fn transfer_recursive(
-            &self,
-            _: &str,
-            _: &str,
-        ) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: transfer_recursive not expected")
-        }
+    }
+
+    impl crate::provisioner::ShellExecutor for MultipassUnreachableStub {
         async fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: exec not expected")
         }
@@ -531,11 +513,21 @@ mod tests {
         fn exec_spawn(&self, _: &[&str]) -> anyhow::Result<tokio::process::Child> {
             anyhow::bail!("stub: exec_spawn not expected")
         }
-        async fn version(&self) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: version not expected")
-        }
         async fn exec_status(&self, _: &[&str]) -> anyhow::Result<std::process::ExitStatus> {
             anyhow::bail!("stub: exec_status not expected")
+        }
+    }
+
+    impl crate::provisioner::FileTransfer for MultipassUnreachableStub {
+        async fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: transfer not expected")
+        }
+        async fn transfer_recursive(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> anyhow::Result<std::process::Output> {
+            anyhow::bail!("stub: transfer_recursive not expected")
         }
     }
 

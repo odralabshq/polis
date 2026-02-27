@@ -100,7 +100,7 @@ impl Cli {
             command,
         } = self;
         let no_color = no_color || std::env::var("NO_COLOR").is_ok();
-        let mp = crate::multipass::MultipassCli;
+        let mp = crate::provisioner::MultipassProvisioner::default_runner();
 
         match command {
             Command::Start(args) => {
@@ -125,7 +125,7 @@ impl Cli {
 
             Command::Connect(args) => {
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::connect::run(&ctx, args, &mp).await
+                commands::connect::run(&ctx, args).await
             }
 
             Command::Config(cmd) => {
@@ -149,7 +149,6 @@ impl Cli {
             Command::Version => commands::version::run(json),
 
             Command::Agent(cmd) => {
-                let mp = crate::multipass::MultipassCli;
                 let ctx = crate::output::OutputContext::new(no_color, quiet);
                 commands::agent::run(cmd, &mp, &ctx, json).await
             }

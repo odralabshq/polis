@@ -25,11 +25,7 @@ pub struct ConnectArgs {}
 /// # Errors
 ///
 /// Returns an error if SSH config setup fails or permissions are unsafe.
-pub async fn run(
-    ctx: &OutputContext,
-    _args: ConnectArgs,
-    mp: &impl crate::multipass::Multipass,
-) -> Result<()> {
+pub async fn run(ctx: &OutputContext, _args: ConnectArgs) -> Result<()> {
     let ssh_mgr = SshConfigManager::new()?;
 
     if ssh_mgr.is_configured()? {
@@ -47,13 +43,13 @@ pub async fn run(
 
     // Install pubkey into the VM's ubuntu user so `polis _ssh-proxy` can SSH
     // to the VM directly (bypasses multipass exec stdin bug on Windows).
-    install_vm_pubkey(&pubkey, mp).await?;
+    install_vm_pubkey(&pubkey).await?;
 
     // Install pubkey into the workspace container's polis user.
-    install_pubkey(&pubkey, mp).await?;
+    install_pubkey(&pubkey).await?;
 
     // Pin the workspace host key so StrictHostKeyChecking can verify it.
-    pin_host_key(mp).await;
+    pin_host_key().await;
 
     show_connection_options(ctx);
     Ok(())
@@ -116,7 +112,7 @@ fn validate_pubkey(key: &str) -> Result<()> {
 /// This enables `polis _ssh-proxy` to SSH directly to the VM (bypassing
 /// `multipass exec` which has a stdin pipe bug on Windows).
 /// Idempotent — skips if key already present.
-async fn install_vm_pubkey(pubkey: &str, _mp: &impl crate::multipass::Multipass) -> Result<()> {
+async fn install_vm_pubkey(pubkey: &str) -> Result<()> {
     validate_pubkey(pubkey)?;
     let key = pubkey.trim();
 
@@ -143,7 +139,7 @@ async fn install_vm_pubkey(pubkey: &str, _mp: &impl crate::multipass::Multipass)
 /// Uses `printf` + shell command instead of stdin piping because
 /// `multipass exec ... docker exec -i ...` stdin pipes hang on Windows
 /// (the EOF is never propagated through the double-pipe chain).
-async fn install_pubkey(pubkey: &str, _mp: &impl crate::multipass::Multipass) -> Result<()> {
+async fn install_pubkey(pubkey: &str) -> Result<()> {
     // SEC-001: Validate pubkey format before use to prevent shell injection.
     // validate_pubkey ensures only [a-zA-Z0-9 +/=@.-\n] — no quotes or
     // shell metacharacters — so embedding in single-quoted printf is safe.
@@ -188,7 +184,7 @@ fn write_host_key(mgr: &crate::ssh::KnownHostsManager, raw_key: &str) -> Result<
 }
 
 /// Extracts the workspace SSH host key and writes it to `~/.polis/known_hosts`.
-async fn pin_host_key(_mp: &impl crate::multipass::Multipass) {
+async fn pin_host_key() {
     let Ok(output) = crate::multipass::exec_with_timeout(
         &[
             "docker",

@@ -134,18 +134,25 @@ pub trait HealthProbe {
 }
 
 /// Production implementation that queries the real system.
-pub struct SystemProbe<'a, M: crate::multipass::Multipass> {
+pub struct SystemProbe<
+    'a,
+    M: crate::provisioner::InstanceInspector + crate::provisioner::ShellExecutor,
+> {
     mp: &'a M,
 }
 
-impl<'a, M: crate::multipass::Multipass> SystemProbe<'a, M> {
+impl<'a, M: crate::provisioner::InstanceInspector + crate::provisioner::ShellExecutor>
+    SystemProbe<'a, M>
+{
     /// Create a new system probe with the given multipass implementation.
     pub fn new(mp: &'a M) -> Self {
         Self { mp }
     }
 }
 
-impl<M: crate::multipass::Multipass> HealthProbe for SystemProbe<'_, M> {
+impl<M: crate::provisioner::InstanceInspector + crate::provisioner::ShellExecutor> HealthProbe
+    for SystemProbe<'_, M>
+{
     async fn check_prerequisites(&self) -> Result<PrerequisiteChecks> {
         tokio::task::spawn_blocking(probe_prerequisites)
             .await
@@ -217,7 +224,11 @@ pub async fn run(
     json: bool,
     verbose: bool,
     fix: bool,
-    mp: &impl crate::multipass::Multipass,
+    mp: &(
+         impl crate::provisioner::InstanceInspector
+         + crate::provisioner::ShellExecutor
+         + crate::provisioner::FileTransfer
+     ),
 ) -> Result<()> {
     run_with(ctx, json, verbose, fix, &SystemProbe::new(mp), mp).await
 }
@@ -233,7 +244,11 @@ pub async fn run_with(
     verbose: bool,
     fix: bool,
     probe: &impl HealthProbe,
-    mp: &impl crate::multipass::Multipass,
+    mp: &(
+         impl crate::provisioner::InstanceInspector
+         + crate::provisioner::ShellExecutor
+         + crate::provisioner::FileTransfer
+     ),
 ) -> Result<()> {
     let checks_result = tokio::try_join!(
         probe.check_prerequisites(),
@@ -532,7 +547,11 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
 #[allow(clippy::too_many_lines)]
 pub async fn repair(
     ctx: &OutputContext,
-    mp: &impl crate::multipass::Multipass,
+    mp: &(
+         impl crate::provisioner::InstanceInspector
+         + crate::provisioner::ShellExecutor
+         + crate::provisioner::FileTransfer
+     ),
     health_checks_failed: bool,
 ) -> Result<()> {
     use owo_colors::OwoColorize;
@@ -871,13 +890,13 @@ async fn check_dns() -> bool {
 }
 
 /// Check if sysbox-runc is available inside the multipass VM.
-async fn check_process_isolation(mp: &impl crate::multipass::Multipass) -> bool {
+async fn check_process_isolation(mp: &impl crate::provisioner::ShellExecutor) -> bool {
     let output = mp.exec(&["sysbox-runc", "--version"]).await;
     output.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Check if the gate container is running inside the multipass VM.
-async fn check_gate_health(mp: &impl crate::multipass::Multipass) -> bool {
+async fn check_gate_health(mp: &impl crate::provisioner::ShellExecutor) -> bool {
     let output = mp
         .exec(&[
             "docker",
@@ -909,7 +928,7 @@ async fn check_gate_health(mp: &impl crate::multipass::Multipass) -> bool {
 }
 
 /// Check `ClamAV` database freshness inside the multipass VM.
-async fn check_malware_db(mp: &impl crate::multipass::Multipass) -> (bool, u64) {
+async fn check_malware_db(mp: &impl crate::provisioner::ShellExecutor) -> (bool, u64) {
     // Find the newest DB file (daily.cvd or daily.cld) in the scanner container.
     let output = mp
         .exec(&[
@@ -945,7 +964,7 @@ async fn check_malware_db(mp: &impl crate::multipass::Multipass) -> (bool, u64) 
 }
 
 /// Check CA certificate expiry inside the multipass VM.
-async fn check_certificates(mp: &impl crate::multipass::Multipass) -> (bool, i64) {
+async fn check_certificates(mp: &impl crate::provisioner::ShellExecutor) -> (bool, i64) {
     let output = mp
         .exec(&[
             "openssl",

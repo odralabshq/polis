@@ -6,8 +6,10 @@ use std::process::Output;
 
 use anyhow::Result;
 use polis_cli::commands::agent::{self, AddArgs, AgentCommand, RemoveArgs};
-use polis_cli::multipass::Multipass;
 use polis_cli::output::OutputContext;
+use polis_cli::provisioner::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
+};
 
 use crate::helpers::{err_output, ok_output};
 
@@ -19,11 +21,16 @@ fn quiet() -> OutputContext {
 
 struct ExecStub(Output);
 
-impl Multipass for ExecStub {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for ExecStub {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected in this test")
+    }
+}
+impl InstanceLifecycle for ExecStub {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         anyhow::bail!("not expected in this test")
     }
     async fn start(&self) -> Result<Output> {
@@ -38,6 +45,8 @@ impl Multipass for ExecStub {
     async fn purge(&self) -> Result<Output> {
         anyhow::bail!("not expected in this test")
     }
+}
+impl FileTransfer for ExecStub {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected in this test")
     }
@@ -48,6 +57,8 @@ impl Multipass for ExecStub {
             stderr: self.0.stderr.clone(),
         })
     }
+}
+impl ShellExecutor for ExecStub {
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(Output {
             status: self.0.status,
@@ -59,9 +70,6 @@ impl Multipass for ExecStub {
         anyhow::bail!("not expected in this test")
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        anyhow::bail!("not expected in this test")
-    }
-    async fn version(&self) -> Result<Output> {
         anyhow::bail!("not expected in this test")
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
@@ -97,12 +105,10 @@ async fn test_restart_no_active_agent_returns_error() {
     let mp = ExecStub(ok_output(b""));
     let result = agent::run(AgentCommand::Restart, &mp, &quiet(), false).await;
     assert!(result.is_err());
+    let msg = result.expect_err("expected error").to_string().to_lowercase();
     assert!(
-        result
-            .expect_err("expected error")
-            .to_string()
-            .contains("No active agent"),
-        "error should mention no active agent"
+        msg.contains("no active agent"),
+        "error should mention no active agent, got: {msg}"
     );
 }
 
@@ -206,11 +212,9 @@ async fn test_update_no_active_agent_returns_error() {
     let mp = ExecStub(ok_output(b""));
     let result = agent::run(AgentCommand::Update, &mp, &quiet(), false).await;
     assert!(result.is_err());
+    let msg = result.expect_err("expected error").to_string().to_lowercase();
     assert!(
-        result
-            .expect_err("expected error")
-            .to_string()
-            .contains("No active agent"),
-        "error should mention no active agent"
+        msg.contains("no active agent"),
+        "error should mention no active agent, got: {msg}"
     );
 }

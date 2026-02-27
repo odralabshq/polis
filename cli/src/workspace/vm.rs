@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::multipass::Multipass;
+use crate::provisioner::{FileTransfer, InstanceInspector, ShellExecutor};
 
 const VM_CPUS: &str = "2";
 const VM_MEMORY: &str = "8G";
@@ -20,11 +20,8 @@ pub enum VmState {
 }
 
 /// Check if VM exists.
-pub async fn exists(mp: &impl Multipass) -> bool {
-    mp.vm_info()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+pub async fn exists(mp: &impl InstanceInspector) -> bool {
+    mp.info().await.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Get current VM state.
@@ -32,8 +29,8 @@ pub async fn exists(mp: &impl Multipass) -> bool {
 /// # Errors
 ///
 /// Returns an error if the multipass output cannot be parsed.
-pub async fn state(mp: &impl Multipass) -> Result<VmState> {
-    let output = match mp.vm_info().await {
+pub async fn state(mp: &impl InstanceInspector) -> Result<VmState> {
+    let output = match mp.info().await {
         Ok(o) if o.status.success() => o,
         _ => return Ok(VmState::NotFound),
     };
@@ -66,7 +63,7 @@ pub async fn state(mp: &impl Multipass) -> Result<VmState> {
 ///
 /// Returns an error if cloud-init reported a failure (exit code 1 or 2), or
 /// if the command could not be executed.
-pub async fn verify_cloud_init(mp: &impl Multipass) -> Result<()> {
+pub async fn verify_cloud_init(mp: &impl crate::provisioner::ShellExecutor) -> Result<()> {
     const LOG: &str = "/var/log/cloud-init-output.log";
     const RECOVERY: &str = "polis delete && polis start";
 
@@ -110,7 +107,7 @@ pub async fn verify_cloud_init(mp: &impl Multipass) -> Result<()> {
 ///
 /// Returns an error if prerequisites are not met, asset extraction fails,
 /// the multipass launch fails, or cloud-init reports a failure.
-pub async fn create(mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn create(mp: &impl crate::provisioner::VmProvisioner, quiet: bool) -> Result<()> {
     check_prerequisites(mp).await?;
 
     if !quiet {
@@ -146,7 +143,7 @@ pub async fn create(mp: &impl Multipass, quiet: bool) -> Result<()> {
         crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
     });
     let output = mp
-        .launch(&crate::multipass::LaunchParams {
+        .launch(&crate::provisioner::InstanceSpec {
             image: "24.04",
             cpus: VM_CPUS,
             memory: VM_MEMORY,
@@ -201,7 +198,7 @@ fn inception_line(level: &str, msg: &str) -> String {
 /// # Errors
 ///
 /// Returns an error if the multipass start command fails.
-pub async fn start(mp: &impl Multipass) -> Result<()> {
+pub async fn start(mp: &impl crate::provisioner::InstanceLifecycle) -> Result<()> {
     let output = mp.start().await.context("starting workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -215,7 +212,9 @@ pub async fn start(mp: &impl Multipass) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the multipass stop command fails.
-pub async fn stop(mp: &impl Multipass) -> Result<()> {
+pub async fn stop(
+    mp: &(impl crate::provisioner::InstanceLifecycle + crate::provisioner::ShellExecutor),
+) -> Result<()> {
     // Stop all polis- containers (including agent sidecars not in the base
     // compose file). Using `docker stop` with a filter is more reliable than
     // `docker compose stop` which only knows about services in its file.
@@ -235,7 +234,7 @@ pub async fn stop(mp: &impl Multipass) -> Result<()> {
 }
 
 /// Delete VM.
-pub async fn delete(mp: &impl Multipass) {
+pub async fn delete(mp: &impl crate::provisioner::InstanceLifecycle) {
     let _ = mp.delete().await;
     let _ = mp.purge().await;
 }
@@ -245,7 +244,10 @@ pub async fn delete(mp: &impl Multipass) {
 /// # Errors
 ///
 /// Returns an error if the multipass start command fails.
-pub async fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn restart(
+    mp: &(impl crate::provisioner::InstanceLifecycle + crate::provisioner::ShellExecutor),
+    quiet: bool,
+) -> Result<()> {
     if !quiet {
         println!("✓ {}", inception_line("L0", "sequence started."));
     }
@@ -278,7 +280,11 @@ pub async fn restart(mp: &impl Multipass, quiet: bool) -> Result<()> {
 ///
 /// Returns an error if the tarball contains path traversal entries, if any
 /// multipass command fails, or if the `.env` file cannot be written.
-pub async fn transfer_config(mp: &impl Multipass, assets_dir: &Path, version: &str) -> Result<()> {
+pub async fn transfer_config(
+    mp: &(impl ShellExecutor + FileTransfer),
+    assets_dir: &Path,
+    version: &str,
+) -> Result<()> {
     let tar_path = assets_dir.join("polis-setup.config.tar");
 
     // 1. Validate tarball entries on the host before transferring (V-013).
@@ -439,7 +445,7 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 /// # Errors
 ///
 /// Returns an error if the exec command fails.
-pub async fn write_config_hash(mp: &impl Multipass, hash: &str) -> Result<()> {
+pub async fn write_config_hash(mp: &impl ShellExecutor, hash: &str) -> Result<()> {
     mp.exec_with_stdin(&["tee", "/opt/polis/.config-hash"], hash.as_bytes())
         .await
         .context("writing config hash to VM")?;
@@ -457,7 +463,7 @@ pub async fn write_config_hash(mp: &impl Multipass, hash: &str) -> Result<()> {
 ///   the user check network connectivity (Requirement 14.2).
 /// - If the command fails for any other reason, returns an error with the
 ///   captured stderr for diagnosis.
-pub async fn pull_images(mp: &impl Multipass) -> Result<()> {
+pub async fn pull_images(mp: &impl ShellExecutor) -> Result<()> {
     let output = mp
         .exec(&[
             "timeout",
@@ -508,7 +514,7 @@ pub async fn pull_images(mp: &impl Multipass) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if any generation script fails.
-pub async fn generate_certs_and_secrets(mp: &impl Multipass) -> Result<()> {
+pub async fn generate_certs_and_secrets(mp: &impl crate::provisioner::ShellExecutor) -> Result<()> {
     // SAFETY: polis_root is a compile-time constant. If this is ever parameterized,
     // switch to explicit argument arrays to prevent shell injection (see V-004 in transfer_config).
     let polis_root = "/opt/polis";
@@ -584,7 +590,7 @@ pub async fn generate_certs_and_secrets(mp: &impl Multipass) -> Result<()> {
 
 const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
 
-async fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
+async fn check_prerequisites(mp: &impl crate::provisioner::InstanceInspector) -> Result<()> {
     let output = mp.version().await.map_err(|_| {
         anyhow::anyhow!(
             "Workspace runtime not available.\n\nRun 'polis doctor' to diagnose and fix."
@@ -603,18 +609,18 @@ async fn check_prerequisites(mp: &impl Multipass) -> Result<()> {
     Ok(())
 }
 
-async fn configure_credentials(mp: &impl Multipass) {
+async fn configure_credentials(mp: &impl crate::provisioner::FileTransfer) {
     let ca_cert = std::path::PathBuf::from("certs/ca/ca.pem");
     if ca_cert.exists() {
         let _ = mp.transfer(&ca_cert.to_string_lossy(), "/tmp/ca.pem").await;
     }
 }
 
-async fn start_services(mp: &impl Multipass) {
+async fn start_services(mp: &impl crate::provisioner::ShellExecutor) {
     let _ = mp.exec(&["sudo", "systemctl", "start", "polis"]).await;
 }
 
-async fn start_services_with_progress(mp: &impl Multipass, quiet: bool) {
+async fn start_services_with_progress(mp: &impl crate::provisioner::ShellExecutor, quiet: bool) {
     let pb = (!quiet).then(|| {
         crate::output::progress::spinner(&inception_line("L2", "agent isolation starting..."))
     });
@@ -648,7 +654,9 @@ mod tests {
     use anyhow::Result;
 
     use super::*;
-    use crate::multipass::Multipass;
+    use crate::provisioner::{
+        FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
+    };
 
     /// Build an `ExitStatus` from a logical exit code (cross-platform).
     #[cfg(unix)]
@@ -679,50 +687,17 @@ mod tests {
         }
     }
 
-    /// Mock multipass with configurable `vm_info()` output for state detection.
+    /// Mock with configurable `info()` output for state detection.
     struct MultipassVmInfoStub(Output);
-    impl Multipass for MultipassVmInfoStub {
-        async fn vm_info(&self) -> Result<Output> {
+    impl InstanceInspector for MultipassVmInfoStub {
+        async fn info(&self) -> Result<Output> {
             Ok(Output {
                 status: self.0.status,
                 stdout: self.0.stdout.clone(),
                 stderr: self.0.stderr.clone(),
             })
         }
-        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn start(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn stop(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn delete(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn purge(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn exec(&self, _: &[&str]) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
         async fn version(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             anyhow::bail!("not expected")
         }
     }
@@ -757,7 +732,7 @@ mod tests {
         assert!(!exists(&mp).await);
     }
 
-    /// Mock multipass that tracks `start()` and `exec()` calls for restart tests.
+    /// Mock that tracks `start()` and `exec()` calls for restart tests.
     struct MultipassRestartSpy {
         start_called: std::cell::Cell<bool>,
         exec_called: std::cell::Cell<bool>,
@@ -770,11 +745,8 @@ mod tests {
             }
         }
     }
-    impl Multipass for MultipassRestartSpy {
-        async fn vm_info(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
+    impl InstanceLifecycle for MultipassRestartSpy {
+        async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
             anyhow::bail!("not expected")
         }
         async fn start(&self) -> Result<Output> {
@@ -790,12 +762,8 @@ mod tests {
         async fn purge(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
+    }
+    impl ShellExecutor for MultipassRestartSpy {
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             self.exec_called.set(true);
             Ok(ok(b""))
@@ -804,9 +772,6 @@ mod tests {
             anyhow::bail!("not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        async fn version(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
@@ -826,33 +791,9 @@ mod tests {
         );
     }
 
-    /// Mock multipass that returns a configurable exit status for `exec_status`.
+    /// Mock that returns a configurable exit status for `exec_status`.
     struct MultipassExitStatusStub(i32);
-    impl Multipass for MultipassExitStatusStub {
-        async fn vm_info(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn start(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn stop(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn delete(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn purge(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
+    impl ShellExecutor for MultipassExitStatusStub {
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             anyhow::bail!("not expected")
         }
@@ -860,9 +801,6 @@ mod tests {
             anyhow::bail!("not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        async fn version(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
@@ -1084,25 +1022,7 @@ mod tests {
         }
     }
 
-    impl Multipass for TransferConfigSpy {
-        async fn vm_info(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn start(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn stop(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn delete(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn purge(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
+    impl FileTransfer for TransferConfigSpy {
         async fn transfer(&self, src: &str, dst: &str) -> Result<Output> {
             self.transferred
                 .borrow_mut()
@@ -1112,6 +1032,8 @@ mod tests {
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+    }
+    impl ShellExecutor for TransferConfigSpy {
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             self.exec_calls
                 .borrow_mut()
@@ -1126,9 +1048,6 @@ mod tests {
             Ok(ok(b""))
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        async fn version(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
@@ -1399,31 +1318,7 @@ mod tests {
         }
     }
 
-    impl Multipass for PullImagesStub {
-        async fn vm_info(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn start(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn stop(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn delete(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn purge(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
+    impl ShellExecutor for PullImagesStub {
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             Ok(Output {
                 status: exit_status(self.exit_code),
@@ -1435,9 +1330,6 @@ mod tests {
             anyhow::bail!("not expected")
         }
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        async fn version(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {

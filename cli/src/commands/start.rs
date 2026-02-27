@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Args;
 
-use crate::multipass::Multipass;
 use crate::output::OutputContext;
+use crate::provisioner::VmProvisioner;
 use crate::state::{StateManager, WorkspaceState};
 use crate::workspace::{digest, health, vm};
 
@@ -43,7 +43,7 @@ Please use an amd64 machine."
 /// # Errors
 ///
 /// Returns an error if image acquisition, VM creation, or health check fails.
-pub async fn run(args: &StartArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
+pub async fn run(args: &StartArgs, mp: &impl VmProvisioner, ctx: &OutputContext) -> Result<()> {
     check_architecture()?;
     let state_mgr = StateManager::new()?;
     let vm_state = vm::state(mp).await?;
@@ -102,7 +102,7 @@ fn handle_running_vm(
 async fn create_and_start_vm(
     state_mgr: &StateManager,
     args: &StartArgs,
-    mp: &impl Multipass,
+    mp: &impl VmProvisioner,
     ctx: &OutputContext,
 ) -> Result<()> {
     // Step 1: Extract all 3 embedded assets to a temp dir.
@@ -168,7 +168,7 @@ async fn create_and_start_vm(
 async fn restart_vm(
     state_mgr: &StateManager,
     args: &StartArgs,
-    mp: &impl Multipass,
+    mp: &impl VmProvisioner,
     ctx: &OutputContext,
 ) -> Result<()> {
     vm::restart(mp, ctx.quiet).await?;
@@ -190,7 +190,7 @@ async fn restart_vm(
 }
 
 /// Validate and generate artifacts for an agent if one is requested.
-async fn setup_agent_if_requested(mp: &impl Multipass, agent: Option<&str>) -> Result<()> {
+async fn setup_agent_if_requested(mp: &impl VmProvisioner, agent: Option<&str>) -> Result<()> {
     if let Some(name) = agent {
         validate_agent(mp, name).await?;
         generate_agent_artifacts(mp, name).await?;
@@ -239,7 +239,7 @@ fn print_success_message(agent: Option<&str>, ctx: &OutputContext) {
 /// # Errors
 ///
 /// Returns an error if the agent manifest is missing or the VM is unreachable.
-pub async fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()> {
+pub async fn validate_agent(mp: &impl VmProvisioner, agent_name: &str) -> Result<()> {
     let manifest_path = format!("{VM_POLIS_ROOT}/agents/{agent_name}/agent.yaml");
     let output = mp
         .exec(&["test", "-f", &manifest_path])
@@ -279,7 +279,7 @@ pub async fn validate_agent(mp: &impl Multipass, agent_name: &str) -> Result<()>
 /// # Errors
 ///
 /// Returns an error if artifact generation fails or the VM is unreachable.
-pub async fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> Result<()> {
+pub async fn generate_agent_artifacts(mp: &impl VmProvisioner, agent_name: &str) -> Result<()> {
     let script = format!("{VM_POLIS_ROOT}/scripts/generate-agent.sh");
     let agents_dir = format!("{VM_POLIS_ROOT}/agents");
     let output = mp
@@ -310,7 +310,7 @@ pub async fn generate_agent_artifacts(mp: &impl Multipass, agent_name: &str) -> 
 /// # Errors
 ///
 /// Returns an error if docker compose fails or the VM is unreachable.
-pub async fn start_compose(mp: &impl Multipass, agent_name: Option<&str>) -> Result<()> {
+pub async fn start_compose(mp: &impl VmProvisioner, agent_name: Option<&str>) -> Result<()> {
     let base = format!("{VM_POLIS_ROOT}/docker-compose.yml");
     let mut args: Vec<String> = vec!["docker".into(), "compose".into(), "-f".into(), base];
     if let Some(name) = agent_name {

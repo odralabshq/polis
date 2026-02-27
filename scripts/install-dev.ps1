@@ -210,17 +210,18 @@ Install-Cli
 Add-ToUserPath
 
 # Remove existing VM for a clean reinstall
-$vmExists = $false
-try {
-    $ErrorActionPreference = "Continue"
-    $null = & multipass info polis 2>&1
-    if ($LASTEXITCODE -eq 0) { $vmExists = $true }
-    $ErrorActionPreference = "Stop"
-} catch {
-    $ErrorActionPreference = "Stop"
+Write-Info "Checking for existing polis VM..."
+$vmList = $null
+$listJob = Start-Job { & multipass list --format csv 2>$null }
+if (Wait-Job $listJob -Timeout 30) {
+    $vmList = Receive-Job $listJob | Select-String -Pattern '^polis,'
+} else {
+    Stop-Job $listJob
+    Write-Warn "multipass list timed out — assuming no existing VM"
 }
+Remove-Job $listJob -Force
 
-if ($vmExists) {
+if ($vmList) {
     Write-Info "Existing polis VM found — deleting for clean reinstall..."
     & multipass delete polis --purge 2>$null
     Write-Ok "VM deleted"

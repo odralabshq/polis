@@ -6,9 +6,11 @@ use clap::Parser;
 
 mod assets;
 mod cli;
+mod command_runner;
 mod commands;
 mod multipass;
 mod output;
+mod provisioner;
 mod ssh;
 mod state;
 mod workspace;

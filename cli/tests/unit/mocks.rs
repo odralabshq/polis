@@ -1,6 +1,6 @@
 //! Shared mock infrastructure for unit tests.
 //!
-//! Provides canned [`Multipass`] implementations and output helpers so each
+//! Provides canned sub-trait implementations and output helpers so each
 //! test file doesn't have to re-define the same boilerplate.
 
 #![allow(clippy::expect_used)]
@@ -8,7 +8,9 @@
 use std::process::Output;
 
 use anyhow::Result;
-use polis_cli::multipass::Multipass;
+use polis_cli::provisioner::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
+};
 
 use crate::helpers::exit_status;
 
@@ -40,14 +42,17 @@ fn unexpected<T>() -> Result<T> {
 
 pub struct MultipassVmNotFound;
 
-impl Multipass for MultipassVmNotFound {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for MultipassVmNotFound {
+    async fn info(&self) -> Result<Output> {
         Ok(err_output(b"instance \"polis\" does not exist"))
     }
-    async fn exec(&self, _: &[&str]) -> Result<Output> {
-        Ok(err_output(b""))
+    async fn version(&self) -> Result<Output> {
+        unexpected()
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+}
+
+impl InstanceLifecycle for MultipassVmNotFound {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         unexpected()
     }
     async fn start(&self) -> Result<Output> {
@@ -62,19 +67,25 @@ impl Multipass for MultipassVmNotFound {
     async fn purge(&self) -> Result<Output> {
         unexpected()
     }
+}
+
+impl FileTransfer for MultipassVmNotFound {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         unexpected()
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         unexpected()
     }
+}
+
+impl ShellExecutor for MultipassVmNotFound {
+    async fn exec(&self, _: &[&str]) -> Result<Output> {
+        Ok(err_output(b""))
+    }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
         unexpected()
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        unexpected()
-    }
-    async fn version(&self) -> Result<Output> {
         unexpected()
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
@@ -86,14 +97,17 @@ impl Multipass for MultipassVmNotFound {
 
 pub struct MultipassVmStopped;
 
-impl Multipass for MultipassVmStopped {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for MultipassVmStopped {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Stopped"}}}"#))
     }
-    async fn exec(&self, _: &[&str]) -> Result<Output> {
-        Ok(err_output(b""))
+    async fn version(&self) -> Result<Output> {
+        unexpected()
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+}
+
+impl InstanceLifecycle for MultipassVmStopped {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         unexpected()
     }
     async fn start(&self) -> Result<Output> {
@@ -108,19 +122,25 @@ impl Multipass for MultipassVmStopped {
     async fn purge(&self) -> Result<Output> {
         unexpected()
     }
+}
+
+impl FileTransfer for MultipassVmStopped {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         unexpected()
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         unexpected()
     }
+}
+
+impl ShellExecutor for MultipassVmStopped {
+    async fn exec(&self, _: &[&str]) -> Result<Output> {
+        Ok(err_output(b""))
+    }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
         unexpected()
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        unexpected()
-    }
-    async fn version(&self) -> Result<Output> {
         unexpected()
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
@@ -131,7 +151,7 @@ impl Multipass for MultipassVmStopped {
 // ── Mock: exec call recorder ──────────────────────────────────────────────────
 
 /// Records every `exec()` call as a `Vec<String>` (one entry per argument).
-/// All exec calls succeed (exit 0). Other methods panic if called.
+/// All exec calls succeed (exit 0). Other methods bail if called.
 pub struct MultipassExecRecorder {
     pub calls: std::sync::Mutex<Vec<Vec<String>>>,
 }
@@ -160,10 +180,43 @@ impl Default for MultipassExecRecorder {
     }
 }
 
-impl Multipass for MultipassExecRecorder {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for MultipassExecRecorder {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected in this test")
+    }
+}
+
+impl InstanceLifecycle for MultipassExecRecorder {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
+        anyhow::bail!("launch not expected in this test")
+    }
+    async fn start(&self) -> Result<Output> {
+        anyhow::bail!("start not expected in this test")
+    }
+    async fn stop(&self) -> Result<Output> {
+        anyhow::bail!("stop not expected in this test")
+    }
+    async fn delete(&self) -> Result<Output> {
+        anyhow::bail!("delete not expected in this test")
+    }
+    async fn purge(&self) -> Result<Output> {
+        anyhow::bail!("purge not expected in this test")
+    }
+}
+
+impl FileTransfer for MultipassExecRecorder {
+    async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+        anyhow::bail!("transfer not expected in this test")
+    }
+    async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+        anyhow::bail!("transfer_recursive not expected in this test")
+    }
+}
+
+impl ShellExecutor for MultipassExecRecorder {
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         self.calls
             .lock()
@@ -171,38 +224,14 @@ impl Multipass for MultipassExecRecorder {
             .push(args.iter().map(std::string::ToString::to_string).collect());
         Ok(ok_output(b""))
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
-        panic!("launch not expected in this test")
-    }
-    async fn start(&self) -> Result<Output> {
-        panic!("start not expected in this test")
-    }
-    async fn stop(&self) -> Result<Output> {
-        panic!("stop not expected in this test")
-    }
-    async fn delete(&self) -> Result<Output> {
-        panic!("delete not expected in this test")
-    }
-    async fn purge(&self) -> Result<Output> {
-        panic!("purge not expected in this test")
-    }
-    async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-        panic!("transfer not expected in this test")
-    }
-    async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-        panic!("transfer_recursive not expected in this test")
-    }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-        panic!("exec_with_stdin not expected in this test")
+        anyhow::bail!("exec_with_stdin not expected in this test")
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        panic!("exec_spawn not expected in this test")
-    }
-    async fn version(&self) -> Result<Output> {
-        panic!("version not expected in this test")
+        anyhow::bail!("exec_spawn not expected in this test")
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-        panic!("exec_status not expected in this test")
+        anyhow::bail!("exec_status not expected in this test")
     }
 }
 
@@ -210,14 +239,17 @@ impl Multipass for MultipassExecRecorder {
 
 pub struct MultipassVmRunning;
 
-impl Multipass for MultipassVmRunning {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for MultipassVmRunning {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
-    async fn exec(&self, _: &[&str]) -> Result<Output> {
-        Ok(ok_output(b""))
+    async fn version(&self) -> Result<Output> {
+        unexpected()
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+}
+
+impl InstanceLifecycle for MultipassVmRunning {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         unexpected()
     }
     async fn start(&self) -> Result<Output> {
@@ -232,19 +264,25 @@ impl Multipass for MultipassVmRunning {
     async fn purge(&self) -> Result<Output> {
         unexpected()
     }
+}
+
+impl FileTransfer for MultipassVmRunning {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         unexpected()
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         unexpected()
     }
+}
+
+impl ShellExecutor for MultipassVmRunning {
+    async fn exec(&self, _: &[&str]) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
         unexpected()
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        unexpected()
-    }
-    async fn version(&self) -> Result<Output> {
         unexpected()
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {

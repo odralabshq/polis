@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use crate::commands::DeleteArgs;
-use crate::multipass::Multipass;
+use crate::provisioner::{InstanceInspector, InstanceLifecycle};
 use crate::state::StateManager;
 use crate::workspace::{image, vm};
 
@@ -16,7 +16,7 @@ use crate::workspace::{image, vm};
 /// Returns an error if the workspace cannot be removed.
 pub async fn run(
     args: &DeleteArgs,
-    mp: &impl Multipass,
+    mp: &(impl InstanceLifecycle + InstanceInspector),
     state_mgr: &StateManager,
     quiet: bool,
 ) -> Result<()> {
@@ -29,7 +29,7 @@ pub async fn run(
 
 async fn delete_workspace(
     args: &DeleteArgs,
-    mp: &impl Multipass,
+    mp: &(impl InstanceLifecycle + InstanceInspector),
     state_mgr: &StateManager,
     quiet: bool,
 ) -> Result<()> {
@@ -77,7 +77,7 @@ async fn delete_workspace(
 
 async fn delete_all(
     args: &DeleteArgs,
-    mp: &impl Multipass,
+    mp: &(impl InstanceLifecycle + InstanceInspector),
     state_mgr: &StateManager,
     quiet: bool,
 ) -> Result<()> {

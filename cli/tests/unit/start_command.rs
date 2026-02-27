@@ -6,7 +6,9 @@ use std::process::Output;
 
 use anyhow::Result;
 use polis_cli::commands::start::{generate_agent_artifacts, start_compose, validate_agent};
-use polis_cli::multipass::Multipass;
+use polis_cli::provisioner::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
+};
 use polis_cli::workspace::vm::generate_certs_and_secrets;
 
 use crate::helpers::{err_output, exit_status, ok_output};
@@ -17,11 +19,16 @@ use crate::mocks::MultipassExecRecorder;
 /// VM is running; exec returns success for all calls.
 struct VmRunningExecOk;
 
-impl Multipass for VmRunningExecOk {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for VmRunningExecOk {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected")
+    }
+}
+impl InstanceLifecycle for VmRunningExecOk {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn start(&self) -> Result<Output> {
@@ -36,12 +43,16 @@ impl Multipass for VmRunningExecOk {
     async fn purge(&self) -> Result<Output> {
         Ok(ok_output(b""))
     }
+}
+impl FileTransfer for VmRunningExecOk {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
+}
+impl ShellExecutor for VmRunningExecOk {
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(ok_output(b""))
     }
@@ -49,9 +60,6 @@ impl Multipass for VmRunningExecOk {
         anyhow::bail!("not expected")
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        anyhow::bail!("not expected")
-    }
-    async fn version(&self) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
@@ -62,11 +70,16 @@ impl Multipass for VmRunningExecOk {
 /// VM is running; exec always returns failure.
 struct VmRunningExecFail;
 
-impl Multipass for VmRunningExecFail {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for VmRunningExecFail {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected")
+    }
+}
+impl InstanceLifecycle for VmRunningExecFail {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn start(&self) -> Result<Output> {
@@ -81,12 +94,16 @@ impl Multipass for VmRunningExecFail {
     async fn purge(&self) -> Result<Output> {
         Ok(ok_output(b""))
     }
+}
+impl FileTransfer for VmRunningExecFail {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
+}
+impl ShellExecutor for VmRunningExecFail {
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(err_output(1, b"script failed"))
     }
@@ -94,9 +111,6 @@ impl Multipass for VmRunningExecFail {
         anyhow::bail!("not expected")
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        anyhow::bail!("not expected")
-    }
-    async fn version(&self) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
@@ -107,11 +121,16 @@ impl Multipass for VmRunningExecFail {
 /// exec returns exit code 2 (missing yq).
 struct VmRunningExecExitTwo;
 
-impl Multipass for VmRunningExecExitTwo {
-    async fn vm_info(&self) -> Result<Output> {
+impl InstanceInspector for VmRunningExecExitTwo {
+    async fn info(&self) -> Result<Output> {
         Ok(ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#))
     }
-    async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
+    async fn version(&self) -> Result<Output> {
+        anyhow::bail!("not expected")
+    }
+}
+impl InstanceLifecycle for VmRunningExecExitTwo {
+    async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn start(&self) -> Result<Output> {
@@ -126,12 +145,16 @@ impl Multipass for VmRunningExecExitTwo {
     async fn purge(&self) -> Result<Output> {
         Ok(ok_output(b""))
     }
+}
+impl FileTransfer for VmRunningExecExitTwo {
     async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
         anyhow::bail!("not expected")
     }
+}
+impl ShellExecutor for VmRunningExecExitTwo {
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         Ok(Output {
             status: exit_status(2),
@@ -143,9 +166,6 @@ impl Multipass for VmRunningExecExitTwo {
         anyhow::bail!("not expected")
     }
     fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-        anyhow::bail!("not expected")
-    }
-    async fn version(&self) -> Result<Output> {
         anyhow::bail!("not expected")
     }
     async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {

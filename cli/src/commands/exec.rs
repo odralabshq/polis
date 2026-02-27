@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 use anyhow::{Context, Result};
 use clap::Args;
 
-use crate::multipass::Multipass;
+use crate::provisioner::ShellExecutor;
 use crate::workspace::CONTAINER_NAME;
 
 /// Arguments for the exec command.
@@ -27,7 +27,7 @@ pub struct ExecArgs {
 /// Returns an error if the command cannot be spawned. Calls
 /// [`std::process::exit`] with the container command's exit code on
 /// completion.
-pub async fn run(args: &ExecArgs, mp: &impl Multipass) -> Result<()> {
+pub async fn run(args: &ExecArgs, mp: &impl ShellExecutor) -> Result<()> {
     let interactive = std::io::stdin().is_terminal();
 
     let mut docker_args: Vec<&str> = vec!["docker", "exec"];

@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::LazyLock;
 
-use crate::multipass::Multipass;
 use crate::output::OutputContext;
+use crate::provisioner::{FileTransfer, InstanceInspector, ShellExecutor};
 use crate::state::StateManager;
 use crate::workspace::{CONTAINER_NAME, vm};
 
@@ -639,7 +639,7 @@ struct AgentManifestMetadata {
 /// found, artifact generation failure).
 pub async fn run(
     cmd: AgentCommand,
-    mp: &impl Multipass,
+    mp: &(impl ShellExecutor + FileTransfer + InstanceInspector),
     ctx: &OutputContext,
     json: bool,
 ) -> Result<()> {
@@ -655,7 +655,11 @@ pub async fn run(
     }
 }
 
-async fn add(args: &AddArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
+async fn add(
+    args: &AddArgs,
+    mp: &(impl ShellExecutor + FileTransfer + InstanceInspector),
+    ctx: &OutputContext,
+) -> Result<()> {
     let name = validate_agent_folder(&args.path)?;
     require_vm_running(mp).await?;
     ensure_agent_not_exists(mp, &name).await?;
@@ -701,7 +705,7 @@ fn validate_agent_folder(path: &str) -> Result<String> {
 }
 
 /// Ensure VM is running.
-async fn require_vm_running(mp: &impl Multipass) -> Result<()> {
+async fn require_vm_running(mp: &impl InstanceInspector) -> Result<()> {
     anyhow::ensure!(
         vm::state(mp).await? == vm::VmState::Running,
         "VM is not running. Start it first: polis start"
@@ -710,7 +714,7 @@ async fn require_vm_running(mp: &impl Multipass) -> Result<()> {
 }
 
 /// Ensure agent doesn't already exist.
-async fn ensure_agent_not_exists(mp: &impl Multipass, name: &str) -> Result<()> {
+async fn ensure_agent_not_exists(mp: &impl ShellExecutor, name: &str) -> Result<()> {
     let target_dir = format!("{VM_ROOT}/agents/{name}");
     let exists = mp.exec(&["test", "-d", &target_dir]).await?;
     anyhow::ensure!(
@@ -722,7 +726,7 @@ async fn ensure_agent_not_exists(mp: &impl Multipass, name: &str) -> Result<()> 
 
 /// Transfer agent folder to VM.
 async fn transfer_agent_to_vm(
-    mp: &impl Multipass,
+    mp: &impl FileTransfer,
     ctx: &OutputContext,
     path: &str,
     name: &str,
@@ -743,7 +747,11 @@ async fn transfer_agent_to_vm(
     Ok(())
 }
 
-async fn remove(args: &RemoveArgs, mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
+async fn remove(
+    args: &RemoveArgs,
+    mp: &(impl ShellExecutor + InstanceInspector),
+    ctx: &OutputContext,
+) -> Result<()> {
     let name = &args.name;
     validate_agent_name(name)?;
     let agent_dir = format!("{VM_ROOT}/agents/{name}");
@@ -805,7 +813,7 @@ async fn remove(args: &RemoveArgs, mp: &impl Multipass, ctx: &OutputContext) -> 
     Ok(())
 }
 
-async fn list(mp: &impl Multipass, ctx: &OutputContext, json: bool) -> Result<()> {
+async fn list(mp: &impl ShellExecutor, ctx: &OutputContext, json: bool) -> Result<()> {
     // Scan agents/*/agent.yaml inside VM (exclude _template).
     // Use `cat` to read each file and parse with serde_yaml on the host — no yq needed.
     let scan = mp
@@ -903,7 +911,7 @@ async fn list(mp: &impl Multipass, ctx: &OutputContext, json: bool) -> Result<()
     Ok(())
 }
 
-async fn restart(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
+async fn restart(mp: &(impl ShellExecutor + InstanceInspector), ctx: &OutputContext) -> Result<()> {
     let state_mgr = StateManager::new()?;
     let name = state_mgr
         .load()?
@@ -941,7 +949,10 @@ async fn restart(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
     Ok(())
 }
 
-async fn update(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
+async fn update(
+    mp: &(impl ShellExecutor + FileTransfer + InstanceInspector),
+    ctx: &OutputContext,
+) -> Result<()> {
     let state_mgr = StateManager::new()?;
     let name = state_mgr
         .load()?
@@ -1016,7 +1027,7 @@ async fn update(mp: &impl Multipass, ctx: &OutputContext) -> Result<()> {
 }
 
 /// Require the VM to be running; return an error otherwise.
-async fn require_running(mp: &impl Multipass) -> Result<()> {
+async fn require_running(mp: &impl InstanceInspector) -> Result<()> {
     anyhow::ensure!(
         vm::state(mp).await? == vm::VmState::Running,
         "Workspace is not running. Start it first: polis start --agent <name>"
@@ -1032,7 +1043,7 @@ fn require_active_agent() -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("no active agent. Start one: polis start --agent <name>"))
 }
 
-async fn shell(mp: &impl Multipass) -> Result<()> {
+async fn shell(mp: &(impl ShellExecutor + InstanceInspector)) -> Result<()> {
     require_running(mp).await?;
     let name = require_active_agent()?;
 
@@ -1061,7 +1072,7 @@ async fn shell(mp: &impl Multipass) -> Result<()> {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-async fn exec_cmd(mp: &impl Multipass, args: &ExecArgs) -> Result<()> {
+async fn exec_cmd(mp: &(impl ShellExecutor + InstanceInspector), args: &ExecArgs) -> Result<()> {
     require_running(mp).await?;
     let mut cmd_args: Vec<&str> = vec!["docker", "exec", CONTAINER_NAME];
     let refs: Vec<&str> = args.command.iter().map(String::as_str).collect();
@@ -1073,7 +1084,7 @@ async fn exec_cmd(mp: &impl Multipass, args: &ExecArgs) -> Result<()> {
     Ok(())
 }
 
-async fn agent_cmd(mp: &impl Multipass, args: &CmdArgs) -> Result<()> {
+async fn agent_cmd(mp: &(impl ShellExecutor + InstanceInspector), args: &CmdArgs) -> Result<()> {
     require_running(mp).await?;
     let name = require_active_agent()?;
     let commands_sh = format!("{VM_ROOT}/agents/{name}/commands.sh");

@@ -55,7 +55,7 @@ where
 /// # Errors
 ///
 /// Returns an error if the VM IP cannot be resolved or SSH cannot be spawned.
-pub async fn ssh_proxy(mp: &impl crate::multipass::Multipass) -> Result<()> {
+pub async fn ssh_proxy(mp: &impl crate::provisioner::InstanceInspector) -> Result<()> {
     let vm_ip = crate::multipass::resolve_vm_ip(mp).await?;
 
     let identity_key = dirs::home_dir()
@@ -111,7 +111,7 @@ pub async fn ssh_proxy(mp: &impl crate::multipass::Multipass) -> Result<()> {
 ///
 /// Returns an error if the host key cannot be extracted.
 #[allow(clippy::large_futures)]
-pub async fn extract_host_key(mp: &impl crate::multipass::Multipass) -> Result<()> {
+pub async fn extract_host_key(mp: &impl crate::provisioner::ShellExecutor) -> Result<()> {
     let output = mp
         .exec(&[
             "docker",

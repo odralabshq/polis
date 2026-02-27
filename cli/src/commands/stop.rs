@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 
-use crate::multipass::Multipass;
 use crate::output::OutputContext;
+use crate::provisioner::{InstanceInspector, InstanceLifecycle, ShellExecutor};
 use crate::workspace::vm;
 
 /// Run `polis stop`.
@@ -11,7 +11,10 @@ use crate::workspace::vm;
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be stopped.
-pub async fn run(ctx: &OutputContext, mp: &impl Multipass) -> Result<()> {
+pub async fn run(
+    ctx: &OutputContext,
+    mp: &(impl InstanceLifecycle + InstanceInspector + ShellExecutor),
+) -> Result<()> {
     let state = vm::state(mp).await?;
 
     match state {

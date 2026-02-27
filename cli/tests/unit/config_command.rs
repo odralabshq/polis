@@ -12,8 +12,8 @@ use std::process::Output;
 
 use anyhow::Result;
 use polis_cli::commands::config::{self, ConfigCommand};
-use polis_cli::multipass::Multipass;
 use polis_cli::output::OutputContext;
+use polis_cli::provisioner::{InstanceInspector, ShellExecutor};
 use serial_test::serial;
 use tempfile::TempDir;
 
@@ -56,52 +56,22 @@ fn set_cmd(value: &str) -> (TempDir, ConfigCommand) {
 
 // ── Shared mock boilerplate ──────────────────────────────────────────────────
 //
-// The Multipass trait has 12 methods. Only `exec` is exercised by config
-// propagation. Every other method bails with its name so unexpected calls
-// surface immediately (per TESTER.md manual-mock convention).
+// Config propagation only needs InstanceInspector (for vm::state) and
+// ShellExecutor (for exec). We implement only those two traits per mock.
 
-macro_rules! multipass_stub_methods {
-    () => {
-        async fn vm_info(&self) -> Result<Output> {
-            // Propagation tests require a running VM
-            Ok(Output {
-                status: exit_status(0),
-                stdout: br#"{"info":{"polis":{"state":"Running"}}}"#.to_vec(),
-                stderr: Vec::new(),
-            })
-        }
-        async fn launch(&self, _: &polis_cli::multipass::LaunchParams<'_>) -> Result<Output> {
-            anyhow::bail!("launch not expected in this test")
-        }
-        async fn start(&self) -> Result<Output> {
-            anyhow::bail!("start not expected in this test")
-        }
-        async fn stop(&self) -> Result<Output> {
-            anyhow::bail!("stop not expected in this test")
-        }
-        async fn delete(&self) -> Result<Output> {
-            anyhow::bail!("delete not expected in this test")
-        }
-        async fn purge(&self) -> Result<Output> {
-            anyhow::bail!("purge not expected in this test")
-        }
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("transfer not expected in this test")
-        }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("transfer_recursive not expected in this test")
-        }
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            anyhow::bail!("exec_with_stdin not expected in this test")
-        }
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("exec_spawn not expected in this test")
-        }
-        async fn version(&self) -> Result<Output> {
-            anyhow::bail!("version not expected in this test")
-        }
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            anyhow::bail!("exec_status not expected in this test")
+macro_rules! impl_inspector_running {
+    ($t:ty) => {
+        impl InstanceInspector for $t {
+            async fn info(&self) -> Result<Output> {
+                Ok(Output {
+                    status: exit_status(0),
+                    stdout: br#"{"info":{"polis":{"state":"Running"}}}"#.to_vec(),
+                    stderr: Vec::new(),
+                })
+            }
+            async fn version(&self) -> Result<Output> {
+                anyhow::bail!("version not expected in this test")
+            }
         }
     };
 }
@@ -111,7 +81,9 @@ macro_rules! multipass_stub_methods {
 /// Password read OK, valkey-cli SET returns OK.
 struct MockPropagateOk;
 
-impl Multipass for MockPropagateOk {
+impl_inspector_running!(MockPropagateOk);
+
+impl ShellExecutor for MockPropagateOk {
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         if args.contains(&"cat") {
             return Ok(ok_output(b"s3cret\n"));
@@ -121,7 +93,15 @@ impl Multipass for MockPropagateOk {
         }
         anyhow::bail!("exec not expected with args: {args:?}")
     }
-    multipass_stub_methods!();
+    async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+        anyhow::bail!("exec_with_stdin not expected in this test")
+    }
+    fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+        anyhow::bail!("exec_spawn not expected in this test")
+    }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+        anyhow::bail!("exec_status not expected in this test")
+    }
 }
 
 // ── Mock: password read fails ────────────────────────────────────────────────
@@ -129,14 +109,24 @@ impl Multipass for MockPropagateOk {
 /// VM not running — `cat` of password file returns non-zero.
 struct MockPasswordReadFails;
 
-impl Multipass for MockPasswordReadFails {
+impl_inspector_running!(MockPasswordReadFails);
+
+impl ShellExecutor for MockPasswordReadFails {
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         if args.contains(&"cat") {
             return Ok(err_output(b"No such file or directory"));
         }
         anyhow::bail!("exec not expected with args: {args:?}")
     }
-    multipass_stub_methods!();
+    async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+        anyhow::bail!("exec_with_stdin not expected in this test")
+    }
+    fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+        anyhow::bail!("exec_spawn not expected in this test")
+    }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+        anyhow::bail!("exec_status not expected in this test")
+    }
 }
 
 // ── Mock: valkey SET fails ───────────────────────────────────────────────────
@@ -144,7 +134,9 @@ impl Multipass for MockPasswordReadFails {
 /// Password read OK but valkey-cli SET returns NOPERM.
 struct MockValkeySetFails;
 
-impl Multipass for MockValkeySetFails {
+impl_inspector_running!(MockValkeySetFails);
+
+impl ShellExecutor for MockValkeySetFails {
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         if args.contains(&"cat") {
             return Ok(ok_output(b"s3cret\n"));
@@ -154,7 +146,15 @@ impl Multipass for MockValkeySetFails {
         }
         anyhow::bail!("exec not expected with args: {args:?}")
     }
-    multipass_stub_methods!();
+    async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+        anyhow::bail!("exec_with_stdin not expected in this test")
+    }
+    fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+        anyhow::bail!("exec_spawn not expected in this test")
+    }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+        anyhow::bail!("exec_status not expected in this test")
+    }
 }
 
 // ── Mock: multipass exec itself errors ───────────────────────────────────────
@@ -162,11 +162,21 @@ impl Multipass for MockValkeySetFails {
 /// Multipass not installed or VM unreachable.
 struct MockExecErrors;
 
-impl Multipass for MockExecErrors {
+impl_inspector_running!(MockExecErrors);
+
+impl ShellExecutor for MockExecErrors {
     async fn exec(&self, _: &[&str]) -> Result<Output> {
         anyhow::bail!("failed to run multipass exec")
     }
-    multipass_stub_methods!();
+    async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+        anyhow::bail!("exec_with_stdin not expected in this test")
+    }
+    fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+        anyhow::bail!("exec_spawn not expected in this test")
+    }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+        anyhow::bail!("exec_status not expected in this test")
+    }
 }
 
 // ── Mock: captures exec args ─────────────────────────────────────────────────
@@ -188,7 +198,9 @@ impl MockCaptureArgs {
     }
 }
 
-impl Multipass for MockCaptureArgs {
+impl_inspector_running!(MockCaptureArgs);
+
+impl ShellExecutor for MockCaptureArgs {
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         self.captured
             .lock()
@@ -200,7 +212,15 @@ impl Multipass for MockCaptureArgs {
             b"OK\n"
         }))
     }
-    multipass_stub_methods!();
+    async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+        anyhow::bail!("exec_with_stdin not expected in this test")
+    }
+    fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+        anyhow::bail!("exec_spawn not expected in this test")
+    }
+    async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+        anyhow::bail!("exec_status not expected in this test")
+    }
 }
 
 // ── Tests: propagation succeeds ──────────────────────────────────────────────

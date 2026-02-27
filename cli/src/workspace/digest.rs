@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 
 use crate::assets::get_asset;
-use crate::multipass::Multipass;
+use crate::provisioner::ShellExecutor;
 
 /// Mapping from Docker image reference to expected sha256 digest.
 ///
@@ -39,7 +39,7 @@ pub type DigestManifest = HashMap<String, String>;
 /// - Returns an error if the manifest cannot be parsed.
 /// - Returns an error if `docker inspect` fails for any image.
 /// - Returns an error if any image digest does not match the expected value.
-pub async fn verify_image_digests(mp: &impl Multipass) -> Result<()> {
+pub async fn verify_image_digests(mp: &impl ShellExecutor) -> Result<()> {
     let manifest_bytes = get_asset("image-digests.json")?;
     let manifest: DigestManifest =
         serde_json::from_slice(manifest_bytes).context("parsing embedded digest manifest")?;
@@ -90,7 +90,7 @@ mod tests {
     use anyhow::Result;
 
     use super::*;
-    use crate::multipass::Multipass;
+    use crate::provisioner::ShellExecutor;
 
     // ── Cross-platform ExitStatus helper ─────────────────────────────────────
 
@@ -154,34 +154,7 @@ mod tests {
         }
     }
 
-    impl Multipass for DigestMock {
-        async fn vm_info(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn start(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn stop(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn delete(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn purge(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        async fn version(&self) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
+    impl ShellExecutor for DigestMock {
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             let args_owned: Vec<String> =
                 args.iter().map(std::string::ToString::to_string).collect();
@@ -210,7 +183,7 @@ mod tests {
 
     /// Helper: run `verify_image_digests` against a synthetic manifest (bypasses
     /// the embedded asset) by directly calling the inner verification logic.
-    async fn verify_manifest(mp: &impl Multipass, manifest: &DigestManifest) -> Result<()> {
+    async fn verify_manifest(mp: &impl ShellExecutor, manifest: &DigestManifest) -> Result<()> {
         if manifest.is_empty() {
             eprintln!(
                 "⚠ Warning: image digest manifest is empty — verification skipped (local dev build)"
@@ -337,34 +310,7 @@ mod tests {
         #[allow(clippy::items_after_statements)]
         struct FailingMock;
         #[allow(clippy::items_after_statements)]
-        impl Multipass for FailingMock {
-            async fn vm_info(&self) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            async fn launch(&self, _: &crate::multipass::LaunchParams<'_>) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            async fn start(&self) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            async fn stop(&self) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            async fn delete(&self) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            async fn purge(&self) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            async fn version(&self) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
+        impl ShellExecutor for FailingMock {
             async fn exec(&self, _: &[&str]) -> Result<Output> {
                 Err(anyhow::anyhow!("multipass exec failed"))
             }
