@@ -3,6 +3,7 @@
 //! Imports only from `crate::domain` and `crate::application::ports`.
 //! All I/O is routed through injected port traits.
 
+pub use crate::domain::agent::AgentInfo;
 use anyhow::{Context, Result};
 
 use crate::application::ports::{
@@ -62,7 +63,7 @@ async fn generate_and_write_artifacts(polis_dir: &std::path::Path, name: &str) -
 }
 
 /// Path to the polis project root inside the VM.
-const VM_ROOT: &str = "/opt/polis";
+use crate::domain::workspace::VM_ROOT;
 
 /// Install an agent from a local folder into the VM.
 ///
@@ -75,7 +76,6 @@ const VM_ROOT: &str = "/opt/polis";
 ///
 /// Returns an error if validation fails, artifact generation fails,
 /// or any VM operation fails.
-#[allow(dead_code)] // Public API — not yet called from commands/agent.rs
 pub async fn install_agent(
     provisioner: &(impl ShellExecutor + FileTransfer + InstanceInspector),
     _state_mgr: &impl WorkspaceStateStore,
@@ -93,8 +93,10 @@ pub async fn install_agent(
     );
     let content = tokio::task::spawn_blocking({
         let manifest_path = manifest_path.clone();
-        move || std::fs::read_to_string(&manifest_path)
-            .with_context(|| format!("reading {}", manifest_path.display()))
+        move || {
+            std::fs::read_to_string(&manifest_path)
+                .with_context(|| format!("reading {}", manifest_path.display()))
+        }
     })
     .await
     .context("spawn_blocking for manifest read")??;
@@ -151,7 +153,6 @@ pub async fn install_agent(
 /// # Errors
 ///
 /// Returns an error if the agent is not installed or any VM operation fails.
-#[allow(dead_code)] // Public API — not yet called from commands/agent.rs
 pub async fn remove_agent(
     provisioner: &(impl ShellExecutor + InstanceInspector),
     state_mgr: &impl WorkspaceStateStore,
@@ -226,7 +227,6 @@ pub async fn remove_agent(
 ///
 /// Returns an error if no agent is active, the VM is not running, or any
 /// VM operation fails.
-#[allow(dead_code)] // Public API — not yet called from commands/agent.rs
 pub async fn update_agent(
     provisioner: &(impl ShellExecutor + FileTransfer + InstanceInspector),
     state_mgr: &impl WorkspaceStateStore,
@@ -313,3 +313,72 @@ pub async fn update_agent(
     Ok(name)
 }
 
+/// List all installed agents.
+pub async fn list_agents(
+    provisioner: &impl ShellExecutor,
+    state_mgr: &impl WorkspaceStateStore,
+) -> Result<Vec<AgentInfo>> {
+    // Scan agents/*/agent.yaml inside VM (exclude _template).
+    let scan = provisioner
+        .exec(&[
+            "bash",
+            "-c",
+            &format!(
+                "for f in {VM_ROOT}/agents/*/agent.yaml; do \
+                   dir=$(dirname \"$f\"); \
+                   name=$(basename \"$dir\"); \
+                   [ \"$name\" = \"_template\" ] && continue; \
+                   [ -f \"$f\" ] || continue; \
+                   printf '===AGENT:%s===\\n' \"$name\"; \
+                   cat \"$f\"; \
+                   printf '\\n===END===\\n'; \
+                 done"
+            ),
+        ])
+        .await?;
+
+    let output = String::from_utf8_lossy(&scan.stdout);
+    let active = state_mgr.load_async().await?.and_then(|s| s.active_agent);
+
+    let mut agents = Vec::new();
+    let mut current_name: Option<String> = None;
+    let mut current_yaml = String::new();
+
+    for line in output.lines() {
+        if let Some(name) = line
+            .strip_prefix("===AGENT:")
+            .and_then(|s| s.strip_suffix("==="))
+        {
+            current_name = Some(name.to_string());
+            current_yaml.clear();
+        } else if line == "===END===" {
+            if let Some(dir_name) = current_name.take() {
+                let is_active = active.as_deref() == Some(&dir_name);
+                if let Ok(m) = serde_yaml::from_str::<serde_yaml::Value>(&current_yaml) {
+                    let metadata = m.get("metadata");
+                    agents.push(AgentInfo {
+                        name: metadata
+                            .and_then(|m| m.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&dir_name)
+                            .to_string(),
+                        version: metadata
+                            .and_then(|m| m.get("version"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        description: metadata
+                            .and_then(|m| m.get("description"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        active: is_active,
+                    });
+                }
+            }
+        } else if current_name.is_some() {
+            current_yaml.push_str(line);
+            current_yaml.push('\n');
+        }
+    }
+
+    Ok(agents)
+}

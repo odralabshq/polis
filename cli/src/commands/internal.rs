@@ -3,6 +3,7 @@
 //! These are invoked by tooling (e.g. SSH client via `ProxyCommand`), not by users.
 
 use anyhow::{Context, Result};
+use std::process::ExitCode;
 
 use crate::domain::workspace::CONTAINER_NAME;
 
@@ -55,7 +56,7 @@ where
 /// # Errors
 ///
 /// Returns an error if the VM IP cannot be resolved or SSH cannot be spawned.
-pub async fn ssh_proxy(mp: &impl crate::application::ports::InstanceInspector) -> Result<()> {
+pub async fn ssh_proxy(mp: &impl crate::application::ports::InstanceInspector) -> Result<ExitCode> {
     let vm_ip = crate::application::services::vm::lifecycle::resolve_vm_ip(mp).await?;
 
     let identity_key = dirs::home_dir()
@@ -94,7 +95,9 @@ pub async fn ssh_proxy(mp: &impl crate::application::ports::InstanceInspector) -
         .status()
         .context("failed to spawn ssh")?;
 
-    std::process::exit(status.code().unwrap_or(255));
+    let code = status.code().unwrap_or(255);
+    #[allow(clippy::cast_possible_truncation)]
+    Ok(ExitCode::from(code as u8))
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +114,9 @@ pub async fn ssh_proxy(mp: &impl crate::application::ports::InstanceInspector) -
 ///
 /// Returns an error if the host key cannot be extracted.
 #[allow(clippy::large_futures)]
-pub async fn extract_host_key(mp: &impl crate::application::ports::ShellExecutor) -> Result<()> {
+pub async fn extract_host_key(
+    mp: &impl crate::application::ports::ShellExecutor,
+) -> Result<ExitCode> {
     let output = mp
         .exec(&[
             "docker",
@@ -129,7 +134,7 @@ pub async fn extract_host_key(mp: &impl crate::application::ports::ShellExecutor
         .to_string();
     crate::infra::ssh::validate_host_key(&key)?;
     println!("workspace {key}");
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 // ---------------------------------------------------------------------------
@@ -168,15 +173,6 @@ mod tests {
         assert_eq!(buf.get_ref(), b"hello");
     }
 
-    // -----------------------------------------------------------------------
-    // Property 1: Fault Condition — Blocking Bridge Completes Byte Forwarding
-    //
-    // **Validates: Requirements 1.1, 1.2, 2.1, 2.2**
-    //
-    // For all byte sequences `bs`, `bridge_io(&mut bs.as_ref(), &mut writer)`
-    // completes and `writer == bs` — i.e. every byte is forwarded without
-    // data loss or stalling.
-    // -----------------------------------------------------------------------
     proptest! {
         #[test]
         fn prop_bridge_io_forwards_all_bytes(bs in proptest::collection::vec(any::<u8>(), 0..4096)) {
@@ -198,14 +194,6 @@ mod preservation_tests {
     use super::bridge_io;
     use proptest::prelude::*;
 
-    // -------------------------------------------------------------------
-    // Property 2 (Part B): Preservation — Bridge Byte Fidelity
-    //
-    // **Validates: Requirements 3.1, 3.2, 3.3**
-    //
-    // For all byte sequences `bs`, the async `bridge_io` forwards every
-    // byte exactly from reader to writer.
-    // -------------------------------------------------------------------
     proptest! {
         #[test]
         fn prop_bridge_byte_fidelity_preservation(bs in proptest::collection::vec(any::<u8>(), 0..4096)) {

@@ -17,10 +17,7 @@ use crate::application::services::vm::{
     provision::{generate_certs_and_secrets, transfer_config},
     services::pull_images,
 };
-use crate::domain::workspace::WorkspaceState;
-
-/// Path to the polis project root inside the VM.
-const VM_POLIS_ROOT: &str = "/opt/polis";
+use crate::domain::workspace::{VM_ROOT, WorkspaceState};
 
 /// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
@@ -224,8 +221,6 @@ async fn restart_vm(
 /// functions, and transfers the `.generated/` folder back into the VM.
 /// This replaces the old `generate-agent.sh` shell script invocation.
 async fn setup_agent<P: VmProvisioner>(provisioner: &P, agent_name: &str) -> Result<()> {
-    const VM_ROOT: &str = "/opt/polis";
-
     // Verify agent manifest exists in the VM.
     let manifest_path = format!("{VM_ROOT}/agents/{agent_name}/agent.yaml");
     let check = provisioner
@@ -306,10 +301,10 @@ async fn setup_agent<P: VmProvisioner>(provisioner: &P, agent_name: &str) -> Res
 
 /// Start docker compose with optional agent overlay.
 async fn start_compose<P: VmProvisioner>(provisioner: &P, agent_name: Option<&str>) -> Result<()> {
-    let base = format!("{VM_POLIS_ROOT}/docker-compose.yml");
+    let base = format!("{VM_ROOT}/docker-compose.yml");
     let mut args: Vec<String> = vec!["docker".into(), "compose".into(), "-f".into(), base];
     if let Some(name) = agent_name {
-        let overlay = format!("{VM_POLIS_ROOT}/agents/{name}/.generated/compose.agent.yaml");
+        let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
         args.push("-f".into());
         args.push(overlay);
     }

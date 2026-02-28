@@ -1,6 +1,7 @@
 //! `polis exec` — run a command inside the workspace container.
 
 use std::io::IsTerminal;
+use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -24,10 +25,8 @@ pub struct ExecArgs {
 ///
 /// # Errors
 ///
-/// Returns an error if the command cannot be spawned. Calls
-/// [`std::process::exit`] with the container command's exit code on
-/// completion.
-pub async fn run(args: &ExecArgs, mp: &impl ShellExecutor) -> Result<()> {
+/// Returns an error if the command cannot be spawned.
+pub async fn run(args: &ExecArgs, mp: &impl ShellExecutor) -> Result<ExitCode> {
     let interactive = std::io::stdin().is_terminal();
 
     let mut docker_args: Vec<&str> = vec!["docker", "exec"];
@@ -43,8 +42,6 @@ pub async fn run(args: &ExecArgs, mp: &impl ShellExecutor) -> Result<()> {
         .context("failed to exec in workspace")?;
 
     let code = status.code().unwrap_or(1);
-    if code != 0 {
-        std::process::exit(code);
-    }
-    Ok(())
+    #[allow(clippy::cast_possible_truncation)]
+    Ok(ExitCode::from(code as u8))
 }

@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::process::ExitCode;
 
 use crate::app::AppContext;
 use crate::commands;
@@ -98,7 +99,7 @@ impl Cli {
     /// # Errors
     ///
     /// Returns an error if the command fails or is not yet implemented.
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<ExitCode> {
         let Cli {
             no_color,
             quiet,
@@ -118,38 +119,32 @@ impl Cli {
             behaviour: crate::app::BehaviourFlags { yes },
         })?;
 
-        match command {
-            Command::Start(args) => commands::start::run(&args, &app).await,
-
-            Command::Stop => commands::stop::run(&app).await,
-
-            Command::Delete(args) => commands::delete::run(&args, &app).await,
-
-            Command::Status => commands::status::run(&app, &app.provisioner).await,
-
-            Command::Connect(args) => commands::connect::run(&app, args).await,
-
-            Command::Config(cmd) => commands::config::run(&app, cmd, &app.provisioner).await,
-
+        let exit_code = match command {
+            Command::Start(args) => commands::start::run(&args, &app).await?,
+            Command::Stop => commands::stop::run(&app).await?,
+            Command::Delete(args) => commands::delete::run(&args, &app).await?,
+            Command::Status => commands::status::run(&app, &app.provisioner).await?,
+            Command::Connect(args) => commands::connect::run(&app, args).await?,
+            Command::Config(cmd) => commands::config::run(&app, cmd, &app.provisioner).await?,
             Command::Update(args) => {
-                commands::update::run(&args, &app, &commands::update::GithubUpdateChecker).await
+                commands::update::run(&args, &app, &commands::update::GithubUpdateChecker).await?
             }
-
-            Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await,
-
-            Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await,
-
-            Command::Version => commands::version::run(&app),
-
-            Command::Agent(cmd) => commands::agent::run(cmd, &app.provisioner, &app).await,
+            Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await?,
+            Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,
+            Command::Version => commands::version::run(&app).await?,
+            Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
 
             // --- Internal commands ---
             #[allow(clippy::large_futures)]
-            Command::SshProxy => commands::internal::ssh_proxy(&app.provisioner).await,
-            Command::ExtractHostKey => commands::internal::extract_host_key(&app.provisioner).await,
+            Command::SshProxy => commands::internal::ssh_proxy(&app.provisioner).await?,
+            Command::ExtractHostKey => {
+                commands::internal::extract_host_key(&app.provisioner).await?
+            }
             Command::Provision => {
                 anyhow::bail!("Provision command is internal only")
             }
-        }
+        };
+
+        Ok(exit_code)
     }
 }

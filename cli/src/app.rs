@@ -8,7 +8,10 @@
 use anyhow::Result;
 
 use crate::infra::assets::EmbeddedAssets;
-use crate::infra::command_runner::TokioCommandRunner;
+use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, TokioCommandRunner};
+use crate::infra::config::YamlConfigStore;
+use crate::infra::fs::LocalFs;
+use crate::infra::network::TokioNetworkProbe;
 use crate::infra::provisioner::MultipassProvisioner;
 use crate::infra::ssh::SshConfigManager;
 use crate::infra::state::StateManager;
@@ -69,6 +72,15 @@ pub struct AppContext {
     /// Set when `--yes` / `-y` is passed, or when the `CI` or `POLIS_YES`
     /// environment variables are present.
     pub non_interactive: bool,
+
+    /// Command runner for local process execution.
+    pub cmd_runner: TokioCommandRunner,
+    /// Network probe for connectivity checks.
+    pub network_probe: TokioNetworkProbe,
+    /// Local filesystem operations.
+    pub local_fs: LocalFs,
+    /// Configuration store.
+    pub config_store: YamlConfigStore,
 }
 
 impl AppContext {
@@ -95,6 +107,10 @@ impl AppContext {
             assets: EmbeddedAssets,
             ssh: SshConfigManager::new()?,
             non_interactive,
+            cmd_runner: TokioCommandRunner::new(DEFAULT_CMD_TIMEOUT),
+            network_probe: TokioNetworkProbe,
+            local_fs: LocalFs,
+            config_store: YamlConfigStore,
         })
     }
 

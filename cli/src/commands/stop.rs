@@ -1,6 +1,7 @@
 //! `polis stop` — stop workspace, preserving all data.
 
 use anyhow::Result;
+use std::process::ExitCode;
 
 use crate::app::AppContext;
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
@@ -10,7 +11,7 @@ use crate::application::services::vm::lifecycle::{self as vm, VmState};
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be stopped.
-pub async fn run(app: &AppContext) -> Result<()> {
+pub async fn run(app: &AppContext) -> Result<ExitCode> {
     let mp = &app.provisioner;
     let ctx = &app.output;
     let state = vm::state(mp).await?;
@@ -32,5 +33,5 @@ pub async fn run(app: &AppContext) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

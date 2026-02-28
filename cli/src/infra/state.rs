@@ -126,4 +126,14 @@ impl WorkspaceStateStore for StateManager {
         .await
         .context("state save task panicked")?
     }
+
+    async fn clear_async(&self) -> Result<()> {
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mgr = StateManager::with_path(path);
+            mgr.clear()
+        })
+        .await
+        .context("state clear task panicked")?
+    }
 }

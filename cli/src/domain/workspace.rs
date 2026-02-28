@@ -75,6 +75,9 @@ pub const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
 /// MAINT-002: Centralized constant for container references.
 pub const CONTAINER_NAME: &str = "polis-workspace";
 
+/// Path to the polis project root inside the VM.
+pub const VM_ROOT: &str = "/opt/polis";
+
 /// Encode bytes as lowercase hex string.
 ///
 /// Pure utility used by update signature verification and image digest computation.

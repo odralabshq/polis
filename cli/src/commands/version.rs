@@ -1,26 +1,15 @@
-//! Version command
+//! `polis version` — show version and diagnostic info.
 
-use anyhow::{Context, Result};
-
-use crate::app::{AppContext, OutputMode};
-
-/// Build the pretty-printed JSON string for `version --json`.
-fn version_json(version: &str) -> Result<String> {
-    serde_json::to_string_pretty(&serde_json::json!({ "version": version }))
-        .context("JSON serialization")
-}
+use crate::app::AppContext;
+use anyhow::Result;
+use std::process::ExitCode;
 
 /// Run the version command.
-///
-/// # Errors
-///
-/// Returns an error if JSON serialization fails.
-pub fn run(app: &AppContext) -> Result<()> {
+pub async fn run(_app: &AppContext) -> Result<ExitCode> {
     let version = env!("CARGO_PKG_VERSION");
-    if app.mode == OutputMode::Json {
-        println!("{}", version_json(version)?);
-    } else {
-        println!("polis {version}");
-    }
-    Ok(())
+    let commit = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
+    let build_date = option_env!("VERGEN_BUILD_DATE").unwrap_or("unknown");
+
+    println!("polis v{} ({} {})", version, commit, build_date);
+    Ok(ExitCode::SUCCESS)
 }

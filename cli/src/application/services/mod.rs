@@ -6,6 +6,8 @@
 //! or `crate::output`.
 
 pub mod agent_crud;
+pub mod cleanup_service;
+pub mod config_service;
 pub mod update;
 pub mod vm;
 pub mod workspace_doctor;

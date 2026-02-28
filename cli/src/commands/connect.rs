@@ -19,10 +19,7 @@ pub struct ConnectArgs {}
 /// # Errors
 ///
 /// Returns an error if SSH config setup fails or permissions are unsafe.
-pub async fn run(
-    app: &AppContext,
-    _args: ConnectArgs,
-) -> Result<()> {
+pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::ExitCode> {
     let ctx = &app.output;
     let mp = &app.provisioner;
     let ssh_mgr = SshConfigManager::new()?;
@@ -51,7 +48,7 @@ pub async fn run(
     pin_host_key(mp).await;
 
     show_connection_options(ctx);
-    Ok(())
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 fn setup_ssh_config(ssh_mgr: &SshConfigManager, app: &AppContext) -> Result<()> {

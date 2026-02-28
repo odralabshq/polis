@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args;
+use std::process::ExitCode;
 
 use crate::app::AppContext;
 use crate::application::services::workspace_start::{self as service, StartOutcome};
@@ -16,11 +17,7 @@ pub struct StartArgs {
 }
 
 /// Run `polis start`.
-///
-/// # Errors
-///
-/// Returns an error if image acquisition, VM creation, or health check fails.
-pub async fn run(args: &StartArgs, app: &AppContext) -> Result<()> {
+pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     let (assets_dir, _assets_guard) = app.assets_dir().context("extracting assets")?;
     let version = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
@@ -30,7 +27,7 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<()> {
         &app.state_mgr,
         &app.assets,
         &app.ssh,
-        &crate::infra::fs::LocalFs,
+        &app.local_fs,
         &reporter,
         args.agent.as_deref(),
         &assets_dir,
@@ -47,7 +44,7 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Print message when workspace is already running with matching config.
@@ -59,7 +56,7 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
     if let Some(name) = agent {
         ctx.kv("Agent", name);
     }
-    print_guarantees(ctx);
+    ctx.guarantees();
     ctx.kv("Connect", "polis connect");
     ctx.kv("Status", "polis status");
 }
@@ -69,7 +66,7 @@ fn print_success_message(agent: Option<&str>, ctx: &OutputContext) {
     if ctx.quiet {
         return;
     }
-    print_guarantees(ctx);
+    ctx.guarantees();
     if let Some(name) = agent {
         ctx.success(&format!("Workspace ready. Agent: {name}"));
         ctx.kv("Agent shell", "polis agent shell");
@@ -79,28 +76,6 @@ fn print_success_message(agent: Option<&str>, ctx: &OutputContext) {
     }
     ctx.kv("Connect", "polis connect");
     ctx.kv("Status", "polis status");
-}
-
-fn print_guarantees(ctx: &OutputContext) {
-    pub use owo_colors::{OwoColorize, Stream::Stdout, Style};
-    if ctx.quiet {
-        return;
-    }
-    let gov = Style::new().truecolor(37, 56, 144);
-    let sec = Style::new().truecolor(26, 107, 160);
-    let obs = Style::new().truecolor(26, 151, 179);
-    println!(
-        "✓ {}  policy engine active · audit trail recording",
-        "[governance]   ".if_supports_color(Stdout, |t| t.style(gov))
-    );
-    println!(
-        "✓ {}  workspace isolated · traffic inspection enabled",
-        "[security]     ".if_supports_color(Stdout, |t| t.style(sec))
-    );
-    println!(
-        "✓ {}  action tracing live · trust scoring active",
-        "[observability]".if_supports_color(Stdout, |t| t.style(obs))
-    );
 }
 
 #[cfg(test)]

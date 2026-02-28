@@ -53,13 +53,13 @@ impl Renderer<'_> {
     /// # Errors
     ///
     /// Returns an error if JSON serialization fails.
-    pub fn render_agents(&self, agents: &[JsonValue]) -> Result<()> {
+    pub fn render_agent_list(&self, agents: &[crate::domain::agent::AgentInfo]) -> Result<()> {
         match self {
             Renderer::Human(r) => {
-                r.render_agents(agents);
+                r.render_agent_list(agents);
                 Ok(())
             }
-            Renderer::Json(_) => JsonRenderer::render_agents(agents),
+            Renderer::Json(_) => JsonRenderer::render_agent_list(agents),
         }
     }
 
@@ -176,5 +176,24 @@ impl OutputContext {
         if !self.quiet {
             println!("  {}  {value}", key.style(self.styles.dim));
         }
+    }
+
+    /// Print the three core guarantees (governance, security, observability).
+    pub fn guarantees(&self) {
+        if self.quiet {
+            return;
+        }
+        println!(
+            "  {}  policy engine active · audit trail recording",
+            "[governance]   ".style(self.styles.governance)
+        );
+        println!(
+            "  {}  workspace isolated · traffic inspection enabled",
+            "[security]     ".style(self.styles.security)
+        );
+        println!(
+            "  {}  action tracing live · trust scoring active",
+            "[observability]".style(self.styles.observability)
+        );
     }
 }

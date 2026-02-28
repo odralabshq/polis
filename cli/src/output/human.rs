@@ -2,7 +2,6 @@
 
 use owo_colors::OwoColorize as _;
 use polis_common::types::StatusOutput;
-use serde_json::Value as JsonValue;
 
 use crate::domain::health::DoctorChecks;
 use crate::output::OutputContext;
@@ -68,9 +67,7 @@ impl<'a> HumanRenderer<'a> {
     }
 
     /// Render the list of installed agents.
-    ///
-    /// `agents` is a JSON array of objects with `name`, `version`, `description`, `active` fields.
-    pub fn render_agents(&self, agents: &[JsonValue]) {
+    pub fn render_agent_list(&self, agents: &[crate::domain::agent::AgentInfo]) {
         if agents.is_empty() {
             if !self.ctx.quiet {
                 println!("No agents installed. Install one: polis agent add --path <folder>");
@@ -80,14 +77,10 @@ impl<'a> HumanRenderer<'a> {
 
         println!("Available agents:\n");
         for agent in agents {
-            let name = agent["name"].as_str().unwrap_or("(unknown)");
-            let version = agent["version"].as_str().unwrap_or("");
-            let desc = agent["description"].as_str().unwrap_or("");
-            let marker = if agent["active"].as_bool().unwrap_or(false) {
-                "  [active]"
-            } else {
-                ""
-            };
+            let name = &agent.name;
+            let version = agent.version.as_deref().unwrap_or("");
+            let desc = agent.description.as_deref().unwrap_or("");
+            let marker = if agent.active { "  [active]" } else { "" };
             println!("  {name:<16} {version:<10} {desc}{marker}");
         }
         println!("\nStart an agent: polis start --agent <name>");
@@ -219,29 +212,29 @@ impl<'a> HumanRenderer<'a> {
         println!("  Security:");
         self.print_check(
             checks.security.process_isolation,
-            "Process isolation active",
+            "process isolation active",
         );
         self.print_check(
             checks.security.traffic_inspection,
-            "Traffic inspection responding",
+            "traffic inspection responding",
         );
         self.print_check(
             checks.security.malware_db_current,
             &format!(
-                "Malware scanner database current (updated: {}h ago)",
+                "malware scanner database current (updated: {}h ago)",
                 checks.security.malware_db_age_hours,
             ),
         );
         let expire_days = checks.security.certificates_expire_days;
         if expire_days > 30 {
-            self.print_check(true, "Certificates valid (no immediate action required)");
+            self.print_check(true, "certificates valid (no immediate action required)");
         } else if expire_days > 0 {
             println!(
-                "    {} Certificates expire soon",
+                "    {} certificates expire soon",
                 "\u{26a0}".style(self.ctx.styles.warning)
             );
         } else {
-            self.print_check(false, "Certificates expired");
+            self.print_check(false, "certificates expired");
         }
     }
 

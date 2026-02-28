@@ -13,3 +13,11 @@ pub use validate::{
     AGENT_NAME_RE, ALLOWED_RW_PREFIXES, PLATFORM_PORTS, SHELL_METACHAR_RE, is_valid_agent_name,
     validate_full_manifest,
 };
+/// Information about an installed agent.
+#[derive(Debug, serde::Serialize)]
+pub struct AgentInfo {
+    pub name: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub active: bool,
+}

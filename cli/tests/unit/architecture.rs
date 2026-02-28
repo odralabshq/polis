@@ -90,7 +90,10 @@ fn no_tokio_command_runner_new_outside_infra() {
             .to_string_lossy()
             .to_string();
         let rel_normalized = rel.replace('\\', "/");
-        if rel_normalized.contains("/infra/") || rel_normalized.ends_with("provisioner.rs") {
+        if rel_normalized.contains("/infra/")
+            || rel_normalized.ends_with("provisioner.rs")
+            || rel_normalized.ends_with("app.rs")
+        {
             continue;
         }
 

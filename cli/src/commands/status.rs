@@ -15,9 +15,13 @@ use crate::application::services::workspace_status::gather_status;
 /// # Errors
 ///
 /// Returns an error if JSON serialization fails.
-pub async fn run(app: &AppContext, mp: &(impl InstanceInspector + ShellExecutor)) -> Result<()> {
+pub async fn run(
+    app: &AppContext,
+    mp: &(impl InstanceInspector + ShellExecutor),
+) -> Result<std::process::ExitCode> {
     let output = gather_status(mp).await;
-    app.renderer().render_status(&output)
+    app.renderer().render_status(&output)?;
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 // ── Display helpers (used by tests and output layer) ─────────────────────────
@@ -96,8 +100,14 @@ mod tests {
     fn test_workspace_state_display_all() {
         assert_eq!(workspace_state_display(WorkspaceState::Running), "running");
         assert_eq!(workspace_state_display(WorkspaceState::Stopped), "stopped");
-        assert_eq!(workspace_state_display(WorkspaceState::Starting), "starting");
-        assert_eq!(workspace_state_display(WorkspaceState::Stopping), "stopping");
+        assert_eq!(
+            workspace_state_display(WorkspaceState::Starting),
+            "starting"
+        );
+        assert_eq!(
+            workspace_state_display(WorkspaceState::Stopping),
+            "stopping"
+        );
         assert_eq!(workspace_state_display(WorkspaceState::Error), "error");
     }
 

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::process::ExitCode;
 
 use crate::app::AppContext;
 use crate::application::services::workspace_doctor;
@@ -14,7 +15,7 @@ use crate::application::services::workspace_repair;
 /// # Errors
 ///
 /// Returns an error if health checks or repair steps fail fatally.
-pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<()> {
+pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode> {
     let ctx = &app.output;
     let mp = &app.provisioner;
     let reporter = app.terminal_reporter();
@@ -23,11 +24,9 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<()> {
     let checks = workspace_doctor::run_doctor(
         mp,
         &reporter,
-        &crate::infra::command_runner::TokioCommandRunner::new(
-            crate::infra::command_runner::DEFAULT_CMD_TIMEOUT,
-        ),
-        &crate::infra::network::TokioNetworkProbe,
-        &crate::infra::fs::LocalFs,
+        &app.cmd_runner,
+        &app.network_probe,
+        &app.local_fs,
     )
     .await?;
 
@@ -50,11 +49,9 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<()> {
         let checks_after = workspace_doctor::run_doctor(
             mp,
             &reporter,
-            &crate::infra::command_runner::TokioCommandRunner::new(
-                crate::infra::command_runner::DEFAULT_CMD_TIMEOUT,
-            ),
-            &crate::infra::network::TokioNetworkProbe,
-            &crate::infra::fs::LocalFs,
+            &app.cmd_runner,
+            &app.network_probe,
+            &app.local_fs,
         )
         .await?;
         let issues_after = crate::domain::health::collect_issues(&checks_after);
@@ -64,7 +61,7 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<()> {
         ctx.info("Run 'polis doctor --fix' to attempt automated repair.");
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

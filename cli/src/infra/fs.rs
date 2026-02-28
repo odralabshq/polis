@@ -47,10 +47,51 @@ impl crate::application::ports::FileHasher for LocalFs {
 
 impl crate::application::ports::LocalPaths for LocalFs {
     fn images_dir(&self) -> PathBuf {
-        // Correcting error handling: images_dir() returns Result, but Port expects PathBuf.
-        // In clean architecture, infra errors should be handled, or the port should return Result.
-        // For simplicity here, we'll unwrap as it's a critical path, but better to update port.
         images_dir().unwrap_or_else(|_| PathBuf::from("images"))
+    }
+
+    fn polis_dir(&self) -> Result<PathBuf> {
+        dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))
+            .map(|h| h.join(".polis"))
+    }
+}
+
+impl crate::application::ports::LocalFs for LocalFs {
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        std::fs::create_dir_all(path)
+            .with_context(|| format!("creating directory {}", path.display()))
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> Result<()> {
+        std::fs::remove_dir_all(path)
+            .with_context(|| format!("removing directory {}", path.display()))
+    }
+
+    fn remove_file(&self, path: &Path) -> Result<()> {
+        std::fs::remove_file(path).with_context(|| format!("removing file {}", path.display()))
+    }
+
+    fn write(&self, path: &Path, content: String) -> Result<()> {
+        std::fs::write(path, content).with_context(|| format!("writing file {}", path.display()))
+    }
+
+    fn read_to_string(&self, path: &Path) -> Result<String> {
+        std::fs::read_to_string(path).with_context(|| format!("reading file {}", path.display()))
+    }
+
+    fn set_permissions(&self, path: &Path, _mode: u32) -> Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(_mode))
+                .with_context(|| format!("setting permissions on {}", path.display()))?;
+        }
+        Ok(())
     }
 }
 

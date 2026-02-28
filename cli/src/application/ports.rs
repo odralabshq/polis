@@ -16,6 +16,13 @@ use crate::domain::{DoctorChecks, WorkspaceState};
 /// The canonical VM instance name used by all trait implementations.
 pub const POLIS_INSTANCE: &str = "polis";
 
+/// Docker container name inside the VM.
+/// MAINT-002: Centralized constant for container references.
+pub const CONTAINER_NAME: &str = "polis-workspace";
+
+/// Path to the polis project root inside the VM.
+pub const VM_ROOT: &str = "/opt/polis";
+
 // ── Value Types ───────────────────────────────────────────────────────────────
 
 /// Launch parameters for creating a new VM instance.
@@ -170,6 +177,8 @@ pub trait WorkspaceStateStore {
     async fn load_async(&self) -> Result<Option<WorkspaceState>>;
     /// Persist the given workspace state.
     async fn save_async(&self, state: &WorkspaceState) -> Result<()>;
+    /// Clear the workspace state.
+    async fn clear_async(&self) -> Result<()>;
 }
 
 /// Abstracts writing agent artifact files to the local filesystem.
@@ -237,6 +246,36 @@ pub trait FileHasher {
 pub trait LocalPaths {
     /// Get the directory where VM images are stored.
     fn images_dir(&self) -> std::path::PathBuf;
+    /// Get the polis directory (typically ~/.polis).
+    fn polis_dir(&self) -> Result<std::path::PathBuf>;
+}
+
+/// Abstracts local filesystem operations.
+pub trait LocalFs {
+    /// Check if a path exists.
+    fn exists(&self, path: &std::path::Path) -> bool;
+    /// Create a directory and all its parents.
+    fn create_dir_all(&self, path: &std::path::Path) -> Result<()>;
+    /// Remove a directory and all its contents.
+    fn remove_dir_all(&self, path: &std::path::Path) -> Result<()>;
+    /// Remove a single file.
+    fn remove_file(&self, path: &std::path::Path) -> Result<()>;
+    /// Write content to a file.
+    fn write(&self, path: &std::path::Path, content: String) -> Result<()>;
+    /// Read content from a file.
+    fn read_to_string(&self, path: &std::path::Path) -> Result<String>;
+    /// Set file permissions (best-effort, typically only on Unix).
+    fn set_permissions(&self, path: &std::path::Path, mode: u32) -> Result<()>;
+}
+
+/// Abstracts configuration persistence.
+pub trait ConfigStore {
+    /// Load the configuration.
+    fn load(&self) -> Result<crate::domain::config::PolisConfig>;
+    /// Save the configuration.
+    fn save(&self, config: &crate::domain::config::PolisConfig) -> Result<()>;
+    /// Get the path to the config file.
+    fn path(&self) -> Result<std::path::PathBuf>;
 }
 
 // ── SSH Configuration Port ────────────────────────────────────────────────────

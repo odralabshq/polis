@@ -8,6 +8,7 @@
 
 pub mod assets;
 pub mod command_runner;
+pub mod config;
 pub mod fs;
 pub mod image;
 pub mod network;
