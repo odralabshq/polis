@@ -3,57 +3,61 @@
 //! Imports only from `crate::domain` and `crate::application::ports`.
 //! All I/O is routed through injected port traits.
 
-#![allow(dead_code)] // Refactor in progress — service defined ahead of callers
-
 use anyhow::{Context, Result};
 
 use crate::application::ports::{
     FileTransfer, InstanceInspector, LocalArtifactWriter, ProgressReporter, ShellExecutor,
     WorkspaceStateStore,
 };
-use crate::workspace::vm;
+use crate::application::services::vm::lifecycle::{self as vm, VmState};
 
 /// Generate agent artifacts from `agent.yaml` and write them to
 /// `<polis_dir>/agents/<name>/.generated/`.
 ///
 /// Reads the manifest, calls pure domain generators, and writes the four
-/// output files to disk.  Lives here (application layer) rather than in
-/// `domain/agent/artifacts.rs` because it performs I/O.
+/// output files to disk via `spawn_blocking` to avoid blocking the async runtime.
 ///
 /// # Errors
 ///
 /// Returns an error if the manifest cannot be read/parsed, or if any file
 /// write fails.
-fn generate_and_write_artifacts(polis_dir: &std::path::Path, name: &str) -> Result<()> {
-    use crate::domain::agent::artifacts;
+async fn generate_and_write_artifacts(polis_dir: &std::path::Path, name: &str) -> Result<()> {
+    let polis_dir = polis_dir.to_path_buf();
+    let name = name.to_owned();
+    tokio::task::spawn_blocking(move || {
+        use crate::domain::agent::artifacts;
 
-    let manifest_path = polis_dir.join("agents").join(name).join("agent.yaml");
-    let content = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("reading {}", manifest_path.display()))?;
-    let manifest: polis_common::agent::AgentManifest =
-        serde_yaml::from_str(&content).context("failed to parse agent.yaml")?;
+        let manifest_path = polis_dir.join("agents").join(&name).join("agent.yaml");
+        let content = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("reading {}", manifest_path.display()))?;
+        let manifest: polis_common::agent::AgentManifest =
+            serde_yaml::from_str(&content).context("failed to parse agent.yaml")?;
 
-    let generated_dir = polis_dir.join("agents").join(name).join(".generated");
-    std::fs::create_dir_all(&generated_dir)
-        .with_context(|| format!("creating {}", generated_dir.display()))?;
+        let generated_dir = polis_dir.join("agents").join(&name).join(".generated");
+        std::fs::create_dir_all(&generated_dir)
+            .with_context(|| format!("creating {}", generated_dir.display()))?;
 
-    let compose = artifacts::compose_overlay(&manifest);
-    std::fs::write(generated_dir.join("compose.agent.yaml"), &compose)
-        .context("writing compose.agent.yaml")?;
+        let compose = artifacts::compose_overlay(&manifest);
+        std::fs::write(generated_dir.join("compose.agent.yaml"), &compose)
+            .context("writing compose.agent.yaml")?;
 
-    let unit = artifacts::systemd_unit(&manifest);
-    let hash = artifacts::service_hash(&unit);
-    std::fs::write(generated_dir.join(format!("{name}.service")), &unit)
-        .context("writing .service file")?;
-    std::fs::write(generated_dir.join(format!("{name}.service.sha256")), &hash)
-        .context("writing .service.sha256 file")?;
+        let unit = artifacts::systemd_unit(&manifest);
+        let hash = artifacts::service_hash(&unit);
+        std::fs::write(generated_dir.join(format!("{name}.service")), &unit)
+            .context("writing .service file")?;
+        std::fs::write(generated_dir.join(format!("{name}.service.sha256")), &hash)
+            .context("writing .service.sha256 file")?;
 
-    // Read .env from polis_dir if present; fall back to empty string.
-    let env_content = std::fs::read_to_string(polis_dir.join(".env")).unwrap_or_default();
-    let filtered = artifacts::filtered_env(&env_content, &manifest);
-    std::fs::write(generated_dir.join(format!("{name}.env")), filtered)
-        .context("writing .env file")?;
+        // Read .env from polis_dir if present; fall back to empty string.
+        let env_content = std::fs::read_to_string(polis_dir.join(".env")).unwrap_or_default();
+        let filtered = artifacts::filtered_env(&env_content, &manifest);
+        std::fs::write(generated_dir.join(format!("{name}.env")), filtered)
+            .context("writing .env file")?;
 
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .context("spawn_blocking for generate_and_write_artifacts")??;
     Ok(())
 }
 
@@ -71,6 +75,7 @@ const VM_ROOT: &str = "/opt/polis";
 ///
 /// Returns an error if validation fails, artifact generation fails,
 /// or any VM operation fails.
+#[allow(dead_code)] // Public API — not yet called from commands/agent.rs
 pub async fn install_agent(
     provisioner: &(impl ShellExecutor + FileTransfer + InstanceInspector),
     _state_mgr: &impl WorkspaceStateStore,
@@ -86,8 +91,13 @@ pub async fn install_agent(
         manifest_path.exists(),
         "No agent.yaml found in: {agent_path}"
     );
-    let content = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let content = tokio::task::spawn_blocking({
+        let manifest_path = manifest_path.clone();
+        move || std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("reading {}", manifest_path.display()))
+    })
+    .await
+    .context("spawn_blocking for manifest read")??;
     let manifest: polis_common::agent::AgentManifest =
         serde_yaml::from_str(&content).context("failed to parse agent.yaml")?;
     crate::domain::agent::validate::validate_full_manifest(&manifest)?;
@@ -95,7 +105,7 @@ pub async fn install_agent(
 
     // Step 2: Require VM running.
     anyhow::ensure!(
-        vm::state(provisioner).await? == vm::VmState::Running,
+        vm::state(provisioner).await? == VmState::Running,
         "VM is not running. Start it first: polis start"
     );
 
@@ -114,7 +124,7 @@ pub async fn install_agent(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("cannot determine parent directory of agent folder"))?;
     let polis_dir = parent_dir.parent().unwrap_or(parent_dir);
-    generate_and_write_artifacts(polis_dir, &name)?;
+    generate_and_write_artifacts(polis_dir, &name).await?;
 
     // Step 5: Transfer agent folder to VM.
     reporter.step(&format!("copying '{name}' to VM..."));
@@ -141,6 +151,7 @@ pub async fn install_agent(
 /// # Errors
 ///
 /// Returns an error if the agent is not installed or any VM operation fails.
+#[allow(dead_code)] // Public API — not yet called from commands/agent.rs
 pub async fn remove_agent(
     provisioner: &(impl ShellExecutor + InstanceInspector),
     state_mgr: &impl WorkspaceStateStore,
@@ -215,6 +226,7 @@ pub async fn remove_agent(
 ///
 /// Returns an error if no agent is active, the VM is not running, or any
 /// VM operation fails.
+#[allow(dead_code)] // Public API — not yet called from commands/agent.rs
 pub async fn update_agent(
     provisioner: &(impl ShellExecutor + FileTransfer + InstanceInspector),
     state_mgr: &impl WorkspaceStateStore,
@@ -227,7 +239,7 @@ pub async fn update_agent(
         .ok_or_else(|| anyhow::anyhow!("no active agent. Start one: polis start --agent <name>"))?;
 
     anyhow::ensure!(
-        vm::state(provisioner).await? == vm::VmState::Running,
+        vm::state(provisioner).await? == VmState::Running,
         "Workspace is not running. Start it first: polis start --agent <name>"
     );
 
@@ -247,11 +259,17 @@ pub async fn update_agent(
     // Write manifest to a temp dir and run the Rust generator.
     let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
     let agent_dir = tmp.path().join("agents").join(&name);
-    std::fs::create_dir_all(&agent_dir).context("creating temp agent dir")?;
-    std::fs::write(agent_dir.join("agent.yaml"), &cat_out.stdout)
-        .context("writing agent.yaml to temp dir")?;
+    let agent_dir_clone = agent_dir.clone();
+    let stdout_bytes = cat_out.stdout.clone();
+    tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&agent_dir_clone).context("creating temp agent dir")?;
+        std::fs::write(agent_dir_clone.join("agent.yaml"), &stdout_bytes)
+            .context("writing agent.yaml to temp dir")
+    })
+    .await
+    .context("spawn_blocking for temp dir setup")??;
 
-    generate_and_write_artifacts(tmp.path(), &name)?;
+    generate_and_write_artifacts(tmp.path(), &name).await?;
 
     // Transfer the regenerated .generated/ folder back into the VM.
     reporter.step("transferring updated artifacts...");
@@ -294,3 +312,4 @@ pub async fn update_agent(
     reporter.success(&format!("agent '{name}' updated"));
     Ok(name)
 }
+

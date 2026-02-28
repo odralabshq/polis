@@ -2,31 +2,29 @@
 
 use anyhow::Result;
 
-use crate::application::ports::{InstanceInspector, InstanceLifecycle, ShellExecutor};
-use crate::output::OutputContext;
-use crate::workspace::vm;
+use crate::app::AppContext;
+use crate::application::services::vm::lifecycle::{self as vm, VmState};
 
 /// Run `polis stop`.
 ///
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be stopped.
-pub async fn run(
-    ctx: &OutputContext,
-    mp: &(impl InstanceLifecycle + InstanceInspector + ShellExecutor),
-) -> Result<()> {
+pub async fn run(app: &AppContext) -> Result<()> {
+    let mp = &app.provisioner;
+    let ctx = &app.output;
     let state = vm::state(mp).await?;
 
     match state {
-        vm::VmState::NotFound => {
+        VmState::NotFound => {
             ctx.info("No workspace to stop.");
             ctx.info("Create one: polis start");
         }
-        vm::VmState::Stopped => {
+        VmState::Stopped => {
             ctx.info("Workspace is already stopped.");
             ctx.info("Resume: polis start");
         }
-        vm::VmState::Running | vm::VmState::Starting => {
+        VmState::Running | VmState::Starting => {
             ctx.info("Stopping workspace...");
             vm::stop(mp).await?;
             ctx.success("Workspace stopped. Your data is preserved.");

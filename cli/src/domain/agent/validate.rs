@@ -4,8 +4,6 @@
 //! data out. Zero imports from `tokio`, `std::fs`, `crate::infra`,
 //! `crate::commands`, or `crate::application`.
 
-#![allow(dead_code)] // Refactor in progress — some functions defined ahead of callers
-
 use anyhow::Result;
 use polis_common::agent::AgentManifest;
 use regex::Regex;
@@ -136,6 +134,7 @@ pub fn validate_full_manifest(manifest: &AgentManifest) -> Result<()> {
 /// alphanumeric with interior hyphens, 1–63 characters total.
 ///
 /// Pure function — no I/O, no async.
+#[allow(dead_code)] // Not yet called from command handlers
 pub fn is_valid_agent_name(name: &str) -> bool {
     AGENT_NAME_RE.is_match(name)
 }

@@ -4,34 +4,34 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+use crate::app::AppContext;
 use crate::application::ports::{InstanceInspector, InstanceLifecycle};
+use crate::application::services::vm::lifecycle as vm;
 use crate::commands::DeleteArgs;
-use crate::state::StateManager;
-use crate::workspace::{image, vm};
+use crate::infra::fs::images_dir;
 
 /// Run `polis delete [--all]`.
 ///
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be removed.
-pub async fn run(
-    args: &DeleteArgs,
-    mp: &(impl InstanceLifecycle + InstanceInspector),
-    state_mgr: &StateManager,
-    quiet: bool,
-) -> Result<()> {
+pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<()> {
+    let mp = &app.provisioner;
+    let state_mgr = &app.state_mgr;
+    let quiet = app.output.quiet;
     if args.all {
-        delete_all(args, mp, state_mgr, quiet).await
+        delete_all(args, mp, state_mgr, quiet, app).await
     } else {
-        delete_workspace(args, mp, state_mgr, quiet).await
+        delete_workspace(args, mp, state_mgr, quiet, app).await
     }
 }
 
 async fn delete_workspace(
     args: &DeleteArgs,
     mp: &(impl InstanceLifecycle + InstanceInspector),
-    state_mgr: &StateManager,
+    state_mgr: &crate::infra::state::StateManager,
     quiet: bool,
+    app: &AppContext,
 ) -> Result<()> {
     if !quiet {
         println!();
@@ -40,7 +40,7 @@ async fn delete_workspace(
         println!();
     }
 
-    if !args.yes && !confirm("Continue?")? {
+    if !args.yes && !app.confirm("Continue?", false)? {
         println!("Cancelled.");
         return Ok(());
     }
@@ -78,8 +78,9 @@ async fn delete_workspace(
 async fn delete_all(
     args: &DeleteArgs,
     mp: &(impl InstanceLifecycle + InstanceInspector),
-    state_mgr: &StateManager,
+    state_mgr: &crate::infra::state::StateManager,
     quiet: bool,
+    app: &AppContext,
 ) -> Result<()> {
     if !quiet {
         println!();
@@ -91,7 +92,7 @@ async fn delete_all(
         println!();
     }
 
-    if !args.yes && !confirm("Continue?")? {
+    if !args.yes && !app.confirm("Continue?", false)? {
         println!("Cancelled.");
         return Ok(());
     }
@@ -141,17 +142,6 @@ async fn delete_all(
 
 // --- Helpers ---
 
-fn confirm(prompt: &str) -> Result<bool> {
-    use std::io::{BufRead, Read, Write};
-    print!("{prompt} [y/N]: ");
-    std::io::stdout().flush()?;
-    let mut line = String::new();
-    // CORR-002: Limit input to 16 bytes to prevent memory exhaustion
-    let n = std::io::stdin().lock().take(16).read_line(&mut line)?;
-    anyhow::ensure!(n > 0, "no input provided");
-    Ok(line.trim().eq_ignore_ascii_case("y"))
-}
-
 fn get_polis_dir() -> Result<PathBuf> {
     let home =
         dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
@@ -196,7 +186,7 @@ fn remove_config() -> Result<()> {
 }
 
 fn remove_cached_images() -> Result<()> {
-    let images_dir = image::images_dir()?;
+    let images_dir = images_dir()?;
     if images_dir.exists() {
         std::fs::remove_dir_all(&images_dir)
             .with_context(|| format!("removing {}", images_dir.display()))?;

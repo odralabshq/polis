@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 
 use crate::application::ports::ShellExecutor;
-use crate::workspace::COMPOSE_PATH;
+use crate::domain::workspace::COMPOSE_PATH;
 
 /// Health status.
 #[derive(Debug, Clone, PartialEq, Eq)]

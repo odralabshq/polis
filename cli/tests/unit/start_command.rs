@@ -9,7 +9,7 @@ use polis_cli::application::ports::{
     FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
 };
 use polis_cli::commands::start::{generate_agent_artifacts, start_compose, validate_agent};
-use polis_cli::workspace::vm::generate_certs_and_secrets;
+use polis_cli::application::services::vm::provision::generate_certs_and_secrets;
 
 use crate::helpers::{err_output, exit_status, ok_output};
 use crate::mocks::MultipassExecRecorder;
@@ -17,7 +17,30 @@ use crate::mocks::MultipassExecRecorder;
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// VM is running; exec returns success for all calls.
+/// For `cat` calls, returns a minimal valid agent manifest.
 struct VmRunningExecOk;
+
+const MINIMAL_AGENT_YAML: &[u8] = br#"apiVersion: polis.dev/v1
+kind: AgentPlugin
+metadata:
+  name: openclaw
+  displayName: "OpenClaw"
+  version: "1.0.0"
+  description: "Test agent"
+spec:
+  packaging: script
+  install: install.sh
+  runtime:
+    command: /usr/bin/openclaw
+    workdir: /app
+    user: polis
+  health:
+    command: "curl -sf http://127.0.0.1:9000/health"
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    startPeriod: 60s
+"#;
 
 impl InstanceInspector for VmRunningExecOk {
     async fn info(&self) -> Result<Output> {
@@ -49,11 +72,15 @@ impl FileTransfer for VmRunningExecOk {
         anyhow::bail!("not expected")
     }
     async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-        anyhow::bail!("not expected")
+        Ok(ok_output(b""))
     }
 }
 impl ShellExecutor for VmRunningExecOk {
-    async fn exec(&self, _: &[&str]) -> Result<Output> {
+    async fn exec(&self, args: &[&str]) -> Result<Output> {
+        // Return manifest YAML for cat calls, success for everything else.
+        if args.first() == Some(&"cat") {
+            return Ok(ok_output(MINIMAL_AGENT_YAML));
+        }
         Ok(ok_output(b""))
     }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
@@ -207,18 +234,18 @@ async fn test_generate_agent_artifacts_failure_returns_error() {
     assert!(result.is_err());
     let msg = result.expect_err("expected error").to_string();
     assert!(
-        msg.contains("artifact generation failed") || msg.contains("Agent artifact"),
+        msg.contains("failed to read agent manifest") || msg.contains("artifact generation failed") || msg.contains("Agent artifact"),
         "got: {msg}"
     );
 }
 
 #[tokio::test]
 async fn test_generate_agent_artifacts_exit_2_mentions_yq() {
+    // With the Rust generator, exit code 2 from cat means the manifest couldn't be read.
+    // The yq-specific error path no longer exists — just verify it returns an error.
     let result: anyhow::Result<()> =
         generate_agent_artifacts(&VmRunningExecExitTwo, "openclaw").await;
-    assert!(result.is_err());
-    let msg = result.expect_err("expected error").to_string();
-    assert!(msg.contains("yq"), "expected yq mention, got: {msg}");
+    assert!(result.is_err(), "expected error when cat fails with exit 2");
 }
 
 // ============================================================================

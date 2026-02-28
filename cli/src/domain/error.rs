@@ -3,8 +3,6 @@
 //! This module has zero imports from `crate::infra`, `crate::commands`,
 //! `crate::application`, `tokio`, `std::fs`, `std::process`, or `std::net`.
 //! All error types implement `thiserror::Error` and convert to `anyhow::Error`
-
-#![allow(dead_code)] // Refactor in progress — error variants defined ahead of callers
 //! via the `?` operator.
 
 use thiserror::Error;
@@ -13,6 +11,7 @@ use thiserror::Error;
 
 /// Errors related to workspace lifecycle and identity.
 #[derive(Debug, Error)]
+#[allow(dead_code)] // Variants defined ahead of callers
 pub enum WorkspaceError {
     #[error("Workspace not found. Run 'polis start' to create one.")]
     NotFound,
@@ -34,6 +33,7 @@ pub enum WorkspaceError {
 
 /// Errors related to agent management.
 #[derive(Debug, Error)]
+#[allow(dead_code)] // Variants defined ahead of callers
 pub enum AgentError {
     #[error("Agent '{0}' not found.")]
     NotFound(String),

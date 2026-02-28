@@ -120,20 +120,19 @@ impl Cli {
 
         match command {
             Command::Start(args) => {
-                commands::start::run(&args, &app.provisioner, &app.output).await
+                commands::start::run(&args, &app).await
             }
 
-            Command::Stop => commands::stop::run(&app.output, &app.provisioner).await,
+            Command::Stop => commands::stop::run(&app).await,
 
             Command::Delete(args) => {
-                commands::delete::run(&args, &app.provisioner, &app.state_mgr, app.output.quiet)
-                    .await
+                commands::delete::run(&args, &app).await
             }
 
             Command::Status => commands::status::run(&app, &app.provisioner).await,
 
             Command::Connect(args) => {
-                commands::connect::run(&app.output, args, &app.provisioner).await
+                commands::connect::run(&app, args).await
             }
 
             Command::Config(cmd) => commands::config::run(&app, cmd, &app.provisioner).await,
@@ -141,9 +140,8 @@ impl Cli {
             Command::Update(args) => {
                 commands::update::run(
                     &args,
-                    &app.output,
+                    &app,
                     &commands::update::GithubUpdateChecker,
-                    &app.provisioner,
                 )
                 .await
             }

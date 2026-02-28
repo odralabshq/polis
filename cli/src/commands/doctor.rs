@@ -92,8 +92,7 @@ impl<M: crate::application::ports::InstanceInspector + crate::application::ports
     }
 
     async fn check_security(&self) -> Result<SecurityChecks> {
-        let vm_running = crate::workspace::vm::state(self.mp).await.ok()
-            == Some(crate::workspace::vm::VmState::Running);
+        let vm_running = crate::application::services::vm::lifecycle::state(self.mp).await.ok() == Some(crate::application::services::vm::lifecycle::VmState::Running);
 
         if !vm_running {
             return Ok(SecurityChecks {
@@ -268,7 +267,7 @@ pub async fn repair(
         let (assets_dir, _guard) =
             crate::infra::assets::extract_assets().context("extracting embedded assets")?;
         let version = env!("CARGO_PKG_VERSION");
-        crate::workspace::vm::transfer_config(mp, &assets_dir, version)
+        crate::application::services::vm::provision::transfer_config(mp, &assets_dir, version)
             .await
             .context("re-transferring config to VM")?;
         print_ok("Config re-transferred");
@@ -325,7 +324,7 @@ pub async fn repair(
         let (assets_dir, _guard) =
             crate::infra::assets::extract_assets().context("extracting embedded assets")?;
         let version = env!("CARGO_PKG_VERSION");
-        crate::workspace::vm::transfer_config(mp, &assets_dir, version)
+        crate::application::services::vm::provision::transfer_config(mp, &assets_dir, version)
             .await
             .context("re-transferring config to VM")?;
         print_ok("Config re-transferred");
@@ -362,7 +361,7 @@ pub async fn repair(
             mp.exec(&["rm", "-f", "/opt/polis/.certs-ready"]).await.ok();
         }
         print_step("Generating certificates and secrets...");
-        crate::workspace::vm::generate_certs_and_secrets(mp)
+        crate::application::services::vm::provision::generate_certs_and_secrets(mp)
             .await
             .context("generating certificates during repair")?;
         certs_regenerated = true;
@@ -452,7 +451,7 @@ fn probe_prerequisites() -> PrerequisiteChecks {
 
 /// Check image cache status, metadata, `POLIS_IMAGE` override, and version drift.
 async fn check_image() -> ImageCheckResult {
-    let Ok(images_dir) = crate::workspace::image::images_dir() else {
+    let Ok(images_dir) = crate::infra::fs::images_dir() else {
         return ImageCheckResult::default();
     };
     let cached = images_dir.join("polis.qcow2").exists();
@@ -502,7 +501,7 @@ fn read_image_json(images_dir: &Path) -> (Option<String>, Option<String>) {
 async fn check_version_drift(current: String) -> Option<VersionDrift> {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        tokio::task::spawn_blocking(crate::workspace::image::resolve_latest_image_url),
+        tokio::task::spawn_blocking(crate::infra::image::resolve_latest_image_url),
     )
     .await;
     let Ok(Ok(Ok(resolved))) = result else {
@@ -587,7 +586,7 @@ async fn check_gate_health(mp: &impl crate::application::ports::ShellExecutor) -
             "docker",
             "compose",
             "-f",
-            crate::workspace::COMPOSE_PATH,
+            crate::domain::workspace::COMPOSE_PATH,
             "ps",
             "--format",
             "json",
@@ -953,3 +952,4 @@ mod tests {
         );
     }
 }
+

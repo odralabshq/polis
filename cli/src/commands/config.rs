@@ -110,7 +110,7 @@ async fn propagate_security_level(
     mp: &(impl InstanceInspector + ShellExecutor),
 ) {
     // Fast check: skip if VM is not running (vm_info returns immediately)
-    if crate::workspace::vm::state(mp).await.ok() != Some(crate::workspace::vm::VmState::Running) {
+    if crate::application::services::vm::lifecycle::state(mp).await.ok() != Some(crate::application::services::vm::lifecycle::VmState::Running) {
         return;
     }
     let pass = match mp.exec(&["cat", VM_MCP_ADMIN_PASS]).await {

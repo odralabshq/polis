@@ -4,13 +4,7 @@
 
 pub mod app;
 pub mod application;
-pub mod assets;
-pub mod command_runner;
 pub mod commands;
 pub mod domain;
 pub mod infra;
 pub mod output;
-pub mod provisioner;
-pub mod ssh;
-pub mod state;
-pub mod workspace;

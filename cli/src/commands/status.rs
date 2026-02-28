@@ -1,16 +1,14 @@
 //! Status command implementation.
 //!
-//! Displays workspace state, agent health, security status, and metrics.
+//! Thin handler: delegates status gathering to `application::services::workspace_status`,
+//! then renders the result via `app.renderer()`.
 
 use anyhow::Result;
-use polis_common::types::{
-    AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
-    WorkspaceState, WorkspaceStatus,
-};
+use polis_common::types::{AgentHealth, WorkspaceState};
 
 use crate::app::AppContext;
 use crate::application::ports::{InstanceInspector, ShellExecutor};
-use crate::workspace::COMPOSE_PATH;
+use crate::application::services::workspace_status::gather_status;
 
 /// Run the status command.
 ///
@@ -22,245 +20,7 @@ pub async fn run(app: &AppContext, mp: &(impl InstanceInspector + ShellExecutor)
     app.renderer().render_status(&output)
 }
 
-/// Gather all status information.
-async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutput {
-    let workspace = get_workspace_status(mp).await;
-    let is_running = workspace.status == WorkspaceState::Running;
-
-    let (security, agent) = if is_running {
-        (get_security_status(mp).await, get_agent_status(mp).await)
-    } else {
-        (
-            SecurityStatus {
-                traffic_inspection: false,
-                credential_protection: false,
-                malware_scanning: false,
-            },
-            None,
-        )
-    };
-
-    StatusOutput {
-        workspace,
-        agent,
-        security,
-        events: SecurityEvents {
-            count: 0,
-            severity: EventSeverity::None,
-        },
-    }
-}
-
-/// Check workspace status via multipass.
-async fn get_workspace_status(mp: &(impl InstanceInspector + ShellExecutor)) -> WorkspaceStatus {
-    let Some(vm_state) = check_multipass_status(mp).await else {
-        return workspace_unknown();
-    };
-
-    // If VM not running, return that state
-    if vm_state != WorkspaceState::Running {
-        return WorkspaceStatus {
-            status: vm_state,
-            uptime_seconds: None,
-        };
-    }
-
-    // VM is running - check if polis-workspace container is running
-    let container_running = check_workspace_container(mp).await;
-
-    WorkspaceStatus {
-        status: if container_running {
-            WorkspaceState::Running
-        } else {
-            WorkspaceState::Starting // VM up but container not ready
-        },
-        uptime_seconds: None,
-    }
-}
-
-/// Check multipass VM state (with timeout to prevent hanging).
-async fn check_multipass_status(mp: &impl InstanceInspector) -> Option<WorkspaceState> {
-    // Use mp.info() through the provisioner trait — the provisioner already
-    // applies DEFAULT_CMD_TIMEOUT. For status we accept the default timeout.
-    let output = mp.info().await.ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let info: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    let state = info.get("info")?.get("polis")?.get("state")?.as_str()?;
-
-    Some(match state {
-        "Running" => WorkspaceState::Running,
-        "Stopped" => WorkspaceState::Stopped,
-        "Starting" => WorkspaceState::Starting,
-        "Stopping" => WorkspaceState::Stopping,
-        _ => WorkspaceState::Error,
-    })
-}
-
-/// Check if polis-workspace container is running inside VM.
-async fn check_workspace_container(mp: &impl ShellExecutor) -> bool {
-    let output = mp
-        .exec(&[
-            "docker",
-            "compose",
-            "-f",
-            COMPOSE_PATH,
-            "ps",
-            "--format",
-            "json",
-            "workspace",
-        ])
-        .await;
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return false,
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let Some(first_line) = stdout.lines().next() else {
-        return false;
-    };
-
-    serde_json::from_str::<serde_json::Value>(first_line)
-        .ok()
-        .and_then(|c| c.get("State")?.as_str().map(|s| s == "running"))
-        .unwrap_or(false)
-}
-
-/// Check security services inside multipass VM.
-async fn get_security_status(mp: &impl ShellExecutor) -> SecurityStatus {
-    let (gate, sentinel, scanner) = tokio::join!(
-        is_service_running(mp, "gate"),
-        is_service_running(mp, "sentinel"),
-        is_service_running(mp, "scanner"),
-    );
-
-    SecurityStatus {
-        traffic_inspection: gate,
-        credential_protection: sentinel,
-        malware_scanning: scanner,
-    }
-}
-
-/// Check if a single docker compose service is running inside the VM.
-async fn is_service_running(mp: &impl ShellExecutor, service: &str) -> bool {
-    let output = mp
-        .exec(&[
-            "docker",
-            "compose",
-            "-f",
-            COMPOSE_PATH,
-            "ps",
-            "--format",
-            "json",
-            service,
-        ])
-        .await;
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return false,
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let Some(first_line) = stdout.lines().next() else {
-        return false;
-    };
-
-    serde_json::from_str::<serde_json::Value>(first_line)
-        .ok()
-        .and_then(|c| c.get("State")?.as_str().map(|s| s == "running"))
-        .unwrap_or(false)
-}
-
-/// Check agent status inside multipass VM.
-async fn get_agent_status(mp: &impl ShellExecutor) -> Option<AgentStatus> {
-    let output = mp
-        .exec(&[
-            "docker",
-            "compose",
-            "-f",
-            COMPOSE_PATH,
-            "ps",
-            "--format",
-            "json",
-            "workspace",
-        ])
-        .await
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let first_line = stdout.lines().next()?;
-    let container: serde_json::Value = serde_json::from_str(first_line).ok()?;
-
-    let state = container.get("State")?.as_str()?;
-    let health = container.get("Health").and_then(|h| h.as_str());
-
-    let status = match (state, health) {
-        ("running", Some("healthy")) => AgentHealth::Healthy,
-        ("running", Some("unhealthy")) => AgentHealth::Unhealthy,
-        ("running", _) => AgentHealth::Starting,
-        _ => AgentHealth::Stopped,
-    };
-
-    Some(AgentStatus {
-        name: "workspace".to_string(),
-        status,
-    })
-}
-
-/// Print human-readable status output.
-#[allow(dead_code)]
-fn print_human_readable(ctx: &crate::output::OutputContext, status: &StatusOutput) {
-    ctx.kv(
-        "Workspace:",
-        workspace_state_display(status.workspace.status),
-    );
-
-    if let Some(agent) = &status.agent {
-        ctx.kv(
-            "Agent:",
-            &format!("{} ({})", agent.name, agent_health_display(agent.status)),
-        );
-    }
-
-    if let Some(uptime) = status.workspace.uptime_seconds {
-        ctx.kv("Uptime:", &format_uptime(uptime));
-    }
-
-    println!();
-    ctx.header("Security:");
-
-    if status.security.traffic_inspection {
-        ctx.success("Traffic inspection active");
-    } else {
-        ctx.warn("Traffic inspection inactive");
-    }
-    if status.security.credential_protection {
-        ctx.success("Credential protection enabled");
-    } else {
-        ctx.warn("Credential protection disabled");
-    }
-    if status.security.malware_scanning {
-        ctx.success("Malware scanning enabled");
-    } else {
-        ctx.warn("Malware scanning disabled");
-    }
-
-    if status.events.count > 0 {
-        println!();
-        ctx.warn(&format!("{} security events", status.events.count));
-        ctx.info("Run: polis logs --security");
-    }
-}
+// ── Display helpers (used by tests and output layer) ─────────────────────────
 
 #[must_use]
 pub fn format_uptime(seconds: u64) -> String {
@@ -307,18 +67,11 @@ pub fn format_events_warning(count: u32) -> String {
     format!("{count} security {noun}\nRun: polis logs --security")
 }
 
-#[must_use]
-pub fn workspace_unknown() -> WorkspaceStatus {
-    WorkspaceStatus {
-        status: WorkspaceState::Error,
-        uptime_seconds: None,
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::application::services::workspace_status::workspace_unknown;
     use polis_common::types::{
         AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
         WorkspaceState, WorkspaceStatus,
@@ -343,14 +96,8 @@ mod tests {
     fn test_workspace_state_display_all() {
         assert_eq!(workspace_state_display(WorkspaceState::Running), "running");
         assert_eq!(workspace_state_display(WorkspaceState::Stopped), "stopped");
-        assert_eq!(
-            workspace_state_display(WorkspaceState::Starting),
-            "starting"
-        );
-        assert_eq!(
-            workspace_state_display(WorkspaceState::Stopping),
-            "stopping"
-        );
+        assert_eq!(workspace_state_display(WorkspaceState::Starting), "starting");
+        assert_eq!(workspace_state_display(WorkspaceState::Stopping), "stopping");
         assert_eq!(workspace_state_display(WorkspaceState::Error), "error");
     }
 

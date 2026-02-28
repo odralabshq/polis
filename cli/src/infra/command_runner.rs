@@ -3,8 +3,6 @@
 //! `TokioCommandRunner` is the production implementation that uses tokio
 //! for async process execution with guaranteed timeout and kill on all platforms.
 
-#![allow(dead_code)] // Refactor in progress — defined ahead of callers
-
 use std::process::{Output, Stdio};
 use std::time::Duration;
 
@@ -40,6 +38,55 @@ impl TokioCommandRunner {
 impl CommandRunner for TokioCommandRunner {
     async fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
         self.run_with_timeout(program, args, self.timeout).await
+    }
+
+    async fn run_with_timeout(
+        &self,
+        program: &str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<Output> {
+        let mut child = tokio::process::Command::new(program)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| format!("failed to spawn {program}"))?;
+
+        let mut stdout_handle = child.stdout.take();
+        let mut stderr_handle = child.stderr.take();
+
+        tokio::select! {
+            result = async {
+                let (status, stdout, stderr) = tokio::join!(
+                    child.wait(),
+                    async {
+                        let mut buf = Vec::new();
+                        if let Some(ref mut h) = stdout_handle {
+                            let _ = h.read_to_end(&mut buf).await;
+                        }
+                        buf
+                    },
+                    async {
+                        let mut buf = Vec::new();
+                        if let Some(ref mut h) = stderr_handle {
+                            let _ = h.read_to_end(&mut buf).await;
+                        }
+                        buf
+                    },
+                );
+                Ok(Output {
+                    status: status.with_context(|| format!("waiting for {program}"))?,
+                    stdout,
+                    stderr,
+                })
+            } => result,
+            () = tokio::time::sleep(timeout) => {
+                let _ = child.kill().await;
+                anyhow::bail!("{program} timed out after {}s", timeout.as_secs())
+            }
+        }
     }
 
     async fn run_with_stdin(&self, program: &str, args: &[&str], input: &[u8]) -> Result<Output> {
@@ -97,6 +144,7 @@ impl CommandRunner for TokioCommandRunner {
         }
     }
 
+    #[allow(dead_code)] // Reserved for future interactive command spawning
     fn spawn(&self, program: &str, args: &[&str]) -> Result<tokio::process::Child> {
         tokio::process::Command::new(program)
             .args(args)
@@ -121,58 +169,4 @@ impl CommandRunner for TokioCommandRunner {
     }
 }
 
-impl TokioCommandRunner {
-    /// Run a command with a custom timeout (overrides the instance default).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the process cannot be spawned or times out.
-    pub async fn run_with_timeout(
-        &self,
-        program: &str,
-        args: &[&str],
-        timeout: Duration,
-    ) -> Result<Output> {
-        let mut child = tokio::process::Command::new(program)
-            .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| format!("failed to spawn {program}"))?;
 
-        let mut stdout_handle = child.stdout.take();
-        let mut stderr_handle = child.stderr.take();
-
-        tokio::select! {
-            result = async {
-                let (status, stdout, stderr) = tokio::join!(
-                    child.wait(),
-                    async {
-                        let mut buf = Vec::new();
-                        if let Some(ref mut h) = stdout_handle {
-                            let _ = h.read_to_end(&mut buf).await;
-                        }
-                        buf
-                    },
-                    async {
-                        let mut buf = Vec::new();
-                        if let Some(ref mut h) = stderr_handle {
-                            let _ = h.read_to_end(&mut buf).await;
-                        }
-                        buf
-                    },
-                );
-                Ok(Output {
-                    status: status.with_context(|| format!("waiting for {program}"))?,
-                    stdout,
-                    stderr,
-                })
-            } => result,
-            () = tokio::time::sleep(timeout) => {
-                let _ = child.kill().await;
-                anyhow::bail!("{program} timed out after {}s", timeout.as_secs())
-            }
-        }
-    }
-}

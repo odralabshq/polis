@@ -3,11 +3,11 @@
 //! Imports only from `crate::domain` and `crate::application::ports`.
 //! All I/O is routed through injected port traits.
 
-#![allow(dead_code)] // Refactor in progress — service defined ahead of callers
-
 use anyhow::Result;
 
-use crate::application::ports::{FileTransfer, InstanceInspector, ProgressReporter, ShellExecutor};
+use crate::application::ports::{
+    CommandRunner, FileTransfer, InstanceInspector, NetworkProbe, ProgressReporter, ShellExecutor,
+};
 use crate::domain::health::DoctorChecks;
 
 /// Run the doctor probe/diagnose workflow.
@@ -19,18 +19,21 @@ use crate::domain::health::DoctorChecks;
 /// # Errors
 ///
 /// Returns an error if any health probe fails to execute.
+#[allow(dead_code)] // Public API — not yet called from commands/doctor.rs
 pub async fn run_doctor(
     provisioner: &(impl InstanceInspector + ShellExecutor + FileTransfer),
     reporter: &impl ProgressReporter,
+    cmd_runner: &impl CommandRunner,
+    network_probe: &impl NetworkProbe,
 ) -> Result<DoctorChecks> {
     reporter.step("checking prerequisites...");
-    let prerequisites = probe_prerequisites().await?;
+    let prerequisites = probe_prerequisites(cmd_runner).await?;
 
     reporter.step("checking workspace...");
-    let workspace = probe_workspace(provisioner).await?;
+    let workspace = probe_workspace(provisioner, cmd_runner).await?;
 
     reporter.step("checking network...");
-    let network = probe_network().await?;
+    let network = probe_network(network_probe).await?;
 
     reporter.step("checking security...");
     let security = probe_security(provisioner).await?;
@@ -47,50 +50,47 @@ pub async fn run_doctor(
 
 // ── Internal probes ───────────────────────────────────────────────────────────
 
-async fn probe_prerequisites() -> Result<crate::domain::health::PrerequisiteChecks> {
-    tokio::task::spawn_blocking(|| {
-        use std::process::Command;
+async fn probe_prerequisites(
+    cmd_runner: &impl CommandRunner,
+) -> Result<crate::domain::health::PrerequisiteChecks> {
+    let output = cmd_runner.run("multipass", &["version"]).await;
+    let Ok(output) = output else {
+        return Ok(crate::domain::health::PrerequisiteChecks {
+            multipass_found: false,
+            multipass_version: None,
+            multipass_version_ok: false,
+        });
+    };
 
-        let output = Command::new("multipass").arg("version").output();
-        let Ok(output) = output else {
-            return crate::domain::health::PrerequisiteChecks {
-                multipass_found: false,
-                multipass_version: None,
-                multipass_version_ok: false,
-            };
-        };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version_str = stdout
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .map(str::to_owned);
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let version_str = stdout
-            .lines()
-            .next()
-            .and_then(|l| l.split_whitespace().nth(1))
-            .map(str::to_owned);
+    let version_ok = version_str
+        .as_deref()
+        .and_then(|v| semver::Version::parse(v).ok())
+        .is_none_or(|v| v >= semver::Version::new(1, 16, 0));
 
-        let version_ok = version_str
-            .as_deref()
-            .and_then(|v| semver::Version::parse(v).ok())
-            .is_none_or(|v| v >= semver::Version::new(1, 16, 0));
-
-        crate::domain::health::PrerequisiteChecks {
-            multipass_found: true,
-            multipass_version: version_str,
-            multipass_version_ok: version_ok,
-        }
+    Ok(crate::domain::health::PrerequisiteChecks {
+        multipass_found: true,
+        multipass_version: version_str,
+        multipass_version_ok: version_ok,
     })
-    .await
-    .map_err(|e| anyhow::anyhow!("prerequisites check task panicked: {e}"))
 }
 
 async fn probe_workspace(
     provisioner: &(impl InstanceInspector + ShellExecutor),
+    cmd_runner: &impl CommandRunner,
 ) -> Result<crate::domain::health::WorkspaceChecks> {
-    let disk_space_gb = probe_disk_space_gb().await?;
+    let disk_space_gb = probe_disk_space_gb(cmd_runner).await?;
     let image = probe_image_cache();
 
     // Check VM readiness via provisioner
-    let ready = crate::workspace::vm::state(provisioner).await.ok()
-        == Some(crate::workspace::vm::VmState::Running);
+    let ready = crate::application::services::vm::lifecycle::state(provisioner).await.ok()
+        == Some(crate::application::services::vm::lifecycle::VmState::Running);
 
     Ok(crate::domain::health::WorkspaceChecks {
         ready,
@@ -100,16 +100,25 @@ async fn probe_workspace(
     })
 }
 
-async fn probe_network() -> Result<crate::domain::health::NetworkChecks> {
-    let (internet, dns) = tokio::join!(probe_internet(), probe_dns());
+async fn probe_network(
+    network_probe: &impl NetworkProbe,
+) -> Result<crate::domain::health::NetworkChecks> {
+    let internet = network_probe
+        .check_tcp_connectivity("8.8.8.8", 53)
+        .await
+        .unwrap_or(false);
+    let dns = network_probe
+        .check_dns_resolution("dns.google")
+        .await
+        .unwrap_or(false);
     Ok(crate::domain::health::NetworkChecks { internet, dns })
 }
 
 async fn probe_security(
     provisioner: &(impl InstanceInspector + ShellExecutor),
 ) -> Result<crate::domain::health::SecurityChecks> {
-    let vm_running = crate::workspace::vm::state(provisioner).await.ok()
-        == Some(crate::workspace::vm::VmState::Running);
+    let vm_running = crate::application::services::vm::lifecycle::state(provisioner).await.ok()
+        == Some(crate::application::services::vm::lifecycle::VmState::Running);
 
     if !vm_running {
         return Ok(crate::domain::health::SecurityChecks {
@@ -146,16 +155,18 @@ async fn probe_security(
 
 // ── Low-level probe helpers ───────────────────────────────────────────────────
 
-async fn probe_disk_space_gb() -> Result<u64> {
+async fn probe_disk_space_gb(cmd_runner: &impl CommandRunner) -> Result<u64> {
     #[cfg(windows)]
     {
-        let out = tokio::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "((Get-PSDrive C).Free / 1GB) -as [int]",
-            ])
-            .output()
+        let out = cmd_runner
+            .run(
+                "powershell",
+                &[
+                    "-NoProfile",
+                    "-Command",
+                    "((Get-PSDrive C).Free / 1GB) -as [int]",
+                ],
+            )
             .await?;
         String::from_utf8_lossy(&out.stdout)
             .trim()
@@ -164,10 +175,7 @@ async fn probe_disk_space_gb() -> Result<u64> {
     }
     #[cfg(not(windows))]
     {
-        let out = tokio::process::Command::new("df")
-            .args(["-k", "/"])
-            .output()
-            .await?;
+        let out = cmd_runner.run("df", &["-k", "/"]).await?;
         let text = String::from_utf8_lossy(&out.stdout);
         text.lines()
             .nth(1)
@@ -179,7 +187,7 @@ async fn probe_disk_space_gb() -> Result<u64> {
 }
 
 fn probe_image_cache() -> crate::domain::health::ImageCheckResult {
-    let Ok(images_dir) = crate::workspace::image::images_dir() else {
+    let Ok(images_dir) = crate::infra::fs::images_dir() else {
         return crate::domain::health::ImageCheckResult::default();
     };
     let cached = images_dir.join("polis.qcow2").exists();
@@ -190,26 +198,6 @@ fn probe_image_cache() -> crate::domain::health::ImageCheckResult {
         polis_image_override: std::env::var("POLIS_IMAGE").ok(),
         version_drift: None,
     }
-}
-
-async fn probe_internet() -> bool {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::time::Duration;
-    const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53);
-    tokio::task::spawn_blocking(|| {
-        std::net::TcpStream::connect_timeout(&ADDR, Duration::from_secs(3)).is_ok()
-    })
-    .await
-    .unwrap_or(false)
-}
-
-async fn probe_dns() -> bool {
-    tokio::task::spawn_blocking(|| {
-        use std::net::ToSocketAddrs;
-        "dns.google:443".to_socket_addrs().is_ok()
-    })
-    .await
-    .unwrap_or(false)
 }
 
 async fn probe_process_isolation(mp: &impl ShellExecutor) -> bool {
@@ -225,7 +213,7 @@ async fn probe_gate_health(mp: &impl ShellExecutor) -> bool {
             "docker",
             "compose",
             "-f",
-            crate::workspace::COMPOSE_PATH,
+            crate::domain::workspace::COMPOSE_PATH,
             "ps",
             "--format",
             "json",

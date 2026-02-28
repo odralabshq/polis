@@ -8,10 +8,11 @@ use std::time::{Duration, Instant};
 
 use proptest::prelude::*;
 
-use polis_cli::command_runner::{CommandRunner, TokioCommandRunner};
+use polis_cli::application::ports::CommandRunner;
+use polis_cli::infra::command_runner::TokioCommandRunner;
 use polis_cli::commands::config::{validate_config_key, validate_config_value};
-use polis_cli::commands::start::generate_workspace_id;
-use polis_cli::workspace::vm::generate_certs_and_secrets;
+use polis_cli::domain::workspace::generate_workspace_id;
+use polis_cli::application::services::vm::provision::generate_certs_and_secrets;
 
 use crate::mocks::MultipassExecRecorder;
 

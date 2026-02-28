@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::workspace::CONTAINER_NAME;
+use crate::domain::workspace::CONTAINER_NAME;
 
 // ---------------------------------------------------------------------------
 // STDIO bridge (async — used by tests)
@@ -56,7 +56,7 @@ where
 ///
 /// Returns an error if the VM IP cannot be resolved or SSH cannot be spawned.
 pub async fn ssh_proxy(mp: &impl crate::application::ports::InstanceInspector) -> Result<()> {
-    let vm_ip = crate::workspace::vm::resolve_vm_ip(mp).await?;
+    let vm_ip = crate::application::services::vm::lifecycle::resolve_vm_ip(mp).await?;
 
     let identity_key = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?

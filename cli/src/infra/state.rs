@@ -3,8 +3,6 @@
 //! `StateManager` provides async load/save using `tokio::task::spawn_blocking`
 //! with atomic write (temp file + rename) to prevent state corruption.
 
-#![allow(dead_code)] // Refactor in progress — defined ahead of callers
-
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -33,6 +31,25 @@ impl StateManager {
     #[must_use]
     pub fn with_path(path: PathBuf) -> Self {
         Self { path }
+    }
+
+    /// Load existing state, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file exists but cannot be read or parsed,
+    /// or if the workspace ID fails validation.
+    pub fn load(&self) -> Result<Option<WorkspaceState>> {
+        self.load_sync()
+    }
+
+    /// Save state to disk with mode 600 using atomic write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be created or the file cannot be written.
+    pub fn save(&self, state: &WorkspaceState) -> Result<()> {
+        self.save_sync(state)
     }
 
     /// Synchronous load — used internally by `load_async` via `spawn_blocking`.

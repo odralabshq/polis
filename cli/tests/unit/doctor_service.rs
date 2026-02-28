@@ -12,8 +12,8 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use polis_cli::application::ports::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ProgressReporter,
-    ShellExecutor,
+    CommandRunner, FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec,
+    NetworkProbe, ProgressReporter, ShellExecutor,
 };
 use polis_cli::application::services::workspace_doctor::run_doctor;
 use polis_cli::domain::health::collect_issues;
@@ -205,9 +205,65 @@ impl ShellExecutor for VmStoppedProvisioner {
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── Mock: no-op CommandRunner ─────────────────────────────────────────────────
 
-/// **Property 7 (partial): Doctor operations route through provisioner**
+struct NoopCommandRunner;
+
+impl CommandRunner for NoopCommandRunner {
+    async fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
+        // probe_disk_space_gb needs a parseable integer from df or powershell
+        let joined = args.join(" ");
+        if program == "df" || (program == "powershell" && joined.contains("Get-PSDrive")) {
+            return Ok(ok(b"50"));
+        }
+        // multipass version → fake version string
+        if program == "multipass" {
+            return Ok(ok(b"multipass 1.16.0\nmultipassd 1.16.0"));
+        }
+        Ok(ok(b""))
+    }
+    async fn run_with_timeout(
+        &self,
+        program: &str,
+        args: &[&str],
+        _timeout: std::time::Duration,
+    ) -> Result<Output> {
+        self.run(program, args).await
+    }
+    async fn run_with_stdin(
+        &self,
+        _program: &str,
+        _args: &[&str],
+        _stdin: &[u8],
+    ) -> Result<Output> {
+        Ok(ok(b""))
+    }
+    fn spawn(&self, _program: &str, _args: &[&str]) -> Result<tokio::process::Child> {
+        anyhow::bail!("not expected")
+    }
+    async fn run_status(
+        &self,
+        _program: &str,
+        _args: &[&str],
+    ) -> Result<std::process::ExitStatus> {
+        Ok(exit_status(0))
+    }
+}
+
+// ── Mock: no-op NetworkProbe ──────────────────────────────────────────────────
+
+struct NoopNetworkProbe;
+
+impl NetworkProbe for NoopNetworkProbe {
+    async fn check_tcp_connectivity(&self, _host: &str, _port: u16) -> Result<bool> {
+        Ok(true)
+    }
+    async fn check_dns_resolution(&self, _hostname: &str) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 ///
 /// `run_doctor()` must use the injected provisioner for all VM interactions
 /// and return a `DoctorChecks` domain type.
@@ -216,7 +272,7 @@ async fn run_doctor_routes_vm_checks_through_provisioner() {
     let provisioner = HealthyProvisioner::new();
     let reporter = NoopReporter;
 
-    let checks = run_doctor(&provisioner, &reporter)
+    let checks = run_doctor(&provisioner, &reporter, &NoopCommandRunner, &NoopNetworkProbe)
         .await
         .expect("run_doctor should succeed");
 
@@ -240,7 +296,7 @@ async fn run_doctor_vm_stopped_returns_security_all_false() {
     let provisioner = VmStoppedProvisioner;
     let reporter = NoopReporter;
 
-    let checks = run_doctor(&provisioner, &reporter)
+    let checks = run_doctor(&provisioner, &reporter, &NoopCommandRunner, &NoopNetworkProbe)
         .await
         .expect("run_doctor should succeed even when VM is stopped");
 
@@ -264,7 +320,7 @@ async fn run_doctor_result_is_usable_by_collect_issues() {
     let provisioner = HealthyProvisioner::new();
     let reporter = NoopReporter;
 
-    let checks = run_doctor(&provisioner, &reporter)
+    let checks = run_doctor(&provisioner, &reporter, &NoopCommandRunner, &NoopNetworkProbe)
         .await
         .expect("run_doctor should succeed");
 
@@ -304,7 +360,7 @@ async fn run_doctor_calls_progress_reporter() {
 
     let provisioner = HealthyProvisioner::new();
 
-    run_doctor(&provisioner, &reporter)
+    run_doctor(&provisioner, &reporter, &NoopCommandRunner, &NoopNetworkProbe)
         .await
         .expect("run_doctor should succeed");
 

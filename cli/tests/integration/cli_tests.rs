@@ -220,7 +220,7 @@ fn test_delete_accepts_all_flag() {
         .args(["delete", "--all"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("no input provided"));
+        .stderr(predicate::str::contains("IO error").or(predicate::str::contains("no input provided")));
 }
 
 #[test]

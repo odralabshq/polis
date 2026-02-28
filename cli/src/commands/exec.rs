@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::application::ports::ShellExecutor;
-use crate::workspace::CONTAINER_NAME;
+use crate::domain::workspace::CONTAINER_NAME;
 
 /// Arguments for the exec command.
 #[derive(Args)]

@@ -3,20 +3,26 @@
 //! Imports only from `crate::domain` and `crate::application::ports`.
 //! All I/O is routed through injected port traits.
 
-#![allow(dead_code)] // Refactor in progress — service defined ahead of callers
-
 use anyhow::{Context, Result};
 use chrono::Utc;
 
 use crate::application::ports::{ProgressReporter, VmProvisioner, WorkspaceStateStore};
+use crate::application::services::vm::{
+    integrity::{verify_image_digests, write_config_hash},
+    lifecycle::{self as vm, VmState},
+    provision::{generate_certs_and_secrets, transfer_config},
+    services::pull_images,
+    health::wait_ready,
+};
 use crate::domain::workspace::WorkspaceState;
-use crate::workspace::{digest, health, vm};
+use crate::infra::fs::sha256_file;
 
 /// Path to the polis project root inside the VM.
 const VM_POLIS_ROOT: &str = "/opt/polis";
 
 /// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
+#[allow(dead_code)] // Public API — not yet called from commands/start.rs
 pub enum StartOutcome {
     /// Workspace was already running with the same agent config.
     AlreadyRunning { agent: Option<String> },
@@ -35,6 +41,7 @@ pub enum StartOutcome {
 /// # Errors
 ///
 /// Returns an error if any step of the provisioning workflow fails.
+#[allow(dead_code)] // Public API — not yet called from commands/start.rs
 pub async fn start_workspace(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
@@ -48,8 +55,8 @@ pub async fn start_workspace(
     let vm_state = vm::state(provisioner).await?;
 
     match vm_state {
-        vm::VmState::Running => handle_running_vm(state_mgr, agent).await,
-        vm::VmState::NotFound => {
+        VmState::Running => handle_running_vm(state_mgr, agent).await,
+        VmState::NotFound => {
             create_and_start_vm(provisioner, state_mgr, reporter, agent, assets_dir, version)
                 .await?;
             Ok(StartOutcome::Created {
@@ -58,7 +65,7 @@ pub async fn start_workspace(
         }
         _ => {
             restart_vm(provisioner, state_mgr, reporter, agent).await?;
-            health::wait_ready(provisioner, false).await?;
+            wait_ready(provisioner, false).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
             })
@@ -97,7 +104,7 @@ async fn create_and_start_vm(
 ) -> Result<()> {
     // Step 1: Compute config hash before transfer.
     let tar_path = assets_dir.join("polis-setup.config.tar");
-    let config_hash = vm::sha256_file(&tar_path).context("computing config tarball SHA256")?;
+    let config_hash = sha256_file(&tar_path).context("computing config tarball SHA256")?;
 
     reporter.step("workspace isolation starting...");
 
@@ -107,25 +114,25 @@ async fn create_and_start_vm(
 
     // Step 3: Transfer config tarball.
     reporter.step("transferring configuration...");
-    vm::transfer_config(provisioner, assets_dir, version)
+    transfer_config(provisioner, assets_dir, version)
         .await
         .context("transferring config to VM")?;
 
     // Step 4: Generate certificates and secrets.
     reporter.step("generating certificates and secrets...");
-    vm::generate_certs_and_secrets(provisioner)
+    generate_certs_and_secrets(provisioner)
         .await
         .context("generating certificates and secrets")?;
 
     // Step 5: Pull Docker images.
     reporter.step("pulling Docker images...");
-    vm::pull_images(provisioner)
+    pull_images(provisioner)
         .await
         .context("pulling Docker images")?;
 
     // Step 6: Verify image digests.
     reporter.step("verifying image digests...");
-    digest::verify_image_digests(provisioner)
+    verify_image_digests(provisioner)
         .await
         .context("verifying image digests")?;
 
@@ -141,11 +148,11 @@ async fn create_and_start_vm(
 
     // Step 9: Wait for health.
     reporter.step("waiting for workspace to become healthy...");
-    health::wait_ready(provisioner, true).await?;
+    wait_ready(provisioner, true).await?;
     reporter.success("workspace ready");
 
     // Step 10: Write config hash after successful startup.
-    vm::write_config_hash(provisioner, &config_hash)
+    write_config_hash(provisioner, &config_hash)
         .await
         .context("writing config hash")?;
 
@@ -191,30 +198,84 @@ async fn restart_vm(
 }
 
 /// Validate and generate artifacts for an agent.
+///
+/// Reads the manifest from the VM, generates artifacts using the Rust domain
+/// functions, and transfers the `.generated/` folder back into the VM.
+/// This replaces the old `generate-agent.sh` shell script invocation.
 async fn setup_agent<P: VmProvisioner>(provisioner: &P, agent_name: &str) -> Result<()> {
     const VM_ROOT: &str = "/opt/polis";
 
     // Verify agent manifest exists in the VM.
     let manifest_path = format!("{VM_ROOT}/agents/{agent_name}/agent.yaml");
-    let output = provisioner
+    let check = provisioner
         .exec(&["test", "-f", &manifest_path])
         .await
         .context("checking agent manifest")?;
-    if !output.status.success() {
+    if !check.status.success() {
         anyhow::bail!("unknown agent '{agent_name}'");
     }
 
-    // Run generate-agent.sh inside the VM.
-    let script = format!("{VM_ROOT}/scripts/generate-agent.sh");
-    let agents_dir = format!("{VM_ROOT}/agents");
-    let output = provisioner
-        .exec(&["bash", &script, agent_name, &agents_dir])
+    // Read manifest from VM.
+    let cat_out = provisioner
+        .exec(&["cat", &manifest_path])
         .await
-        .context("running generate-agent.sh")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("agent artifact generation failed for '{agent_name}'.\n{stderr}");
-    }
+        .context("reading agent manifest from VM")?;
+    anyhow::ensure!(
+        cat_out.status.success(),
+        "failed to read agent manifest from VM: {}",
+        String::from_utf8_lossy(&cat_out.stderr)
+    );
+
+    // Generate artifacts in a temp dir using pure Rust domain functions.
+    let name = agent_name.to_owned();
+    let stdout_bytes = cat_out.stdout.clone();
+    let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
+    let tmp_path = tmp.path().to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use crate::domain::agent::artifacts;
+
+        let manifest: polis_common::agent::AgentManifest =
+            serde_yaml::from_slice(&stdout_bytes).context("parsing agent.yaml from VM")?;
+        crate::domain::agent::validate::validate_full_manifest(&manifest)?;
+
+        let generated_dir = tmp_path.join("agents").join(&name).join(".generated");
+        std::fs::create_dir_all(&generated_dir)
+            .with_context(|| format!("creating {}", generated_dir.display()))?;
+
+        let compose = artifacts::compose_overlay(&manifest);
+        std::fs::write(generated_dir.join("compose.agent.yaml"), &compose)
+            .context("writing compose.agent.yaml")?;
+
+        let unit = artifacts::systemd_unit(&manifest);
+        let hash = artifacts::service_hash(&unit);
+        std::fs::write(generated_dir.join(format!("{name}.service")), &unit)
+            .context("writing .service file")?;
+        std::fs::write(generated_dir.join(format!("{name}.service.sha256")), &hash)
+            .context("writing .service.sha256 file")?;
+
+        // No .env available on VM path — write empty file.
+        std::fs::write(generated_dir.join(format!("{name}.env")), "")
+            .context("writing .env file")?;
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .context("spawn_blocking for artifact generation")??;
+
+    // Transfer the generated artifacts back into the VM.
+    let generated_src = tmp.path().join("agents").join(agent_name).join(".generated");
+    let generated_src_str = generated_src.to_string_lossy().to_string();
+    let generated_dest = format!("{VM_ROOT}/agents/{agent_name}/.generated");
+    let transfer_out = provisioner
+        .transfer_recursive(&generated_src_str, &generated_dest)
+        .await
+        .context("transferring generated artifacts to VM")?;
+    anyhow::ensure!(
+        transfer_out.status.success(),
+        "failed to transfer generated artifacts: {}",
+        String::from_utf8_lossy(&transfer_out.stderr)
+    );
+
     Ok(())
 }
 

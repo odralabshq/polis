@@ -1,6 +1,6 @@
 //! Output formatting module
 
-#![allow(dead_code)] // Helper methods not yet adopted by all commands
+#![allow(dead_code)] // Presentation layer helpers — not all adopted by every command
 
 pub mod human;
 pub mod json;

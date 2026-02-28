@@ -1,85 +1,47 @@
-//! Unit tests for `polis start`, `polis stop`, and `polis delete [--all]`.
+//! Unit tests for start/stop/delete lifecycle behaviour.
+//!
+//! Tests exercise the vm lifecycle service layer directly with mocks,
+//! rather than going through command handlers that own their provisioner.
 
 #![allow(clippy::expect_used)]
 
-use polis_cli::commands::delete;
-use polis_cli::commands::start::{self, StartArgs};
-use polis_cli::commands::{DeleteArgs, stop};
-use polis_cli::output::OutputContext;
-use polis_cli::state::StateManager;
+use polis_cli::application::services::vm::lifecycle::{self as vm, VmState};
 
-use crate::mocks::{MultipassVmNotFound, MultipassVmRunning, MultipassVmStopped};
+use crate::helpers::{VmNotFound, VmRunning, VmStopped};
 
-fn isolated_state() -> (tempfile::TempDir, StateManager) {
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    let mgr = StateManager::with_path(dir.path().join("state.json"));
-    (dir, mgr)
-}
-
-fn quiet_ctx() -> OutputContext {
-    OutputContext::new(true, true)
-}
-
-// ── polis stop ────────────────────────────────────────────────────────────────
+// ── vm::state ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_stop_no_workspace_succeeds() {
-    assert!(stop::run(&quiet_ctx(), &MultipassVmNotFound).await.is_ok());
+async fn vm_state_not_found_when_instance_missing() {
+    let state = vm::state(&VmNotFound).await.expect("state");
+    assert_eq!(state, VmState::NotFound);
 }
 
 #[tokio::test]
-async fn test_stop_already_stopped_succeeds() {
-    assert!(stop::run(&quiet_ctx(), &MultipassVmStopped).await.is_ok());
-}
-
-// ── polis delete ──────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_delete_no_workspace_succeeds() {
-    let (_dir, state_mgr) = isolated_state();
-    let args = DeleteArgs {
-        all: false,
-        yes: true,
-    };
-    assert!(
-        delete::run(&args, &MultipassVmNotFound, &state_mgr, true)
-            .await
-            .is_ok()
-    );
+async fn vm_state_stopped_when_instance_stopped() {
+    let state = vm::state(&VmStopped).await.expect("state");
+    assert_eq!(state, VmState::Stopped);
 }
 
 #[tokio::test]
-async fn test_delete_all_no_workspace_succeeds() {
-    let (_dir, state_mgr) = isolated_state();
-    let args = DeleteArgs {
-        all: true,
-        yes: true,
-    };
-    assert!(
-        delete::run(&args, &MultipassVmNotFound, &state_mgr, true)
-            .await
-            .is_ok()
-    );
+async fn vm_state_running_when_instance_running() {
+    let state = vm::state(&VmRunning).await.expect("state");
+    assert_eq!(state, VmState::Running);
 }
 
-// ── polis start ───────────────────────────────────────────────────────────────
+// ── vm::exists ────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_start_already_running_returns_ok() {
-    let args = StartArgs { agent: None };
-    assert!(
-        start::run(&args, &MultipassVmRunning, &quiet_ctx())
-            .await
-            .is_ok()
-    );
+async fn vm_exists_false_when_not_found() {
+    assert!(!vm::exists(&VmNotFound).await);
 }
 
 #[tokio::test]
-async fn test_start_returns_ok_when_already_running() {
-    let args = StartArgs { agent: None };
-    assert!(
-        start::run(&args, &MultipassVmRunning, &quiet_ctx())
-            .await
-            .is_ok()
-    );
+async fn vm_exists_true_when_stopped() {
+    assert!(vm::exists(&VmStopped).await);
+}
+
+#[tokio::test]
+async fn vm_exists_true_when_running() {
+    assert!(vm::exists(&VmRunning).await);
 }

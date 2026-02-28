@@ -3,8 +3,6 @@
 //! This module is intentionally free of I/O, async, and external layer imports.
 //! All functions take data in and return data out.
 
-#![allow(dead_code)] // Refactor in progress — some functions defined ahead of callers
-
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -57,6 +55,7 @@ pub fn validate_workspace_id(id: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the host is arm64 / aarch64.
+#[allow(dead_code)] // Called from workspace_start service — not yet wired to binary
 pub fn check_architecture() -> Result<()> {
     if std::env::consts::ARCH == "aarch64" {
         anyhow::bail!(
@@ -68,11 +67,34 @@ Please use an amd64 machine."
     Ok(())
 }
 
+/// Path to `docker-compose.yml` inside the VM.
+/// MAINT-001: Centralized constant used by status, update, vm, and health modules.
+pub const COMPOSE_PATH: &str = "/opt/polis/docker-compose.yml";
+
+/// Docker container name inside the VM.
+/// MAINT-002: Centralized constant for container references.
+pub const CONTAINER_NAME: &str = "polis-workspace";
+
+/// Encode bytes as lowercase hex string.
+///
+/// Pure utility used by update signature verification and image digest computation.
+#[must_use]
+pub fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(char::from(HEX[(b >> 4) as usize]));
+        out.push(char::from(HEX[(b & 0xf) as usize]));
+    }
+    out
+}
+
 /// Generate a unique workspace identifier.
 ///
 /// Format: `polis-` followed by 16 lowercase hex characters.
 /// Entropy sources: nanosecond timestamp and two independent `RandomState` hashes.
 #[must_use]
+#[allow(dead_code)] // Called from workspace_start service — not yet wired to binary
 pub fn generate_workspace_id() -> String {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
@@ -117,6 +139,23 @@ mod tests {
     #[test]
     fn test_validate_workspace_id_rejects_non_hex_chars() {
         assert!(validate_workspace_id("polis-ghijklmnopqrstuv").is_err());
+    }
+
+    #[test]
+    fn test_hex_encode_empty_returns_empty() {
+        assert_eq!(hex_encode(&[]), "");
+    }
+
+    #[test]
+    fn test_hex_encode_single_byte() {
+        assert_eq!(hex_encode(&[0x00]), "00");
+        assert_eq!(hex_encode(&[0xff]), "ff");
+        assert_eq!(hex_encode(&[0xab]), "ab");
+    }
+
+    #[test]
+    fn test_hex_encode_multiple_bytes() {
+        assert_eq!(hex_encode(&[0xde, 0xad, 0xbe, 0xef]), "deadbeef");
     }
 
     #[test]

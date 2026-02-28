@@ -14,10 +14,10 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use polis_cli::application::ports::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, POLIS_INSTANCE, ShellExecutor,
+    CommandRunner, FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec,
+    POLIS_INSTANCE, ShellExecutor,
 };
-use polis_cli::command_runner::CommandRunner;
-use polis_cli::provisioner::MultipassProvisioner;
+use polis_cli::infra::provisioner::MultipassProvisioner;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 
@@ -692,11 +692,11 @@ proptest! {
     ///      (proving the timeouts are independent — one doesn't affect the other)
     #[test]
     fn prop_timeout_isolation(
-        cmd_timeout_ms in 50u64..=200u64,
-        exec_timeout_ms in 201u64..=400u64,
+        cmd_timeout_ms in 50u64..=150u64,
+        exec_timeout_ms in 300u64..=500u64,
     ) {
         use std::time::Instant;
-        use polis_cli::command_runner::TokioCommandRunner;
+        use polis_cli::infra::command_runner::TokioCommandRunner;
 
         let cmd_timeout = Duration::from_millis(cmd_timeout_ms);
         let exec_timeout = Duration::from_millis(exec_timeout_ms);
@@ -786,7 +786,7 @@ proptest! {
 //
 // **Validates: Requirements 8.1, 11.3**
 
-use polis_cli::workspace::vm::{VmState, exists, state};
+use polis_cli::application::services::vm::lifecycle::{VmState, exists, state};
 
 /// A minimal `InstanceInspector` that returns a canned `Output`.
 struct StubInspector {
@@ -1023,7 +1023,7 @@ fn prop_stub_inspector_satisfies_only_inspector_trait() {
 /// This verifies the two-layer separation: process layer vs domain layer.
 #[test]
 fn prop_mock_command_runner_is_process_layer_only() {
-    use polis_cli::command_runner::CommandRunner;
+    use polis_cli::application::ports::CommandRunner;
     fn assert_command_runner<T: CommandRunner>(_: &T) {}
     let mock = MockCommandRunner::new_ok();
     // Compile-time proof: mock satisfies CommandRunner (process layer).

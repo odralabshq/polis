@@ -4,12 +4,13 @@ use std::io::{Cursor, Read};
 
 use anyhow::{Context, Result};
 use clap::Args;
-use dialoguer::Confirm;
 use sha2::{Digest, Sha256};
 
-use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
-use crate::output::OutputContext;
-use crate::workspace::{digest, vm};
+use crate::app::AppContext;
+use crate::application::services::update::{
+    UpdateChecker, UpdateInfo, SignatureInfo, UpdateVmConfigOutcome, update_vm_config,
+};
+use crate::application::services::vm::lifecycle::{self as vm, VmState};
 
 /// Arguments for the update command.
 #[derive(Args)]
@@ -25,53 +26,6 @@ pub struct UpdateArgs {
 /// Actions secrets and used by the release workflow to sign `.tar.gz` / `.zip`
 /// archives via `zipsign`.
 pub(crate) const POLIS_PUBLIC_KEY_B64: &str = "0p+AGW1jqNEos8o6cxDUl2objZhZFOXy4BQseFNHIqI=";
-
-// ── Public types ──────────────────────────────────────────────────────────────
-
-/// Information about an available update.
-pub enum UpdateInfo {
-    /// A newer version is available.
-    Available {
-        /// The new version string (without leading `v`).
-        version: String,
-        /// Up to 5 bullet-point release notes.
-        release_notes: Vec<String>,
-        /// Direct download URL for the platform asset.
-        download_url: String,
-    },
-    /// Already on the latest version.
-    UpToDate,
-}
-
-/// Checksum verification result.
-pub struct SignatureInfo {
-    /// Hex-encoded SHA-256 of the downloaded asset.
-    pub sha256: String,
-}
-
-/// Abstraction over the update backend, enabling test doubles.
-pub trait UpdateChecker {
-    /// Check whether a newer version is available.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the release list cannot be fetched or parsed.
-    fn check(&self, current: &str) -> Result<UpdateInfo>;
-
-    /// Verify the cryptographic signature of the release asset.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the signature is missing or invalid.
-    fn verify_signature(&self, download_url: &str) -> Result<SignatureInfo>;
-
-    /// Download and replace the current binary.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the download or binary replacement fails.
-    fn perform_update(&self, version: &str) -> Result<()>;
-}
 
 /// Production implementation using GitHub releases.
 pub struct GithubUpdateChecker;
@@ -105,10 +59,11 @@ impl UpdateChecker for GithubUpdateChecker {
 #[allow(clippy::unused_async)] // async contract: will gain awaits when download is made async
 pub async fn run(
     args: &UpdateArgs,
-    ctx: &OutputContext,
+    app: &AppContext,
     checker: &impl UpdateChecker,
-    mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
 ) -> Result<()> {
+    let ctx = &app.output;
+    let mp = &app.provisioner;
     let current = env!("CARGO_PKG_VERSION");
 
     if !ctx.quiet {
@@ -142,16 +97,16 @@ pub async fn run(
     }
 
     if matches!(cli_update, UpdateInfo::Available { .. }) {
-        apply_cli_update(ctx, checker, cli_update)?;
+        apply_cli_update(app, checker, cli_update)?;
     }
 
     // After CLI self-update, update VM config if the VM is running
     let vm_state = vm::state(mp).await?;
-    if vm_state == vm::VmState::Running {
+    if vm_state == VmState::Running {
         if !ctx.quiet {
             ctx.info("Updating VM config...");
         }
-        update_config(mp, ctx).await?;
+        update_config(app).await?;
     }
 
     Ok(())
@@ -168,87 +123,33 @@ pub async fn run(
 ///
 /// Returns an error if any step of the update cycle fails.
 pub async fn update_config(
-    mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
-    ctx: &OutputContext,
+    app: &AppContext,
 ) -> Result<()> {
+    let mp = &app.provisioner;
+    let ctx = &app.output;
     // 1. Extract embedded assets (new version's tarball)
     let (assets_dir, _guard) =
         crate::infra::assets::extract_assets().context("extracting embedded assets")?;
 
-    // 2. Compute SHA256 of the new config tarball
-    let new_hash = vm::sha256_file(&assets_dir.join("polis-setup.config.tar"))
-        .context("computing config tarball hash")?;
-
-    // 3. Read current hash from VM
-    let hash_output = mp
-        .exec(&["cat", "/opt/polis/.config-hash"])
-        .await
-        .context("reading current config hash from VM")?;
-    let current_hash = String::from_utf8_lossy(&hash_output.stdout)
-        .trim()
-        .to_string();
-
-    // 4. If hashes match, config is up to date
-    if new_hash == current_hash {
-        ctx.success("Config is up to date");
-        return Ok(());
-    }
-
-    // 5. Hashes differ — perform full config update cycle
-    ctx.info("Config changed — updating...");
-
-    // 5a. Stop services
-    mp.exec(&[
-        "docker",
-        "compose",
-        "-f",
-        "/opt/polis/docker-compose.yml",
-        "down",
-    ])
-    .await
-    .context("stopping services")?;
-
-    // 5b. Transfer new config
     let version = env!("CARGO_PKG_VERSION");
-    vm::transfer_config(mp, &assets_dir, version)
-        .await
-        .context("transferring new config")?;
-
-    // 5c. Pull new images
-    vm::pull_images(mp).await.context("pulling Docker images")?;
-
-    // 5d. Verify image digests
-    digest::verify_image_digests(mp)
-        .await
-        .context("verifying image digests")?;
-
-    // 5e. Restart services
-    mp.exec(&[
-        "docker",
-        "compose",
-        "-f",
-        "/opt/polis/docker-compose.yml",
-        "up",
-        "-d",
-    ])
-    .await
-    .context("restarting services")?;
-
-    // 5f. Write new hash AFTER successful restart
-    vm::write_config_hash(mp, &new_hash)
-        .await
-        .context("writing new config hash")?;
-
-    ctx.success("Config updated successfully");
+    match update_vm_config(mp, &assets_dir, version).await? {
+        UpdateVmConfigOutcome::UpToDate => {
+            ctx.success("Config is up to date");
+        }
+        UpdateVmConfigOutcome::Updated => {
+            ctx.success("Config updated successfully");
+        }
+    }
 
     Ok(())
 }
 
 fn apply_cli_update(
-    ctx: &OutputContext,
+    app: &AppContext,
     checker: &impl UpdateChecker,
     cli_update: UpdateInfo,
 ) -> Result<()> {
+    let ctx = &app.output;
     let UpdateInfo::Available {
         version,
         download_url,
@@ -268,10 +169,8 @@ fn apply_cli_update(
     let sha_preview = sig.sha256.get(..12).unwrap_or(&sig.sha256);
     ctx.success(&format!("SHA-256: {sha_preview}..."));
 
-    let confirmed = Confirm::new()
-        .with_prompt("Update CLI now?")
-        .default(true)
-        .interact()
+    let confirmed = app
+        .confirm("Update CLI now?", true)
         .context("reading confirmation")?;
 
     if confirmed {
@@ -425,15 +324,9 @@ fn verify_signature(download_url: &str) -> Result<SignatureInfo> {
 }
 
 /// Encode bytes as lowercase hex string.
-pub(crate) fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(char::from(HEX[(b >> 4) as usize]));
-        out.push(char::from(HEX[(b & 0xf) as usize]));
-    }
-    out
-}
+///
+/// Delegates to `domain::workspace::hex_encode` — the canonical location.
+pub(crate) use crate::domain::workspace::hex_encode;
 
 /// Minimal base64 decoder (standard alphabet, no padding required).
 pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>> {
@@ -486,50 +379,6 @@ fn perform_update(version: &str) -> Result<()> {
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::wildcard_imports)]
 mod tests {
     use super::*;
-
-    /// Stub that fails on any call (for tests that shouldn't reach multipass).
-    struct MultipassUnreachableStub;
-
-    impl crate::application::ports::InstanceInspector for MultipassUnreachableStub {
-        async fn info(&self) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: info not expected")
-        }
-        async fn version(&self) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: version not expected")
-        }
-    }
-
-    impl crate::application::ports::ShellExecutor for MultipassUnreachableStub {
-        async fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: exec not expected")
-        }
-        async fn exec_with_stdin(
-            &self,
-            _: &[&str],
-            _: &[u8],
-        ) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: exec_with_stdin not expected")
-        }
-        fn exec_spawn(&self, _: &[&str]) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("stub: exec_spawn not expected")
-        }
-        async fn exec_status(&self, _: &[&str]) -> anyhow::Result<std::process::ExitStatus> {
-            anyhow::bail!("stub: exec_status not expected")
-        }
-    }
-
-    impl crate::application::ports::FileTransfer for MultipassUnreachableStub {
-        async fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: transfer not expected")
-        }
-        async fn transfer_recursive(
-            &self,
-            _: &str,
-            _: &str,
-        ) -> anyhow::Result<std::process::Output> {
-            anyhow::bail!("stub: transfer_recursive not expected")
-        }
-    }
 
     // -----------------------------------------------------------------------
     // parse_release_notes — unit
@@ -606,8 +455,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_up_to_date_returns_ok() {
-        use crate::output::OutputContext;
-
         struct AlwaysUpToDate;
         impl UpdateChecker for AlwaysUpToDate {
             fn check(&self, _current: &str) -> anyhow::Result<UpdateInfo> {
@@ -622,15 +469,16 @@ mod tests {
         }
 
         let args = UpdateArgs { check: true };
-        let ctx = OutputContext::new(true, true);
-        let result = run(&args, &ctx, &AlwaysUpToDate, &MultipassUnreachableStub).await;
+        let app = crate::app::AppContext::new(&crate::app::AppFlags {
+            output: crate::app::OutputFlags { no_color: true, quiet: true, json: false },
+            behaviour: crate::app::BehaviourFlags { yes: true },
+        }).expect("AppContext");
+        let result = run(&args, &app, &AlwaysUpToDate).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_run_invalid_signature_returns_err() {
-        use crate::output::OutputContext;
-
         struct BadSignature;
         impl UpdateChecker for BadSignature {
             fn check(&self, _current: &str) -> anyhow::Result<UpdateInfo> {
@@ -649,8 +497,11 @@ mod tests {
         }
 
         let args = UpdateArgs { check: false };
-        let ctx = OutputContext::new(true, true);
-        let result = run(&args, &ctx, &BadSignature, &MultipassUnreachableStub).await;
+        let app = crate::app::AppContext::new(&crate::app::AppFlags {
+            output: crate::app::OutputFlags { no_color: true, quiet: true, json: false },
+            behaviour: crate::app::BehaviourFlags { yes: true },
+        }).expect("AppContext");
+        let result = run(&args, &app, &BadSignature).await;
         assert!(result.is_err());
         assert!(
             result.unwrap_err().to_string().contains("checksum"),

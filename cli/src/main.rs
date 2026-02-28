@@ -6,17 +6,11 @@ use clap::Parser;
 
 mod app;
 mod application;
-mod assets;
 mod cli;
-mod command_runner;
 mod commands;
 mod domain;
 mod infra;
 mod output;
-mod provisioner;
-mod ssh;
-mod state;
-mod workspace;
 
 use cli::Cli;
 

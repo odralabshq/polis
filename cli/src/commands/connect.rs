@@ -3,9 +3,9 @@
 use anyhow::{Context, Result};
 use clap::Args;
 
+use crate::app::AppContext;
+use crate::domain::workspace::CONTAINER_NAME;
 use crate::infra::ssh::{SshConfigManager, ensure_identity_key};
-use crate::output::OutputContext;
-use crate::workspace::CONTAINER_NAME;
 
 /// Arguments for the connect command.
 #[derive(Args)]
@@ -20,10 +20,11 @@ pub struct ConnectArgs {}
 ///
 /// Returns an error if SSH config setup fails or permissions are unsafe.
 pub async fn run(
-    ctx: &OutputContext,
+    app: &AppContext,
     _args: ConnectArgs,
-    mp: &(impl crate::application::ports::InstanceInspector + crate::application::ports::ShellExecutor),
 ) -> Result<()> {
+    let ctx = &app.output;
+    let mp = &app.provisioner;
     let ssh_mgr = SshConfigManager::new()?;
 
     if ssh_mgr.is_configured()? {
@@ -31,7 +32,7 @@ pub async fn run(
         ssh_mgr.create_polis_config()?;
         ssh_mgr.create_sockets_dir()?;
     } else {
-        setup_ssh_config(&ssh_mgr)?;
+        setup_ssh_config(&ssh_mgr, app)?;
     }
 
     ssh_mgr.validate_permissions()?;
@@ -53,18 +54,13 @@ pub async fn run(
     Ok(())
 }
 
-fn setup_ssh_config(ssh_mgr: &SshConfigManager) -> Result<()> {
-    // setup_ssh_config is interactive (dialoguer prompt) — uses eprintln for
-    // user-facing messages since OutputContext is not available here.
+fn setup_ssh_config(ssh_mgr: &SshConfigManager, app: &AppContext) -> Result<()> {
+    // setup_ssh_config is interactive — uses eprintln for user-facing messages.
     eprintln!();
     eprintln!("Setting up SSH access...");
     eprintln!();
 
-    let confirmed = dialoguer::Confirm::new()
-        .with_prompt("Add SSH configuration to ~/.ssh/config?")
-        .default(true)
-        .interact()
-        .context("reading confirmation")?;
+    let confirmed = app.confirm("Add SSH configuration to ~/.ssh/config?", true)?;
 
     if !confirmed {
         eprintln!("Skipped. You can set up SSH manually later.");
@@ -80,7 +76,7 @@ fn setup_ssh_config(ssh_mgr: &SshConfigManager) -> Result<()> {
     Ok(())
 }
 
-fn show_connection_options(ctx: &OutputContext) {
+fn show_connection_options(ctx: &crate::output::OutputContext) {
     ctx.info("Connect with:");
     ctx.info("    ssh workspace");
     ctx.info("    code --remote ssh-remote+workspace /workspace");

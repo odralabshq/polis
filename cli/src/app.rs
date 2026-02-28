@@ -5,14 +5,12 @@
 //! Adding a new cross-cutting concern (e.g. `--verbose`, telemetry) requires
 //! only one field change here — zero command signatures change.
 
-#![allow(dead_code)] // Refactor in progress — some fields/methods not yet adopted by all commands
-
 use anyhow::Result;
 
-use crate::command_runner::TokioCommandRunner;
+use crate::infra::command_runner::TokioCommandRunner;
+use crate::infra::provisioner::MultipassProvisioner;
+use crate::infra::state::StateManager;
 use crate::output::{HumanRenderer, JsonRenderer, OutputContext, Renderer};
-use crate::provisioner::MultipassProvisioner;
-use crate::state::StateManager;
 
 /// Output rendering mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +92,7 @@ impl AppContext {
 
     /// Returns `true` when JSON output mode is active.
     #[must_use]
+    #[allow(dead_code)] // Used in tests and future command handlers
     pub fn is_json(&self) -> bool {
         self.mode == OutputMode::Json
     }
@@ -124,5 +123,28 @@ impl AppContext {
             .default(default)
             .interact()?;
         Ok(confirmed)
+    }
+
+    /// Returns a `TerminalReporter` bound to this context's output.
+    #[must_use]
+    #[allow(dead_code)] // Not yet called from command handlers
+    pub fn terminal_reporter(&self) -> crate::output::reporter::TerminalReporter<'_> {
+        crate::output::reporter::TerminalReporter::new(&self.output)
+    }
+
+    /// Extract bundled assets to a temp directory and return the path.
+    ///
+    /// The returned `TempDir` guard must be kept alive until all operations
+    /// using the assets are complete.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if asset extraction fails.
+    #[allow(dead_code)] // Not yet called from command handlers
+    pub fn assets_dir(
+        &self,
+    ) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
+        let (path, guard) = crate::infra::assets::extract_assets()?;
+        Ok((path, guard))
     }
 }

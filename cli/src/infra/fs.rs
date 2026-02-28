@@ -1,15 +1,18 @@
 //! Filesystem infrastructure — implements `LocalArtifactWriter` and raw file ops.
 
-#![allow(dead_code)] // Refactor in progress — defined ahead of callers
-
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 
 use crate::application::ports::LocalArtifactWriter;
+use crate::domain::workspace::hex_encode;
 
 /// Writes agent artifact files to the local filesystem under `.generated/`.
+/// Production filesystem implementation of `LocalArtifactWriter`.
+#[allow(dead_code)] // Not yet wired from command handlers
 pub struct LocalFs;
 
 impl LocalArtifactWriter for LocalFs {
@@ -38,11 +41,43 @@ impl LocalArtifactWriter for LocalFs {
 
 /// Compute the SHA256 hex digest of a file.
 ///
-/// Delegates to [`crate::workspace::image::sha256_file`].
+/// Reads the file in 64 KB chunks to avoid loading large files into memory.
 ///
 /// # Errors
 ///
 /// Returns an error if the file cannot be opened or read.
-pub fn sha256_file(path: &std::path::Path) -> Result<String> {
-    crate::workspace::image::sha256_file(path)
+pub fn sha256_file(path: &Path) -> Result<String> {
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 65536];
+    loop {
+        let n = file.read(&mut buf).context("reading file")?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex_encode(&hasher.finalize()))
+}
+
+/// Returns the image cache directory (legacy — used by `polis delete --all`).
+///
+/// Linux: `~/polis/images/`
+/// Windows/macOS: `~/.polis/images/`
+///
+/// # Errors
+///
+/// Returns an error if the home directory cannot be determined.
+pub fn images_dir() -> Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    return Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join("polis")
+        .join("images"));
+    #[cfg(not(target_os = "linux"))]
+    Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join(".polis")
+        .join("images"))
 }

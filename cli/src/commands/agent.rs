@@ -12,10 +12,11 @@ use polis_common::agent::AgentManifest as FullAgentManifest;
 
 use crate::app::AppContext;
 use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
+use crate::application::services::vm::lifecycle::{self as vm, VmState};
 use crate::domain::agent::validate::{AGENT_NAME_RE, validate_full_manifest};
+use crate::domain::workspace::CONTAINER_NAME;
+use crate::infra::state::StateManager;
 use crate::output::OutputContext;
-use crate::state::StateManager;
-use crate::workspace::{CONTAINER_NAME, vm};
 
 // Re-export domain types and validation for backward compatibility.
 #[allow(unused_imports)]
@@ -265,7 +266,7 @@ fn validate_agent_folder(path: &str) -> Result<String> {
 /// Ensure VM is running.
 async fn require_vm_running(mp: &impl InstanceInspector) -> Result<()> {
     anyhow::ensure!(
-        vm::state(mp).await? == vm::VmState::Running,
+        vm::state(mp).await? == VmState::Running,
         "VM is not running. Start it first: polis start"
     );
     Ok(())
@@ -452,7 +453,7 @@ async fn restart(mp: &(impl ShellExecutor + InstanceInspector), ctx: &OutputCont
         .ok_or_else(|| anyhow::anyhow!("no active agent. Start one: polis start --agent <name>"))?;
 
     anyhow::ensure!(
-        vm::state(mp).await? == vm::VmState::Running,
+        vm::state(mp).await? == VmState::Running,
         "Workspace is not running."
     );
 
@@ -562,7 +563,7 @@ async fn update(
 /// Require the VM to be running; return an error otherwise.
 async fn require_running(mp: &impl InstanceInspector) -> Result<()> {
     anyhow::ensure!(
-        vm::state(mp).await? == vm::VmState::Running,
+        vm::state(mp).await? == VmState::Running,
         "Workspace is not running. Start it first: polis start --agent <name>"
     );
     Ok(())
@@ -1255,3 +1256,4 @@ spec:
         assert_eq!(hash1, hash2, ".service.sha256 not deterministic");
     }
 }
+

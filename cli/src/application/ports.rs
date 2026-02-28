@@ -4,8 +4,6 @@
 //! This file imports only from `crate::domain` — never from `crate::infra`,
 //! `crate::commands`, or `crate::output`.
 
-#![allow(dead_code)] // Refactor in progress — traits defined ahead of callers
-
 use std::collections::HashMap;
 use std::process::Output;
 
@@ -39,6 +37,7 @@ pub struct InstanceSpec<'a> {
 
 /// VM instance state — preserved exactly from `provisioner.rs` (move-only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Reserved for future use — VmState in lifecycle.rs is the active enum
 pub enum InstanceState {
     Running,
     Stopped,
@@ -95,6 +94,7 @@ pub trait ShellExecutor {
     /// # Errors
     ///
     /// Returns an error if the process cannot be spawned.
+    #[allow(dead_code)] // Defined for future interactive use cases
     fn exec_spawn(&self, args: &[&str]) -> Result<tokio::process::Child>;
     /// Execute a command inside the VM with inherited stdio (interactive).
     async fn exec_status(&self, args: &[&str]) -> Result<std::process::ExitStatus>;
@@ -118,7 +118,22 @@ impl<T> VmProvisioner for T where
 #[allow(async_fn_in_trait)]
 pub trait CommandRunner {
     /// Run a program and capture its output.
+    ///
+    /// Implementations should delegate to `run_with_timeout` using the
+    /// instance's configured default timeout.
     async fn run(&self, program: &str, args: &[&str]) -> Result<Output>;
+    /// Run a program with a custom timeout override.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the process cannot be spawned or exceeds `timeout`.
+    /// On timeout, the child process must be killed (not left orphaned).
+    async fn run_with_timeout(
+        &self,
+        program: &str,
+        args: &[&str],
+        timeout: std::time::Duration,
+    ) -> Result<Output>;
     /// Run a program with stdin piped from `stdin`.
     async fn run_with_stdin(&self, program: &str, args: &[&str], stdin: &[u8]) -> Result<Output>;
     /// Spawn a program without waiting for it to finish.
@@ -126,6 +141,7 @@ pub trait CommandRunner {
     /// # Errors
     ///
     /// Returns an error if the process cannot be spawned.
+    #[allow(dead_code)] // Reserved for future background process use cases
     fn spawn(&self, program: &str, args: &[&str]) -> Result<tokio::process::Child>;
     /// Run a program and return only its exit status.
     async fn run_status(&self, program: &str, args: &[&str]) -> Result<std::process::ExitStatus>;
@@ -141,6 +157,7 @@ pub trait ProgressReporter {
     /// Emit a success message.
     fn success(&self, message: &str);
     /// Emit a warning message.
+    #[allow(dead_code)] // Not yet called from all service implementations
     fn warn(&self, message: &str);
 }
 
@@ -157,6 +174,7 @@ pub trait WorkspaceStateStore {
 
 /// Abstracts writing agent artifact files to the local filesystem.
 #[allow(async_fn_in_trait)]
+#[allow(dead_code)] // Not yet wired from command handlers
 pub trait LocalArtifactWriter {
     /// Write agent artifact files and return the directory path.
     async fn write_agent_artifacts(
@@ -166,10 +184,23 @@ pub trait LocalArtifactWriter {
     ) -> Result<std::path::PathBuf>;
 }
 
+// ── Network Probe Port ────────────────────────────────────────────────────────
+
+/// Abstracts network connectivity checks so application services can be tested
+/// without real network access.
+#[allow(async_fn_in_trait)]
+pub trait NetworkProbe {
+    /// Check TCP connectivity to the given host and port.
+    async fn check_tcp_connectivity(&self, host: &str, port: u16) -> Result<bool>;
+    /// Check DNS resolution for the given hostname.
+    async fn check_dns_resolution(&self, hostname: &str) -> Result<bool>;
+}
+
 // ── Health Port ───────────────────────────────────────────────────────────────
 
 /// Abstracts health probing so the doctor service can be tested with mocks.
 #[allow(async_fn_in_trait)]
+#[allow(dead_code)] // Not yet used from application services
 pub trait HealthProbe {
     /// Run all health probes and return the aggregated results.
     async fn probe_all(&self) -> Result<DoctorChecks>;
