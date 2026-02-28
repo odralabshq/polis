@@ -5,7 +5,8 @@
 use anyhow::{Context, Result};
 
 use crate::application::ports::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor, VmProvisioner,
+    AssetExtractor, FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec,
+    ShellExecutor, SshConfigurator, VmProvisioner,
 };
 
 const VM_CPUS: &str = "2";
@@ -131,7 +132,12 @@ pub async fn verify_cloud_init(mp: &impl ShellExecutor) -> Result<()> {
 ///
 /// Returns an error if prerequisites are not met, asset extraction fails,
 /// the multipass launch fails, or cloud-init reports a failure.
-pub async fn create(mp: &impl VmProvisioner, quiet: bool) -> Result<()> {
+pub async fn create(
+    mp: &impl VmProvisioner,
+    assets: &impl AssetExtractor,
+    ssh: &impl SshConfigurator,
+    quiet: bool,
+) -> Result<()> {
     check_prerequisites(mp).await?;
 
     if !quiet {
@@ -140,8 +146,10 @@ pub async fn create(mp: &impl VmProvisioner, quiet: bool) -> Result<()> {
 
     // Extract embedded assets (cloud-init.yaml, etc.) to a temp dir.
     // The TempDir guard must be held until launch completes.
-    let (assets_path, _assets_guard) =
-        crate::infra::assets::extract_assets().context("extracting embedded assets")?;
+    let (assets_path, _assets_guard) = assets
+        .extract_assets()
+        .await
+        .context("extracting embedded assets")?;
 
     // The Multipass daemon (especially snap-confined) runs as a separate user
     // and needs read access to the cloud-init file and its parent directory.
@@ -198,7 +206,7 @@ pub async fn create(mp: &impl VmProvisioner, quiet: bool) -> Result<()> {
 
     configure_credentials(mp).await;
     super::services::start_services_with_progress(mp, quiet).await;
-    pin_host_key().await;
+    pin_host_key(ssh).await;
     Ok(())
 }
 
@@ -221,9 +229,7 @@ pub async fn start(mp: &impl InstanceLifecycle) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the multipass stop command fails.
-pub async fn stop(
-    mp: &(impl InstanceLifecycle + ShellExecutor),
-) -> Result<()> {
+pub async fn stop(mp: &(impl InstanceLifecycle + ShellExecutor)) -> Result<()> {
     // Stop all polis- containers (including agent sidecars not in the base
     // compose file). Using `docker stop` with a filter is more reliable than
     // `docker compose stop` which only knows about services in its file.
@@ -253,10 +259,7 @@ pub async fn delete(mp: &impl InstanceLifecycle) {
 /// # Errors
 ///
 /// Returns an error if the multipass start command fails.
-pub async fn restart(
-    mp: &(impl InstanceLifecycle + ShellExecutor),
-    quiet: bool,
-) -> Result<()> {
+pub async fn restart(mp: &(impl InstanceLifecycle + ShellExecutor), quiet: bool) -> Result<()> {
     if !quiet {
         println!("✓ {}", inception_line("L0", "sequence started."));
     }
@@ -321,7 +324,7 @@ async fn configure_credentials(mp: &impl FileTransfer) {
     }
 }
 
-async fn pin_host_key() {
+async fn pin_host_key(ssh: &impl SshConfigurator) {
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("polis"));
     if let Ok(output) = tokio::process::Command::new(exe)
         .args(["_extract-host-key"])
@@ -330,7 +333,7 @@ async fn pin_host_key() {
         && output.status.success()
         && let Ok(host_key) = String::from_utf8(output.stdout)
     {
-        let _ = crate::infra::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim()));
+        let _ = ssh.update_host_key(host_key.trim()).await;
     }
 }
 

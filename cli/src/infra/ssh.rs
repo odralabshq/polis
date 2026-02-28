@@ -819,3 +819,23 @@ mod ssh_config_manager_tests {
     }
 }
 
+impl crate::application::ports::SshConfigurator for SshConfigManager {
+    async fn ensure_identity(&self) -> Result<String> {
+        ensure_identity_key()
+    }
+
+    async fn update_host_key(&self, host_key: &str) -> Result<()> {
+        KnownHostsManager::new()?.update(host_key)
+    }
+
+    async fn is_configured(&self) -> Result<bool> {
+        self.is_configured()
+    }
+
+    async fn setup_config(&self) -> Result<()> {
+        self.create_polis_config()?;
+        self.add_include_directive()?;
+        self.create_sockets_dir()?;
+        Ok(())
+    }
+}

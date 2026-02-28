@@ -5,13 +5,15 @@ use chrono::Utc;
 use clap::Args;
 
 use crate::app::AppContext;
-use crate::application::ports::VmProvisioner;
+use crate::application::ports::{
+    AssetExtractor, SshConfigurator, VmProvisioner, WorkspaceStateStore,
+};
 use crate::application::services::vm::{
+    health::wait_ready,
     integrity::{verify_image_digests, write_config_hash},
     lifecycle::{self as vm, VmState},
     provision::{generate_certs_and_secrets, transfer_config},
     services::pull_images,
-    health::wait_ready,
 };
 use crate::domain::workspace::WorkspaceState;
 use crate::infra::fs::sha256_file;
@@ -55,20 +57,20 @@ Please use an amd64 machine."
 pub async fn run(args: &StartArgs, app: &AppContext) -> Result<()> {
     let mp = &app.provisioner;
     let ctx = &app.output;
+    let state_mgr = &app.state_mgr;
+
     check_architecture()?;
-    let state_mgr = StateManager::new()?;
+
     let vm_state = vm::state(mp).await?;
 
     match vm_state {
-        VmState::Running => return handle_running_vm(&state_mgr, args, ctx),
+        VmState::Running => return handle_running_vm(state_mgr, args, ctx),
         VmState::NotFound => {
-            // create_and_start_vm handles the full provisioning flow including
-            // health check and config hash write.
-            create_and_start_vm(&state_mgr, args, mp, ctx).await?;
+            create_and_start_vm(app, args, mp).await?;
             print_success_message(args.agent.as_deref(), ctx);
             return Ok(());
         }
-        _ => restart_vm(&state_mgr, args, mp, ctx).await?,
+        _ => restart_vm(app, args, mp).await?,
     }
 
     wait_ready(mp, ctx.quiet).await?;
@@ -111,15 +113,17 @@ fn handle_running_vm(
 /// 9. `health::wait_ready()` — wait for health check
 /// 10. `vm::write_config_hash()` — write hash AFTER successful startup
 async fn create_and_start_vm(
-    state_mgr: &StateManager,
+    app: &AppContext,
     args: &StartArgs,
     mp: &impl VmProvisioner,
-    ctx: &OutputContext,
 ) -> Result<()> {
     // Step 1: Extract all 3 embedded assets to a temp dir.
     // The TempDir guard must be held until all operations complete.
-    let (assets_dir, _assets_guard) =
-        crate::infra::assets::extract_assets().context("extracting embedded assets")?;
+    let (assets_dir, _assets_guard): (std::path::PathBuf, Box<dyn std::any::Any>) = app
+        .assets
+        .extract_assets()
+        .await
+        .context("extracting embedded assets")?;
 
     // Compute the config tarball hash now (before transfer) so we can write it
     // after successful startup. Hash is computed on the host from the embedded asset.
@@ -127,7 +131,7 @@ async fn create_and_start_vm(
     let config_hash = sha256_file(&tar_path).context("computing config tarball SHA256")?;
 
     // Step 2: Launch VM with cloud-init and verify cloud-init completed.
-    vm::create(mp, ctx.quiet).await?;
+    vm::create(mp, &app.assets, &app.ssh, app.output.quiet).await?;
 
     // Step 3: Transfer config tarball into VM, extract to /opt/polis, write .env.
     let version = env!("CARGO_PKG_VERSION");
@@ -155,7 +159,7 @@ async fn create_and_start_vm(
     start_compose(mp, args.agent.as_deref()).await?;
 
     // Step 8: Wait for all services to become healthy.
-    wait_ready(mp, ctx.quiet).await?;
+    wait_ready(mp, app.output.quiet).await?;
 
     // Step 9: Write config hash AFTER successful startup so failed provisioning
     // can be retried (Requirements 15.1, 15.3).
@@ -172,15 +176,12 @@ async fn create_and_start_vm(
         image_source: None,
         active_agent: args.agent.clone(),
     };
-    state_mgr.save(&state)
+    app.state_mgr.save_async(&state).await
 }
 
-async fn restart_vm(
-    state_mgr: &StateManager,
-    args: &StartArgs,
-    mp: &impl VmProvisioner,
-    ctx: &OutputContext,
-) -> Result<()> {
+async fn restart_vm(app: &AppContext, args: &StartArgs, mp: &impl VmProvisioner) -> Result<()> {
+    let ctx = &app.output;
+    let state_mgr = &app.state_mgr;
     vm::restart(mp, ctx.quiet).await?;
 
     if args.agent.is_some() {
@@ -196,7 +197,7 @@ async fn restart_vm(
         active_agent: None,
     });
     state.active_agent.clone_from(&args.agent);
-    state_mgr.save(&state)
+    state_mgr.save_async(&state).await
 }
 
 /// Validate and generate artifacts for an agent if one is requested.
@@ -344,7 +345,11 @@ pub async fn generate_agent_artifacts(mp: &impl VmProvisioner, agent_name: &str)
     .context("spawn_blocking for artifact generation")??;
 
     // Transfer the generated artifacts back into the VM.
-    let generated_src = tmp.path().join("agents").join(agent_name).join(".generated");
+    let generated_src = tmp
+        .path()
+        .join("agents")
+        .join(agent_name)
+        .join(".generated");
     let generated_src_str = generated_src.to_string_lossy().to_string();
     let generated_dest = format!("{VM_POLIS_ROOT}/agents/{agent_name}/.generated");
     let transfer_out = mp

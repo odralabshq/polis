@@ -205,3 +205,41 @@ pub trait HealthProbe {
     /// Run all health probes and return the aggregated results.
     async fn probe_all(&self) -> Result<DoctorChecks>;
 }
+
+// ── Asset Management Port ─────────────────────────────────────────────────────
+
+/// Abstracts extraction of embedded assets.
+#[allow(async_fn_in_trait)]
+pub trait AssetExtractor {
+    /// Extract all embedded assets to a temporary directory.
+    ///
+    /// The returned directory must be accessible to the VM provisioner (e.g.
+    /// under `$HOME` on Linux if using snap-confined Multipass).
+    ///
+    /// Returns `(path, guard)` where `path` is the directory containing the
+    /// extracted files and `guard` is an object that should delete the
+    /// directory when dropped.
+    async fn extract_assets(&self) -> Result<(std::path::PathBuf, Box<dyn std::any::Any>)>;
+
+    /// Get the raw bytes of a single embedded asset.
+    async fn get_asset(&self, name: &str) -> Result<&'static [u8]>;
+}
+
+// ── SSH Configuration Port ────────────────────────────────────────────────────
+
+/// Abstracts SSH environment management for VM access.
+#[allow(async_fn_in_trait)]
+pub trait SshConfigurator {
+    /// Ensure the user's SSH identity (private key) exists.
+    /// Returns the public key material.
+    async fn ensure_identity(&self) -> Result<String>;
+
+    /// Update the known_hosts file with the given host key.
+    async fn update_host_key(&self, host_key: &str) -> Result<()>;
+
+    /// Check if the local SSH config is correctly included in the user's config.
+    async fn is_configured(&self) -> Result<bool>;
+
+    /// Set up the local SSH config.
+    async fn setup_config(&self) -> Result<()>;
+}

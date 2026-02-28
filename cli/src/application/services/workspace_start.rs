@@ -6,13 +6,15 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 
-use crate::application::ports::{ProgressReporter, VmProvisioner, WorkspaceStateStore};
+use crate::application::ports::{
+    AssetExtractor, ProgressReporter, SshConfigurator, VmProvisioner, WorkspaceStateStore,
+};
 use crate::application::services::vm::{
+    health::wait_ready,
     integrity::{verify_image_digests, write_config_hash},
     lifecycle::{self as vm, VmState},
     provision::{generate_certs_and_secrets, transfer_config},
     services::pull_images,
-    health::wait_ready,
 };
 use crate::domain::workspace::WorkspaceState;
 use crate::infra::fs::sha256_file;
@@ -45,6 +47,8 @@ pub enum StartOutcome {
 pub async fn start_workspace(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
+    assets: &impl AssetExtractor,
+    ssh: &impl SshConfigurator,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     assets_dir: &std::path::Path,
@@ -57,14 +61,23 @@ pub async fn start_workspace(
     match vm_state {
         VmState::Running => handle_running_vm(state_mgr, agent).await,
         VmState::NotFound => {
-            create_and_start_vm(provisioner, state_mgr, reporter, agent, assets_dir, version)
-                .await?;
+            create_and_start_vm(
+                provisioner,
+                state_mgr,
+                assets,
+                ssh,
+                reporter,
+                agent,
+                assets_dir,
+                version,
+            )
+            .await?;
             Ok(StartOutcome::Created {
                 agent: agent.map(str::to_owned),
             })
         }
         _ => {
-            restart_vm(provisioner, state_mgr, reporter, agent).await?;
+            restart_vm(provisioner, state_mgr, assets, ssh, reporter, agent).await?;
             wait_ready(provisioner, false).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
@@ -97,6 +110,8 @@ async fn handle_running_vm(
 async fn create_and_start_vm(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
+    assets: &impl AssetExtractor,
+    ssh: &impl SshConfigurator,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     assets_dir: &std::path::Path,
@@ -109,7 +124,7 @@ async fn create_and_start_vm(
     reporter.step("workspace isolation starting...");
 
     // Step 2: Launch VM with cloud-init.
-    vm::create(provisioner, true).await?;
+    vm::create(provisioner, assets, ssh, true).await?;
     reporter.success("workspace isolation started");
 
     // Step 3: Transfer config tarball.
@@ -171,6 +186,8 @@ async fn create_and_start_vm(
 async fn restart_vm(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
+    _assets: &impl AssetExtractor,
+    _ssh: &impl SshConfigurator,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
 ) -> Result<()> {
@@ -263,7 +280,11 @@ async fn setup_agent<P: VmProvisioner>(provisioner: &P, agent_name: &str) -> Res
     .context("spawn_blocking for artifact generation")??;
 
     // Transfer the generated artifacts back into the VM.
-    let generated_src = tmp.path().join("agents").join(agent_name).join(".generated");
+    let generated_src = tmp
+        .path()
+        .join("agents")
+        .join(agent_name)
+        .join(".generated");
     let generated_src_str = generated_src.to_string_lossy().to_string();
     let generated_dest = format!("{VM_ROOT}/agents/{agent_name}/.generated");
     let transfer_out = provisioner

@@ -7,8 +7,10 @@
 
 use anyhow::Result;
 
+use crate::infra::assets::EmbeddedAssets;
 use crate::infra::command_runner::TokioCommandRunner;
 use crate::infra::provisioner::MultipassProvisioner;
+use crate::infra::ssh::SshConfigManager;
 use crate::infra::state::StateManager;
 use crate::output::{HumanRenderer, JsonRenderer, OutputContext, Renderer};
 
@@ -58,6 +60,10 @@ pub struct AppContext {
     pub provisioner: MultipassProvisioner<TokioCommandRunner>,
     /// Workspace state manager.
     pub state_mgr: StateManager,
+    /// Embedded assets extractor.
+    pub assets: EmbeddedAssets,
+    /// SSH configuration manager.
+    pub ssh: SshConfigManager,
     /// When `true`, skip interactive prompts and use defaults.
     ///
     /// Set when `--yes` / `-y` is passed, or when the `CI` or `POLIS_YES`
@@ -86,6 +92,8 @@ impl AppContext {
             mode,
             provisioner: MultipassProvisioner::default_runner(),
             state_mgr: StateManager::new()?,
+            assets: EmbeddedAssets,
+            ssh: SshConfigManager::new()?,
             non_interactive,
         })
     }
@@ -141,9 +149,7 @@ impl AppContext {
     ///
     /// Returns an error if asset extraction fails.
     #[allow(dead_code)] // Not yet called from command handlers
-    pub fn assets_dir(
-        &self,
-    ) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
+    pub fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
         let (path, guard) = crate::infra::assets::extract_assets()?;
         Ok((path, guard))
     }

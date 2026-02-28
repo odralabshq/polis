@@ -13,6 +13,20 @@ use include_dir::{Dir, include_dir};
 /// All 3 embedded assets, compiled in at build time.
 static EMBEDDED_ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../.build/assets");
 
+/// Infrastructure implementation of the `AssetExtractor` port.
+pub struct EmbeddedAssets;
+
+impl crate::application::ports::AssetExtractor for EmbeddedAssets {
+    async fn extract_assets(&self) -> Result<(PathBuf, Box<dyn std::any::Any>)> {
+        let (path, guard) = extract_assets()?;
+        Ok((path, Box::new(guard)))
+    }
+
+    async fn get_asset(&self, name: &str) -> Result<&'static [u8]> {
+        get_asset(name)
+    }
+}
+
 /// Extract all embedded assets to a temporary directory under `~/.polis/tmp/`.
 ///
 /// The Multipass snap daemon is strictly confined and can only read files under
