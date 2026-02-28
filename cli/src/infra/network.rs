@@ -9,6 +9,9 @@ use crate::application::ports::NetworkProbe;
 pub struct TokioNetworkProbe;
 
 impl NetworkProbe for TokioNetworkProbe {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn check_tcp_connectivity(&self, host: &str, port: u16) -> Result<bool> {
         let addr = format!("{host}:{port}");
         let result = tokio::task::spawn_blocking(move || {
@@ -25,6 +28,9 @@ impl NetworkProbe for TokioNetworkProbe {
         Ok(result)
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn check_dns_resolution(&self, hostname: &str) -> Result<bool> {
         let addr = format!("{hostname}:443");
         let result = tokio::task::spawn_blocking(move || {

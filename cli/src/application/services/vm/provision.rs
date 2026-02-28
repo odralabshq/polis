@@ -295,23 +295,35 @@ mod tests {
     }
 
     impl FileTransfer for TransferConfigSpy {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn transfer(&self, src: &str, dst: &str) -> Result<Output> {
             self.transferred
                 .borrow_mut()
                 .push((src.to_string(), dst.to_string()));
             Ok(ok(b""))
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
             anyhow::bail!("not expected")
         }
     }
     impl ShellExecutor for TransferConfigSpy {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             self.exec_calls
                 .borrow_mut()
                 .push(args.iter().map(std::string::ToString::to_string).collect());
             Ok(ok(b""))
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_with_stdin(&self, args: &[&str], stdin: &[u8]) -> Result<Output> {
             self.exec_with_stdin_calls.borrow_mut().push((
                 args.iter().map(std::string::ToString::to_string).collect(),
@@ -319,9 +331,15 @@ mod tests {
             ));
             Ok(ok(b""))
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             anyhow::bail!("not expected")
         }

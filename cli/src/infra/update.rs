@@ -13,6 +13,9 @@ pub const POLIS_PUBLIC_KEY_B64: &str = "jI42dOaR/5mN1T0hH+QeWc+L0aH9BwG1L7Yd/4O5
 pub struct GithubUpdateChecker;
 
 impl UpdateChecker for GithubUpdateChecker {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn check(&self, current: &str) -> Result<UpdateInfo> {
         let releases = self_update::backends::github::ReleaseList::configure()
             .repo_owner("OdraLabsHQ")
@@ -57,6 +60,9 @@ impl UpdateChecker for GithubUpdateChecker {
         })
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn verify_signature(&self, download_url: &str) -> Result<SignatureInfo> {
         let response = ureq::get(download_url)
             .call()
@@ -108,6 +114,9 @@ impl UpdateChecker for GithubUpdateChecker {
         })
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn perform_update(&self, version: &str) -> Result<()> {
         let status = self_update::backends::github::Update::configure()
             .repo_owner("OdraLabsHQ")
@@ -184,6 +193,9 @@ pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>> {
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::wildcard_imports)]
 mod tests {
     use super::*;
+        use crate::domain::workspace::hex_encode;
+        
+
 
     // -----------------------------------------------------------------------
     // parse_release_notes — unit
@@ -252,76 +264,6 @@ mod tests {
             let name = get_asset_name().expect("linux-amd64 should be supported");
             assert_eq!(name, "polis-linux-amd64.tar.gz");
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // run() via UpdateChecker trait mock — unit
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn test_run_up_to_date_returns_ok() {
-        struct AlwaysUpToDate;
-        impl UpdateChecker for AlwaysUpToDate {
-            fn check(&self, _current: &str) -> anyhow::Result<UpdateInfo> {
-                Ok(UpdateInfo::UpToDate)
-            }
-            fn verify_signature(&self, _url: &str) -> anyhow::Result<SignatureInfo> {
-                anyhow::bail!("not expected: should not verify when up to date")
-            }
-            fn perform_update(&self, _version: &str) -> anyhow::Result<()> {
-                anyhow::bail!("not expected: should not update when up to date")
-            }
-        }
-
-        let args = UpdateArgs { check: true };
-        let app = crate::app::AppContext::new(&crate::app::AppFlags {
-            output: crate::app::OutputFlags {
-                no_color: true,
-                quiet: true,
-                json: false,
-            },
-            behaviour: crate::app::BehaviourFlags { yes: true },
-        })
-        .expect("AppContext");
-        let result = run(&args, &app, &AlwaysUpToDate).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_run_invalid_signature_returns_err() {
-        struct BadSignature;
-        impl UpdateChecker for BadSignature {
-            fn check(&self, _current: &str) -> anyhow::Result<UpdateInfo> {
-                Ok(UpdateInfo::Available {
-                    version: "9.9.9".to_string(),
-                    release_notes: vec![],
-                    download_url: "https://example.com/polis.tar.gz".to_string(),
-                })
-            }
-            fn verify_signature(&self, _url: &str) -> anyhow::Result<SignatureInfo> {
-                Err(anyhow::anyhow!("checksum verification failed"))
-            }
-            fn perform_update(&self, _version: &str) -> anyhow::Result<()> {
-                anyhow::bail!("not expected: should not update when checksum is invalid")
-            }
-        }
-
-        let args = UpdateArgs { check: false };
-        let app = crate::app::AppContext::new(&crate::app::AppFlags {
-            output: crate::app::OutputFlags {
-                no_color: true,
-                quiet: true,
-                json: false,
-            },
-            behaviour: crate::app::BehaviourFlags { yes: true },
-        })
-        .expect("AppContext");
-        let result = run(&args, &app, &BadSignature).await;
-        assert!(result.is_err());
-        assert!(
-            result.unwrap_err().to_string().contains("checksum"),
-            "error should mention checksum"
-        );
     }
 
     // -----------------------------------------------------------------------

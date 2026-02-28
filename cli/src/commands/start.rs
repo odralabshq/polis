@@ -16,18 +16,29 @@ pub struct StartArgs {
     pub agent: Option<String>,
 }
 
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 /// Run `polis start`.
 pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     let (assets_dir, _assets_guard) = app.assets_dir().context("extracting assets")?;
     let version = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
 
+    let opts = crate::application::services::workspace_start::StartOptions {
+        reporter: &reporter,
+        agent: args.agent.as_deref(),
+        assets_dir: &assets_dir,
+        version,
+    };
     let outcome = service::start_workspace(
         &app.provisioner,
         &app.state_mgr,
         &app.assets,
         &app.ssh,
-        &app.local_fs, &app.local_fs, &reporter, args.agent.as_deref(), &assets_dir, version,
+        &app.local_fs,
+        &app.local_fs,
+        opts,
     )
     .await?;
 

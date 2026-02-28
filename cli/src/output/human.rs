@@ -19,7 +19,7 @@ impl<'a> HumanRenderer<'a> {
         if self.ctx.quiet {
             return;
         }
-        self.ctx.info(&format!("polis v{} ({} {})", version, commit, build_date));
+        self.ctx.info(&format!("polis v{version} ({commit} {build_date})"));
     }
     /// Create a new `HumanRenderer` wrapping the given output context.
     #[must_use]

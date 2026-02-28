@@ -36,10 +36,16 @@ impl TokioCommandRunner {
 }
 
 impl CommandRunner for TokioCommandRunner {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
         self.run_with_timeout(program, args, self.timeout).await
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn run_with_timeout(
         &self,
         program: &str,
@@ -89,6 +95,9 @@ impl CommandRunner for TokioCommandRunner {
         }
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn run_with_stdin(&self, program: &str, args: &[&str], input: &[u8]) -> Result<Output> {
         let mut child = tokio::process::Command::new(program)
             .args(args)
@@ -144,6 +153,9 @@ impl CommandRunner for TokioCommandRunner {
         }
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     #[allow(dead_code)] // Reserved for future interactive command spawning
     fn spawn(&self, program: &str, args: &[&str]) -> Result<tokio::process::Child> {
         tokio::process::Command::new(program)
@@ -155,6 +167,9 @@ impl CommandRunner for TokioCommandRunner {
             .with_context(|| format!("failed to spawn {program}"))
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn run_status(&self, program: &str, args: &[&str]) -> Result<std::process::ExitStatus> {
         let mut child = tokio::process::Command::new(program)
             .args(args)

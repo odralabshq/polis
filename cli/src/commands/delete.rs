@@ -7,6 +7,10 @@ use crate::application::services::cleanup_service;
 use crate::commands::DeleteArgs;
 
 /// Run `polis delete [--all]`.
+///
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::ExitCode> {
     let quiet = app.output.quiet;
     let reporter = app.terminal_reporter();
@@ -36,10 +40,10 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
         .await?;
     } else {
         if !quiet {
-            println!();
-            println!("This will remove your workspace.");
-            println!("Configuration, certificates, and cached downloads will be preserved.");
-            println!();
+            app.output.info("");
+            app.output.info("This will remove your workspace.");
+            app.output.info("Configuration, certificates, and cached downloads will be preserved.");
+            app.output.info("");
         }
 
         if !args.yes && !app.confirm("Continue?", false)? {
@@ -51,7 +55,7 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
     }
 
     if !quiet {
-        println!("\nStart fresh: polis start");
+        app.output.info("\nStart fresh: polis start");
     }
 
     Ok(std::process::ExitCode::SUCCESS)

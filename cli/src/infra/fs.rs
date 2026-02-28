@@ -16,6 +16,9 @@ use crate::domain::workspace::hex_encode;
 pub struct LocalFs;
 
 impl LocalArtifactWriter for LocalFs {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn write_agent_artifacts(
         &self,
         agent_name: &str,
@@ -40,6 +43,9 @@ impl LocalArtifactWriter for LocalFs {
 }
 
 impl crate::application::ports::FileHasher for LocalFs {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn sha256_file(&self, path: &Path) -> Result<String> {
         sha256_file(path)
     }
@@ -50,6 +56,9 @@ impl crate::application::ports::LocalPaths for LocalFs {
         images_dir().unwrap_or_else(|_| PathBuf::from("images"))
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn polis_dir(&self) -> Result<PathBuf> {
         dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))
@@ -62,33 +71,51 @@ impl crate::application::ports::LocalFs for LocalFs {
         path.exists()
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn create_dir_all(&self, path: &Path) -> Result<()> {
         std::fs::create_dir_all(path)
             .with_context(|| format!("creating directory {}", path.display()))
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn remove_dir_all(&self, path: &Path) -> Result<()> {
         std::fs::remove_dir_all(path)
             .with_context(|| format!("removing directory {}", path.display()))
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn remove_file(&self, path: &Path) -> Result<()> {
         std::fs::remove_file(path).with_context(|| format!("removing file {}", path.display()))
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn write(&self, path: &Path, content: String) -> Result<()> {
         std::fs::write(path, content).with_context(|| format!("writing file {}", path.display()))
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn read_to_string(&self, path: &Path) -> Result<String> {
         std::fs::read_to_string(path).with_context(|| format!("reading file {}", path.display()))
     }
 
-    fn set_permissions(&self, path: &Path, _mode: u32) -> Result<()> {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
+    fn set_permissions(&self, path: &Path, mode: u32) -> Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(_mode))
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
                 .with_context(|| format!("setting permissions on {}", path.display()))?;
         }
         Ok(())

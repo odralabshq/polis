@@ -25,6 +25,10 @@ impl JsonRenderer {
         Ok(())
     }
     /// Render workspace/agent/security status as JSON.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     pub fn render_status(status: &StatusOutput) -> Result<()> {
         println!(
             "{}",
@@ -34,6 +38,10 @@ impl JsonRenderer {
     }
 
     /// Render the list of installed agents as JSON.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     pub fn render_agent_list(agents: &[crate::domain::agent::AgentInfo]) -> Result<()> {
         println!(
             "{}",
@@ -44,6 +52,10 @@ impl JsonRenderer {
     }
 
     /// Render the current polis configuration as JSON.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     pub fn render_config(config: &crate::domain::config::PolisConfig) -> Result<()> {
         println!(
             "{}",
@@ -53,6 +65,10 @@ impl JsonRenderer {
     }
 
     /// Render doctor health check results as JSON.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     pub fn render_doctor(checks: &DoctorChecks, issues: &[String]) -> Result<()> {
         let status = if issues.is_empty() {
             "healthy"
@@ -97,6 +113,10 @@ impl JsonRenderer {
 }
 
 /// Format a JSON error object per the spec error schema (issue 18 §2.7).
+///
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 pub fn format_error(message: &str, code: &str) -> Result<String> {
     let obj = serde_json::json!({
         "error": true,

@@ -6,7 +6,7 @@ use clap::Args;
 
 use crate::app::AppContext;
 use crate::application::services::update::{
-    SignatureInfo, UpdateChecker, UpdateInfo, UpdateVmConfigOutcome, update_vm_config,
+    UpdateChecker, UpdateInfo, UpdateVmConfigOutcome, update_vm_config,
 };
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
 
@@ -18,23 +18,19 @@ pub struct UpdateArgs {
     pub check: bool,
 }
 
-/// Embedded ed25519 public key (base64) for verifying signed CLI release archives.
-///
-/// The corresponding private key is stored as `POLIS_SIGNING_KEY` in GitHub
-/// Actions secrets and used by the release workflow to sign `.tar.gz` / `.zip`
-/// archives via `zipsign`.
+// Embedded ed25519 public key (base64) for verifying signed CLI release archives.
+// The corresponding private key is stored as `POLIS_SIGNING_KEY` in GitHub
+// Actions secrets and used by the release workflow to sign `.tar.gz` / `.zip`
+// archives via `zipsign`.
 
-/// Production implementation using GitHub releases.
+// Production implementation using GitHub releases.
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Run `polis update [--check]`.
-///
 /// Checks GitHub for a newer release, verifies its signature, prompts the user,
 /// then downloads and replaces the current binary. If the VM is running, also
 /// updates the VM config.
-///
 /// # Errors
-///
 /// Returns an error if the version check, signature verification, download, or
 /// user prompt fails.
 #[allow(clippy::unused_async)] // async contract: will gain awaits when download is made async
@@ -90,14 +86,11 @@ pub async fn run(args: &UpdateArgs, app: &AppContext, checker: &impl UpdateCheck
 }
 
 /// Update the VM config when the CLI has been updated to a new version.
-///
 /// Extracts embedded assets, computes the SHA256 of the new config tarball,
 /// and compares it against the hash stored in the VM. If they differ, stops
 /// services, transfers the new config, pulls images, verifies digests,
 /// restarts services, and writes the new hash.
-///
 /// # Errors
-///
 /// Returns an error if any step of the update cycle fails.
 pub async fn update_config(app: &AppContext) -> Result<()> {
     let ctx = &app.output;
@@ -128,6 +121,8 @@ pub async fn update_config(app: &AppContext) -> Result<()> {
     Ok(())
 }
 
+/// # Errors
+/// This function will return an error if the underlying operations fail.
 fn apply_cli_update(
     app: &AppContext,
     checker: &impl UpdateChecker,
@@ -174,6 +169,8 @@ fn apply_cli_update(
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::wildcard_imports)]
 mod tests {
+    use crate::application::services::update::SignatureInfo;
+    use crate::domain::workspace::hex_encode;
     use super::*;
 
     // -----------------------------------------------------------------------
@@ -184,12 +181,18 @@ mod tests {
     async fn test_run_up_to_date_returns_ok() {
         struct AlwaysUpToDate;
         impl UpdateChecker for AlwaysUpToDate {
+            /// # Errors
+            /// This function will return an error if the underlying operations fail.
             fn check(&self, _current: &str) -> anyhow::Result<UpdateInfo> {
                 Ok(UpdateInfo::UpToDate)
             }
+            /// # Errors
+            /// This function will return an error if the underlying operations fail.
             fn verify_signature(&self, _url: &str) -> anyhow::Result<SignatureInfo> {
                 anyhow::bail!("not expected: should not verify when up to date")
             }
+            /// # Errors
+            /// This function will return an error if the underlying operations fail.
             fn perform_update(&self, _version: &str) -> anyhow::Result<()> {
                 anyhow::bail!("not expected: should not update when up to date")
             }
@@ -213,6 +216,8 @@ mod tests {
     async fn test_run_invalid_signature_returns_err() {
         struct BadSignature;
         impl UpdateChecker for BadSignature {
+            /// # Errors
+            /// This function will return an error if the underlying operations fail.
             fn check(&self, _current: &str) -> anyhow::Result<UpdateInfo> {
                 Ok(UpdateInfo::Available {
                     version: "9.9.9".to_string(),
@@ -220,9 +225,13 @@ mod tests {
                     download_url: "https://example.com/polis.tar.gz".to_string(),
                 })
             }
+            /// # Errors
+            /// This function will return an error if the underlying operations fail.
             fn verify_signature(&self, _url: &str) -> anyhow::Result<SignatureInfo> {
                 Err(anyhow::anyhow!("checksum verification failed"))
             }
+            /// # Errors
+            /// This function will return an error if the underlying operations fail.
             fn perform_update(&self, _version: &str) -> anyhow::Result<()> {
                 anyhow::bail!("not expected: should not update when checksum is invalid")
             }

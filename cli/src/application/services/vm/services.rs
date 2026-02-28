@@ -135,25 +135,6 @@ mod tests {
         }
     }
 
-    struct Stub;
-    impl ShellExecutor for Stub {
-        async fn exec(&self, _: &[&str]) -> Result<std::process::Output> {
-            Ok(std::process::Output {
-                status: exit_status(0),
-                stdout: vec![],
-                stderr: vec![],
-            })
-        }
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<std::process::Output> {
-            anyhow::bail!("not expected")
-        }
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            anyhow::bail!("not expected")
-        }
-    }
 
     struct ReporterStub;
     impl ProgressReporter for ReporterStub {

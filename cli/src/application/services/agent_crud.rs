@@ -22,7 +22,7 @@ use crate::application::services::vm::lifecycle::{self as vm, VmState};
 ///
 /// Returns an error if the manifest cannot be read/parsed, or if any file
 /// write fails.
-async fn generate_and_write_artifacts(local_fs: &impl crate::application::ports::LocalFs, polis_dir: &std::path::Path, name: &str) -> Result<()> {
+fn generate_and_write_artifacts(local_fs: &impl crate::application::ports::LocalFs, polis_dir: &std::path::Path, name: &str) -> Result<()> {
     use crate::domain::agent::artifacts;
 
     let manifest_path = polis_dir.join("agents").join(name).join("agent.yaml");
@@ -83,15 +83,8 @@ pub async fn install_agent(
         local_fs.exists(&manifest_path),
         "No agent.yaml found in: {agent_path}"
     );
-    let content = tokio::task::spawn_blocking({
-        let manifest_path = manifest_path.clone();
-        move || {
-            std::fs::read_to_string(&manifest_path)
-                .with_context(|| format!("reading {}", manifest_path.display()))
-        }
-    })
-    .await
-    .context("spawn_blocking for manifest read")??;
+    let content = local_fs.read_to_string(&manifest_path)?;
+
     let manifest: polis_common::agent::AgentManifest =
         serde_yaml::from_str(&content).context("failed to parse agent.yaml")?;
     crate::domain::agent::validate::validate_full_manifest(&manifest)?;
@@ -118,7 +111,7 @@ pub async fn install_agent(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("cannot determine parent directory of agent folder"))?;
     let polis_dir = parent_dir.parent().unwrap_or(parent_dir);
-    generate_and_write_artifacts(local_fs, polis_dir, &name).await?;
+    generate_and_write_artifacts(local_fs, polis_dir, &name)?;
 
     // Step 5: Transfer agent folder to VM.
     reporter.step(&format!("copying '{name}' to VM..."));
@@ -252,17 +245,11 @@ pub async fn update_agent(
     // Write manifest to a temp dir and run the Rust generator.
     let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
     let agent_dir = tmp.path().join("agents").join(&name);
-    let agent_dir_clone = agent_dir.clone();
-    let stdout_bytes = cat_out.stdout.clone();
-    tokio::task::spawn_blocking(move || {
-        std::fs::create_dir_all(&agent_dir_clone).context("creating temp agent dir")?;
-        std::fs::write(agent_dir_clone.join("agent.yaml"), &stdout_bytes)
-            .context("writing agent.yaml to temp dir")
-    })
-    .await
-    .context("spawn_blocking for temp dir setup")??;
+    let stdout_str = String::from_utf8(cat_out.stdout).context("parsing agent.yaml from VM as UTF-8")?;
+    local_fs.create_dir_all(&agent_dir)?;
+    local_fs.write(&agent_dir.join("agent.yaml"), stdout_str)?;
 
-    generate_and_write_artifacts(local_fs, tmp.path(), &name).await?;
+    generate_and_write_artifacts(local_fs, tmp.path(), &name)?;
 
     // Transfer the regenerated .generated/ folder back into the VM.
     reporter.step("transferring updated artifacts...");
@@ -307,6 +294,10 @@ pub async fn update_agent(
 }
 
 /// List all installed agents.
+///
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 pub async fn list_agents(
     provisioner: &impl ShellExecutor,
     state_mgr: &impl WorkspaceStateStore,

@@ -43,5 +43,5 @@ pub async fn run(args: &ExecArgs, mp: &impl ShellExecutor) -> Result<ExitCode> {
 
     let code = status.code().unwrap_or(1);
     #[allow(clippy::cast_possible_truncation)]
-    Ok(ExitCode::from(code as u8))
+    Ok(ExitCode::from(u8::try_from(code).unwrap_or(255)))
 }

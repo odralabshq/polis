@@ -5,6 +5,10 @@ use crate::application::services::vm::lifecycle as vm;
 use anyhow::Result;
 
 /// Delete the workspace VM and clear its state.
+///
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 pub async fn delete_workspace(
     mp: &impl VmProvisioner,
     state_mgr: &impl crate::application::ports::WorkspaceStateStore,
@@ -27,6 +31,10 @@ pub async fn delete_workspace(
 }
 
 /// Delete all workspace data (images, state, agents, config, certs).
+///
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 pub async fn delete_all(
     mp: &impl VmProvisioner,
     state_mgr: &impl crate::application::ports::WorkspaceStateStore,

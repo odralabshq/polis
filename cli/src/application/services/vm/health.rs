@@ -159,6 +159,9 @@ mod property_tests {
     struct PropTestExecStub(Result<Output>);
 
     impl ShellExecutor for PropTestExecStub {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             match &self.0 {
                 Ok(o) => Ok(Output {
@@ -169,12 +172,21 @@ mod property_tests {
                 Err(e) => Err(anyhow::anyhow!("{e}")),
             }
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             anyhow::bail!("not expected")
         }
@@ -339,6 +351,9 @@ mod tests {
     /// Mock multipass with configurable `exec()` output for health checks.
     struct MultipassExecStub(Result<Output>);
     impl ShellExecutor for MultipassExecStub {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             match &self.0 {
                 Ok(o) => Ok(Output {
@@ -349,12 +364,21 @@ mod tests {
                 Err(e) => Err(anyhow::anyhow!("{e}")),
             }
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             anyhow::bail!("not expected")
         }

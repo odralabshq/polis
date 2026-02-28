@@ -53,6 +53,9 @@ pub async fn run_doctor(
 
 // ── Internal probes ───────────────────────────────────────────────────────────
 
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 async fn probe_prerequisites(
     cmd_runner: &impl CommandRunner,
 ) -> Result<crate::domain::health::PrerequisiteChecks> {
@@ -84,6 +87,9 @@ async fn probe_prerequisites(
     })
 }
 
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 async fn probe_workspace(
     provisioner: &(impl InstanceInspector + ShellExecutor),
     cmd_runner: &impl CommandRunner,
@@ -107,6 +113,9 @@ async fn probe_workspace(
     })
 }
 
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 async fn probe_network(
     network_probe: &impl NetworkProbe,
 ) -> Result<crate::domain::health::NetworkChecks> {
@@ -121,6 +130,9 @@ async fn probe_network(
     Ok(crate::domain::health::NetworkChecks { internet, dns })
 }
 
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 async fn probe_security(
     provisioner: &(impl InstanceInspector + ShellExecutor),
 ) -> Result<crate::domain::health::SecurityChecks> {
@@ -164,6 +176,9 @@ async fn probe_security(
 
 // ── Low-level probe helpers ───────────────────────────────────────────────────
 
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 async fn probe_disk_space_gb(cmd_runner: &impl CommandRunner) -> Result<u64> {
     #[cfg(windows)]
     {

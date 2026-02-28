@@ -53,6 +53,10 @@ impl StateManager {
     }
 
     /// Synchronous load — used internally by `load_async` via `spawn_blocking`.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn load_sync(&self) -> Result<Option<WorkspaceState>> {
         if !self.path.exists() {
             return Ok(None);
@@ -66,6 +70,10 @@ impl StateManager {
     }
 
     /// Synchronous save — used internally by `save_async` via `spawn_blocking`.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn save_sync(&self, state: &WorkspaceState) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
@@ -106,6 +114,9 @@ impl StateManager {
 }
 
 impl WorkspaceStateStore for StateManager {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn load_async(&self) -> Result<Option<WorkspaceState>> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
@@ -116,6 +127,9 @@ impl WorkspaceStateStore for StateManager {
         .context("state load task panicked")?
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn save_async(&self, state: &WorkspaceState) -> Result<()> {
         let path = self.path.clone();
         let state = state.clone();
@@ -127,6 +141,9 @@ impl WorkspaceStateStore for StateManager {
         .context("state save task panicked")?
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn clear_async(&self) -> Result<()> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {

@@ -169,6 +169,9 @@ mod tests {
     }
 
     impl ShellExecutor for DigestMock {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             let args_owned: Vec<String> =
                 args.iter().map(std::string::ToString::to_string).collect();
@@ -182,12 +185,21 @@ mod tests {
             }
             Ok(fail_output())
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             anyhow::bail!("not expected")
         }
@@ -210,12 +222,18 @@ mod tests {
     }
 
     impl ShellExecutor for WriteHashSpy {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             self.exec_calls
                 .borrow_mut()
                 .push(args.iter().map(std::string::ToString::to_string).collect());
             Ok(ok_output(""))
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_with_stdin(&self, args: &[&str], stdin: &[u8]) -> Result<Output> {
             self.exec_with_stdin_calls.borrow_mut().push((
                 args.iter().map(std::string::ToString::to_string).collect(),
@@ -223,9 +241,15 @@ mod tests {
             ));
             Ok(ok_output(""))
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             anyhow::bail!("not expected")
         }
@@ -278,6 +302,10 @@ mod tests {
 
     /// Helper: run digest verification against a synthetic manifest (bypasses
     /// the embedded asset) by directly calling the inner verification logic.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn verify_manifest(
         mp: &impl ShellExecutor,
         _assets: &impl AssetExtractor,
@@ -321,9 +349,15 @@ mod tests {
 
     struct AssetStub;
     impl AssetExtractor for AssetStub {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn extract_assets(&self) -> Result<(std::path::PathBuf, Box<dyn std::any::Any>)> {
             anyhow::bail!("not used")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn get_asset(&self, _: &str) -> Result<&'static [u8]> {
             anyhow::bail!("not used")
         }
@@ -414,15 +448,27 @@ mod tests {
         struct FailingMock;
         #[allow(clippy::items_after_statements)]
         impl ShellExecutor for FailingMock {
+            /// # Errors
+            ///
+            /// This function will return an error if the underlying operations fail.
             async fn exec(&self, _: &[&str]) -> Result<Output> {
                 Err(anyhow::anyhow!("multipass exec failed"))
             }
+            /// # Errors
+            ///
+            /// This function will return an error if the underlying operations fail.
             async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
                 anyhow::bail!("not expected")
             }
+            /// # Errors
+            ///
+            /// This function will return an error if the underlying operations fail.
             fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
                 anyhow::bail!("not expected")
             }
+            /// # Errors
+            ///
+            /// This function will return an error if the underlying operations fail.
             async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
                 anyhow::bail!("not expected")
             }

@@ -5,11 +5,19 @@ use crate::domain::config::PolisConfig;
 use anyhow::Result;
 
 /// Load configuration.
+///
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 pub fn load_config(store: &impl ConfigStore) -> Result<PolisConfig> {
     store.load()
 }
 
 /// Save configuration.
+///
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 pub fn save_config(store: &impl ConfigStore, config: &PolisConfig) -> Result<()> {
     store.save(config)
 }
@@ -18,6 +26,10 @@ const VM_MCP_ADMIN_PASS: &str = "/opt/polis/secrets/mcp-admin-pass.txt";
 
 /// Propagate the security level to the workspace VM.
 /// Returns Ok(true) if successful, Ok(false) if VM is not running or unreachable.
+///
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 pub async fn propagate_security_level(
     mp: &(impl crate::application::ports::ShellExecutor + crate::application::ports::InstanceInspector),
     level: &str,

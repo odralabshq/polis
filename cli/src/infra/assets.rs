@@ -17,11 +17,17 @@ static EMBEDDED_ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../.build/as
 pub struct EmbeddedAssets;
 
 impl crate::application::ports::AssetExtractor for EmbeddedAssets {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn extract_assets(&self) -> Result<(PathBuf, Box<dyn std::any::Any>)> {
         let (path, guard) = extract_assets()?;
         Ok((path, Box::new(guard)))
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn get_asset(&self, name: &str) -> Result<&'static [u8]> {
         get_asset(name)
     }

@@ -131,7 +131,7 @@ impl Cli {
             }
             Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await?,
             Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,
-            Command::Version => commands::version::run(&app).await?,
+            Command::Version => commands::version::run(&app)?,
             Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
 
             // --- Internal commands ---

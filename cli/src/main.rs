@@ -3,16 +3,7 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 use clap::Parser;
-
-mod app;
-mod application;
-mod cli;
-mod commands;
-mod domain;
-mod infra;
-mod output;
-
-use cli::Cli;
+use polis_cli::cli::Cli;
 
 #[tokio::main]
 async fn main() {

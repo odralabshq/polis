@@ -25,6 +25,8 @@ pub enum ConfigCommand {
 }
 
 /// Run the config command.
+/// # Errors
+/// This function will return an error if the underlying operations fail.
 pub async fn run(
     app: &AppContext,
     cmd: ConfigCommand,
@@ -36,6 +38,8 @@ pub async fn run(
     }
 }
 
+/// # Errors
+/// This function will return an error if the underlying operations fail.
 fn show_config(app: &AppContext) -> Result<ExitCode> {
     let config = config_service::load_config(&app.config_store)?;
     let path = app.config_store.path()?;
@@ -43,8 +47,9 @@ fn show_config(app: &AppContext) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Path to the mcp-admin password on the VM filesystem.
 
+/// # Errors
+/// This function will return an error if the underlying operations fail.
 async fn set_config(app: &AppContext, key: &str, value: &str) -> Result<ExitCode> {
     validate_config_key(key)?;
     validate_config_value(key, value)?;
@@ -61,11 +66,11 @@ async fn set_config(app: &AppContext, key: &str, value: &str) -> Result<ExitCode
     app.output.success(&format!("Set {key} = {value}"));
 
     if key == "security.level" {
-                if !crate::application::services::config_service::propagate_security_level(&app.provisioner, value).await? {
-            app.output.warn("Could not propagate to workspace (is it running?)");
-        } else {
-            app.output.success("Security level active in workspace");
-        }
+                if crate::application::services::config_service::propagate_security_level(&app.provisioner, value).await? {
+                    app.output.success("Security level active in workspace");
+                } else {
+                    app.output.warn("Could not propagate to workspace (is it running?)");
+                }
     }
 
     Ok(ExitCode::SUCCESS)

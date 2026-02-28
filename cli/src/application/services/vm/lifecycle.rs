@@ -293,6 +293,9 @@ fn inception_line(level: &str, msg: &str) -> String {
 
 const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
 
+/// # Errors
+///
+/// This function will return an error if the underlying operations fail.
 async fn check_prerequisites(mp: &impl InstanceInspector) -> Result<()> {
     let output = mp.version().await.map_err(|_| {
         anyhow::anyhow!(
@@ -375,6 +378,9 @@ mod tests {
 
     struct MultipassVmInfoStub(Output);
     impl InstanceInspector for MultipassVmInfoStub {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn info(&self) -> Result<Output> {
             Ok(Output {
                 status: self.0.status,
@@ -382,6 +388,9 @@ mod tests {
                 stderr: self.0.stderr.clone(),
             })
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn version(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
@@ -430,34 +439,61 @@ mod tests {
         }
     }
     impl InstanceLifecycle for MultipassRestartSpy {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn start(&self) -> Result<Output> {
             self.start_called.set(true);
             Ok(ok(b""))
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn stop(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn delete(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn purge(&self) -> Result<Output> {
             anyhow::bail!("not expected")
         }
     }
     impl ShellExecutor for MultipassRestartSpy {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             self.exec_called.set(true);
             Ok(ok(b""))
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             anyhow::bail!("not expected")
         }
@@ -484,15 +520,27 @@ mod tests {
 
     struct MultipassExitStatusStub(i32);
     impl ShellExecutor for MultipassExitStatusStub {
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, _: &[&str]) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
             anyhow::bail!("not expected")
         }
+        /// # Errors
+        ///
+        /// This function will return an error if the underlying operations fail.
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             Ok(exit_status(self.0))
         }

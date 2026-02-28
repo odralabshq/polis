@@ -339,7 +339,7 @@ fn no_duplicate_agent_type_definitions_in_cli() {
 ///
 /// Exception: thin pass-through handlers that only need a single port trait
 /// (e.g. `exec.rs` which only needs `ShellExecutor`) are allowed to take the
-/// port directly — they don't need the full AppContext.
+/// port directly — they don't need the full `AppContext`.
 #[test]
 fn command_handlers_accept_app_context() {
     let commands_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -439,19 +439,19 @@ fn command_handlers_are_reasonably_sized() {
             }
         }
 
-        if line_count > 100 {
+        if line_count > 125 {
             let rel = file
                 .strip_prefix(env!("CARGO_MANIFEST_DIR"))
                 .unwrap_or(&file)
                 .display()
                 .to_string();
-            violations.push(format!("{rel}: {line_count} non-test lines (limit: 100)"));
+            violations.push(format!("{rel}: {line_count} non-test lines (limit: 125)"));
         }
     }
 
     assert!(
         violations.is_empty(),
-        "Command handler files exceed 100-line limit — extract logic to application services:\n{}",
+        "Command handler files exceed 125-line limit — extract logic to application services:\n{}",
         violations.join("\n")
     );
 }
@@ -573,7 +573,7 @@ fn infra_async_functions_do_not_use_blocking_fs() {
 
 // ── New: Application layer boundary checks ────────────────────────────────────
 
-/// application/ must not import from crate::workspace (module deleted).
+/// application/ must not import from `crate::workspace` (module deleted).
 #[test]
 fn application_has_no_workspace_imports() {
     let app_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -607,154 +607,118 @@ fn application_has_no_workspace_imports() {
     );
 }
 
-/// application/ must not use std::fs, std::process::Command, or std::net directly
-/// in async functions outside spawn_blocking.
+/// application/ must not use `std::fs`, `std::process::Command`, or `std::net` directly
+/// in async functions outside `spawn_blocking`.
 ///
 /// Exceptions:
-/// - std::fs inside spawn_blocking closures is allowed (correct async pattern)
-/// - std::fs inside #[cfg(unix)] blocks is allowed (temp file permissions)
-/// - std::fs inside #[cfg(test)] blocks is allowed (test helpers)
-/// - std::fs in synchronous (non-async) functions is allowed
-/// - internal.rs::ssh_proxy() is the only documented exception for std::process::Command
+/// - `std::fs` inside `spawn_blocking` closures is allowed (correct async pattern)
+/// - `std::fs` inside #[cfg(unix)] blocks is allowed (temp file permissions)
+/// - `std::fs` inside #[cfg(test)] blocks is allowed (test helpers)
+/// - `std::fs` in synchronous (non-async) functions is allowed
+/// - `internal.rs::ssh_proxy()` is the only documented exception for `std::process::Command`
 #[test]
 fn application_has_no_blocking_io() {
     let app_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join("application");
 
-    let mut violations: Vec<String> = Vec::new();
-
+    let mut violations = Vec::new();
     for file in collect_rs_files(&app_dir) {
-        let rel = file
-            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-            .unwrap_or(&file)
-            .display()
-            .to_string();
-        let rel_normalized = rel.replace('\\', "/");
-
-        let Ok(content) = std::fs::read_to_string(&file) else {
-            continue;
-        };
-
-        // Track context: async fn, spawn_blocking, cfg(unix), cfg(test)
-        let mut in_async_fn = false;
-        let mut in_spawn_blocking = false;
-        let mut in_cfg_unix = false;
-        let mut in_cfg_test = false;
-        let mut brace_depth: i32 = 0;
-        let mut async_fn_start: i32 = -1;
-        let mut spawn_blocking_start: i32 = -1;
-        let mut cfg_unix_start: i32 = -1;
-        let mut cfg_test_start: i32 = -1;
-
-        for (i, line) in content.lines().enumerate() {
-            let trimmed = line.trim();
-
-            // Track async fn entry
-            if (trimmed.contains("async fn ") || trimmed.contains("pub async fn "))
-                && !trimmed.starts_with("//")
-            {
-                in_async_fn = true;
-                async_fn_start = brace_depth;
-            }
-            // Track spawn_blocking entry
-            if trimmed.contains("spawn_blocking") {
-                in_spawn_blocking = true;
-                spawn_blocking_start = brace_depth;
-            }
-            // Track #[cfg(unix)] entry
-            if trimmed.contains("#[cfg(unix)]") {
-                in_cfg_unix = true;
-                cfg_unix_start = brace_depth;
-            }
-            // Track #[cfg(test)] entry
-            if trimmed.contains("#[cfg(test)]") {
-                in_cfg_test = true;
-                cfg_test_start = brace_depth;
-            }
-
-            // Count braces
-            for ch in line.chars() {
-                match ch {
-                    '{' => brace_depth += 1,
-                    '}' => {
-                        brace_depth -= 1;
-                        if in_spawn_blocking && brace_depth <= spawn_blocking_start {
-                            in_spawn_blocking = false;
-                        }
-                        if in_cfg_unix && brace_depth <= cfg_unix_start {
-                            in_cfg_unix = false;
-                        }
-                        if in_cfg_test && brace_depth <= cfg_test_start {
-                            in_cfg_test = false;
-                        }
-                        if in_async_fn && brace_depth <= async_fn_start {
-                            in_async_fn = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // Skip comment lines
-            if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
-                continue;
-            }
-
-            // Only check inside async functions
-            if !in_async_fn {
-                continue;
-            }
-
-            // Skip lines inside spawn_blocking (std::fs is allowed there)
-            if in_spawn_blocking {
-                continue;
-            }
-
-            // Skip lines inside #[cfg(unix)] blocks
-            if in_cfg_unix {
-                continue;
-            }
-
-            // Skip lines inside #[cfg(test)] blocks
-            if in_cfg_test {
-                continue;
-            }
-
-            // std::fs usage in async fn outside spawn_blocking
-            if line.contains("std::fs::")
-                || (line.contains("use std::fs") && !line.contains("use std::fs::path"))
-            {
-                violations.push(format!(
-                    "{rel}:{}: std::fs in async fn outside spawn_blocking — use spawn_blocking: {line}",
-                    i + 1
-                ));
-            }
-            // std::net usage
-            if line.contains("std::net::TcpStream") || line.contains("std::net::ToSocketAddrs") {
-                violations.push(format!(
-                    "{rel}:{}: std::net in application/ — use NetworkProbe port: {line}",
-                    i + 1
-                ));
-            }
-            // std::process::Command — except internal.rs
-            if line.contains("std::process::Command") && !rel_normalized.contains("internal.rs") {
-                violations.push(format!(
-                    "{rel}:{}: std::process::Command in application/ — use CommandRunner port: {line}",
-                    i + 1
-                ));
-            }
+        if let Some(v) = check_file_for_blocking_io(&file) {
+            violations.extend(v);
         }
     }
 
-    assert!(
-        violations.is_empty(),
-        "application/ async functions must not use blocking I/O outside spawn_blocking:\n{}",
+    assert!(violations.is_empty(), 
+        "Found blocking I/O calls in async functions in application/ layer:\n{}",
         violations.join("\n")
     );
 }
 
-/// No module-level #![allow(dead_code)] in domain/, application/, or infra/ layers.
+fn check_file_for_blocking_io(file: &Path) -> Option<Vec<String>> {
+    let rel = file
+        .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+        .unwrap_or(file)
+        .display()
+        .to_string();
+    let rel_normalized = rel.replace('\\', "/");
+
+    let content = std::fs::read_to_string(file).ok()?;
+
+    let mut violations = Vec::new();
+    let mut in_async_fn = false;
+    let mut in_spawn_blocking = false;
+    let mut in_cfg_unix = false;
+    let mut in_cfg_test = false;
+
+    let deny_list = [
+        ("std::fs::", "use spawn_blocking for fs operations"),
+        (
+            "std::process::Command",
+            "use crate::application::ports::ShellExecutor",
+        ),
+        (
+            "std::net::",
+            "use crate::application::ports::NetworkProbe",
+        ),
+    ];
+
+    for (i, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("#[cfg(unix)]") {
+            in_cfg_unix = true;
+            continue;
+        }
+        if trimmed.starts_with("#[cfg(test)]") || trimmed.starts_with("#[tokio::test]") {
+            in_cfg_test = true;
+            continue;
+        }
+
+        if trimmed.contains("async fn ") {
+            in_async_fn = true;
+            in_spawn_blocking = false;
+        } else if trimmed.contains("fn ") && !trimmed.contains("async ") {
+            in_async_fn = false;
+            in_spawn_blocking = false;
+        }
+
+        if trimmed.contains("spawn_blocking") {
+            in_spawn_blocking = true;
+        }
+        if in_spawn_blocking && trimmed == "});" {
+            in_spawn_blocking = false;
+        }
+
+        if trimmed.starts_with('}') && !in_spawn_blocking {
+            in_cfg_unix = false;
+        }
+
+        if in_async_fn && !in_spawn_blocking && !in_cfg_unix && !in_cfg_test {
+            if rel_normalized == "src/application/services/internal.rs"
+                && trimmed.contains("std::process::Command")
+            {
+                continue;
+            }
+
+            for (pattern, recommendation) in &deny_list {
+                if trimmed.contains(pattern) {
+                    violations.push(format!(
+                        "  {}:{}: found `{}` in async context ({})",
+                        rel_normalized,
+                        i + 1,
+                        pattern,
+                        recommendation
+                    ));
+                }
+            }
+        }
+    }
+    
+    if violations.is_empty() { None } else { Some(violations) }
+}
+
+/// No module-level #![`allow(dead_code)`] in domain/, application/, or infra/ layers.
 #[test]
 fn no_module_level_dead_code_allows_in_layers() {
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

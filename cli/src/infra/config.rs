@@ -10,6 +10,9 @@ use crate::domain::config::PolisConfig;
 pub struct YamlConfigStore;
 
 impl ConfigStore for YamlConfigStore {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn load(&self) -> Result<PolisConfig> {
         let path = self.path()?;
         if !path.exists() {
@@ -20,6 +23,9 @@ impl ConfigStore for YamlConfigStore {
         serde_yaml::from_str(&content).with_context(|| format!("cannot parse {}", path.display()))
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn save(&self, config: &PolisConfig) -> Result<()> {
         let path = self.path()?;
         if let Some(parent) = path.parent() {
@@ -39,6 +45,9 @@ impl ConfigStore for YamlConfigStore {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn path(&self) -> Result<PathBuf> {
         if let Ok(val) = std::env::var("POLIS_CONFIG") {
             return Ok(PathBuf::from(val));

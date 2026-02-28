@@ -20,17 +20,36 @@ pub async fn run_repair(
     version: &str,
     health_checks_failed: bool,
 ) -> Result<()> {
-    // When health checks failed, VM state is untrusted — always re-transfer config
-    // from host to prevent tampered scripts from persisting and running as root.
     if health_checks_failed {
-        reporter.step("Re-transferring config (health checks failed, VM state untrusted)...");
-        transfer_config(mp, assets_dir, version)
-            .await
-            .context("re-transferring config to VM")?;
-        reporter.success("Config re-transferred");
+        retransfer_config_forced(mp, reporter, assets_dir, version).await?;
     }
+    ensure_docker_running(mp, reporter).await?;
+    ensure_sysbox_registered(mp, reporter).await?;
+    ensure_config_present(mp, reporter, assets_dir, version).await?;
+    let certs_regenerated = ensure_certs_valid(mp, reporter).await?;
+    ensure_polis_service_enabled(mp, reporter).await?;
+    restart_compose_services(mp, reporter, certs_regenerated).await?;
+    Ok(())
+}
 
-    // 1. Ensure Docker is running
+async fn retransfer_config_forced(
+    mp: &(impl ShellExecutor + FileTransfer),
+    reporter: &impl ProgressReporter,
+    assets_dir: &std::path::Path,
+    version: &str,
+) -> Result<()> {
+    reporter.step("Re-transferring config (health checks failed, VM state untrusted)...");
+    transfer_config(mp, assets_dir, version)
+        .await
+        .context("re-transferring config to VM")?;
+    reporter.success("Config re-transferred");
+    Ok(())
+}
+
+async fn ensure_docker_running(
+    mp: &impl ShellExecutor,
+    reporter: &impl ProgressReporter,
+) -> Result<()> {
     reporter.step("Checking Docker daemon...");
     let docker_ok = mp
         .exec(&["docker", "info"])
@@ -46,8 +65,13 @@ pub async fn run_repair(
             .context("restarting docker")?;
         reporter.success("Docker restarted");
     }
+    Ok(())
+}
 
-    // 2. Ensure sysbox runtime is registered
+async fn ensure_sysbox_registered(
+    mp: &impl ShellExecutor,
+    reporter: &impl ProgressReporter,
+) -> Result<()> {
     reporter.step("Checking sysbox runtime...");
     let sysbox_ok = mp
         .exec(&["docker", "info", "--format", "{{.Runtimes}}"])
@@ -66,8 +90,15 @@ pub async fn run_repair(
             .context("restarting docker after sysbox")?;
         reporter.success("sysbox and Docker restarted");
     }
+    Ok(())
+}
 
-    // 3. Re-transfer config if /opt/polis is missing or .env is absent
+async fn ensure_config_present(
+    mp: &(impl ShellExecutor + FileTransfer),
+    reporter: &impl ProgressReporter,
+    assets_dir: &std::path::Path,
+    version: &str,
+) -> Result<()> {
     reporter.step("Checking /opt/polis config...");
     let config_ok = mp
         .exec(&["test", "-f", "/opt/polis/.env"])
@@ -83,9 +114,13 @@ pub async fn run_repair(
             .context("re-transferring config to VM")?;
         reporter.success("Config re-transferred");
     }
+    Ok(())
+}
 
-    // 3.5: Ensure certs exist and are not expiring within 7 days
-    let mut certs_regenerated = false;
+async fn ensure_certs_valid(
+    mp: &impl ShellExecutor,
+    reporter: &impl ProgressReporter,
+) -> Result<bool> {
     reporter.step("Checking certificates...");
     let sentinel_ok = mp
         .exec(&["test", "-f", "/opt/polis/.certs-ready"])
@@ -93,7 +128,6 @@ pub async fn run_repair(
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    // Also check cert expiry — regenerate if expiring within 7 days (604800 seconds)
     let cert_expiry_ok = if sentinel_ok {
         mp.exec(&[
             "bash",
@@ -109,6 +143,7 @@ pub async fn run_repair(
 
     if sentinel_ok && cert_expiry_ok {
         reporter.step("Certificates present and valid");
+        Ok(false)
     } else {
         if sentinel_ok && !cert_expiry_ok {
             reporter.step("Certificates expiring soon, forcing regeneration...");
@@ -118,11 +153,15 @@ pub async fn run_repair(
         generate_certs_and_secrets(mp)
             .await
             .context("generating certificates during repair")?;
-        certs_regenerated = true;
         reporter.success("Certificates generated");
+        Ok(true)
     }
+}
 
-    // 4. Ensure polis.service is enabled
+async fn ensure_polis_service_enabled(
+    mp: &impl ShellExecutor,
+    reporter: &impl ProgressReporter,
+) -> Result<()> {
     reporter.step("Checking polis.service...");
     let service_enabled = mp
         .exec(&["systemctl", "is-enabled", "polis.service"])
@@ -138,10 +177,14 @@ pub async fn run_repair(
             .context("enabling polis.service")?;
         reporter.success("polis.service enabled");
     }
+    Ok(())
+}
 
-    // 5. Restart compose services — use compose down when certs were regenerated
-    // to ensure credential consistency (prevents rolling restart mismatch where
-    // some containers read new secrets while Valkey still has old ones).
+async fn restart_compose_services(
+    mp: &impl ShellExecutor,
+    reporter: &impl ProgressReporter,
+    certs_regenerated: bool,
+) -> Result<()> {
     if certs_regenerated {
         reporter.step("Stopping services for clean restart...");
         mp.exec(&["bash", "-c", "cd /opt/polis && docker compose down"])
@@ -157,6 +200,5 @@ pub async fn run_repair(
     .await
     .context("restarting compose services")?;
     reporter.success("Services restarted");
-
     Ok(())
 }

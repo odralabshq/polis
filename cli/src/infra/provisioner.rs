@@ -62,6 +62,9 @@ impl MultipassProvisioner<TokioCommandRunner> {
 }
 
 impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn launch(&self, spec: &InstanceSpec<'_>) -> Result<Output> {
         let timeout = spec.timeout.unwrap_or("600");
         let mut args = vec![
@@ -88,6 +91,9 @@ impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
             .context("failed to run multipass launch")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn start(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["start", POLIS_INSTANCE])
@@ -95,6 +101,9 @@ impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
             .context("failed to run multipass start")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn stop(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["stop", POLIS_INSTANCE])
@@ -102,6 +111,9 @@ impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
             .context("failed to run multipass stop")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn delete(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["delete", POLIS_INSTANCE])
@@ -109,6 +121,9 @@ impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
             .context("failed to run multipass delete")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn purge(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["purge"])
@@ -118,6 +133,9 @@ impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
 }
 
 impl<R: CommandRunner> InstanceInspector for MultipassProvisioner<R> {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn info(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["info", POLIS_INSTANCE, "--format", "json"])
@@ -125,6 +143,9 @@ impl<R: CommandRunner> InstanceInspector for MultipassProvisioner<R> {
             .context("failed to run multipass info")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn version(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["version"])
@@ -134,6 +155,9 @@ impl<R: CommandRunner> InstanceInspector for MultipassProvisioner<R> {
 }
 
 impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn transfer(&self, local: &str, remote: &str) -> Result<Output> {
         let dest = format!("{POLIS_INSTANCE}:{remote}");
         self.cmd_runner
@@ -142,6 +166,9 @@ impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
             .context("failed to run multipass transfer")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn transfer_recursive(&self, local: &str, remote: &str) -> Result<Output> {
         let dest = format!("{POLIS_INSTANCE}:{remote}");
         self.cmd_runner
@@ -152,6 +179,9 @@ impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
 }
 
 impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         let mut full = vec!["exec", POLIS_INSTANCE, "--"];
         full.extend_from_slice(args);
@@ -161,6 +191,9 @@ impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {
             .context("failed to run multipass exec")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn exec_with_stdin(&self, args: &[&str], input: &[u8]) -> Result<Output> {
         let mut full = vec!["exec", POLIS_INSTANCE, "--"];
         full.extend_from_slice(args);
@@ -170,6 +203,9 @@ impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {
             .context("failed to run multipass exec")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn exec_spawn(&self, args: &[&str]) -> Result<tokio::process::Child> {
         let mut full = vec!["exec", POLIS_INSTANCE, "--"];
         full.extend_from_slice(args);
@@ -178,6 +214,9 @@ impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {
             .context("failed to run multipass exec")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn exec_status(&self, args: &[&str]) -> Result<std::process::ExitStatus> {
         let mut full = vec!["exec", POLIS_INSTANCE, "--"];
         full.extend_from_slice(args);
@@ -202,6 +241,9 @@ pub struct TimeoutView<'a, R: CommandRunner> {
 }
 
 impl<R: CommandRunner> InstanceInspector for TimeoutView<'_, R> {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn info(&self) -> Result<Output> {
         self.provisioner
             .cmd_runner
@@ -214,6 +256,9 @@ impl<R: CommandRunner> InstanceInspector for TimeoutView<'_, R> {
             .context("multipass info (timeout view)")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn version(&self) -> Result<Output> {
         self.provisioner
             .cmd_runner
@@ -224,6 +269,9 @@ impl<R: CommandRunner> InstanceInspector for TimeoutView<'_, R> {
 }
 
 impl<R: CommandRunner> ShellExecutor for TimeoutView<'_, R> {
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         let mut full = vec!["exec", POLIS_INSTANCE, "--"];
         full.extend_from_slice(args);
@@ -234,6 +282,9 @@ impl<R: CommandRunner> ShellExecutor for TimeoutView<'_, R> {
             .context("multipass exec (timeout view)")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn exec_with_stdin(&self, args: &[&str], input: &[u8]) -> Result<Output> {
         let mut full = vec!["exec", POLIS_INSTANCE, "--"];
         full.extend_from_slice(args);
@@ -244,6 +295,9 @@ impl<R: CommandRunner> ShellExecutor for TimeoutView<'_, R> {
             .context("multipass exec with stdin (timeout view)")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     fn exec_spawn(&self, args: &[&str]) -> Result<tokio::process::Child> {
         let mut full = vec!["exec", POLIS_INSTANCE, "--"];
         full.extend_from_slice(args);
@@ -253,6 +307,9 @@ impl<R: CommandRunner> ShellExecutor for TimeoutView<'_, R> {
             .context("multipass exec spawn")
     }
 
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
     async fn exec_status(&self, args: &[&str]) -> Result<std::process::ExitStatus> {
         let mut full = vec!["exec", POLIS_INSTANCE, "--"];
         full.extend_from_slice(args);

@@ -3,7 +3,17 @@
 //! Imports only from `crate::domain` and `crate::application::ports`.
 //! All I/O is routed through injected port traits.
 
+use crate::domain::agent::artifacts;
 use anyhow::{Context, Result};
+
+pub struct StartOptions<'a, R: crate::application::ports::ProgressReporter> {
+    pub reporter: &'a R,
+    pub agent: Option<&'a str>,
+    pub assets_dir: &'a std::path::Path,
+    pub version: &'a str,
+}
+
+
 use chrono::Utc;
 
 use crate::application::ports::{
@@ -47,11 +57,10 @@ pub async fn start_workspace(
     ssh: &impl SshConfigurator,
     hasher: &impl FileHasher,
     local_fs: &impl LocalFs,
-    reporter: &impl ProgressReporter,
-    agent: Option<&str>,
-    assets_dir: &std::path::Path,
-    version: &str,
+    opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
 ) -> Result<StartOutcome> {
+    let reporter = opts.reporter;
+    let StartOptions { agent, assets_dir, version, .. } = opts;
     crate::domain::workspace::check_architecture()?;
 
     let vm_state = vm::state(provisioner).await?;
@@ -66,10 +75,7 @@ pub async fn start_workspace(
                 ssh,
                 hasher,
                 local_fs,
-                reporter,
-                agent,
-                assets_dir,
-                version,
+                StartOptions { reporter, agent, assets_dir, version },
             )
             .await?;
             Ok(StartOutcome::Created {
@@ -114,11 +120,10 @@ async fn create_and_start_vm(
     ssh: &impl SshConfigurator,
     hasher: &impl FileHasher,
     local_fs: &impl LocalFs,
-    reporter: &impl ProgressReporter,
-    agent: Option<&str>,
-    assets_dir: &std::path::Path,
-    version: &str,
+    opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
 ) -> Result<()> {
+    let reporter = opts.reporter;
+    let StartOptions { agent, assets_dir, version, .. } = opts;
     // Step 1: Compute config hash before transfer.
     let tar_path = assets_dir.join("polis-setup.config.tar");
     let config_hash = hasher
@@ -252,7 +257,6 @@ async fn setup_agent<P: VmProvisioner>(provisioner: &P, local_fs: &impl LocalFs,
     let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
     let tmp_path = tmp.path().to_path_buf();
     
-    use crate::domain::agent::artifacts;
 
     let manifest: polis_common::agent::AgentManifest =
         serde_yaml::from_slice(&stdout_bytes).context("parsing agent.yaml from VM")?;
@@ -268,7 +272,7 @@ async fn setup_agent<P: VmProvisioner>(provisioner: &P, local_fs: &impl LocalFs,
     let hash = artifacts::service_hash(&unit);
     local_fs.write(&generated_dir.join(format!("{name}.service")), unit)?;
     local_fs.write(&generated_dir.join(format!("{name}.service.sha256")), hash)?;
-    local_fs.write(&generated_dir.join(format!("{name}.env")), "".to_string())?;
+    local_fs.write(&generated_dir.join(format!("{name}.env")), String::new())?;
 
     // Transfer the generated artifacts back into the VM.
     let generated_src = tmp
