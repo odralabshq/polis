@@ -5,10 +5,10 @@
 use std::process::Output;
 
 use anyhow::Result;
-use polis_cli::commands::start::{generate_agent_artifacts, start_compose, validate_agent};
-use polis_cli::provisioner::{
+use polis_cli::application::ports::{
     FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
 };
+use polis_cli::commands::start::{generate_agent_artifacts, start_compose, validate_agent};
 use polis_cli::workspace::vm::generate_certs_and_secrets;
 
 use crate::helpers::{err_output, exit_status, ok_output};

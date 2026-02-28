@@ -1,48 +1,13 @@
 //! Workspace state persistence.
+//!
+//! Domain types have moved to `crate::domain::workspace`. This module
+//! re-exports them for backward compatibility and provides the I/O layer
+//! (`StateManager`) for reading and writing state to disk.
+
+use crate::domain::workspace::{WorkspaceState, validate_workspace_id};
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-/// Workspace state persisted to `~/.polis/state.json`.
-///
-/// The `created_at` field accepts the legacy `started_at` name for backward
-/// compatibility with older state files.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceState {
-    /// Workspace identifier (e.g., "polis-abc123def456").
-    pub workspace_id: String,
-    /// When workspace was created (accepts legacy `"started_at"` field).
-    #[serde(alias = "started_at")]
-    pub created_at: DateTime<Utc>,
-    /// Image SHA256 used to create workspace.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image_sha256: Option<String>,
-    /// Custom image source (path or URL) used to create workspace.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image_source: Option<String>,
-    /// Currently active agent name, or None for control-plane-only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_agent: Option<String>,
-}
-
-/// SEC-004: Validates workspace ID format.
-///
-/// # Errors
-///
-/// Returns an error if the ID doesn't match expected format.
-fn validate_workspace_id(id: &str) -> Result<()> {
-    anyhow::ensure!(
-        id.starts_with("polis-") && id.len() == 22,
-        "invalid workspace ID format: {id}"
-    );
-    anyhow::ensure!(
-        id[6..].chars().all(|c| c.is_ascii_hexdigit()),
-        "workspace ID contains invalid characters: {id}"
-    );
-    Ok(())
-}
 
 /// State file manager.
 pub struct StateManager {
@@ -138,6 +103,7 @@ impl StateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use tempfile::TempDir;
 
     /// Valid 22-character workspace ID for tests (polis- + 16 hex chars).
@@ -292,28 +258,5 @@ mod tests {
             .expect("metadata")
             .permissions();
         assert_eq!(perms.mode() & 0o777, 0o600, "state file must be mode 600");
-    }
-
-    #[test]
-    fn test_validate_workspace_id_valid_format() {
-        assert!(validate_workspace_id(TEST_WORKSPACE_ID).is_ok());
-        assert!(validate_workspace_id("polis-aaaaaaaaaaaaaaaa").is_ok());
-        assert!(validate_workspace_id("polis-AAAAAAAAAAAAAAAA").is_ok());
-    }
-
-    #[test]
-    fn test_validate_workspace_id_rejects_short_id() {
-        assert!(validate_workspace_id("polis-abc123").is_err());
-        assert!(validate_workspace_id("polis-test").is_err());
-    }
-
-    #[test]
-    fn test_validate_workspace_id_rejects_wrong_prefix() {
-        assert!(validate_workspace_id("other-0123456789abcdef").is_err());
-    }
-
-    #[test]
-    fn test_validate_workspace_id_rejects_non_hex_chars() {
-        assert!(validate_workspace_id("polis-ghijklmnopqrstuv").is_err());
     }
 }

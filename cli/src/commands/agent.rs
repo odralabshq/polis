@@ -5,226 +5,31 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use regex::Regex;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::path::Path;
-use std::sync::LazyLock;
 
+use polis_common::agent::AgentManifest as FullAgentManifest;
+
+use crate::app::AppContext;
+use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
+use crate::domain::agent::validate::{AGENT_NAME_RE, validate_full_manifest};
 use crate::output::OutputContext;
-use crate::provisioner::{FileTransfer, InstanceInspector, ShellExecutor};
 use crate::state::StateManager;
 use crate::workspace::{CONTAINER_NAME, vm};
 
+// Re-export domain types and validation for backward compatibility.
+#[allow(unused_imports)]
+pub use crate::domain::agent::validate::{
+    ALLOWED_RW_PREFIXES, PLATFORM_PORTS, SHELL_METACHAR_RE, is_valid_agent_name,
+};
+
+// Re-export domain artifact generation for backward compatibility.
+#[allow(unused_imports)]
+pub use crate::domain::agent::artifacts::{
+    compose_overlay, filtered_env, service_hash, systemd_unit,
+};
+
 const VM_ROOT: &str = "/opt/polis";
-
-/// Same rule enforced by `generate-agent.sh`; checked here before any
-/// path interpolation to prevent path-traversal (CWE-22).
-static AGENT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // Safety: this is a compile-time constant pattern — cannot fail.
-    #[allow(clippy::expect_used)]
-    Regex::new(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$").expect("valid regex")
-});
-
-/// Shell metacharacters that must not appear in runtime.command.
-static SHELL_METACHAR_RE: LazyLock<Regex> = LazyLock::new(|| {
-    #[allow(clippy::expect_used)]
-    Regex::new(r"[;|&`$()\\<>!#~*\[\]{}]").expect("valid regex")
-});
-
-/// Platform-reserved ports that agents must not use.
-const PLATFORM_PORTS: &[u16] = &[
-    80, 443, 8080, 8443, 9090, 9091, 9092, 9093, 3000, 5432, 6379, 27017,
-];
-
-/// Allowed prefixes for readWritePaths (same as generate-agent.sh).
-const ALLOWED_RW_PREFIXES: &[&str] = &["/opt/polis/agents/", "/tmp/", "/var/tmp/"];
-
-// ---------------------------------------------------------------------------
-// Full AgentManifest struct (typed representation of agent.yaml)
-// ---------------------------------------------------------------------------
-
-/// Full typed representation of an `agent.yaml` manifest.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FullAgentManifest {
-    api_version: String,
-    kind: String,
-    metadata: FullAgentManifestMetadata,
-    spec: AgentSpec,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FullAgentManifestMetadata {
-    name: String,
-    display_name: Option<String>,
-    #[allow(dead_code)]
-    version: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentSpec {
-    packaging: String,
-    runtime: RuntimeSpec,
-    health: Option<HealthSpec>,
-    security: Option<SecuritySpec>,
-    ports: Option<Vec<PortSpec>>,
-    resources: Option<ResourceSpec>,
-    persistence: Option<Vec<PersistenceSpec>>,
-    requirements: Option<RequirementsSpec>,
-    install: Option<String>,
-    init: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RuntimeSpec {
-    command: String,
-    workdir: Option<String>,
-    user: String,
-    env_file: Option<String>,
-    env: Option<std::collections::HashMap<String, String>>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HealthSpec {
-    command: Option<String>,
-    interval: Option<String>,
-    timeout: Option<String>,
-    retries: Option<u32>,
-    start_period: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SecuritySpec {
-    protect_system: Option<String>,
-    protect_home: Option<String>,
-    read_write_paths: Option<Vec<String>>,
-    #[allow(dead_code)]
-    no_new_privileges: Option<bool>,
-    private_tmp: Option<bool>,
-    memory_max: Option<String>,
-    cpu_quota: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PortSpec {
-    container: u16,
-    host_env: Option<String>,
-    default: Option<u16>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ResourceSpec {
-    memory_limit: Option<String>,
-    memory_reservation: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PersistenceSpec {
-    name: String,
-    container_path: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RequirementsSpec {
-    env_one_of: Option<Vec<String>>,
-    env_optional: Option<Vec<String>>,
-}
-
-// ---------------------------------------------------------------------------
-// Manifest validation
-// ---------------------------------------------------------------------------
-
-/// Validate a parsed `FullAgentManifest` against the same rules as
-/// `generate-agent.sh`. Returns `Ok(())` or an error listing all violations.
-fn validate_full_manifest(manifest: &FullAgentManifest) -> Result<()> {
-    let mut errors: Vec<String> = Vec::new();
-
-    if manifest.api_version != "polis.dev/v1" {
-        errors.push("Unsupported apiVersion. Expected polis.dev/v1".to_string());
-    }
-
-    if manifest.kind != "AgentPlugin" {
-        errors.push("Unsupported kind. Expected AgentPlugin".to_string());
-    }
-
-    if !AGENT_NAME_RE.is_match(&manifest.metadata.name) {
-        errors.push(format!(
-            "metadata.name '{}' must be lowercase alphanumeric with hyphens",
-            manifest.metadata.name
-        ));
-    }
-
-    if manifest.spec.packaging != "script" {
-        errors.push("Only 'script' packaging is supported".to_string());
-    }
-
-    let cmd = &manifest.spec.runtime.command;
-    if !cmd.starts_with('/') {
-        errors.push("runtime.command must start with /".to_string());
-    }
-    if SHELL_METACHAR_RE.is_match(cmd) {
-        errors.push("runtime.command contains shell metacharacters".to_string());
-    }
-
-    if manifest.spec.runtime.user == "root" {
-        errors.push("Agents must run as unprivileged user (not root)".to_string());
-    }
-
-    // install/init path escape check
-    if let Some(install) = &manifest.spec.install
-        && install.contains("..")
-    {
-        errors.push("spec.install path escapes agent directory".to_string());
-    }
-    if let Some(init) = &manifest.spec.init
-        && init.contains("..")
-    {
-        errors.push("spec.init path escapes agent directory".to_string());
-    }
-
-    // Port conflict check
-    if let Some(ports) = &manifest.spec.ports {
-        for port_spec in ports {
-            let port = port_spec.default.unwrap_or(port_spec.container);
-            if PLATFORM_PORTS.contains(&port) {
-                errors.push(format!("Port {port} conflicts with platform service"));
-            }
-        }
-    }
-
-    // readWritePaths prefix check
-    if let Some(security) = &manifest.spec.security
-        && let Some(rw_paths) = &security.read_write_paths
-    {
-        for path in rw_paths {
-            let allowed = ALLOWED_RW_PREFIXES
-                .iter()
-                .any(|prefix| path.starts_with(prefix));
-            if !allowed {
-                errors.push(format!(
-                    "readWritePaths entry '{path}' is outside allowed prefixes: {}",
-                    ALLOWED_RW_PREFIXES.join(", ")
-                ));
-            }
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        anyhow::bail!("Agent manifest validation failed:\n{}", errors.join("\n"))
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Artifact generators
@@ -233,239 +38,20 @@ fn validate_full_manifest(manifest: &FullAgentManifest) -> Result<()> {
 /// Generate `compose.agent.yaml` — Docker Compose overlay with port mappings,
 /// volumes, healthcheck, and socat proxy sidecars.
 fn generate_compose_overlay(manifest: &FullAgentManifest, out_dir: &Path) -> Result<()> {
-    let name = &manifest.metadata.name;
-    let spec = &manifest.spec;
-
-    let health_interval = spec
-        .health
-        .as_ref()
-        .and_then(|h| h.interval.as_deref())
-        .unwrap_or("30s");
-    let health_timeout = spec
-        .health
-        .as_ref()
-        .and_then(|h| h.timeout.as_deref())
-        .unwrap_or("10s");
-    let health_retries = spec.health.as_ref().and_then(|h| h.retries).unwrap_or(3);
-    let health_start_period = spec
-        .health
-        .as_ref()
-        .and_then(|h| h.start_period.as_deref())
-        .unwrap_or("60s");
-    let health_cmd = spec
-        .health
-        .as_ref()
-        .and_then(|h| h.command.as_deref())
-        .unwrap_or("");
-
-    let healthcheck_test = format!(
-        "systemctl is-active polis-init.service && systemctl is-active {name}.service && {health_cmd} && ip route | grep -q default"
-    );
-
-    let mut out = String::new();
-    out.push_str(&format!(
-        "# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n"
-    ));
-    out.push_str("services:\n");
-    out.push_str("  workspace:\n");
-    out.push_str("    env_file:\n");
-    out.push_str("      - .env\n");
-    out.push_str("    volumes:\n");
-    out.push_str(&format!(
-        "      - ./agents/{name}/:/opt/agents/{name}/:ro\n"
-    ));
-    out.push_str(&format!(
-        "      - ./agents/{name}/.generated/{name}.service:/etc/systemd/system/{name}.service:ro\n"
-    ));
-    out.push_str(&format!("      - ./agents/{name}/.generated/{name}.service.sha256:/etc/systemd/system/{name}.service.sha256:ro\n"));
-
-    // Persistence volume mounts
-    if let Some(persistence) = &spec.persistence {
-        for p in persistence {
-            out.push_str(&format!(
-                "      - polis-agent-{name}-{}:{}\n",
-                p.name, p.container_path
-            ));
-        }
-    }
-
-    out.push_str("    healthcheck:\n");
-    out.push_str(&format!(
-        "      test: [\"CMD-SHELL\", \"{healthcheck_test}\"]\n"
-    ));
-    out.push_str(&format!("      interval: {health_interval}\n"));
-    out.push_str(&format!("      timeout: {health_timeout}\n"));
-    out.push_str(&format!("      retries: {health_retries}\n"));
-    out.push_str(&format!("      start_period: {health_start_period}\n"));
-
-    // Resources
-    let mem_limit = spec
-        .resources
-        .as_ref()
-        .and_then(|r| r.memory_limit.as_deref());
-    let mem_reservation = spec
-        .resources
-        .as_ref()
-        .and_then(|r| r.memory_reservation.as_deref());
-    if mem_limit.is_some() || mem_reservation.is_some() {
-        out.push_str("    deploy:\n");
-        out.push_str("      resources:\n");
-        if let Some(limit) = mem_limit {
-            out.push_str("        limits:\n");
-            out.push_str(&format!("          memory: {limit}\n"));
-        }
-        if let Some(reservation) = mem_reservation {
-            out.push_str("        reservations:\n");
-            out.push_str(&format!("          memory: {reservation}\n"));
-        }
-    }
-
-    // Socat proxy sidecars (one per port)
-    if let Some(ports) = &spec.ports
-        && !ports.is_empty()
-    {
-        out.push('\n');
-        for port_spec in ports {
-            let container_port = port_spec.container;
-            let host_env = port_spec.host_env.as_deref().unwrap_or("");
-            let default_port = port_spec.default.unwrap_or(container_port);
-            out.push_str(&format!("  {name}-proxy-{container_port}:\n"));
-            out.push_str("    image: alpine/socat:latest\n");
-            out.push_str("    restart: unless-stopped\n");
-            out.push_str("    ports:\n");
-            if host_env.is_empty() {
-                out.push_str(&format!("      - \"{default_port}:{container_port}\"\n"));
-            } else {
-                out.push_str(&format!(
-                    "      - \"${{{host_env}:-{default_port}}}:{container_port}\"\n"
-                ));
-            }
-            out.push_str(&format!(
-                    "    command: TCP-LISTEN:{container_port},fork,reuseaddr TCP:polis-workspace:{container_port}\n"
-                ));
-            out.push_str("    networks:\n");
-            out.push_str("      - internal-bridge\n");
-            out.push_str("      - default\n");
-            out.push_str("    depends_on:\n");
-            out.push_str("      - workspace\n");
-        }
-    }
-
-    // Top-level volumes section
-    if let Some(persistence) = &spec.persistence
-        && !persistence.is_empty()
-    {
-        out.push('\n');
-        out.push_str("volumes:\n");
-        for p in persistence {
-            out.push_str(&format!("  polis-agent-{name}-{}:\n", p.name));
-            out.push_str(&format!("    name: polis-agent-{name}-{}\n", p.name));
-        }
-    }
-
+    let content = crate::domain::agent::artifacts::compose_overlay(manifest);
     let out_path = out_dir.join("compose.agent.yaml");
-    std::fs::write(&out_path, out).with_context(|| format!("writing {}", out_path.display()))?;
+    std::fs::write(&out_path, content)
+        .with_context(|| format!("writing {}", out_path.display()))?;
     Ok(())
 }
 
 /// Generate `<name>.service` — systemd unit with security hardening.
 fn generate_systemd_unit(manifest: &FullAgentManifest, out_dir: &Path) -> Result<()> {
     let name = &manifest.metadata.name;
-    let spec = &manifest.spec;
-    let runtime = &spec.runtime;
-
-    let display_name = manifest.metadata.display_name.as_deref().unwrap_or(name);
-    let protect_system = spec
-        .security
-        .as_ref()
-        .and_then(|s| s.protect_system.as_deref())
-        .unwrap_or("strict");
-    let protect_home = spec
-        .security
-        .as_ref()
-        .and_then(|s| s.protect_home.as_deref())
-        .unwrap_or("true");
-    let private_tmp = spec
-        .security
-        .as_ref()
-        .and_then(|s| s.private_tmp)
-        .unwrap_or(true);
-    let mem_max = spec.security.as_ref().and_then(|s| s.memory_max.as_deref());
-    let cpu_quota = spec.security.as_ref().and_then(|s| s.cpu_quota.as_deref());
-    let rw_paths = spec
-        .security
-        .as_ref()
-        .and_then(|s| s.read_write_paths.as_ref())
-        .map(|paths| paths.join(" "));
-
-    let mut out = String::new();
-    out.push_str(&format!(
-        "# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n"
-    ));
-    out.push_str("[Unit]\n");
-    out.push_str(&format!("Description={display_name}\n"));
-    out.push_str("After=network-online.target polis-init.service\n");
-    out.push_str("Wants=network-online.target\n");
-    out.push_str("Requires=polis-init.service\n");
-    out.push_str("StartLimitIntervalSec=300\n");
-    out.push_str("StartLimitBurst=3\n");
-    out.push('\n');
-    out.push_str("[Service]\n");
-    out.push_str("Type=simple\n");
-    out.push_str(&format!("User={}\n", runtime.user));
-    if let Some(workdir) = &runtime.workdir {
-        out.push_str(&format!("WorkingDirectory={workdir}\n"));
-    }
-    out.push('\n');
-    if let Some(env_file) = &runtime.env_file {
-        out.push_str(&format!("EnvironmentFile=-{env_file}\n"));
-    }
-    out.push('\n');
-    out.push_str("Environment=NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/polis-ca.crt\n");
-    out.push_str("Environment=SSL_CERT_FILE=/usr/local/share/ca-certificates/polis-ca.crt\n");
-    out.push_str("Environment=REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/polis-ca.crt\n");
-
-    // Inline env vars from spec.runtime.env
-    if let Some(env_map) = &runtime.env {
-        // Sort for deterministic output
-        let mut entries: Vec<(&String, &String)> = env_map.iter().collect();
-        entries.sort_by_key(|(k, _)| k.as_str());
-        for (k, v) in entries {
-            out.push_str(&format!("Environment=\"{k}={v}\"\n"));
-        }
-    }
-
-    out.push('\n');
-    if let Some(init) = &spec.init {
-        out.push_str(&format!(
-            "ExecStartPre=+/bin/bash /opt/agents/{name}/{init}\n"
-        ));
-    }
-    out.push_str(&format!("ExecStart={}\n", runtime.command));
-    out.push('\n');
-    out.push_str("Restart=always\n");
-    out.push_str("RestartSec=5\n");
-    out.push_str("StartLimitBurst=3\n");
-    out.push('\n');
-    out.push_str("NoNewPrivileges=true\n");
-    out.push_str(&format!("ProtectSystem={protect_system}\n"));
-    out.push_str(&format!("ProtectHome={protect_home}\n"));
-    if let Some(paths) = &rw_paths {
-        out.push_str(&format!("ReadWritePaths={paths}\n"));
-    }
-    out.push_str(&format!("PrivateTmp={private_tmp}\n"));
-    if let Some(mem) = mem_max {
-        out.push_str(&format!("MemoryMax={mem}\n"));
-    }
-    if let Some(cpu) = cpu_quota {
-        out.push_str(&format!("CPUQuota={cpu}\n"));
-    }
-    out.push('\n');
-    out.push_str("[Install]\n");
-    out.push_str("WantedBy=multi-user.target\n");
-
+    let content = crate::domain::agent::artifacts::systemd_unit(manifest);
     let out_path = out_dir.join(format!("{name}.service"));
-    std::fs::write(&out_path, out).with_context(|| format!("writing {}", out_path.display()))?;
+    std::fs::write(&out_path, content)
+        .with_context(|| format!("writing {}", out_path.display()))?;
     Ok(())
 }
 
@@ -473,11 +59,9 @@ fn generate_systemd_unit(manifest: &FullAgentManifest, out_dir: &Path) -> Result
 fn generate_service_hash(manifest: &FullAgentManifest, out_dir: &Path) -> Result<()> {
     let name = &manifest.metadata.name;
     let service_path = out_dir.join(format!("{name}.service"));
-    let content = std::fs::read(&service_path)
+    let content = std::fs::read_to_string(&service_path)
         .with_context(|| format!("reading {}", service_path.display()))?;
-    let mut hasher = Sha256::new();
-    hasher.update(&content);
-    let hash = format!("{:x}\n", hasher.finalize());
+    let hash = crate::domain::agent::artifacts::service_hash(&content);
     let out_path = out_dir.join(format!("{name}.service.sha256"));
     std::fs::write(&out_path, hash).with_context(|| format!("writing {}", out_path.display()))?;
     Ok(())
@@ -491,47 +75,21 @@ fn generate_filtered_env(
     polis_dir: &Path,
 ) -> Result<()> {
     let name = &manifest.metadata.name;
-
-    // Collect all declared keys from requirements
-    let mut declared_keys: Vec<String> = Vec::new();
-    if let Some(reqs) = &manifest.spec.requirements {
-        if let Some(one_of) = &reqs.env_one_of {
-            declared_keys.extend(one_of.iter().cloned());
-        }
-        if let Some(optional) = &reqs.env_optional {
-            declared_keys.extend(optional.iter().cloned());
-        }
-    }
-
-    let mut filtered_lines: Vec<String> = Vec::new();
     let env_path = polis_dir.join(".env");
-    if env_path.exists() {
-        let content = std::fs::read_to_string(&env_path)
-            .with_context(|| format!("reading {}", env_path.display()))?;
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') || trimmed.is_empty() {
-                continue;
-            }
-            let key = trimmed.split('=').next().unwrap_or("").trim();
-            if declared_keys.iter().any(|k| k == key) {
-                filtered_lines.push(line.to_string());
-            }
-        }
-    }
-
-    let out_path = out_dir.join(format!("{name}.env"));
-    let content = if filtered_lines.is_empty() {
-        String::new()
+    let env_content = if env_path.exists() {
+        std::fs::read_to_string(&env_path)
+            .with_context(|| format!("reading {}", env_path.display()))?
     } else {
-        format!("{}\n", filtered_lines.join("\n"))
+        String::new()
     };
+    let content = crate::domain::agent::artifacts::filtered_env(&env_content, manifest);
+    let out_path = out_dir.join(format!("{name}.env"));
     std::fs::write(&out_path, content)
         .with_context(|| format!("writing {}", out_path.display()))?;
     Ok(())
 }
 
-/// Parse an `agent.yaml` manifest into a strongly-typed `FullAgentManifest`.
+/// Parse an `agent.yaml` manifest into a strongly-typed `AgentManifest`.
 fn parse_agent_manifest(path: &Path) -> Result<FullAgentManifest> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("reading agent manifest: {}", path.display()))?;
@@ -640,13 +198,13 @@ struct AgentManifestMetadata {
 pub async fn run(
     cmd: AgentCommand,
     mp: &(impl ShellExecutor + FileTransfer + InstanceInspector),
-    ctx: &OutputContext,
-    json: bool,
+    app: &AppContext,
 ) -> Result<()> {
+    let ctx = &app.output;
     match cmd {
         AgentCommand::Add(args) => add(&args, mp, ctx).await,
         AgentCommand::Remove(args) => remove(&args, mp, ctx).await,
-        AgentCommand::List => list(mp, ctx, json).await,
+        AgentCommand::List => list(mp, app).await,
         AgentCommand::Restart => restart(mp, ctx).await,
         AgentCommand::Update => update(mp, ctx).await,
         AgentCommand::Shell => shell(mp).await,
@@ -813,7 +371,7 @@ async fn remove(
     Ok(())
 }
 
-async fn list(mp: &impl ShellExecutor, ctx: &OutputContext, json: bool) -> Result<()> {
+async fn list(mp: &impl ShellExecutor, app: &AppContext) -> Result<()> {
     // Scan agents/*/agent.yaml inside VM (exclude _template).
     // Use `cat` to read each file and parse with serde_yaml on the host — no yq needed.
     let scan = mp
@@ -883,32 +441,7 @@ async fn list(mp: &impl ShellExecutor, ctx: &OutputContext, json: bool) -> Resul
         }
     }
 
-    if json {
-        println!("{}", serde_json::json!({ "agents": agents }));
-        return Ok(());
-    }
-
-    if agents.is_empty() {
-        if !ctx.quiet {
-            println!("No agents installed. Install one: polis agent add --path <folder>");
-        }
-        return Ok(());
-    }
-
-    println!("Available agents:\n");
-    for agent in &agents {
-        let name = agent["name"].as_str().unwrap_or("(unknown)");
-        let version = agent["version"].as_str().unwrap_or("");
-        let desc = agent["description"].as_str().unwrap_or("");
-        let marker = if agent["active"].as_bool().unwrap_or(false) {
-            "  [active]"
-        } else {
-            ""
-        };
-        println!("  {name:<16} {version:<10} {desc}{marker}");
-    }
-    println!("\nStart an agent: polis start --agent <name>");
-    Ok(())
+    app.renderer().render_agents(&agents)
 }
 
 async fn restart(mp: &(impl ShellExecutor + InstanceInspector), ctx: &OutputContext) -> Result<()> {
@@ -1102,6 +635,8 @@ async fn agent_cmd(mp: &(impl ShellExecutor + InstanceInspector), args: &CmdArgs
     }
     Ok(())
 }
+
+// ── Public wrappers for application service layer ─────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -1297,10 +832,13 @@ metadata:
   name: test-agent
   displayName: "Test Agent"
   version: "1.0.0"
+  description: "A test agent"
 spec:
   packaging: script
+  install: install.sh
   runtime:
     command: /usr/bin/myapp
+    workdir: /app
     user: polis
   health:
     command: "curl -sf http://127.0.0.1:9000/health"
@@ -1319,6 +857,7 @@ metadata:
   name: test-agent
   displayName: "Test Agent"
   version: "1.0.0"
+  description: "A test agent"
 spec:
   packaging: script
   install: install.sh
@@ -1567,6 +1106,7 @@ spec:
 
     #[test]
     fn test_generate_service_hash_matches_service_content() {
+        use sha2::{Digest, Sha256};
         let dir = tempfile::tempdir().expect("tempdir");
         let agent_dir = dir.path().join("agents").join("test-agent");
         std::fs::create_dir_all(&agent_dir).expect("create dirs");
@@ -1648,10 +1188,15 @@ apiVersion: polis.dev/v1
 kind: AgentPlugin
 metadata:
   name: bad-agent
+  displayName: Bad Agent
+  version: 1.0.0
+  description: A bad agent
 spec:
   packaging: script
+  install: install.sh
   runtime:
     command: /usr/bin/myapp
+    workdir: /app
     user: root
 ";
         std::fs::write(agent_dir.join("agent.yaml"), yaml).expect("write yaml");

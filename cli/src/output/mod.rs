@@ -2,13 +2,106 @@
 
 #![allow(dead_code)] // Helper methods not yet adopted by all commands
 
+pub mod human;
 pub mod json;
 pub mod progress;
+pub mod reporter;
 pub mod styles;
 
 use console::Term;
+pub use human::HumanRenderer;
+pub use json::JsonRenderer;
 use owo_colors::OwoColorize as _;
 pub use styles::Styles;
+
+use anyhow::Result;
+use polis_common::types::StatusOutput;
+use serde_json::Value as JsonValue;
+
+use crate::domain::health::DoctorChecks;
+
+/// Enum-dispatched output renderer.
+///
+/// Use `AppContext::renderer()` to obtain the appropriate variant based on
+/// the active `OutputMode`. Enum dispatch (not trait objects) gives
+/// zero-overhead rendering.
+pub enum Renderer<'a> {
+    /// Human-readable terminal output.
+    Human(HumanRenderer<'a>),
+    /// Machine-readable JSON output.
+    Json(JsonRenderer),
+}
+
+impl Renderer<'_> {
+    /// Render workspace/agent/security status.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_status(&self, status: &StatusOutput) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_status(status);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_status(status),
+        }
+    }
+
+    /// Render the list of installed agents.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_agents(&self, agents: &[JsonValue]) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_agents(agents);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_agents(agents),
+        }
+    }
+
+    /// Render the current polis configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_config(
+        &self,
+        config: &crate::domain::config::PolisConfig,
+        path: &std::path::Path,
+    ) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_config(config, path);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_config(config),
+        }
+    }
+
+    /// Render doctor health check results.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_doctor(
+        &self,
+        checks: &DoctorChecks,
+        issues: &[String],
+        verbose: bool,
+    ) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_doctor(checks, issues, verbose);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_doctor(checks, issues),
+        }
+    }
+}
 
 /// Output context carrying styling and terminal state.
 pub struct OutputContext {

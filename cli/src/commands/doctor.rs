@@ -4,100 +4,16 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
-use serde::Serialize;
 
+use crate::app::AppContext;
 use crate::output::OutputContext;
 
-// ── Public types ──────────────────────────────────────────────────────────────
+// ── Re-exports from domain::health (backward compatibility) ───────────────────
 
-/// All check categories returned by the doctor command.
-#[derive(Debug)]
-pub struct DoctorChecks {
-    /// Prerequisite checks (multipass version, hypervisor).
-    pub prerequisites: PrerequisiteChecks,
-    /// Workspace health.
-    pub workspace: WorkspaceChecks,
-    /// Network health.
-    pub network: NetworkChecks,
-    /// Security health.
-    pub security: SecurityChecks,
-}
-
-/// Prerequisite checks — multipass version and platform hypervisor.
-#[derive(Debug)]
-#[allow(clippy::struct_field_names)]
-pub struct PrerequisiteChecks {
-    /// Whether `multipass` is on PATH.
-    pub multipass_found: bool,
-    /// Installed Multipass version string (e.g. `"1.16.1"`), if found.
-    pub multipass_version: Option<String>,
-    /// Whether the installed version meets the minimum (1.16.0).
-    pub multipass_version_ok: bool,
-}
-
-/// Workspace health checks.
-#[derive(Debug)]
-pub struct WorkspaceChecks {
-    /// Whether the workspace can be started.
-    pub ready: bool,
-    /// Available disk space in GB.
-    pub disk_space_gb: u64,
-    /// Whether disk space meets the 10 GB minimum.
-    pub disk_space_ok: bool,
-    /// Image cache status.
-    pub image: ImageCheckResult,
-}
-
-/// Result of image health checks.
-#[derive(Debug, Default, Serialize)]
-pub struct ImageCheckResult {
-    /// Whether a cached image exists at `~/.polis/images/polis.qcow2`.
-    pub cached: bool,
-    /// Version from `image.json` (if available).
-    pub version: Option<String>,
-    /// SHA-256 preview (first 12 hex chars) from `image.json`.
-    pub sha256_preview: Option<String>,
-    /// Value of `POLIS_IMAGE` env var if set (override active).
-    pub polis_image_override: Option<String>,
-    /// Whether cached version differs from latest available.
-    pub version_drift: Option<VersionDrift>,
-}
-
-/// Version drift between cached and latest available image.
-#[derive(Debug, Serialize)]
-pub struct VersionDrift {
-    /// Currently cached version.
-    pub current: String,
-    /// Latest available version.
-    pub latest: String,
-}
-
-/// Network health checks.
-#[derive(Debug)]
-pub struct NetworkChecks {
-    /// Whether internet connectivity is available.
-    pub internet: bool,
-    /// Whether DNS resolution is working.
-    pub dns: bool,
-}
-
-/// Security health checks.
-#[derive(Debug)]
-#[allow(clippy::struct_excessive_bools)] // fields are spec-mandated; a bitfield would obscure intent
-pub struct SecurityChecks {
-    /// Whether process isolation (sysbox) is active.
-    pub process_isolation: bool,
-    /// Whether traffic inspection is responding.
-    pub traffic_inspection: bool,
-    /// Whether the malware scanner database is current.
-    pub malware_db_current: bool,
-    /// Hours since the malware database was last updated.
-    pub malware_db_age_hours: u64,
-    /// Whether certificates are valid.
-    pub certificates_valid: bool,
-    /// Days until certificate expiry (≤ 0 means expired).
-    pub certificates_expire_days: i64,
-}
+pub use crate::domain::health::{
+    DoctorChecks, ImageCheckResult, NetworkChecks, PrerequisiteChecks, SecurityChecks,
+    VersionDrift, WorkspaceChecks, collect_issues,
+};
 
 // ── HealthProbe trait ─────────────────────────────────────────────────────────
 
@@ -136,12 +52,12 @@ pub trait HealthProbe {
 /// Production implementation that queries the real system.
 pub struct SystemProbe<
     'a,
-    M: crate::provisioner::InstanceInspector + crate::provisioner::ShellExecutor,
+    M: crate::application::ports::InstanceInspector + crate::application::ports::ShellExecutor,
 > {
     mp: &'a M,
 }
 
-impl<'a, M: crate::provisioner::InstanceInspector + crate::provisioner::ShellExecutor>
+impl<'a, M: crate::application::ports::InstanceInspector + crate::application::ports::ShellExecutor>
     SystemProbe<'a, M>
 {
     /// Create a new system probe with the given multipass implementation.
@@ -150,8 +66,8 @@ impl<'a, M: crate::provisioner::InstanceInspector + crate::provisioner::ShellExe
     }
 }
 
-impl<M: crate::provisioner::InstanceInspector + crate::provisioner::ShellExecutor> HealthProbe
-    for SystemProbe<'_, M>
+impl<M: crate::application::ports::InstanceInspector + crate::application::ports::ShellExecutor>
+    HealthProbe for SystemProbe<'_, M>
 {
     async fn check_prerequisites(&self) -> Result<PrerequisiteChecks> {
         tokio::task::spawn_blocking(probe_prerequisites)
@@ -220,17 +136,16 @@ impl<M: crate::provisioner::InstanceInspector + crate::provisioner::ShellExecuto
 ///
 /// Returns an error if health checks cannot be executed or output fails.
 pub async fn run(
-    ctx: &OutputContext,
-    json: bool,
+    app: &AppContext,
     verbose: bool,
     fix: bool,
     mp: &(
-         impl crate::provisioner::InstanceInspector
-         + crate::provisioner::ShellExecutor
-         + crate::provisioner::FileTransfer
+         impl crate::application::ports::InstanceInspector
+         + crate::application::ports::ShellExecutor
+         + crate::application::ports::FileTransfer
      ),
 ) -> Result<()> {
-    run_with(ctx, json, verbose, fix, &SystemProbe::new(mp), mp).await
+    run_with(app, verbose, fix, &SystemProbe::new(mp), mp).await
 }
 
 /// Run doctor with a custom health probe (for testing).
@@ -239,17 +154,17 @@ pub async fn run(
 ///
 /// Returns an error if health checks cannot be executed or output fails.
 pub async fn run_with(
-    ctx: &OutputContext,
-    json: bool,
+    app: &AppContext,
     verbose: bool,
     fix: bool,
     probe: &impl HealthProbe,
     mp: &(
-         impl crate::provisioner::InstanceInspector
-         + crate::provisioner::ShellExecutor
-         + crate::provisioner::FileTransfer
+         impl crate::application::ports::InstanceInspector
+         + crate::application::ports::ShellExecutor
+         + crate::application::ports::FileTransfer
      ),
 ) -> Result<()> {
+    let ctx = &app.output;
     let checks_result = tokio::try_join!(
         probe.check_prerequisites(),
         probe.check_workspace(),
@@ -267,11 +182,7 @@ pub async fn run_with(
             };
             let issues = collect_issues(&checks);
 
-            if json {
-                print_json_output(&checks, &issues)?;
-            } else {
-                print_human_output(ctx, &checks, &issues, verbose);
-            }
+            app.renderer().render_doctor(&checks, &issues, verbose)?;
 
             if fix && !issues.is_empty() {
                 repair(ctx, mp, false).await?;
@@ -295,233 +206,7 @@ pub async fn run_with(
     Ok(())
 }
 
-/// Build and print JSON output for doctor checks.
-fn print_json_output(checks: &DoctorChecks, issues: &[String]) -> Result<()> {
-    let status = if issues.is_empty() {
-        "healthy"
-    } else {
-        "unhealthy"
-    };
-    let out = serde_json::json!({
-        "status": status,
-        "checks": {
-            "prerequisites": {
-                "multipass_found": checks.prerequisites.multipass_found,
-                "multipass_version": checks.prerequisites.multipass_version,
-                "multipass_version_ok": checks.prerequisites.multipass_version_ok,
-            },
-            "workspace": {
-                "ready": checks.workspace.ready,
-                "disk_space_gb": checks.workspace.disk_space_gb,
-                "disk_space_ok": checks.workspace.disk_space_ok,
-                "image": checks.workspace.image,
-            },
-            "network": {
-                "internet": checks.network.internet,
-                "dns": checks.network.dns,
-            },
-            "security": {
-                "process_isolation": checks.security.process_isolation,
-                "traffic_inspection": checks.security.traffic_inspection,
-                "malware_db_current": checks.security.malware_db_current,
-                "malware_db_age_hours": checks.security.malware_db_age_hours,
-                "certificates_valid": checks.security.certificates_valid,
-                "certificates_expire_days": checks.security.certificates_expire_days,
-            },
-        },
-        "issues": issues,
-    });
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&out).context("JSON serialization")?
-    );
-    Ok(())
-}
-
-/// Print human-readable doctor output.
-fn print_human_output(
-    ctx: &OutputContext,
-    checks: &DoctorChecks,
-    issues: &[String],
-    verbose: bool,
-) {
-    println!();
-    println!("  {}", "Polis Health Check".style(ctx.styles.header));
-    println!();
-
-    print_prerequisites_section(ctx, &checks.prerequisites);
-    print_workspace_section(ctx, &checks.workspace);
-    print_network_section(ctx, &checks.network);
-    print_security_section(ctx, &checks.security);
-    print_summary(ctx, issues, verbose);
-
-    println!();
-}
-
-/// Print the network section of the human-readable health report.
-fn print_network_section(ctx: &OutputContext, net: &NetworkChecks) {
-    println!("  Network:");
-    print_check(ctx, net.internet, "Internet connectivity");
-    print_check(ctx, net.dns, "DNS resolution working");
-    println!();
-}
-
-/// Print the summary section with issues.
-fn print_summary(ctx: &OutputContext, issues: &[String], verbose: bool) {
-    println!();
-    if issues.is_empty() {
-        println!("  {} Everything looks good!", "✓".style(ctx.styles.success));
-        return;
-    }
-    let hint = if verbose {
-        ""
-    } else {
-        " Run with --verbose for details."
-    };
-    println!(
-        "  {} Found {} issues.{hint}",
-        "✗".style(ctx.styles.error),
-        issues.len(),
-    );
-    if verbose {
-        println!();
-        for issue in issues {
-            println!("    {} {issue}", "✗".style(ctx.styles.error));
-        }
-    }
-}
-
-/// Print the prerequisites section of the human-readable health report.
-fn print_prerequisites_section(ctx: &OutputContext, pre: &PrerequisiteChecks) {
-    println!("  Prerequisites:");
-    if !pre.multipass_found {
-        print_check(ctx, false, "multipass not found");
-        #[cfg(target_os = "linux")]
-        println!("      Install: sudo snap install multipass");
-        #[cfg(not(target_os = "linux"))]
-        println!("      Install: https://multipass.run/install");
-        println!();
-        return;
-    }
-    let ver = pre.multipass_version.as_deref().unwrap_or("unknown");
-    print_check(
-        ctx,
-        pre.multipass_version_ok,
-        &format!("Multipass {ver} (need ≥ 1.16.0)"),
-    );
-    if !pre.multipass_version_ok {
-        #[cfg(target_os = "linux")]
-        println!("      Update: sudo snap refresh multipass");
-        #[cfg(not(target_os = "linux"))]
-        println!("      Update: https://multipass.run/install");
-    }
-    println!();
-}
-
-/// Print the workspace section of the human-readable health report.
-fn print_workspace_section(ctx: &OutputContext, ws: &WorkspaceChecks) {
-    println!("  Workspace:");
-    print_check(ctx, ws.ready, "Ready to start");
-
-    if ws.disk_space_ok {
-        print_check(
-            ctx,
-            true,
-            &format!("{} GB disk space available", ws.disk_space_gb),
-        );
-    } else {
-        print_check(
-            ctx,
-            false,
-            &format!(
-                "Low disk space ({} GB available, need 10 GB)",
-                ws.disk_space_gb
-            ),
-        );
-    }
-    println!();
-}
-
-/// Print the security section of the human-readable health report.
-fn print_security_section(ctx: &OutputContext, sec: &SecurityChecks) {
-    println!("  Security:");
-    print_check(ctx, sec.process_isolation, "Process isolation active");
-    print_check(ctx, sec.traffic_inspection, "Traffic inspection responding");
-    print_check(
-        ctx,
-        sec.malware_db_current,
-        &format!(
-            "Malware scanner database current (updated: {}h ago)",
-            sec.malware_db_age_hours,
-        ),
-    );
-
-    let expire_days = sec.certificates_expire_days;
-    if expire_days > 30 {
-        print_check(
-            ctx,
-            true,
-            "Certificates valid (no immediate action required)",
-        );
-    } else if expire_days > 0 {
-        println!(
-            "    {} Certificates expire soon",
-            "⚠".style(ctx.styles.warning)
-        );
-    } else {
-        print_check(ctx, false, "Certificates expired");
-    }
-}
-
-fn print_check(ctx: &OutputContext, ok: bool, msg: &str) {
-    if ok {
-        println!("    {} {msg}", "✓".style(ctx.styles.success));
-    } else {
-        println!("    {} {msg}", "✗".style(ctx.styles.error));
-    }
-}
-
 // ── Issue collection ──────────────────────────────────────────────────────────
-
-/// Collect actionable issues from check results.
-///
-/// Certificates expiring in 1–30 days are a warning only and are NOT included.
-#[must_use]
-pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
-    let mut issues = Vec::new();
-    if !checks.prerequisites.multipass_found {
-        issues.push("multipass is not installed".to_string());
-    } else if !checks.prerequisites.multipass_version_ok {
-        let ver = checks
-            .prerequisites
-            .multipass_version
-            .as_deref()
-            .unwrap_or("unknown");
-        issues.push(format!("Multipass {ver} is too old (need ≥ 1.16.0)"));
-    }
-    if !checks.workspace.disk_space_ok {
-        issues.push(format!(
-            "Low disk space ({} GB available, need 10 GB)",
-            checks.workspace.disk_space_gb,
-        ));
-    }
-    if !checks.network.dns {
-        issues.push("DNS resolution failed".to_string());
-    }
-    if !checks.security.traffic_inspection {
-        issues.push("Traffic inspection not responding".to_string());
-    }
-    if !checks.security.malware_db_current {
-        issues.push(format!(
-            "Malware scanner database stale (updated: {}h ago)",
-            checks.security.malware_db_age_hours
-        ));
-    }
-    if checks.security.certificates_expire_days <= 0 {
-        issues.push("Certificates expired".to_string());
-    }
-    issues
-}
 
 // ── System check helpers ──────────────────────────────────────────────────────
 
@@ -548,9 +233,9 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
 pub async fn repair(
     ctx: &OutputContext,
     mp: &(
-         impl crate::provisioner::InstanceInspector
-         + crate::provisioner::ShellExecutor
-         + crate::provisioner::FileTransfer
+         impl crate::application::ports::InstanceInspector
+         + crate::application::ports::ShellExecutor
+         + crate::application::ports::FileTransfer
      ),
     health_checks_failed: bool,
 ) -> Result<()> {
@@ -581,7 +266,7 @@ pub async fn repair(
     if health_checks_failed {
         print_step("Re-transferring config (health checks failed, VM state untrusted)...");
         let (assets_dir, _guard) =
-            crate::assets::extract_assets().context("extracting embedded assets")?;
+            crate::infra::assets::extract_assets().context("extracting embedded assets")?;
         let version = env!("CARGO_PKG_VERSION");
         crate::workspace::vm::transfer_config(mp, &assets_dir, version)
             .await
@@ -638,7 +323,7 @@ pub async fn repair(
     } else {
         print_step("Re-transferring config...");
         let (assets_dir, _guard) =
-            crate::assets::extract_assets().context("extracting embedded assets")?;
+            crate::infra::assets::extract_assets().context("extracting embedded assets")?;
         let version = env!("CARGO_PKG_VERSION");
         crate::workspace::vm::transfer_config(mp, &assets_dir, version)
             .await
@@ -890,13 +575,13 @@ async fn check_dns() -> bool {
 }
 
 /// Check if sysbox-runc is available inside the multipass VM.
-async fn check_process_isolation(mp: &impl crate::provisioner::ShellExecutor) -> bool {
+async fn check_process_isolation(mp: &impl crate::application::ports::ShellExecutor) -> bool {
     let output = mp.exec(&["sysbox-runc", "--version"]).await;
     output.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Check if the gate container is running inside the multipass VM.
-async fn check_gate_health(mp: &impl crate::provisioner::ShellExecutor) -> bool {
+async fn check_gate_health(mp: &impl crate::application::ports::ShellExecutor) -> bool {
     let output = mp
         .exec(&[
             "docker",
@@ -928,7 +613,7 @@ async fn check_gate_health(mp: &impl crate::provisioner::ShellExecutor) -> bool 
 }
 
 /// Check `ClamAV` database freshness inside the multipass VM.
-async fn check_malware_db(mp: &impl crate::provisioner::ShellExecutor) -> (bool, u64) {
+async fn check_malware_db(mp: &impl crate::application::ports::ShellExecutor) -> (bool, u64) {
     // Find the newest DB file (daily.cvd or daily.cld) in the scanner container.
     let output = mp
         .exec(&[
@@ -964,7 +649,7 @@ async fn check_malware_db(mp: &impl crate::provisioner::ShellExecutor) -> (bool,
 }
 
 /// Check CA certificate expiry inside the multipass VM.
-async fn check_certificates(mp: &impl crate::provisioner::ShellExecutor) -> (bool, i64) {
+async fn check_certificates(mp: &impl crate::application::ports::ShellExecutor) -> (bool, i64) {
     let output = mp
         .exec(&[
             "openssl",

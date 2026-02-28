@@ -13,14 +13,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use polis_cli::command_runner::CommandRunner;
-use polis_cli::provisioner::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, MultipassProvisioner,
-    POLIS_INSTANCE, ShellExecutor,
+use polis_cli::application::ports::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, POLIS_INSTANCE, ShellExecutor,
 };
+use polis_cli::command_runner::CommandRunner;
+use polis_cli::provisioner::MultipassProvisioner;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 
 // ─── MockCommandRunner ────────────────────────────────────────────────────────
+
+type CallLog = Arc<Mutex<Vec<(String, Vec<String>)>>>;
 
 /// A `CommandRunner` that records every `(program, args)` call and returns a
 /// configurable canned result.
@@ -30,7 +33,7 @@ use proptest::prelude::*;
 #[derive(Clone)]
 struct MockCommandRunner {
     /// All recorded `(program, args)` pairs in call order.
-    calls: Arc<Mutex<Vec<(String, Vec<String>)>>>,
+    calls: CallLog,
     /// The result to return from `run()` / `run_with_timeout()` / `run_with_stdin()`.
     result: Arc<dyn Fn() -> Result<Output> + Send + Sync>,
 }
@@ -54,16 +57,22 @@ impl MockCommandRunner {
 
     /// Return a snapshot of all recorded calls.
     fn recorded_calls(&self) -> Vec<(String, Vec<String>)> {
-        self.calls.lock().expect("mutex poisoned").clone()
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("mutex poisoned: {e}"))
+            .clone()
     }
 }
 
 impl CommandRunner for MockCommandRunner {
     async fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
-        self.calls.lock().expect("mutex poisoned").push((
-            program.to_owned(),
-            args.iter().map(|s| s.to_string()).collect(),
-        ));
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("mutex poisoned: {e}"))
+            .push((
+                program.to_owned(),
+                args.iter().map(ToString::to_string).collect(),
+            ));
         (self.result)()
     }
 
@@ -81,18 +90,24 @@ impl CommandRunner for MockCommandRunner {
     }
 
     fn spawn(&self, program: &str, args: &[&str]) -> Result<tokio::process::Child> {
-        self.calls.lock().expect("mutex poisoned").push((
-            program.to_owned(),
-            args.iter().map(|s| s.to_string()).collect(),
-        ));
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("mutex poisoned: {e}"))
+            .push((
+                program.to_owned(),
+                args.iter().map(ToString::to_string).collect(),
+            ));
         bail!("spawn not supported in MockCommandRunner")
     }
 
     async fn run_status(&self, program: &str, args: &[&str]) -> Result<std::process::ExitStatus> {
-        self.calls.lock().expect("mutex poisoned").push((
-            program.to_owned(),
-            args.iter().map(|s| s.to_string()).collect(),
-        ));
+        self.calls
+            .lock()
+            .unwrap_or_else(|e| panic!("mutex poisoned: {e}"))
+            .push((
+                program.to_owned(),
+                args.iter().map(ToString::to_string).collect(),
+            ));
         bail!("run_status not supported in MockCommandRunner")
     }
 }
@@ -116,13 +131,13 @@ fn exit_status(code: i32) -> ExitStatus {
         std::process::Command::new("cmd")
             .args(["/C", "exit 0"])
             .status()
-            .expect("failed to spawn helper process for exit status")
+            .unwrap_or_else(|e| panic!("failed to spawn helper process for exit status: {e}"))
     } else {
         let script = format!("exit {code}");
         std::process::Command::new("sh")
             .args(["-c", &script])
             .status()
-            .expect("failed to spawn helper process for exit status")
+            .unwrap_or_else(|e| panic!("failed to spawn helper process for exit status: {e}"))
     }
 }
 
@@ -147,30 +162,29 @@ fn make_provisioner_split(
 ///
 /// **Validates: Requirement 4.3**
 #[tokio::test]
-async fn test_info_delegates_to_cmd_runner() {
+async fn test_info_delegates_to_cmd_runner() -> anyhow::Result<()> {
     let mock = MockCommandRunner::new_ok();
     let mp = make_provisioner(&mock);
 
-    mp.info().await.expect("info should succeed");
+    mp.info().await?;
 
     let calls = mock.recorded_calls();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "multipass");
     assert_eq!(calls[0].1, ["info", POLIS_INSTANCE, "--format", "json"]);
+    Ok(())
 }
 
 /// `exec()` must delegate to `exec_runner.run("multipass", ["exec", "polis", "--", ...args])`.
 ///
 /// **Validates: Requirement 4.4**
 #[tokio::test]
-async fn test_exec_delegates_to_exec_runner() {
+async fn test_exec_delegates_to_exec_runner() -> anyhow::Result<()> {
     let cmd_mock = MockCommandRunner::new_ok();
     let exec_mock = MockCommandRunner::new_ok();
     let mp = make_provisioner_split(cmd_mock.clone(), exec_mock.clone());
 
-    mp.exec(&["docker", "ps"])
-        .await
-        .expect("exec should succeed");
+    mp.exec(&["docker", "ps"]).await?;
 
     // exec_runner should have received the call
     let exec_calls = exec_mock.recorded_calls();
@@ -183,6 +197,7 @@ async fn test_exec_delegates_to_exec_runner() {
 
     // cmd_runner should NOT have been called
     assert!(cmd_mock.recorded_calls().is_empty());
+    Ok(())
 }
 
 /// `launch()` must build the correct arg list from an `InstanceSpec`, including
@@ -190,7 +205,7 @@ async fn test_exec_delegates_to_exec_runner() {
 ///
 /// **Validates: Requirement 4.5**
 #[tokio::test]
-async fn test_launch_builds_correct_args_without_optional_fields() {
+async fn test_launch_builds_correct_args_without_optional_fields() -> anyhow::Result<()> {
     let mock = MockCommandRunner::new_ok();
     let mp = make_provisioner(&mock);
 
@@ -202,7 +217,7 @@ async fn test_launch_builds_correct_args_without_optional_fields() {
         cloud_init: None,
         timeout: None,
     };
-    mp.launch(&spec).await.expect("launch should succeed");
+    mp.launch(&spec).await?;
 
     let calls = mock.recorded_calls();
     assert_eq!(calls.len(), 1);
@@ -222,13 +237,14 @@ async fn test_launch_builds_correct_args_without_optional_fields() {
     assert!(args.contains(&"600".to_owned()));
     // No --cloud-init
     assert!(!args.contains(&"--cloud-init".to_owned()));
+    Ok(())
 }
 
 /// `launch()` with `cloud_init` and `timeout` set must include both optional flags.
 ///
 /// **Validates: Requirement 4.5**
 #[tokio::test]
-async fn test_launch_includes_optional_cloud_init_and_timeout() {
+async fn test_launch_includes_optional_cloud_init_and_timeout() -> anyhow::Result<()> {
     let mock = MockCommandRunner::new_ok();
     let mp = make_provisioner(&mock);
 
@@ -240,7 +256,7 @@ async fn test_launch_includes_optional_cloud_init_and_timeout() {
         cloud_init: Some("/tmp/cloud-init.yaml"),
         timeout: Some("900"),
     };
-    mp.launch(&spec).await.expect("launch should succeed");
+    mp.launch(&spec).await?;
 
     let calls = mock.recorded_calls();
     let args = &calls[0].1;
@@ -248,19 +264,18 @@ async fn test_launch_includes_optional_cloud_init_and_timeout() {
     assert!(args.contains(&"/tmp/cloud-init.yaml".to_owned()));
     assert!(args.contains(&"--timeout".to_owned()));
     assert!(args.contains(&"900".to_owned()));
+    Ok(())
 }
 
 /// `transfer()` must format the destination as `polis:<remote_path>`.
 ///
 /// **Validates: Requirement 4.6**
 #[tokio::test]
-async fn test_transfer_formats_destination_as_polis_colon_path() {
+async fn test_transfer_formats_destination_as_polis_colon_path() -> anyhow::Result<()> {
     let mock = MockCommandRunner::new_ok();
     let mp = make_provisioner(&mock);
 
-    mp.transfer("/local/file.txt", "/remote/file.txt")
-        .await
-        .expect("transfer should succeed");
+    mp.transfer("/local/file.txt", "/remote/file.txt").await?;
 
     let calls = mock.recorded_calls();
     assert_eq!(calls.len(), 1);
@@ -268,6 +283,7 @@ async fn test_transfer_formats_destination_as_polis_colon_path() {
     assert_eq!(args[0], "transfer");
     assert_eq!(args[1], "/local/file.txt");
     assert_eq!(args[2], "polis:/remote/file.txt");
+    Ok(())
 }
 
 /// When the runner returns an error, `info()` error chain must contain
@@ -279,8 +295,9 @@ async fn test_info_error_context() {
     let mock = MockCommandRunner::new_err("runner error");
     let mp = make_provisioner(&mock);
 
-    let err = mp.info().await.expect_err("info should fail");
-    let chain = format!("{err:#}");
+    let result = mp.info().await;
+    assert!(result.is_err(), "info should fail");
+    let chain = format!("{:#}", result.err().unwrap_or_else(|| anyhow::anyhow!("")));
     assert!(
         chain.contains("failed to run multipass info"),
         "error chain was: {chain}"
@@ -296,8 +313,9 @@ async fn test_exec_error_context() {
     let mock = MockCommandRunner::new_err("runner error");
     let mp = make_provisioner(&mock);
 
-    let err = mp.exec(&["ls"]).await.expect_err("exec should fail");
-    let chain = format!("{err:#}");
+    let result = mp.exec(&["ls"]).await;
+    assert!(result.is_err(), "exec should fail");
+    let chain = format!("{:#}", result.err().unwrap_or_else(|| anyhow::anyhow!("")));
     assert!(
         chain.contains("failed to run multipass exec"),
         "error chain was: {chain}"
@@ -321,8 +339,9 @@ async fn test_launch_error_context() {
         cloud_init: None,
         timeout: None,
     };
-    let err = mp.launch(&spec).await.expect_err("launch should fail");
-    let chain = format!("{err:#}");
+    let result = mp.launch(&spec).await;
+    assert!(result.is_err(), "launch should fail");
+    let chain = format!("{:#}", result.err().unwrap_or_else(|| anyhow::anyhow!("")));
     assert!(
         chain.contains("failed to run multipass launch"),
         "error chain was: {chain}"
@@ -338,11 +357,9 @@ async fn test_transfer_error_context() {
     let mock = MockCommandRunner::new_err("runner error");
     let mp = make_provisioner(&mock);
 
-    let err = mp
-        .transfer("/local/file.txt", "/remote/file.txt")
-        .await
-        .expect_err("transfer should fail");
-    let chain = format!("{err:#}");
+    let result = mp.transfer("/local/file.txt", "/remote/file.txt").await;
+    assert!(result.is_err(), "transfer should fail");
+    let chain = format!("{:#}", result.err().unwrap_or_else(|| anyhow::anyhow!("")));
     assert!(
         chain.contains("failed to run multipass transfer"),
         "error chain was: {chain}"
@@ -370,7 +387,7 @@ proptest! {
         cloud_init in proptest::option::of("[/a-z0-9._-]{1,30}"),
         timeout in proptest::option::of("[1-9][0-9]{1,3}"),
     ) {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let mock = MockCommandRunner::new_ok();
             let mp = make_provisioner(&mock);
@@ -385,7 +402,7 @@ proptest! {
                 cloud_init: ci,
                 timeout: to,
             };
-            mp.launch(&spec).await.expect("launch should succeed");
+            mp.launch(&spec).await.map_err(|e| TestCaseError::fail(e.to_string()))?;
 
             let calls = mock.recorded_calls();
             prop_assert_eq!(calls.len(), 1);
@@ -435,13 +452,13 @@ proptest! {
     fn prop_exec_prepends_exec_polis_separator(
         user_args in proptest::collection::vec("[a-z][a-z0-9_-]{0,15}", 0..8),
     ) {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let mock = MockCommandRunner::new_ok();
             let mp = make_provisioner(&mock);
 
             let refs: Vec<&str> = user_args.iter().map(String::as_str).collect();
-            mp.exec(&refs).await.expect("exec should succeed");
+            mp.exec(&refs).await.map_err(|e| TestCaseError::fail(e.to_string()))?;
 
             let calls = mock.recorded_calls();
             prop_assert_eq!(calls.len(), 1);
@@ -471,14 +488,14 @@ proptest! {
     fn prop_transfer_formats_destination_as_polis_colon_path(
         remote_path in "/[a-z][a-z0-9/_.-]{0,40}",
     ) {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let mock = MockCommandRunner::new_ok();
             let mp = make_provisioner(&mock);
 
             mp.transfer("/local/src", &remote_path)
                 .await
-                .expect("transfer should succeed");
+                .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
             let calls = mock.recorded_calls();
             prop_assert_eq!(calls.len(), 1);
@@ -510,7 +527,7 @@ proptest! {
     /// Uses a fixed error message and iterates over all methods in the test body.
     #[test]
     fn prop_error_context_propagation(_dummy in proptest::bool::ANY) {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             // Each entry: (method name for diagnostics, expected context string)
             // We run each method with a failing mock and check the error chain.
@@ -519,129 +536,120 @@ proptest! {
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp.info().await.expect_err("info should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass info"),
-                    "info() error chain was: {chain}"
-                );
+                let result = mp.info().await;
+                prop_assert!(result.is_err(), "info should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass info"), "info() error chain was: {chain}");
+                }
             }
 
             // version()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp.version().await.expect_err("version should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass version"),
-                    "version() error chain was: {chain}"
-                );
+                let result = mp.version().await;
+                prop_assert!(result.is_err(), "version should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass version"), "version() error chain was: {chain}");
+                }
             }
 
             // start()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp.start().await.expect_err("start should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass start"),
-                    "start() error chain was: {chain}"
-                );
+                let result = mp.start().await;
+                prop_assert!(result.is_err(), "start should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass start"), "start() error chain was: {chain}");
+                }
             }
 
             // stop()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp.stop().await.expect_err("stop should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass stop"),
-                    "stop() error chain was: {chain}"
-                );
+                let result = mp.stop().await;
+                prop_assert!(result.is_err(), "stop should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass stop"), "stop() error chain was: {chain}");
+                }
             }
 
             // delete()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp.delete().await.expect_err("delete should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass delete"),
-                    "delete() error chain was: {chain}"
-                );
+                let result = mp.delete().await;
+                prop_assert!(result.is_err(), "delete should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass delete"), "delete() error chain was: {chain}");
+                }
             }
 
             // purge()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp.purge().await.expect_err("purge should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass purge"),
-                    "purge() error chain was: {chain}"
-                );
+                let result = mp.purge().await;
+                prop_assert!(result.is_err(), "purge should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass purge"), "purge() error chain was: {chain}");
+                }
             }
 
             // exec()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp.exec(&["ls"]).await.expect_err("exec should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass exec"),
-                    "exec() error chain was: {chain}"
-                );
+                let result = mp.exec(&["ls"]).await;
+                prop_assert!(result.is_err(), "exec should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass exec"), "exec() error chain was: {chain}");
+                }
             }
 
             // transfer()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp
-                    .transfer("/local/file", "/remote/file")
-                    .await
-                    .expect_err("transfer should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass transfer"),
-                    "transfer() error chain was: {chain}"
-                );
+                let result = mp.transfer("/local/file", "/remote/file").await;
+                prop_assert!(result.is_err(), "transfer should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass transfer"), "transfer() error chain was: {chain}");
+                }
             }
 
             // transfer_recursive()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp
-                    .transfer_recursive("/local/dir", "/remote/dir")
-                    .await
-                    .expect_err("transfer_recursive should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass transfer"),
-                    "transfer_recursive() error chain was: {chain}"
-                );
+                let result = mp.transfer_recursive("/local/dir", "/remote/dir").await;
+                prop_assert!(result.is_err(), "transfer_recursive should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass transfer"), "transfer_recursive() error chain was: {chain}");
+                }
             }
 
             // exec_with_stdin()
             {
                 let mock = MockCommandRunner::new_err("injected runner error");
                 let mp = make_provisioner(&mock);
-                let err = mp
-                    .exec_with_stdin(&["tee", "/tmp/file"], b"data")
-                    .await
-                    .expect_err("exec_with_stdin should fail");
-                let chain = format!("{err:#}");
-                prop_assert!(
-                    chain.contains("failed to run multipass exec"),
-                    "exec_with_stdin() error chain was: {chain}"
-                );
+                let result = mp.exec_with_stdin(&["tee", "/tmp/file"], b"data").await;
+                prop_assert!(result.is_err(), "exec_with_stdin should fail");
+                if let Err(e) = result {
+                    let chain = format!("{e:#}");
+                    prop_assert!(chain.contains("failed to run multipass exec"), "exec_with_stdin() error chain was: {chain}");
+                }
             }
 
             Ok(())
@@ -695,7 +703,7 @@ proptest! {
         // Allow generous slack for process spawn overhead and scheduler jitter
         let slack = Duration::from_secs(2);
 
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let cmd_runner = TokioCommandRunner::new(cmd_timeout);
             let exec_runner = TokioCommandRunner::new(exec_timeout);
@@ -713,7 +721,7 @@ proptest! {
                 "cmd_runner: expected Err but got Ok (timeout={}ms)",
                 cmd_timeout_ms
             );
-            let cmd_err = format!("{:#}", cmd_result.unwrap_err());
+            let cmd_err = if let Err(e) = cmd_result { format!("{e:#}") } else { String::new() };
             prop_assert!(
                 cmd_err.contains("timed out"),
                 "cmd_runner: error does not contain 'timed out': {cmd_err}"
@@ -739,7 +747,7 @@ proptest! {
                 "exec_runner: expected Err but got Ok (timeout={}ms)",
                 exec_timeout_ms
             );
-            let exec_err = format!("{:#}", exec_result.unwrap_err());
+            let exec_err = if let Err(e) = exec_result { format!("{e:#}") } else { String::new() };
             prop_assert!(
                 exec_err.contains("timed out"),
                 "exec_runner: error does not contain 'timed out': {exec_err}"
@@ -787,7 +795,7 @@ struct StubInspector {
 
 impl StubInspector {
     fn ok_with_state(state_str: &str) -> Self {
-        let json = format!(r#"{{"info":{{"polis":{{"state":"{}"}}}}}}"#, state_str);
+        let json = format!(r#"{{"info":{{"polis":{{"state":"{state_str}"}}}}}}"#);
         Self {
             output: std::process::Output {
                 status: success_output().status,
@@ -844,10 +852,10 @@ proptest! {
             Just("Starting"),
         ]
     ) {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let stub = StubInspector::ok_with_state(state_str);
-            let result = state(&stub).await.expect("state should succeed");
+            let result = state(&stub).await.map_err(|e| TestCaseError::fail(e.to_string()))?;
             let expected = match state_str {
                 "Running" => VmState::Running,
                 "Starting" => VmState::Starting,
@@ -867,10 +875,10 @@ proptest! {
                 s != "Running" && s != "Starting" && s != "Stopped"
             })
     ) {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let stub = StubInspector::ok_with_state(&state_str);
-            let result = state(&stub).await.expect("state should succeed");
+            let result = state(&stub).await.map_err(|e| TestCaseError::fail(e.to_string()))?;
             prop_assert_eq!(result, VmState::Stopped,
                 "unknown state '{}' should map to Stopped", state_str);
             Ok(())
@@ -882,7 +890,7 @@ proptest! {
     fn prop_vm_exists_iff_info_succeeds(
         state_str in prop_oneof![Just("Running"), Just("Stopped"), Just("Starting")]
     ) {
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             let stub = StubInspector::ok_with_state(state_str);
             prop_assert!(exists(&stub).await, "exists should be true when info succeeds");
@@ -892,9 +900,10 @@ proptest! {
 }
 
 #[tokio::test]
-async fn vm_state_not_found_when_info_fails() {
+async fn vm_state_not_found_when_info_fails() -> anyhow::Result<()> {
     let stub = StubInspector::fail();
-    assert_eq!(state(&stub).await.expect("state"), VmState::NotFound);
+    assert_eq!(state(&stub).await?, VmState::NotFound);
+    Ok(())
 }
 
 #[tokio::test]
@@ -920,7 +929,7 @@ async fn vm_exists_false_when_info_fails() {
 //
 // **Validates: Requirements 8.6, 11.4**
 
-use polis_cli::provisioner::VmProvisioner;
+use polis_cli::application::ports::VmProvisioner;
 
 /// Accepts any `InstanceInspector` — proves the mock satisfies the bound.
 fn assert_inspector<T: InstanceInspector>(_: &T) {}
@@ -1006,9 +1015,7 @@ fn prop_stub_inspector_satisfies_only_inspector_trait() {
     let stub = StubInspector::ok_with_state("Running");
     // Compile-time proof: stub satisfies InstanceInspector.
     assert_inspector(&stub);
-    // Runtime assertion is trivially true — the value of this test is that
-    // it compiles, proving the ISP split is working correctly.
-    assert!(true);
+    // The value of this test is that it compiles, proving the ISP split works.
 }
 
 /// `MockCommandRunner` (defined in this file) satisfies `CommandRunner`.
@@ -1023,5 +1030,4 @@ fn prop_mock_command_runner_is_process_layer_only() {
     assert_command_runner(&mock);
     // It does NOT implement InstanceInspector, ShellExecutor, etc. —
     // that separation is enforced by the type system.
-    assert!(true);
 }

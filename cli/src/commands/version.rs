@@ -2,6 +2,8 @@
 
 use anyhow::{Context, Result};
 
+use crate::app::{AppContext, OutputMode};
+
 /// Build the pretty-printed JSON string for `version --json`.
 fn version_json(version: &str) -> Result<String> {
     serde_json::to_string_pretty(&serde_json::json!({ "version": version }))
@@ -13,9 +15,9 @@ fn version_json(version: &str) -> Result<String> {
 /// # Errors
 ///
 /// Returns an error if JSON serialization fails.
-pub fn run(json: bool) -> Result<()> {
+pub fn run(app: &AppContext) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
-    if json {
+    if app.mode == OutputMode::Json {
         println!("{}", version_json(version)?);
     } else {
         println!("polis {version}");

@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 
-use crate::assets::get_asset;
-use crate::provisioner::ShellExecutor;
+use crate::application::ports::ShellExecutor;
+use crate::infra::assets::get_asset;
 
 /// Mapping from Docker image reference to expected sha256 digest.
 ///
@@ -90,7 +90,7 @@ mod tests {
     use anyhow::Result;
 
     use super::*;
-    use crate::provisioner::ShellExecutor;
+    use crate::application::ports::ShellExecutor;
 
     // ── Cross-platform ExitStatus helper ─────────────────────────────────────
 

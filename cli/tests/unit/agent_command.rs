@@ -5,16 +5,36 @@
 use std::process::Output;
 
 use anyhow::Result;
-use polis_cli::commands::agent::{self, AddArgs, AgentCommand, RemoveArgs};
-use polis_cli::output::OutputContext;
-use polis_cli::provisioner::{
+use polis_cli::app::AppContext;
+use polis_cli::application::ports::{
     FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
 };
+use polis_cli::commands::agent::{self, AddArgs, AgentCommand, RemoveArgs};
 
 use crate::helpers::{err_output, ok_output};
 
-fn quiet() -> OutputContext {
-    OutputContext::new(true, true)
+fn quiet() -> AppContext {
+    AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: false,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app")
+}
+
+fn quiet_json() -> AppContext {
+    AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: true,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app")
 }
 
 // ── Stub: returns fixed Output for every exec() call ────────────────────────
@@ -84,7 +104,7 @@ impl ShellExecutor for ExecStub {
 #[tokio::test]
 async fn test_list_empty_returns_ok() {
     let mp = ExecStub(ok_output(b""));
-    let result = agent::run(AgentCommand::List, &mp, &quiet(), false).await;
+    let result = agent::run(AgentCommand::List, &mp, &quiet()).await;
     assert!(result.is_ok());
 }
 
@@ -92,7 +112,7 @@ async fn test_list_empty_returns_ok() {
 async fn test_list_json_returns_ok_with_agents_array() {
     let line = br#"{"dir":"myagent","name":"myagent","version":"v1.0","description":"My agent"}"#;
     let mp = ExecStub(ok_output(line));
-    let result = agent::run(AgentCommand::List, &mp, &quiet(), true).await;
+    let result = agent::run(AgentCommand::List, &mp, &quiet_json()).await;
     assert!(result.is_ok());
 }
 
@@ -103,9 +123,12 @@ async fn test_list_json_returns_ok_with_agents_array() {
 #[tokio::test]
 async fn test_restart_no_active_agent_returns_error() {
     let mp = ExecStub(ok_output(b""));
-    let result = agent::run(AgentCommand::Restart, &mp, &quiet(), false).await;
+    let result = agent::run(AgentCommand::Restart, &mp, &quiet()).await;
     assert!(result.is_err());
-    let msg = result.expect_err("expected error").to_string().to_lowercase();
+    let msg = result
+        .expect_err("expected error")
+        .to_string()
+        .to_lowercase();
     assert!(
         msg.contains("no active agent"),
         "error should mention no active agent, got: {msg}"
@@ -126,7 +149,6 @@ async fn test_remove_agent_not_installed_returns_error() {
         }),
         &mp,
         &quiet(),
-        false,
     )
     .await;
     assert!(result.is_err());
@@ -152,7 +174,6 @@ async fn test_add_path_not_found_returns_error() {
         }),
         &mp,
         &quiet(),
-        false,
     )
     .await;
     assert!(result.is_err());
@@ -173,7 +194,6 @@ async fn test_add_missing_agent_yaml_returns_error() {
         }),
         &mp,
         &quiet(),
-        false,
     )
     .await;
     assert!(result.is_err());
@@ -192,7 +212,6 @@ async fn test_add_malformed_agent_yaml_returns_error() {
         }),
         &mp,
         &quiet(),
-        false,
     )
     .await;
     assert!(result.is_err());
@@ -210,9 +229,12 @@ async fn test_add_malformed_agent_yaml_returns_error() {
 #[tokio::test]
 async fn test_update_no_active_agent_returns_error() {
     let mp = ExecStub(ok_output(b""));
-    let result = agent::run(AgentCommand::Update, &mp, &quiet(), false).await;
+    let result = agent::run(AgentCommand::Update, &mp, &quiet()).await;
     assert!(result.is_err());
-    let msg = result.expect_err("expected error").to_string().to_lowercase();
+    let msg = result
+        .expect_err("expected error")
+        .to_string()
+        .to_lowercase();
     assert!(
         msg.contains("no active agent"),
         "error should mention no active agent, got: {msg}"

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::provisioner::ShellExecutor;
+use crate::application::ports::ShellExecutor;
 use crate::workspace::COMPOSE_PATH;
 
 /// Health status.
@@ -143,7 +143,7 @@ mod property_tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::provisioner::ShellExecutor;
+    use crate::application::ports::ShellExecutor;
 
     #[cfg(unix)]
     fn exit_status_ok() -> ExitStatus {
@@ -217,7 +217,7 @@ mod property_tests {
                 Just("healthy".to_string()),
                 Just("unhealthy".to_string()),
                 Just("starting".to_string()),
-                Just("".to_string()),
+                Just(String::new()),
             ],
         ) {
             let json = format!(r#"{{"State":"{state}","Health":"{health}"}}"#);
@@ -271,8 +271,13 @@ mod property_tests {
         /// Property 8 (bad JSON): bad JSON → HealthStatus::Unknown
         #[test]
         fn prop_bad_json_returns_unknown(
-            garbage in "[^{}\n]{1,30}",
+            // Generate strings that are syntactically invalid JSON:
+            // start with a letter that isn't the start of true/false/null,
+            // ensuring serde_json::from_str always returns Err.
+            prefix in "[g-mo-su-z][a-z0-9 ]{0,20}",
         ) {
+            let garbage = format!("x{prefix}");
+            let garbage = &garbage;
             let output = Output {
                 status: exit_status_ok(),
                 stdout: garbage.as_bytes().to_vec(),
@@ -321,7 +326,7 @@ mod tests {
     use anyhow::Result;
 
     use super::*;
-    use crate::provisioner::ShellExecutor;
+    use crate::application::ports::ShellExecutor;
 
     #[cfg(unix)]
     fn exit_status(code: i32) -> ExitStatus {

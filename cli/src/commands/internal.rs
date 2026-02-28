@@ -55,8 +55,8 @@ where
 /// # Errors
 ///
 /// Returns an error if the VM IP cannot be resolved or SSH cannot be spawned.
-pub async fn ssh_proxy(mp: &impl crate::provisioner::InstanceInspector) -> Result<()> {
-    let vm_ip = crate::multipass::resolve_vm_ip(mp).await?;
+pub async fn ssh_proxy(mp: &impl crate::application::ports::InstanceInspector) -> Result<()> {
+    let vm_ip = crate::workspace::vm::resolve_vm_ip(mp).await?;
 
     let identity_key = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
@@ -111,7 +111,7 @@ pub async fn ssh_proxy(mp: &impl crate::provisioner::InstanceInspector) -> Resul
 ///
 /// Returns an error if the host key cannot be extracted.
 #[allow(clippy::large_futures)]
-pub async fn extract_host_key(mp: &impl crate::provisioner::ShellExecutor) -> Result<()> {
+pub async fn extract_host_key(mp: &impl crate::application::ports::ShellExecutor) -> Result<()> {
     let output = mp
         .exec(&[
             "docker",
@@ -127,7 +127,7 @@ pub async fn extract_host_key(mp: &impl crate::provisioner::ShellExecutor) -> Re
         .context("host key output is not valid UTF-8")?
         .trim()
         .to_string();
-    crate::ssh::validate_host_key(&key)?;
+    crate::infra::ssh::validate_host_key(&key)?;
     println!("workspace {key}");
     Ok(())
 }

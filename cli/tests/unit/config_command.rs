@@ -11,9 +11,9 @@
 use std::process::Output;
 
 use anyhow::Result;
+use polis_cli::app::AppContext;
+use polis_cli::application::ports::{InstanceInspector, ShellExecutor};
 use polis_cli::commands::config::{self, ConfigCommand};
-use polis_cli::output::OutputContext;
-use polis_cli::provisioner::{InstanceInspector, ShellExecutor};
 use serial_test::serial;
 use tempfile::TempDir;
 
@@ -37,8 +37,28 @@ fn err_output(stderr: &[u8]) -> Output {
     }
 }
 
-fn ctx() -> OutputContext {
-    OutputContext::new(true, true)
+fn ctx() -> AppContext {
+    AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: false,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app")
+}
+
+fn ctx_json() -> AppContext {
+    AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: true,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app")
 }
 
 fn set_cmd(value: &str) -> (TempDir, ConfigCommand) {
@@ -86,10 +106,16 @@ impl_inspector_running!(MockPropagateOk);
 impl ShellExecutor for MockPropagateOk {
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         if args.contains(&"cat") {
-            return Ok(ok_output(b"s3cret\n"));
+            return Ok(ok_output(
+                b"s3cret
+",
+            ));
         }
         if args.contains(&"valkey-cli") {
-            return Ok(ok_output(b"OK\n"));
+            return Ok(ok_output(
+                b"OK
+",
+            ));
         }
         anyhow::bail!("exec not expected with args: {args:?}")
     }
@@ -139,7 +165,10 @@ impl_inspector_running!(MockValkeySetFails);
 impl ShellExecutor for MockValkeySetFails {
     async fn exec(&self, args: &[&str]) -> Result<Output> {
         if args.contains(&"cat") {
-            return Ok(ok_output(b"s3cret\n"));
+            return Ok(ok_output(
+                b"s3cret
+",
+            ));
         }
         if args.contains(&"valkey-cli") {
             return Ok(err_output(b"NOPERM"));
@@ -207,9 +236,11 @@ impl ShellExecutor for MockCaptureArgs {
             .expect("lock")
             .push(args.iter().map(|s| (*s).to_string()).collect());
         Ok(ok_output(if args.contains(&"cat") {
-            b"testpass\n"
+            b"testpass
+"
         } else {
-            b"OK\n"
+            b"OK
+"
         }))
     }
     async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
@@ -229,7 +260,7 @@ impl ShellExecutor for MockCaptureArgs {
 #[serial]
 async fn test_config_set_security_level_propagates_on_success() {
     let (_dir, cmd) = set_cmd("strict");
-    let result = config::run(&ctx(), cmd, false, &MockPropagateOk).await;
+    let result = config::run(&ctx(), cmd, &MockPropagateOk).await;
     assert!(result.is_ok());
 }
 
@@ -238,7 +269,7 @@ async fn test_config_set_security_level_propagates_on_success() {
 async fn test_config_set_security_level_saves_file_on_success() {
     let (dir, cmd) = set_cmd("strict");
     let path = dir.path().join("config.yaml");
-    config::run(&ctx(), cmd, false, &MockPropagateOk)
+    config::run(&ctx(), cmd, &MockPropagateOk)
         .await
         .expect("should succeed");
     let content = std::fs::read_to_string(&path).expect("file should exist");
@@ -251,7 +282,7 @@ async fn test_config_set_security_level_saves_file_on_success() {
 #[serial]
 async fn test_config_set_succeeds_when_password_read_fails() {
     let (_dir, cmd) = set_cmd("strict");
-    let result = config::run(&ctx(), cmd, false, &MockPasswordReadFails).await;
+    let result = config::run(&ctx(), cmd, &MockPasswordReadFails).await;
     assert!(
         result.is_ok(),
         "local save should succeed even if propagation fails"
@@ -262,7 +293,7 @@ async fn test_config_set_succeeds_when_password_read_fails() {
 #[serial]
 async fn test_config_set_succeeds_when_valkey_set_fails() {
     let (_dir, cmd) = set_cmd("balanced");
-    let result = config::run(&ctx(), cmd, false, &MockValkeySetFails).await;
+    let result = config::run(&ctx(), cmd, &MockValkeySetFails).await;
     assert!(
         result.is_ok(),
         "local save should succeed even if Valkey SET fails"
@@ -273,7 +304,7 @@ async fn test_config_set_succeeds_when_valkey_set_fails() {
 #[serial]
 async fn test_config_set_succeeds_when_exec_errors() {
     let (_dir, cmd) = set_cmd("balanced");
-    let result = config::run(&ctx(), cmd, false, &MockExecErrors).await;
+    let result = config::run(&ctx(), cmd, &MockExecErrors).await;
     assert!(
         result.is_ok(),
         "local save should succeed even if multipass exec errors"
@@ -285,7 +316,7 @@ async fn test_config_set_succeeds_when_exec_errors() {
 async fn test_config_set_saves_file_even_when_propagation_fails() {
     let (dir, cmd) = set_cmd("strict");
     let path = dir.path().join("config.yaml");
-    config::run(&ctx(), cmd, false, &MockPasswordReadFails)
+    config::run(&ctx(), cmd, &MockPasswordReadFails)
         .await
         .expect("should succeed");
     let content = std::fs::read_to_string(&path).expect("file should exist");
@@ -303,7 +334,7 @@ async fn test_config_show_does_not_interact_with_multipass() {
     let (_dir, _) = set_cmd("balanced"); // sets POLIS_CONFIG
     let cmd = ConfigCommand::Show;
     // MockExecErrors bails on any exec call — proves show is exec-free.
-    let result = config::run(&ctx(), cmd, false, &MockExecErrors).await;
+    let result = config::run(&ctx(), cmd, &MockExecErrors).await;
     assert!(result.is_ok());
 }
 
@@ -312,7 +343,7 @@ async fn test_config_show_does_not_interact_with_multipass() {
 async fn test_config_show_json_does_not_interact_with_multipass() {
     let (_dir, _) = set_cmd("balanced");
     let cmd = ConfigCommand::Show;
-    let result = config::run(&ctx(), cmd, true, &MockExecErrors).await;
+    let result = config::run(&ctx_json(), cmd, &MockExecErrors).await;
     assert!(result.is_ok());
 }
 
@@ -323,7 +354,7 @@ async fn test_config_show_json_does_not_interact_with_multipass() {
 async fn test_config_set_propagation_passes_level_as_separate_arg() {
     let (_dir, cmd) = set_cmd("strict");
     let mock = MockCaptureArgs::new();
-    config::run(&ctx(), cmd, false, &mock).await.expect("ok");
+    config::run(&ctx(), cmd, &mock).await.expect("ok");
 
     let calls = mock.exec_calls();
     assert_eq!(calls.len(), 2, "expected password read + valkey-cli SET");
@@ -353,7 +384,7 @@ async fn test_config_set_propagation_passes_level_as_separate_arg() {
 async fn test_config_set_propagation_does_not_use_shell() {
     let (_dir, cmd) = set_cmd("balanced");
     let mock = MockCaptureArgs::new();
-    config::run(&ctx(), cmd, false, &mock).await.expect("ok");
+    config::run(&ctx(), cmd, &mock).await.expect("ok");
 
     let calls = mock.exec_calls();
     for call in &calls {

@@ -2,50 +2,33 @@
 //!
 //! Displays workspace state, agent health, security status, and metrics.
 
-use std::time::Duration;
-
 use anyhow::Result;
 use polis_common::types::{
     AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
     WorkspaceState, WorkspaceStatus,
 };
 
-use crate::output::OutputContext;
-use crate::provisioner::InstanceInspector;
+use crate::app::AppContext;
+use crate::application::ports::{InstanceInspector, ShellExecutor};
 use crate::workspace::COMPOSE_PATH;
-
-/// Timeout for individual exec calls during status gathering.
-/// Prevents `polis status` from hanging when Docker is unresponsive.
-const STATUS_EXEC_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Timeout for `multipass info` during status — shorter than the default
-/// provisioner timeout so `polis status` fails fast when the daemon is slow.
-const STATUS_INFO_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Run the status command.
 ///
 /// # Errors
 ///
 /// Returns an error if JSON serialization fails.
-pub async fn run(ctx: &OutputContext, json: bool, mp: &impl InstanceInspector) -> Result<()> {
+pub async fn run(app: &AppContext, mp: &(impl InstanceInspector + ShellExecutor)) -> Result<()> {
     let output = gather_status(mp).await;
-
-    if json {
-        println!("{}", serde_json::to_string_pretty(&output)?);
-    } else {
-        print_human_readable(ctx, &output);
-    }
-
-    Ok(())
+    app.renderer().render_status(&output)
 }
 
 /// Gather all status information.
-async fn gather_status(mp: &impl InstanceInspector) -> StatusOutput {
+async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutput {
     let workspace = get_workspace_status(mp).await;
     let is_running = workspace.status == WorkspaceState::Running;
 
     let (security, agent) = if is_running {
-        (get_security_status().await, get_agent_status().await)
+        (get_security_status(mp).await, get_agent_status(mp).await)
     } else {
         (
             SecurityStatus {
@@ -69,7 +52,7 @@ async fn gather_status(mp: &impl InstanceInspector) -> StatusOutput {
 }
 
 /// Check workspace status via multipass.
-async fn get_workspace_status(mp: &impl InstanceInspector) -> WorkspaceStatus {
+async fn get_workspace_status(mp: &(impl InstanceInspector + ShellExecutor)) -> WorkspaceStatus {
     let Some(vm_state) = check_multipass_status(mp).await else {
         return workspace_unknown();
     };
@@ -83,7 +66,7 @@ async fn get_workspace_status(mp: &impl InstanceInspector) -> WorkspaceStatus {
     }
 
     // VM is running - check if polis-workspace container is running
-    let container_running = check_workspace_container().await;
+    let container_running = check_workspace_container(mp).await;
 
     WorkspaceStatus {
         status: if container_running {
@@ -96,17 +79,10 @@ async fn get_workspace_status(mp: &impl InstanceInspector) -> WorkspaceStatus {
 }
 
 /// Check multipass VM state (with timeout to prevent hanging).
-async fn check_multipass_status(_mp: &impl InstanceInspector) -> Option<WorkspaceState> {
-    // Use a short dedicated timeout rather than mp.info() which goes through
-    // the provisioner's DEFAULT_CMD_TIMEOUT (30s) — on Windows the Multipass
-    // daemon can be slow to respond and would silently block polis status.
-    let output = crate::multipass::cmd_with_timeout(
-        "info",
-        &[crate::multipass::VM_NAME, "--format", "json"],
-        STATUS_INFO_TIMEOUT,
-    )
-    .await
-    .ok()?;
+async fn check_multipass_status(mp: &impl InstanceInspector) -> Option<WorkspaceState> {
+    // Use mp.info() through the provisioner trait — the provisioner already
+    // applies DEFAULT_CMD_TIMEOUT. For status we accept the default timeout.
+    let output = mp.info().await.ok()?;
 
     if !output.status.success() {
         return None;
@@ -125,13 +101,9 @@ async fn check_multipass_status(_mp: &impl InstanceInspector) -> Option<Workspac
 }
 
 /// Check if polis-workspace container is running inside VM.
-///
-/// Uses `exec_with_timeout` which spawns the child process and explicitly
-/// kills it on timeout — required on Windows where dropping a tokio process
-/// future does NOT terminate the child.
-async fn check_workspace_container() -> bool {
-    let output = crate::multipass::exec_with_timeout(
-        &[
+async fn check_workspace_container(mp: &impl ShellExecutor) -> bool {
+    let output = mp
+        .exec(&[
             "docker",
             "compose",
             "-f",
@@ -140,10 +112,8 @@ async fn check_workspace_container() -> bool {
             "--format",
             "json",
             "workspace",
-        ],
-        STATUS_EXEC_TIMEOUT,
-    )
-    .await;
+        ])
+        .await;
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -162,15 +132,11 @@ async fn check_workspace_container() -> bool {
 }
 
 /// Check security services inside multipass VM.
-///
-/// Queries each security service individually to avoid the unfiltered
-/// `docker compose ps --format json` call which hangs on Windows when
-/// run through `multipass exec` (the host process never closes stdout).
-async fn get_security_status() -> SecurityStatus {
+async fn get_security_status(mp: &impl ShellExecutor) -> SecurityStatus {
     let (gate, sentinel, scanner) = tokio::join!(
-        is_service_running("gate"),
-        is_service_running("sentinel"),
-        is_service_running("scanner"),
+        is_service_running(mp, "gate"),
+        is_service_running(mp, "sentinel"),
+        is_service_running(mp, "scanner"),
     );
 
     SecurityStatus {
@@ -181,9 +147,9 @@ async fn get_security_status() -> SecurityStatus {
 }
 
 /// Check if a single docker compose service is running inside the VM.
-async fn is_service_running(service: &str) -> bool {
-    let output = crate::multipass::exec_with_timeout(
-        &[
+async fn is_service_running(mp: &impl ShellExecutor, service: &str) -> bool {
+    let output = mp
+        .exec(&[
             "docker",
             "compose",
             "-f",
@@ -192,10 +158,8 @@ async fn is_service_running(service: &str) -> bool {
             "--format",
             "json",
             service,
-        ],
-        STATUS_EXEC_TIMEOUT,
-    )
-    .await;
+        ])
+        .await;
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -214,11 +178,9 @@ async fn is_service_running(service: &str) -> bool {
 }
 
 /// Check agent status inside multipass VM.
-///
-/// Uses `exec_with_timeout` for cross-platform process kill on timeout.
-async fn get_agent_status() -> Option<AgentStatus> {
-    let output = crate::multipass::exec_with_timeout(
-        &[
+async fn get_agent_status(mp: &impl ShellExecutor) -> Option<AgentStatus> {
+    let output = mp
+        .exec(&[
             "docker",
             "compose",
             "-f",
@@ -227,11 +189,9 @@ async fn get_agent_status() -> Option<AgentStatus> {
             "--format",
             "json",
             "workspace",
-        ],
-        STATUS_EXEC_TIMEOUT,
-    )
-    .await
-    .ok()?;
+        ])
+        .await
+        .ok()?;
 
     if !output.status.success() {
         return None;
@@ -258,7 +218,8 @@ async fn get_agent_status() -> Option<AgentStatus> {
 }
 
 /// Print human-readable status output.
-fn print_human_readable(ctx: &OutputContext, status: &StatusOutput) {
+#[allow(dead_code)]
+fn print_human_readable(ctx: &crate::output::OutputContext, status: &StatusOutput) {
     ctx.kv(
         "Workspace:",
         workspace_state_display(status.workspace.status),

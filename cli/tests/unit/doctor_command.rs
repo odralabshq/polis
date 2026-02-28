@@ -5,14 +5,15 @@
 #![allow(clippy::expect_used)]
 
 use anyhow::Result;
+use polis_cli::app::AppContext;
+use polis_cli::application::ports::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
+};
 use polis_cli::commands::doctor::{
     self, HealthProbe, ImageCheckResult, NetworkChecks, PrerequisiteChecks, SecurityChecks,
     WorkspaceChecks,
 };
 use polis_cli::output::OutputContext;
-use polis_cli::provisioner::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
-};
 
 use crate::helpers::{err_output, ok_output};
 
@@ -246,33 +247,65 @@ impl ShellExecutor for RepairMockMp {
 
 #[tokio::test]
 async fn test_doctor_json_outputs_valid_json() {
-    let ctx = OutputContext::new(true, true);
+    let app = AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: true,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app");
     let mp = RepairMockMp::new(true, true);
-    let result = doctor::run_with(&ctx, true, false, false, &MockHealthyProbe, &mp).await;
+    let result = doctor::run_with(&app, false, false, &MockHealthyProbe, &mp).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_doctor_healthy_system_returns_ok() {
-    let ctx = OutputContext::new(true, true);
+    let app = AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: false,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app");
     let mp = RepairMockMp::new(true, true);
-    let result = doctor::run_with(&ctx, false, false, false, &MockHealthyProbe, &mp).await;
+    let result = doctor::run_with(&app, false, false, &MockHealthyProbe, &mp).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_doctor_unhealthy_system_returns_ok() {
-    let ctx = OutputContext::new(true, true);
+    let app = AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: false,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app");
     let mp = RepairMockMp::new(true, true);
-    let result = doctor::run_with(&ctx, false, false, false, &MockUnhealthyProbe, &mp).await;
+    let result = doctor::run_with(&app, false, false, &MockUnhealthyProbe, &mp).await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_doctor_unhealthy_json_returns_ok() {
-    let ctx = OutputContext::new(true, true);
+    let app = AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: true,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app");
     let mp = RepairMockMp::new(true, true);
-    let result = doctor::run_with(&ctx, true, false, false, &MockUnhealthyProbe, &mp).await;
+    let result = doctor::run_with(&app, false, false, &MockUnhealthyProbe, &mp).await;
     assert!(result.is_ok());
 }
 
@@ -282,10 +315,18 @@ async fn test_doctor_unhealthy_json_returns_ok() {
 /// called (broken VM must not block the repair path).
 #[tokio::test]
 async fn test_run_with_checks_fail_fix_calls_repair() {
-    let ctx = OutputContext::new(true, true);
+    let app = AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: false,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app");
     // Sentinel present + certs valid so repair completes without cert regen
     let mp = RepairMockMp::new(true, true);
-    let result = doctor::run_with(&ctx, false, false, true, &MockFailingProbe, &mp).await;
+    let result = doctor::run_with(&app, false, true, &MockFailingProbe, &mp).await;
     // repair() should have been called — verify by checking that compose up was invoked
     assert!(
         result.is_ok(),
@@ -301,9 +342,17 @@ async fn test_run_with_checks_fail_fix_calls_repair() {
 /// When health checks return Err and --fix is NOT passed, the error propagates.
 #[tokio::test]
 async fn test_run_with_checks_fail_no_fix_returns_err() {
-    let ctx = OutputContext::new(true, true);
+    let app = AppContext::new(&polis_cli::app::AppFlags {
+        output: polis_cli::app::OutputFlags {
+            no_color: true,
+            quiet: true,
+            json: false,
+        },
+        behaviour: polis_cli::app::BehaviourFlags { yes: false },
+    })
+    .expect("app");
     let mp = RepairMockMp::new(true, true);
-    let result = doctor::run_with(&ctx, false, false, false, &MockFailingProbe, &mp).await;
+    let result = doctor::run_with(&app, false, false, &MockFailingProbe, &mp).await;
     assert!(
         result.is_err(),
         "expected error to propagate when fix=false"

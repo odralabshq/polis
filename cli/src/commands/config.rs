@@ -5,10 +5,17 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use owo_colors::OwoColorize;
-use serde::{Deserialize, Serialize};
 
+use crate::app::AppContext;
+use crate::application::ports::{InstanceInspector, ShellExecutor};
 use crate::output::OutputContext;
-use crate::provisioner::{InstanceInspector, ShellExecutor};
+
+// ── Re-exports from domain (backward compatibility) ──────────────────────────
+
+#[allow(unused_imports)]
+pub use crate::domain::config::{
+    PolisConfig, SecurityConfig, validate_config_key, validate_config_value,
+};
 
 // ── Subcommand enum ──────────────────────────────────────────────────────────
 
@@ -26,37 +33,6 @@ pub enum ConfigCommand {
     },
 }
 
-// ── Config schema ────────────────────────────────────────────────────────────
-
-/// Top-level configuration stored in `~/.polis/config.yaml`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct PolisConfig {
-    /// Security settings.
-    #[serde(default)]
-    pub security: SecurityConfig,
-}
-
-/// Security configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityConfig {
-    /// Security level: `balanced` (default) or `strict`.
-    #[serde(default = "default_security_level")]
-    pub level: String,
-}
-
-impl Default for SecurityConfig {
-    fn default() -> Self {
-        Self {
-            level: default_security_level(),
-        }
-    }
-}
-
-fn default_security_level() -> String {
-    "balanced".to_string()
-}
-
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 /// Run the config command.
@@ -66,49 +42,22 @@ fn default_security_level() -> String {
 /// Returns an error if the config file cannot be read or written, or if
 /// the key or value fails validation.
 pub async fn run(
-    ctx: &OutputContext,
+    app: &AppContext,
     cmd: ConfigCommand,
-    json: bool,
     mp: &(impl InstanceInspector + ShellExecutor),
 ) -> Result<()> {
     match cmd {
-        ConfigCommand::Show => show_config(ctx, json),
-        ConfigCommand::Set { key, value } => set_config(ctx, &key, &value, mp).await,
+        ConfigCommand::Show => show_config(app),
+        ConfigCommand::Set { key, value } => set_config(&app.output, &key, &value, mp).await,
     }
 }
 
 // ── Subcommand handlers ──────────────────────────────────────────────────────
 
-fn show_config(ctx: &OutputContext, json: bool) -> Result<()> {
+fn show_config(app: &AppContext) -> Result<()> {
     let path = get_config_path()?;
     let config = load_config(&path)?;
-
-    if json {
-        println!("{}", serde_json::to_string_pretty(&config)?);
-        return Ok(());
-    }
-
-    println!();
-    println!(
-        "  {}",
-        format!("Configuration ({})", path.display()).style(ctx.styles.header)
-    );
-    println!();
-    println!("  {:<20} {}", "security.level:", config.security.level);
-    println!();
-    println!("  {}", "Environment:".style(ctx.styles.bold));
-    println!(
-        "    {:<18} {}",
-        "POLIS_CONFIG:",
-        std::env::var("POLIS_CONFIG").unwrap_or_else(|_| "(not set)".to_string())
-    );
-    println!(
-        "    {:<18} {}",
-        "NO_COLOR:",
-        std::env::var("NO_COLOR").unwrap_or_else(|_| "(not set)".to_string())
-    );
-    println!();
-    Ok(())
+    app.renderer().render_config(&config, &path)
 }
 
 /// Path to the mcp-admin password on the VM filesystem.
@@ -268,40 +217,6 @@ fn save_config(path: &Path, config: &PolisConfig) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .with_context(|| format!("cannot set permissions on {}", path.display()))?;
-    }
-    Ok(())
-}
-
-/// Validates a configuration key against the whitelist.
-///
-/// # Errors
-///
-/// Returns an error if the key is not in the allowed list.
-pub fn validate_config_key(key: &str) -> Result<()> {
-    const VALID: &[&str] = &["security.level"];
-    if !VALID.contains(&key) {
-        anyhow::bail!(
-            "Unknown setting: {key}\n\nValid settings: {}",
-            VALID.join(", ")
-        );
-    }
-    Ok(())
-}
-
-/// Validates a configuration value for the given key.
-///
-/// # Errors
-///
-/// Returns an error if the value is not valid for the key.
-pub fn validate_config_value(key: &str, value: &str) -> Result<()> {
-    if key == "security.level" {
-        const VALID: &[&str] = &["relaxed", "balanced", "strict"];
-        if !VALID.contains(&value) {
-            anyhow::bail!(
-                "Invalid value for security.level: {value}\n\nValid values: {}",
-                VALID.join(", ")
-            );
-        }
     }
     Ok(())
 }

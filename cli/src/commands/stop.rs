@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 
+use crate::application::ports::{InstanceInspector, InstanceLifecycle, ShellExecutor};
 use crate::output::OutputContext;
-use crate::provisioner::{InstanceInspector, InstanceLifecycle, ShellExecutor};
 use crate::workspace::vm;
 
 /// Run `polis stop`.

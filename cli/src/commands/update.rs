@@ -7,8 +7,8 @@ use clap::Args;
 use dialoguer::Confirm;
 use sha2::{Digest, Sha256};
 
+use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
 use crate::output::OutputContext;
-use crate::provisioner::{FileTransfer, InstanceInspector, ShellExecutor};
 use crate::workspace::{digest, vm};
 
 /// Arguments for the update command.
@@ -173,7 +173,7 @@ pub async fn update_config(
 ) -> Result<()> {
     // 1. Extract embedded assets (new version's tarball)
     let (assets_dir, _guard) =
-        crate::assets::extract_assets().context("extracting embedded assets")?;
+        crate::infra::assets::extract_assets().context("extracting embedded assets")?;
 
     // 2. Compute SHA256 of the new config tarball
     let new_hash = vm::sha256_file(&assets_dir.join("polis-setup.config.tar"))
@@ -490,7 +490,7 @@ mod tests {
     /// Stub that fails on any call (for tests that shouldn't reach multipass).
     struct MultipassUnreachableStub;
 
-    impl crate::provisioner::InstanceInspector for MultipassUnreachableStub {
+    impl crate::application::ports::InstanceInspector for MultipassUnreachableStub {
         async fn info(&self) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: info not expected")
         }
@@ -499,7 +499,7 @@ mod tests {
         }
     }
 
-    impl crate::provisioner::ShellExecutor for MultipassUnreachableStub {
+    impl crate::application::ports::ShellExecutor for MultipassUnreachableStub {
         async fn exec(&self, _: &[&str]) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: exec not expected")
         }
@@ -518,7 +518,7 @@ mod tests {
         }
     }
 
-    impl crate::provisioner::FileTransfer for MultipassUnreachableStub {
+    impl crate::application::ports::FileTransfer for MultipassUnreachableStub {
         async fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
             anyhow::bail!("stub: transfer not expected")
         }

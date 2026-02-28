@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 use anyhow::{Context, Result};
 use clap::Args;
 
-use crate::provisioner::ShellExecutor;
+use crate::application::ports::ShellExecutor;
 use crate::workspace::CONTAINER_NAME;
 
 /// Arguments for the exec command.

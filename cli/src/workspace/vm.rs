@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::provisioner::{FileTransfer, InstanceInspector, ShellExecutor};
+use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
 
 const VM_CPUS: &str = "2";
 const VM_MEMORY: &str = "8G";
@@ -49,6 +49,31 @@ pub async fn state(mp: &impl InstanceInspector) -> Result<VmState> {
     })
 }
 
+/// Resolve the primary IPv4 address of the polis VM.
+///
+/// Parses `multipass info --format json` output to extract the first IPv4
+/// address from `info.polis.ipv4`.
+///
+/// # Errors
+///
+/// Returns an error if `info()` fails or no IPv4 address is found.
+pub async fn resolve_vm_ip(mp: &impl InstanceInspector) -> Result<String> {
+    let output = mp.info().await.context("failed to query VM info")?;
+    anyhow::ensure!(output.status.success(), "multipass info failed");
+
+    let info: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("invalid JSON from multipass info")?;
+
+    info.get("info")
+        .and_then(|i| i.get("polis"))
+        .and_then(|p| p.get("ipv4"))
+        .and_then(|arr| arr.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| anyhow::anyhow!("no IPv4 address found for polis VM"))
+}
+
 /// Verify that cloud-init completed successfully inside the VM.
 ///
 /// Runs `cloud-init status --wait` and maps the exit code:
@@ -63,7 +88,7 @@ pub async fn state(mp: &impl InstanceInspector) -> Result<VmState> {
 ///
 /// Returns an error if cloud-init reported a failure (exit code 1 or 2), or
 /// if the command could not be executed.
-pub async fn verify_cloud_init(mp: &impl crate::provisioner::ShellExecutor) -> Result<()> {
+pub async fn verify_cloud_init(mp: &impl crate::application::ports::ShellExecutor) -> Result<()> {
     const LOG: &str = "/var/log/cloud-init-output.log";
     const RECOVERY: &str = "polis delete && polis start";
 
@@ -107,7 +132,7 @@ pub async fn verify_cloud_init(mp: &impl crate::provisioner::ShellExecutor) -> R
 ///
 /// Returns an error if prerequisites are not met, asset extraction fails,
 /// the multipass launch fails, or cloud-init reports a failure.
-pub async fn create(mp: &impl crate::provisioner::VmProvisioner, quiet: bool) -> Result<()> {
+pub async fn create(mp: &impl crate::application::ports::VmProvisioner, quiet: bool) -> Result<()> {
     check_prerequisites(mp).await?;
 
     if !quiet {
@@ -117,7 +142,7 @@ pub async fn create(mp: &impl crate::provisioner::VmProvisioner, quiet: bool) ->
     // Extract embedded assets (cloud-init.yaml, etc.) to a temp dir.
     // The TempDir guard must be held until launch completes.
     let (assets_path, _assets_guard) =
-        crate::assets::extract_assets().context("extracting embedded assets")?;
+        crate::infra::assets::extract_assets().context("extracting embedded assets")?;
 
     // The Multipass daemon (especially snap-confined) runs as a separate user
     // and needs read access to the cloud-init file and its parent directory.
@@ -143,7 +168,7 @@ pub async fn create(mp: &impl crate::provisioner::VmProvisioner, quiet: bool) ->
         crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
     });
     let output = mp
-        .launch(&crate::provisioner::InstanceSpec {
+        .launch(&crate::application::ports::InstanceSpec {
             image: "24.04",
             cpus: VM_CPUS,
             memory: VM_MEMORY,
@@ -198,7 +223,7 @@ fn inception_line(level: &str, msg: &str) -> String {
 /// # Errors
 ///
 /// Returns an error if the multipass start command fails.
-pub async fn start(mp: &impl crate::provisioner::InstanceLifecycle) -> Result<()> {
+pub async fn start(mp: &impl crate::application::ports::InstanceLifecycle) -> Result<()> {
     let output = mp.start().await.context("starting workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -213,7 +238,7 @@ pub async fn start(mp: &impl crate::provisioner::InstanceLifecycle) -> Result<()
 ///
 /// Returns an error if the multipass stop command fails.
 pub async fn stop(
-    mp: &(impl crate::provisioner::InstanceLifecycle + crate::provisioner::ShellExecutor),
+    mp: &(impl crate::application::ports::InstanceLifecycle + crate::application::ports::ShellExecutor),
 ) -> Result<()> {
     // Stop all polis- containers (including agent sidecars not in the base
     // compose file). Using `docker stop` with a filter is more reliable than
@@ -234,7 +259,7 @@ pub async fn stop(
 }
 
 /// Delete VM.
-pub async fn delete(mp: &impl crate::provisioner::InstanceLifecycle) {
+pub async fn delete(mp: &impl crate::application::ports::InstanceLifecycle) {
     let _ = mp.delete().await;
     let _ = mp.purge().await;
 }
@@ -245,7 +270,7 @@ pub async fn delete(mp: &impl crate::provisioner::InstanceLifecycle) {
 ///
 /// Returns an error if the multipass start command fails.
 pub async fn restart(
-    mp: &(impl crate::provisioner::InstanceLifecycle + crate::provisioner::ShellExecutor),
+    mp: &(impl crate::application::ports::InstanceLifecycle + crate::application::ports::ShellExecutor),
     quiet: bool,
 ) -> Result<()> {
     if !quiet {
@@ -514,7 +539,9 @@ pub async fn pull_images(mp: &impl ShellExecutor) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if any generation script fails.
-pub async fn generate_certs_and_secrets(mp: &impl crate::provisioner::ShellExecutor) -> Result<()> {
+pub async fn generate_certs_and_secrets(
+    mp: &impl crate::application::ports::ShellExecutor,
+) -> Result<()> {
     // SAFETY: polis_root is a compile-time constant. If this is ever parameterized,
     // switch to explicit argument arrays to prevent shell injection (see V-004 in transfer_config).
     let polis_root = "/opt/polis";
@@ -590,7 +617,7 @@ pub async fn generate_certs_and_secrets(mp: &impl crate::provisioner::ShellExecu
 
 const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
 
-async fn check_prerequisites(mp: &impl crate::provisioner::InstanceInspector) -> Result<()> {
+async fn check_prerequisites(mp: &impl crate::application::ports::InstanceInspector) -> Result<()> {
     let output = mp.version().await.map_err(|_| {
         anyhow::anyhow!(
             "Workspace runtime not available.\n\nRun 'polis doctor' to diagnose and fix."
@@ -609,18 +636,21 @@ async fn check_prerequisites(mp: &impl crate::provisioner::InstanceInspector) ->
     Ok(())
 }
 
-async fn configure_credentials(mp: &impl crate::provisioner::FileTransfer) {
+async fn configure_credentials(mp: &impl crate::application::ports::FileTransfer) {
     let ca_cert = std::path::PathBuf::from("certs/ca/ca.pem");
     if ca_cert.exists() {
         let _ = mp.transfer(&ca_cert.to_string_lossy(), "/tmp/ca.pem").await;
     }
 }
 
-async fn start_services(mp: &impl crate::provisioner::ShellExecutor) {
+async fn start_services(mp: &impl crate::application::ports::ShellExecutor) {
     let _ = mp.exec(&["sudo", "systemctl", "start", "polis"]).await;
 }
 
-async fn start_services_with_progress(mp: &impl crate::provisioner::ShellExecutor, quiet: bool) {
+async fn start_services_with_progress(
+    mp: &impl crate::application::ports::ShellExecutor,
+    quiet: bool,
+) {
     let pb = (!quiet).then(|| {
         crate::output::progress::spinner(&inception_line("L2", "agent isolation starting..."))
     });
@@ -642,7 +672,7 @@ async fn pin_host_key() {
         && output.status.success()
         && let Ok(host_key) = String::from_utf8(output.stdout)
     {
-        let _ = crate::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim()));
+        let _ = crate::infra::ssh::KnownHostsManager::new().and_then(|m| m.update(host_key.trim()));
     }
 }
 
@@ -654,7 +684,7 @@ mod tests {
     use anyhow::Result;
 
     use super::*;
-    use crate::provisioner::{
+    use crate::application::ports::{
         FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
     };
 

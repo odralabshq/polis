@@ -1,17 +1,11 @@
 //! `polis connect` — SSH config management.
 
-use std::time::Duration;
-
 use anyhow::{Context, Result};
 use clap::Args;
 
+use crate::infra::ssh::{SshConfigManager, ensure_identity_key};
 use crate::output::OutputContext;
-use crate::ssh::{SshConfigManager, ensure_identity_key};
 use crate::workspace::CONTAINER_NAME;
-
-/// Timeout for exec calls during connect setup.
-/// Prevents `polis connect` from hanging when Docker/containers are unresponsive.
-const CONNECT_EXEC_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Arguments for the connect command.
 #[derive(Args)]
@@ -25,7 +19,11 @@ pub struct ConnectArgs {}
 /// # Errors
 ///
 /// Returns an error if SSH config setup fails or permissions are unsafe.
-pub async fn run(ctx: &OutputContext, _args: ConnectArgs) -> Result<()> {
+pub async fn run(
+    ctx: &OutputContext,
+    _args: ConnectArgs,
+    mp: &(impl crate::application::ports::InstanceInspector + crate::application::ports::ShellExecutor),
+) -> Result<()> {
     let ssh_mgr = SshConfigManager::new()?;
 
     if ssh_mgr.is_configured()? {
@@ -43,13 +41,13 @@ pub async fn run(ctx: &OutputContext, _args: ConnectArgs) -> Result<()> {
 
     // Install pubkey into the VM's ubuntu user so `polis _ssh-proxy` can SSH
     // to the VM directly (bypasses multipass exec stdin bug on Windows).
-    install_vm_pubkey(&pubkey).await?;
+    install_vm_pubkey(mp, &pubkey).await?;
 
     // Install pubkey into the workspace container's polis user.
-    install_pubkey(&pubkey).await?;
+    install_pubkey(mp, &pubkey).await?;
 
     // Pin the workspace host key so StrictHostKeyChecking can verify it.
-    pin_host_key().await;
+    pin_host_key(mp).await;
 
     show_connection_options(ctx);
     Ok(())
@@ -108,11 +106,10 @@ fn validate_pubkey(key: &str) -> Result<()> {
 }
 
 /// Installs `pubkey` into `~/.ssh/authorized_keys` of the VM's `ubuntu` user.
-///
-/// This enables `polis _ssh-proxy` to SSH directly to the VM (bypassing
-/// `multipass exec` which has a stdin pipe bug on Windows).
-/// Idempotent — skips if key already present.
-async fn install_vm_pubkey(pubkey: &str) -> Result<()> {
+async fn install_vm_pubkey(
+    mp: &impl crate::application::ports::ShellExecutor,
+    pubkey: &str,
+) -> Result<()> {
     validate_pubkey(pubkey)?;
     let key = pubkey.trim();
 
@@ -121,10 +118,10 @@ async fn install_vm_pubkey(pubkey: &str) -> Result<()> {
          printf '%s\\n' '{key}' >> /home/ubuntu/.ssh/authorized_keys"
     );
 
-    let output =
-        crate::multipass::exec_with_timeout(&["bash", "-c", &script], CONNECT_EXEC_TIMEOUT)
-            .await
-            .context("installing public key in VM")?;
+    let output = mp
+        .exec(&["bash", "-c", &script])
+        .await
+        .context("installing public key in VM")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -135,20 +132,14 @@ async fn install_vm_pubkey(pubkey: &str) -> Result<()> {
 
 /// Installs `pubkey` into `~/.ssh/authorized_keys` of the `polis` user inside
 /// the workspace container. Idempotent.
-///
-/// Uses `printf` + shell command instead of stdin piping because
-/// `multipass exec ... docker exec -i ...` stdin pipes hang on Windows
-/// (the EOF is never propagated through the double-pipe chain).
-async fn install_pubkey(pubkey: &str) -> Result<()> {
-    // SEC-001: Validate pubkey format before use to prevent shell injection.
-    // validate_pubkey ensures only [a-zA-Z0-9 +/=@.-\n] — no quotes or
-    // shell metacharacters — so embedding in single-quoted printf is safe.
+async fn install_pubkey(
+    mp: &impl crate::application::ports::ShellExecutor,
+    pubkey: &str,
+) -> Result<()> {
     validate_pubkey(pubkey)?;
 
     let key = pubkey.trim();
 
-    // Single command: create .ssh dir, append key (idempotent via grep guard),
-    // fix permissions — all without stdin piping.
     let script = format!(
         "mkdir -p /home/polis/.ssh && \
          chmod 700 /home/polis/.ssh && \
@@ -159,12 +150,10 @@ async fn install_pubkey(pubkey: &str) -> Result<()> {
          chown polis:polis /home/polis/.ssh/authorized_keys"
     );
 
-    let output = crate::multipass::exec_with_timeout(
-        &["docker", "exec", CONTAINER_NAME, "bash", "-c", &script],
-        CONNECT_EXEC_TIMEOUT,
-    )
-    .await
-    .context("installing public key in workspace")?;
+    let output = mp
+        .exec(&["docker", "exec", CONTAINER_NAME, "bash", "-c", &script])
+        .await
+        .context("installing public key in workspace")?;
 
     anyhow::ensure!(
         output.status.success(),
@@ -175,27 +164,25 @@ async fn install_pubkey(pubkey: &str) -> Result<()> {
 
 /// Formats a raw public key as a `known_hosts` line and writes it via the
 /// given manager. Returns `Ok(())` on success.
-fn write_host_key(mgr: &crate::ssh::KnownHostsManager, raw_key: &str) -> Result<()> {
+fn write_host_key(mgr: &crate::infra::ssh::KnownHostsManager, raw_key: &str) -> Result<()> {
     let trimmed = raw_key.trim();
     anyhow::ensure!(!trimmed.is_empty(), "empty host key");
-    crate::ssh::validate_host_key(trimmed)?;
+    crate::infra::ssh::validate_host_key(trimmed)?;
     let host_key = format!("workspace {trimmed}");
     mgr.update(&host_key)
 }
 
 /// Extracts the workspace SSH host key and writes it to `~/.polis/known_hosts`.
-async fn pin_host_key() {
-    let Ok(output) = crate::multipass::exec_with_timeout(
-        &[
+async fn pin_host_key(mp: &impl crate::application::ports::ShellExecutor) {
+    let Ok(output) = mp
+        .exec(&[
             "docker",
             "exec",
             CONTAINER_NAME,
             "cat",
             "/etc/ssh/ssh_host_ed25519_key.pub",
-        ],
-        CONNECT_EXEC_TIMEOUT,
-    )
-    .await
+        ])
+        .await
     else {
         return;
     };
@@ -203,7 +190,7 @@ async fn pin_host_key() {
     if output.status.success()
         && let Ok(key) = String::from_utf8(output.stdout)
     {
-        let mgr = crate::ssh::KnownHostsManager::new();
+        let mgr = crate::infra::ssh::KnownHostsManager::new();
         let _ = mgr.and_then(|m| write_host_key(&m, &key));
     }
 }
@@ -216,8 +203,8 @@ mod tests {
     // write_host_key
     // -----------------------------------------------------------------------
 
-    fn known_hosts_in(dir: &tempfile::TempDir) -> crate::ssh::KnownHostsManager {
-        crate::ssh::KnownHostsManager::with_path(dir.path().join("known_hosts"))
+    fn known_hosts_in(dir: &tempfile::TempDir) -> crate::infra::ssh::KnownHostsManager {
+        crate::infra::ssh::KnownHostsManager::with_path(dir.path().join("known_hosts"))
     }
 
     #[test]

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+use crate::application::ports::{InstanceInspector, InstanceLifecycle};
 use crate::commands::DeleteArgs;
-use crate::provisioner::{InstanceInspector, InstanceLifecycle};
 use crate::state::StateManager;
 use crate::workspace::{image, vm};
 
@@ -183,7 +183,7 @@ fn remove_ssh_config() -> Result<()> {
 }
 
 fn remove_known_hosts() -> Result<()> {
-    crate::ssh::KnownHostsManager::new()?.remove()
+    crate::infra::ssh::KnownHostsManager::new()?.remove()
 }
 
 fn remove_config() -> Result<()> {

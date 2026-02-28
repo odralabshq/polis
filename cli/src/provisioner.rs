@@ -1,37 +1,14 @@
 use std::process::Output;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
-/// VM instance state — superset of the current `VmState` enum.
-/// Adds `Stopping`, `Error`, and `NotFound` variants that the current
-/// code handles via `Option` or error returns.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstanceState {
-    Running,
-    Stopped,
-    Starting,
-    Stopping,
-    NotFound,
-    Error,
-}
-
-/// Launch parameters for creating a new VM instance.
-/// Replaces `LaunchParams` with a more domain-appropriate name.
-pub struct InstanceSpec<'a> {
-    /// Ubuntu image to launch, e.g. `"24.04"`.
-    pub image: &'a str,
-    /// Number of vCPUs, e.g. `"2"`.
-    pub cpus: &'a str,
-    /// Memory size, e.g. `"8G"`.
-    pub memory: &'a str,
-    /// Disk size, e.g. `"40G"`.
-    pub disk: &'a str,
-    /// Optional path to a cloud-init YAML file.
-    pub cloud_init: Option<&'a str>,
-    /// Launch timeout in seconds. Defaults to `"600"` when `None`.
-    pub timeout: Option<&'a str>,
-}
+use crate::application::ports::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, InstanceState,
+    POLIS_INSTANCE, ShellExecutor,
+};
+use crate::command_runner::{
+    CommandRunner, DEFAULT_CMD_TIMEOUT, DEFAULT_EXEC_TIMEOUT, TokioCommandRunner,
+};
 
 /// Parsed VM instance information.
 /// Returned by `InstanceInspector::info()` as a domain type
@@ -51,88 +28,6 @@ pub struct InstanceInfo {
     pub memory: String,
     pub disk: String,
 }
-
-/// The canonical VM instance name used by all trait implementations.
-pub const POLIS_INSTANCE: &str = "polis";
-
-/// VM lifecycle operations: create, start, stop, destroy.
-#[allow(async_fn_in_trait)]
-pub trait InstanceLifecycle {
-    /// Launch a new VM instance with the given spec.
-    async fn launch(&self, spec: &InstanceSpec<'_>) -> Result<Output>;
-
-    /// Start a stopped VM instance.
-    async fn start(&self) -> Result<Output>;
-
-    /// Stop a running VM instance.
-    async fn stop(&self) -> Result<Output>;
-
-    /// Delete the VM instance (can be recovered with `recover`).
-    async fn delete(&self) -> Result<Output>;
-
-    /// Permanently remove all deleted instances.
-    async fn purge(&self) -> Result<Output>;
-}
-
-/// VM state inspection: query info and version.
-#[allow(async_fn_in_trait)]
-pub trait InstanceInspector {
-    /// Get VM instance info as JSON.
-    /// Renamed from `vm_info` — the "vm" prefix is redundant in a VM-focused trait.
-    async fn info(&self) -> Result<Output>;
-
-    /// Get the provisioner backend version.
-    async fn version(&self) -> Result<Output>;
-}
-
-/// Host-to-VM file transfer operations.
-#[allow(async_fn_in_trait)]
-pub trait FileTransfer {
-    /// Transfer a single file from host to VM.
-    async fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output>;
-
-    /// Recursively transfer a directory from host to VM.
-    async fn transfer_recursive(&self, local_path: &str, remote_path: &str) -> Result<Output>;
-}
-
-/// Command execution inside the VM.
-#[allow(async_fn_in_trait)]
-pub trait ShellExecutor {
-    /// Execute a command inside the VM and capture output.
-    async fn exec(&self, args: &[&str]) -> Result<Output>;
-
-    /// Execute a command inside the VM with stdin piped from `input`.
-    async fn exec_with_stdin(&self, args: &[&str], input: &[u8]) -> Result<Output>;
-
-    /// Spawn a command inside the VM with piped stdin/stdout for STDIO bridging.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the process fails to spawn.
-    #[allow(dead_code)]
-    fn exec_spawn(&self, args: &[&str]) -> Result<tokio::process::Child>;
-
-    /// Execute a command inside the VM with inherited stdio (interactive).
-    async fn exec_status(&self, args: &[&str]) -> Result<std::process::ExitStatus>;
-}
-
-/// Composite trait combining all four sub-traits.
-/// Used by consumers that need the full VM interface (e.g., `vm.rs`, `start.rs`).
-pub trait VmProvisioner:
-    InstanceLifecycle + InstanceInspector + FileTransfer + ShellExecutor
-{
-}
-
-/// Blanket implementation: any type implementing all four sub-traits is a `VmProvisioner`.
-impl<T> VmProvisioner for T where
-    T: InstanceLifecycle + InstanceInspector + FileTransfer + ShellExecutor
-{
-}
-
-use crate::command_runner::{
-    CommandRunner, DEFAULT_CMD_TIMEOUT, DEFAULT_EXEC_TIMEOUT, TokioCommandRunner,
-};
-use anyhow::Context;
 
 /// Infrastructure adapter that routes all multipass CLI calls through a `CommandRunner`.
 ///
@@ -171,7 +66,7 @@ impl MultipassProvisioner<TokioCommandRunner> {
 }
 
 impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
-    async fn launch(&self, spec: &InstanceSpec<'_>) -> Result<std::process::Output> {
+    async fn launch(&self, spec: &InstanceSpec<'_>) -> Result<Output> {
         let timeout = spec.timeout.unwrap_or("600");
         let mut args = vec![
             "launch",
@@ -197,28 +92,28 @@ impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
             .context("failed to run multipass launch")
     }
 
-    async fn start(&self) -> Result<std::process::Output> {
+    async fn start(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["start", POLIS_INSTANCE])
             .await
             .context("failed to run multipass start")
     }
 
-    async fn stop(&self) -> Result<std::process::Output> {
+    async fn stop(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["stop", POLIS_INSTANCE])
             .await
             .context("failed to run multipass stop")
     }
 
-    async fn delete(&self) -> Result<std::process::Output> {
+    async fn delete(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["delete", POLIS_INSTANCE])
             .await
             .context("failed to run multipass delete")
     }
 
-    async fn purge(&self) -> Result<std::process::Output> {
+    async fn purge(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["purge"])
             .await
@@ -227,14 +122,14 @@ impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
 }
 
 impl<R: CommandRunner> InstanceInspector for MultipassProvisioner<R> {
-    async fn info(&self) -> Result<std::process::Output> {
+    async fn info(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["info", POLIS_INSTANCE, "--format", "json"])
             .await
             .context("failed to run multipass info")
     }
 
-    async fn version(&self) -> Result<std::process::Output> {
+    async fn version(&self) -> Result<Output> {
         self.cmd_runner
             .run("multipass", &["version"])
             .await
@@ -243,7 +138,7 @@ impl<R: CommandRunner> InstanceInspector for MultipassProvisioner<R> {
 }
 
 impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
-    async fn transfer(&self, local_path: &str, remote_path: &str) -> Result<std::process::Output> {
+    async fn transfer(&self, local_path: &str, remote_path: &str) -> Result<Output> {
         let dest = format!("{POLIS_INSTANCE}:{remote_path}");
         self.cmd_runner
             .run("multipass", &["transfer", local_path, &dest])
@@ -251,11 +146,7 @@ impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
             .context("failed to run multipass transfer")
     }
 
-    async fn transfer_recursive(
-        &self,
-        local_path: &str,
-        remote_path: &str,
-    ) -> Result<std::process::Output> {
+    async fn transfer_recursive(&self, local_path: &str, remote_path: &str) -> Result<Output> {
         let dest = format!("{POLIS_INSTANCE}:{remote_path}");
         self.cmd_runner
             .run("multipass", &["transfer", "--recursive", local_path, &dest])
@@ -265,7 +156,7 @@ impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
 }
 
 impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {
-    async fn exec(&self, args: &[&str]) -> Result<std::process::Output> {
+    async fn exec(&self, args: &[&str]) -> Result<Output> {
         let mut full_args = vec!["exec", POLIS_INSTANCE, "--"];
         full_args.extend_from_slice(args);
         self.exec_runner
@@ -274,7 +165,7 @@ impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {
             .context("failed to run multipass exec")
     }
 
-    async fn exec_with_stdin(&self, args: &[&str], input: &[u8]) -> Result<std::process::Output> {
+    async fn exec_with_stdin(&self, args: &[&str], input: &[u8]) -> Result<Output> {
         let mut full_args = vec!["exec", POLIS_INSTANCE, "--"];
         full_args.extend_from_slice(args);
         self.exec_runner

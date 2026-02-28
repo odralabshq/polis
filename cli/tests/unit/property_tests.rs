@@ -248,7 +248,7 @@ proptest! {
             let result = runner.run(program, &args_refs).await;
             prop_assert!(result.is_ok(), "command failed: {:?}", result.err());
 
-            let output = result.unwrap();
+            let output = result.expect("command should succeed");
             prop_assert!(output.status.success(), "exit status was not success: {:?}", output.status);
 
             let stdout_str = String::from_utf8_lossy(&output.stdout);
@@ -291,7 +291,7 @@ proptest! {
             let result = runner.run(program, &args_refs).await;
             prop_assert!(result.is_ok(), "command failed: {:?}", result.err());
 
-            let output = result.unwrap();
+            let output = result.expect("command should succeed");
 
             let stderr_str = String::from_utf8_lossy(&output.stderr);
             let stderr_trimmed = stderr_str.trim_end_matches(['\n', '\r']);
@@ -344,7 +344,7 @@ proptest! {
             prop_assert!(result.is_err(), "expected Err but got Ok for timeout={}ms", timeout_ms);
 
             // Error must mention "timed out"
-            let err_msg = format!("{:#}", result.unwrap_err());
+            let err_msg = format!("{:#}", result.expect_err("expected timeout error"));
             prop_assert!(
                 err_msg.contains("timed out"),
                 "error does not contain 'timed out': {err_msg}"
@@ -418,7 +418,7 @@ async fn test_run_returns_output_on_success() {
     let result = runner.run(program, &args).await;
     assert!(result.is_ok(), "expected Ok but got: {:?}", result.err());
 
-    let output = result.unwrap();
+    let output = result.expect("run should succeed");
     assert!(
         output.status.success(),
         "expected success exit status, got: {:?}",
@@ -429,8 +429,7 @@ async fn test_run_returns_output_on_success() {
     let stdout_trimmed = stdout.trim();
     assert!(
         stdout_trimmed.contains("hello"),
-        "expected stdout to contain 'hello', got: {:?}",
-        stdout_trimmed
+        "expected stdout to contain 'hello', got: {stdout_trimmed:?}"
     );
 }
 
@@ -449,7 +448,7 @@ async fn test_run_returns_timed_out_error_on_timeout() {
 
     assert!(result.is_err(), "expected Err but got Ok");
 
-    let err_msg = format!("{:#}", result.unwrap_err());
+    let err_msg = format!("{:#}", result.expect_err("expected timeout error"));
     assert!(
         err_msg.contains("timed out"),
         "error does not contain 'timed out': {err_msg}"
@@ -470,12 +469,13 @@ async fn test_run_returns_timed_out_error_on_timeout() {
 async fn test_run_with_stdin_delivers_input_and_returns_output() {
     let runner = TokioCommandRunner::new(Duration::from_secs(10));
     let (program, args) = stdin_echo_command();
-    let input = b"hello from stdin\n";
+    let input = b"hello from stdin
+";
 
     let result = runner.run_with_stdin(program, &args, input).await;
     assert!(result.is_ok(), "expected Ok but got: {:?}", result.err());
 
-    let output = result.unwrap();
+    let output = result.expect("run_with_stdin should succeed");
     assert!(
         output.status.success(),
         "expected success exit status, got: {:?}",
@@ -485,8 +485,7 @@ async fn test_run_with_stdin_delivers_input_and_returns_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("hello from stdin"),
-        "expected stdout to contain 'hello from stdin', got: {:?}",
-        stdout
+        "expected stdout to contain 'hello from stdin', got: {stdout:?}"
     );
 }
 
@@ -508,10 +507,16 @@ async fn test_spawn_returns_live_child_with_piped_io() {
     assert!(child.stdout.is_some(), "expected piped stdout");
 
     // Write to stdin and read from stdout
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = child.stdout.take().unwrap();
+    let mut stdin = child.stdin.take().expect("expected piped stdin handle");
+    let mut stdout = child.stdout.take().expect("expected piped stdout handle");
 
-    stdin.write_all(b"ping\n").await.expect("write to stdin");
+    stdin
+        .write_all(
+            b"ping
+",
+        )
+        .await
+        .expect("write to stdin");
     drop(stdin); // close stdin so the child can exit
 
     let mut buf = Vec::new();
@@ -523,8 +528,7 @@ async fn test_spawn_returns_live_child_with_piped_io() {
     let output = String::from_utf8_lossy(&buf);
     assert!(
         output.contains("ping"),
-        "expected stdout to contain 'ping', got: {:?}",
-        output
+        "expected stdout to contain 'ping', got: {output:?}"
     );
 
     let status = child.wait().await.expect("wait for child");
@@ -542,7 +546,7 @@ async fn test_spawn_failure_returns_err_with_program_name() {
     let result = runner.spawn(program, &[]);
     assert!(result.is_err(), "expected Err for nonexistent program");
 
-    let err_msg = format!("{:#}", result.unwrap_err());
+    let err_msg = format!("{:#}", result.expect_err("expected spawn error"));
     assert!(
         err_msg.contains("failed to spawn"),
         "error does not contain 'failed to spawn': {err_msg}"

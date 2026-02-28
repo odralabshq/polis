@@ -5,7 +5,7 @@
 use std::process::{ExitStatus, Output};
 
 use anyhow::Result;
-use polis_cli::provisioner::{
+use polis_cli::application::ports::{
     FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
 };
 

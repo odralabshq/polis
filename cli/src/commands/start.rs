@@ -4,9 +4,10 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Args;
 
+use crate::application::ports::VmProvisioner;
+use crate::domain::workspace::WorkspaceState;
 use crate::output::OutputContext;
-use crate::provisioner::VmProvisioner;
-use crate::state::{StateManager, WorkspaceState};
+use crate::state::StateManager;
 use crate::workspace::{digest, health, vm};
 
 /// Path to the polis project root inside the VM.
@@ -108,7 +109,7 @@ async fn create_and_start_vm(
     // Step 1: Extract all 3 embedded assets to a temp dir.
     // The TempDir guard must be held until all operations complete.
     let (assets_dir, _assets_guard) =
-        crate::assets::extract_assets().context("extracting embedded assets")?;
+        crate::infra::assets::extract_assets().context("extracting embedded assets")?;
 
     // Compute the config tarball hash now (before transfer) so we can write it
     // after successful startup. Hash is computed on the host from the embedded asset.
