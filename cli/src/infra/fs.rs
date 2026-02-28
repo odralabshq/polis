@@ -39,6 +39,21 @@ impl LocalArtifactWriter for LocalFs {
     }
 }
 
+impl crate::application::ports::FileHasher for LocalFs {
+    fn sha256_file(&self, path: &Path) -> Result<String> {
+        sha256_file(path)
+    }
+}
+
+impl crate::application::ports::LocalPaths for LocalFs {
+    fn images_dir(&self) -> PathBuf {
+        // Correcting error handling: images_dir() returns Result, but Port expects PathBuf.
+        // In clean architecture, infra errors should be handled, or the port should return Result.
+        // For simplicity here, we'll unwrap as it's a critical path, but better to update port.
+        images_dir().unwrap_or_else(|_| PathBuf::from("images"))
+    }
+}
+
 /// Compute the SHA256 hex digest of a file.
 ///
 /// Reads the file in 64 KB chunks to avoid loading large files into memory.

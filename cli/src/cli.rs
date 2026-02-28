@@ -119,36 +119,23 @@ impl Cli {
         })?;
 
         match command {
-            Command::Start(args) => {
-                commands::start::run(&args, &app).await
-            }
+            Command::Start(args) => commands::start::run(&args, &app).await,
 
             Command::Stop => commands::stop::run(&app).await,
 
-            Command::Delete(args) => {
-                commands::delete::run(&args, &app).await
-            }
+            Command::Delete(args) => commands::delete::run(&args, &app).await,
 
             Command::Status => commands::status::run(&app, &app.provisioner).await,
 
-            Command::Connect(args) => {
-                commands::connect::run(&app, args).await
-            }
+            Command::Connect(args) => commands::connect::run(&app, args).await,
 
             Command::Config(cmd) => commands::config::run(&app, cmd, &app.provisioner).await,
 
             Command::Update(args) => {
-                commands::update::run(
-                    &args,
-                    &app,
-                    &commands::update::GithubUpdateChecker,
-                )
-                .await
+                commands::update::run(&args, &app, &commands::update::GithubUpdateChecker).await
             }
 
-            Command::Doctor { verbose, fix } => {
-                commands::doctor::run(&app, verbose, fix, &app.provisioner).await
-            }
+            Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await,
 
             Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await,
 

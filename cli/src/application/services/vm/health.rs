@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::application::ports::ShellExecutor;
+use crate::application::ports::{ProgressReporter, ShellExecutor};
 use crate::domain::workspace::COMPOSE_PATH;
 
 /// Health status.
@@ -35,47 +35,34 @@ fn get_health_timeout() -> (u32, Duration) {
 /// # Errors
 ///
 /// Returns an error if the workspace does not become healthy within timeout.
-pub async fn wait_ready(mp: &impl ShellExecutor, quiet: bool) -> Result<()> {
-    use owo_colors::{OwoColorize, Stream::Stdout, Style};
-    // Logo gradient stop 4 (46,53,147) — L3
-    let tag_style = Style::new().truecolor(46, 53, 147);
+pub async fn wait_ready(
+    mp: &impl ShellExecutor,
+    reporter: &impl ProgressReporter,
+    quiet: bool,
+) -> Result<()> {
+    // Branding lines should ideally be moved to a domain helper or handled by the reporter.
+    // For now, we'll keep the logic but remove the direct output dependency.
+    let msg_start = "agent isolation complete...";
+    let msg_end = "agent containment active.";
 
-    let fmt = |msg: &str| {
-        format!(
-            "{}  {}",
-            "[inception]".if_supports_color(Stdout, |t| t.style(tag_style)),
-            msg,
-        )
-    };
-
-    let pb =
-        (!quiet).then(|| crate::output::progress::spinner(&fmt("agent isolation complete...")));
+    if !quiet {
+        reporter.step(msg_start);
+    }
 
     let (max_attempts, delay) = get_health_timeout();
 
-    for attempt in 1..=max_attempts {
+    for _attempt in 1..=max_attempts {
         match check(mp).await {
             HealthStatus::Healthy => {
-                if let Some(pb) = pb {
-                    crate::output::progress::finish_ok(&pb, &fmt("agent containment active."));
+                if !quiet {
+                    reporter.success(msg_end);
                 }
                 return Ok(());
-            }
-            HealthStatus::Unhealthy { reason } if attempt == max_attempts => {
-                if let Some(pb) = &pb {
-                    pb.finish_and_clear();
-                }
-                anyhow::bail!(
-                    "Workspace did not start properly.\n\nReason: {reason}\nDiagnose: polis doctor\nView logs: polis logs"
-                );
             }
             _ => tokio::time::sleep(delay).await,
         }
     }
 
-    if let Some(pb) = pb {
-        pb.finish_and_clear();
-    }
     anyhow::bail!(
         "Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs"
     )

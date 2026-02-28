@@ -225,6 +225,20 @@ pub trait AssetExtractor {
     async fn get_asset(&self, name: &str) -> Result<&'static [u8]>;
 }
 
+// ── Filesystem and Path Ports ─────────────────────────────────────────────────
+
+/// Abstracts file hashing operations.
+pub trait FileHasher {
+    /// Compute the SHA-256 hash of a file.
+    fn sha256_file(&self, path: &std::path::Path) -> Result<String>;
+}
+
+/// Abstracts local filesystem paths.
+pub trait LocalPaths {
+    /// Get the directory where VM images are stored.
+    fn images_dir(&self) -> std::path::PathBuf;
+}
+
 // ── SSH Configuration Port ────────────────────────────────────────────────────
 
 /// Abstracts SSH environment management for VM access.

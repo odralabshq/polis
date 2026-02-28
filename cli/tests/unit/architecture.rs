@@ -57,7 +57,9 @@ fn no_inline_json_branching_in_commands() {
         for (i, line) in lines.iter().enumerate() {
             let lineno = i + 1;
             if line.contains("json: bool") {
-                violations.push(format!("{rel}:{lineno}: found `json: bool` parameter: {line}"));
+                violations.push(format!(
+                    "{rel}:{lineno}: found `json: bool` parameter: {line}"
+                ));
             }
             let trimmed = line.trim();
             if trimmed.starts_with("if json") || trimmed.starts_with("if !json") {
@@ -204,7 +206,10 @@ fn infra_has_no_imports_from_commands_or_output() {
         let lines = read_non_comment_lines(&file);
         for (i, line) in lines.iter().enumerate() {
             if line.contains("crate::commands") || line.contains("crate::output") {
-                violations.push(format!("{rel}:{}: forbidden import in infra/: {line}", i + 1));
+                violations.push(format!(
+                    "{rel}:{}: forbidden import in infra/: {line}",
+                    i + 1
+                ));
             }
         }
     }
@@ -714,7 +719,9 @@ fn application_has_no_blocking_io() {
             }
 
             // std::fs usage in async fn outside spawn_blocking
-            if line.contains("std::fs::") || (line.contains("use std::fs") && !line.contains("use std::fs::path")) {
+            if line.contains("std::fs::")
+                || (line.contains("use std::fs") && !line.contains("use std::fs::path"))
+            {
                 violations.push(format!(
                     "{rel}:{}: std::fs in async fn outside spawn_blocking — use spawn_blocking: {line}",
                     i + 1
@@ -925,5 +932,38 @@ fn workspace_directory_removed() {
     assert!(
         !workspace_dir.exists(),
         "src/workspace/ directory still exists — it should have been deleted in Phase 3a"
+    );
+}
+
+// ── Property 16: Application layer boundary ──────────────────────────────────
+
+/// application/ must not import from infra/ or output/ layers.
+#[test]
+fn application_has_no_infra_or_output_imports() {
+    let app_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("application");
+
+    let mut violations: Vec<String> = Vec::new();
+
+    for file in collect_rs_files(&app_dir) {
+        let rel = file
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+
+        let lines = read_non_comment_lines(&file);
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("crate::infra::") || line.contains("crate::output::") {
+                violations.push(format!("{rel}:{}: forbidden import: {line}", i + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "application/ must not import from infra/ or output/:\n{}",
+        violations.join("\n")
     );
 }

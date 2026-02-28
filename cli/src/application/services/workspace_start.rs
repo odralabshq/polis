@@ -7,7 +7,8 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 
 use crate::application::ports::{
-    AssetExtractor, ProgressReporter, SshConfigurator, VmProvisioner, WorkspaceStateStore,
+    AssetExtractor, FileHasher, ProgressReporter, SshConfigurator, VmProvisioner,
+    WorkspaceStateStore,
 };
 use crate::application::services::vm::{
     health::wait_ready,
@@ -17,7 +18,6 @@ use crate::application::services::vm::{
     services::pull_images,
 };
 use crate::domain::workspace::WorkspaceState;
-use crate::infra::fs::sha256_file;
 
 /// Path to the polis project root inside the VM.
 const VM_POLIS_ROOT: &str = "/opt/polis";
@@ -43,12 +43,12 @@ pub enum StartOutcome {
 /// # Errors
 ///
 /// Returns an error if any step of the provisioning workflow fails.
-#[allow(dead_code)] // Public API — not yet called from commands/start.rs
 pub async fn start_workspace(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
     assets: &impl AssetExtractor,
     ssh: &impl SshConfigurator,
+    hasher: &impl FileHasher,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     assets_dir: &std::path::Path,
@@ -66,6 +66,7 @@ pub async fn start_workspace(
                 state_mgr,
                 assets,
                 ssh,
+                hasher,
                 reporter,
                 agent,
                 assets_dir,
@@ -78,7 +79,7 @@ pub async fn start_workspace(
         }
         _ => {
             restart_vm(provisioner, state_mgr, assets, ssh, reporter, agent).await?;
-            wait_ready(provisioner, false).await?;
+            wait_ready(provisioner, reporter, false).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
             })
@@ -112,6 +113,7 @@ async fn create_and_start_vm(
     state_mgr: &impl WorkspaceStateStore,
     assets: &impl AssetExtractor,
     ssh: &impl SshConfigurator,
+    hasher: &impl FileHasher,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     assets_dir: &std::path::Path,
@@ -119,12 +121,14 @@ async fn create_and_start_vm(
 ) -> Result<()> {
     // Step 1: Compute config hash before transfer.
     let tar_path = assets_dir.join("polis-setup.config.tar");
-    let config_hash = sha256_file(&tar_path).context("computing config tarball SHA256")?;
+    let config_hash = hasher
+        .sha256_file(&tar_path)
+        .context("computing config tarball SHA256")?;
 
     reporter.step("workspace isolation starting...");
 
     // Step 2: Launch VM with cloud-init.
-    vm::create(provisioner, assets, ssh, true).await?;
+    vm::create(provisioner, assets, ssh, reporter, true).await?;
     reporter.success("workspace isolation started");
 
     // Step 3: Transfer config tarball.
@@ -141,13 +145,13 @@ async fn create_and_start_vm(
 
     // Step 5: Pull Docker images.
     reporter.step("pulling Docker images...");
-    pull_images(provisioner)
+    pull_images(provisioner, reporter)
         .await
         .context("pulling Docker images")?;
 
     // Step 6: Verify image digests.
     reporter.step("verifying image digests...");
-    verify_image_digests(provisioner)
+    verify_image_digests(provisioner, assets)
         .await
         .context("verifying image digests")?;
 
@@ -163,7 +167,7 @@ async fn create_and_start_vm(
 
     // Step 9: Wait for health.
     reporter.step("waiting for workspace to become healthy...");
-    wait_ready(provisioner, true).await?;
+    wait_ready(provisioner, reporter, true).await?;
     reporter.success("workspace ready");
 
     // Step 10: Write config hash after successful startup.
@@ -192,7 +196,7 @@ async fn restart_vm(
     agent: Option<&str>,
 ) -> Result<()> {
     reporter.step("restarting workspace...");
-    vm::restart(provisioner, true).await?;
+    vm::restart(provisioner, reporter, true).await?;
     reporter.success("workspace restarted");
 
     if let Some(name) = agent {

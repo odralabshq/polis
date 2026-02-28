@@ -5,7 +5,9 @@
 
 use anyhow::{Context, Result};
 
-use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
+use crate::application::ports::{
+    AssetExtractor, FileHasher, FileTransfer, InstanceInspector, ProgressReporter, ShellExecutor,
+};
 use crate::application::services::vm::{
     integrity::{verify_image_digests, write_config_hash},
     lifecycle::{self as vm, VmState},
@@ -74,11 +76,15 @@ pub trait UpdateChecker {
 /// Returns an error if any step of the update cycle fails.
 pub async fn update_vm_config(
     mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
+    assets: &impl AssetExtractor,
+    hasher: &(impl FileHasher + ?Sized),
+    reporter: &impl ProgressReporter,
     assets_dir: &std::path::Path,
     version: &str,
 ) -> Result<UpdateVmConfigOutcome> {
     // Compute SHA256 of the new config tarball
-    let new_hash = crate::infra::fs::sha256_file(&assets_dir.join("polis-setup.config.tar"))
+    let new_hash = hasher
+        .sha256_file(&assets_dir.join("polis-setup.config.tar"))
         .context("computing config tarball hash")?;
 
     // Read current hash from VM
@@ -114,10 +120,12 @@ pub async fn update_vm_config(
         .context("transferring new config")?;
 
     // Pull new images
-    pull_images(mp).await.context("pulling Docker images")?;
+    pull_images(mp, reporter)
+        .await
+        .context("pulling Docker images")?;
 
     // Verify image digests
-    verify_image_digests(mp)
+    verify_image_digests(mp, assets)
         .await
         .context("verifying image digests")?;
 
@@ -157,8 +165,6 @@ pub enum UpdateVmConfigOutcome {
 ///
 /// Returns an error if the VM state cannot be determined.
 #[allow(dead_code)] // Not yet called from command handlers
-pub async fn should_update_vm_config(
-    mp: &impl InstanceInspector,
-) -> Result<bool> {
+pub async fn should_update_vm_config(mp: &impl InstanceInspector) -> Result<bool> {
     Ok(vm::state(mp).await? == VmState::Running)
 }

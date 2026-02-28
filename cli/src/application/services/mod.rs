@@ -9,5 +9,6 @@ pub mod agent_crud;
 pub mod update;
 pub mod vm;
 pub mod workspace_doctor;
+pub mod workspace_repair;
 pub mod workspace_start;
 pub mod workspace_status;

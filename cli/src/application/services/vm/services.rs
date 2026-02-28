@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::application::ports::ShellExecutor;
+use crate::application::ports::{ProgressReporter, ShellExecutor};
 
 /// Pull all Docker images inside the VM via `docker compose pull`.
 ///
@@ -17,7 +17,7 @@ use crate::application::ports::ShellExecutor;
 ///   the user check network connectivity.
 /// - If the command fails for any other reason, returns an error with the
 ///   captured stderr for diagnosis.
-pub async fn pull_images(mp: &impl ShellExecutor) -> Result<()> {
+pub async fn pull_images(mp: &impl ShellExecutor, _reporter: &impl ProgressReporter) -> Result<()> {
     let output = mp
         .exec(&[
             "timeout",
@@ -57,16 +57,17 @@ pub(super) async fn start_services(mp: &impl ShellExecutor) {
 }
 
 /// Start services with inception progress spinner.
-pub(super) async fn start_services_with_progress(mp: &impl ShellExecutor, quiet: bool) {
-    let pb = (!quiet).then(|| {
-        crate::output::progress::spinner(&inception_line("L2", "agent isolation starting..."))
-    });
+pub(super) async fn start_services_with_progress(
+    mp: &impl ShellExecutor,
+    reporter: &impl ProgressReporter,
+    quiet: bool,
+) {
+    if !quiet {
+        reporter.step(&inception_line("L2", "agent isolation starting..."));
+    }
     start_services(mp).await;
-    if let Some(pb) = pb {
-        crate::output::progress::finish_ok(
-            &pb,
-            &inception_line("L2", "agent isolation starting..."),
-        );
+    if !quiet {
+        reporter.success(&inception_line("L2", "agent isolation starting..."));
     }
 }
 
@@ -115,14 +116,50 @@ mod tests {
 
     impl PullImagesStub {
         fn success() -> Self {
-            Self { exit_code: 0, stderr: vec![] }
+            Self {
+                exit_code: 0,
+                stderr: vec![],
+            }
         }
         fn failure(stderr: &[u8]) -> Self {
-            Self { exit_code: 1, stderr: stderr.to_vec() }
+            Self {
+                exit_code: 1,
+                stderr: stderr.to_vec(),
+            }
         }
         fn timeout() -> Self {
-            Self { exit_code: 124, stderr: b"Timeout".to_vec() }
+            Self {
+                exit_code: 124,
+                stderr: b"Timeout".to_vec(),
+            }
         }
+    }
+
+    struct Stub;
+    impl ShellExecutor for Stub {
+        async fn exec(&self, _: &[&str]) -> Result<std::process::Output> {
+            Ok(std::process::Output {
+                status: exit_status(0),
+                stdout: vec![],
+                stderr: vec![],
+            })
+        }
+        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<std::process::Output> {
+            anyhow::bail!("not expected")
+        }
+        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
+            anyhow::bail!("not expected")
+        }
+        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
+            anyhow::bail!("not expected")
+        }
+    }
+
+    struct ReporterStub;
+    impl ProgressReporter for ReporterStub {
+        fn step(&self, _: &str) {}
+        fn success(&self, _: &str) {}
+        fn warn(&self, _: &str) {}
     }
 
     impl ShellExecutor for PullImagesStub {
@@ -147,21 +184,23 @@ mod tests {
     #[tokio::test]
     async fn pull_images_succeeds_on_exit_code_0() {
         let mp = PullImagesStub::success();
-        let result = pull_images(&mp).await;
+        let result = pull_images(&mp, &ReporterStub).await;
         assert!(result.is_ok(), "exit code 0 should succeed: {result:?}");
     }
 
     #[tokio::test]
     async fn pull_images_fails_on_nonzero_exit_code() {
         let mp = PullImagesStub::failure(b"connection refused");
-        let result = pull_images(&mp).await;
+        let result = pull_images(&mp, &ReporterStub).await;
         assert!(result.is_err(), "non-zero exit code should fail");
     }
 
     #[tokio::test]
     async fn pull_images_includes_stderr_in_error() {
         let mp = PullImagesStub::failure(b"Error response from daemon: manifest unknown");
-        let err = pull_images(&mp).await.expect_err("expected Err");
+        let err = pull_images(&mp, &ReporterStub)
+            .await
+            .expect_err("expected Err");
         let msg = err.to_string();
         assert!(
             msg.contains("Error response from daemon"),
@@ -172,7 +211,9 @@ mod tests {
     #[tokio::test]
     async fn pull_images_timeout_returns_specific_error() {
         let mp = PullImagesStub::timeout();
-        let err = pull_images(&mp).await.expect_err("expected Err");
+        let err = pull_images(&mp, &ReporterStub)
+            .await
+            .expect_err("expected Err");
         let msg = err.to_string();
         assert!(
             msg.contains("timed out") || msg.contains("10 minutes"),
@@ -183,7 +224,9 @@ mod tests {
     #[tokio::test]
     async fn pull_images_timeout_suggests_network_check() {
         let mp = PullImagesStub::timeout();
-        let err = pull_images(&mp).await.expect_err("expected Err");
+        let err = pull_images(&mp, &ReporterStub)
+            .await
+            .expect_err("expected Err");
         let msg = err.to_string();
         assert!(
             msg.contains("network") || msg.contains("connectivity"),

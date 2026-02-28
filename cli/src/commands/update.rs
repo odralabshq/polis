@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use crate::app::AppContext;
 use crate::application::services::update::{
-    UpdateChecker, UpdateInfo, SignatureInfo, UpdateVmConfigOutcome, update_vm_config,
+    SignatureInfo, UpdateChecker, UpdateInfo, UpdateVmConfigOutcome, update_vm_config,
 };
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
 
@@ -57,11 +57,7 @@ impl UpdateChecker for GithubUpdateChecker {
 /// Returns an error if the version check, signature verification, download, or
 /// user prompt fails.
 #[allow(clippy::unused_async)] // async contract: will gain awaits when download is made async
-pub async fn run(
-    args: &UpdateArgs,
-    app: &AppContext,
-    checker: &impl UpdateChecker,
-) -> Result<()> {
+pub async fn run(args: &UpdateArgs, app: &AppContext, checker: &impl UpdateChecker) -> Result<()> {
     let ctx = &app.output;
     let mp = &app.provisioner;
     let current = env!("CARGO_PKG_VERSION");
@@ -122,17 +118,24 @@ pub async fn run(
 /// # Errors
 ///
 /// Returns an error if any step of the update cycle fails.
-pub async fn update_config(
-    app: &AppContext,
-) -> Result<()> {
-    let mp = &app.provisioner;
+pub async fn update_config(app: &AppContext) -> Result<()> {
     let ctx = &app.output;
-    // 1. Extract embedded assets (new version's tarball)
-    let (assets_dir, _guard) =
-        crate::infra::assets::extract_assets().context("extracting embedded assets")?;
+    let (assets_dir, _guard) = app.assets_dir().context("extracting embedded assets")?;
 
     let version = env!("CARGO_PKG_VERSION");
-    match update_vm_config(mp, &assets_dir, version).await? {
+    let reporter = app.terminal_reporter();
+    let hasher = &crate::infra::fs::LocalFs;
+
+    match update_vm_config(
+        &app.provisioner,
+        &app.assets,
+        hasher,
+        &reporter,
+        &assets_dir,
+        version,
+    )
+    .await?
+    {
         UpdateVmConfigOutcome::UpToDate => {
             ctx.success("Config is up to date");
         }
@@ -470,9 +473,14 @@ mod tests {
 
         let args = UpdateArgs { check: true };
         let app = crate::app::AppContext::new(&crate::app::AppFlags {
-            output: crate::app::OutputFlags { no_color: true, quiet: true, json: false },
+            output: crate::app::OutputFlags {
+                no_color: true,
+                quiet: true,
+                json: false,
+            },
             behaviour: crate::app::BehaviourFlags { yes: true },
-        }).expect("AppContext");
+        })
+        .expect("AppContext");
         let result = run(&args, &app, &AlwaysUpToDate).await;
         assert!(result.is_ok());
     }
@@ -498,9 +506,14 @@ mod tests {
 
         let args = UpdateArgs { check: false };
         let app = crate::app::AppContext::new(&crate::app::AppFlags {
-            output: crate::app::OutputFlags { no_color: true, quiet: true, json: false },
+            output: crate::app::OutputFlags {
+                no_color: true,
+                quiet: true,
+                json: false,
+            },
             behaviour: crate::app::BehaviourFlags { yes: true },
-        }).expect("AppContext");
+        })
+        .expect("AppContext");
         let result = run(&args, &app, &BadSignature).await;
         assert!(result.is_err());
         assert!(

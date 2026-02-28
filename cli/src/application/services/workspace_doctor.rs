@@ -6,7 +6,8 @@
 use anyhow::Result;
 
 use crate::application::ports::{
-    CommandRunner, FileTransfer, InstanceInspector, NetworkProbe, ProgressReporter, ShellExecutor,
+    CommandRunner, FileTransfer, InstanceInspector, LocalPaths, NetworkProbe, ProgressReporter,
+    ShellExecutor,
 };
 use crate::domain::health::DoctorChecks;
 
@@ -25,12 +26,13 @@ pub async fn run_doctor(
     reporter: &impl ProgressReporter,
     cmd_runner: &impl CommandRunner,
     network_probe: &impl NetworkProbe,
+    paths: &impl LocalPaths,
 ) -> Result<DoctorChecks> {
     reporter.step("checking prerequisites...");
     let prerequisites = probe_prerequisites(cmd_runner).await?;
 
     reporter.step("checking workspace...");
-    let workspace = probe_workspace(provisioner, cmd_runner).await?;
+    let workspace = probe_workspace(provisioner, cmd_runner, paths).await?;
 
     reporter.step("checking network...");
     let network = probe_network(network_probe).await?;
@@ -84,12 +86,15 @@ async fn probe_prerequisites(
 async fn probe_workspace(
     provisioner: &(impl InstanceInspector + ShellExecutor),
     cmd_runner: &impl CommandRunner,
+    paths: &impl LocalPaths,
 ) -> Result<crate::domain::health::WorkspaceChecks> {
     let disk_space_gb = probe_disk_space_gb(cmd_runner).await?;
-    let image = probe_image_cache();
+    let image = probe_image_cache(paths);
 
     // Check VM readiness via provisioner
-    let ready = crate::application::services::vm::lifecycle::state(provisioner).await.ok()
+    let ready = crate::application::services::vm::lifecycle::state(provisioner)
+        .await
+        .ok()
         == Some(crate::application::services::vm::lifecycle::VmState::Running);
 
     Ok(crate::domain::health::WorkspaceChecks {
@@ -117,7 +122,9 @@ async fn probe_network(
 async fn probe_security(
     provisioner: &(impl InstanceInspector + ShellExecutor),
 ) -> Result<crate::domain::health::SecurityChecks> {
-    let vm_running = crate::application::services::vm::lifecycle::state(provisioner).await.ok()
+    let vm_running = crate::application::services::vm::lifecycle::state(provisioner)
+        .await
+        .ok()
         == Some(crate::application::services::vm::lifecycle::VmState::Running);
 
     if !vm_running {
@@ -186,10 +193,8 @@ async fn probe_disk_space_gb(cmd_runner: &impl CommandRunner) -> Result<u64> {
     }
 }
 
-fn probe_image_cache() -> crate::domain::health::ImageCheckResult {
-    let Ok(images_dir) = crate::infra::fs::images_dir() else {
-        return crate::domain::health::ImageCheckResult::default();
-    };
+fn probe_image_cache(paths: &impl LocalPaths) -> crate::domain::health::ImageCheckResult {
+    let images_dir = paths.images_dir();
     let cached = images_dir.join("polis.qcow2").exists();
     crate::domain::health::ImageCheckResult {
         cached,

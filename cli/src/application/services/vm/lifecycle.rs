@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 
 use crate::application::ports::{
     AssetExtractor, FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec,
-    ShellExecutor, SshConfigurator, VmProvisioner,
+    ProgressReporter, ShellExecutor, SshConfigurator, VmProvisioner,
 };
 
 const VM_CPUS: &str = "2";
@@ -136,12 +136,13 @@ pub async fn create(
     mp: &impl VmProvisioner,
     assets: &impl AssetExtractor,
     ssh: &impl SshConfigurator,
+    reporter: &impl ProgressReporter,
     quiet: bool,
 ) -> Result<()> {
     check_prerequisites(mp).await?;
 
     if !quiet {
-        println!("✓ {}", inception_line("L0", "sequence started."));
+        reporter.success(&inception_line("L0", "sequence started."));
     }
 
     // Extract embedded assets (cloud-init.yaml, etc.) to a temp dir.
@@ -171,9 +172,9 @@ pub async fn create(
         .context("cloud-init path is not valid UTF-8")?
         .to_string();
 
-    let pb = (!quiet).then(|| {
-        crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
-    });
+    if !quiet {
+        reporter.step(&inception_line("L1", "workspace isolation starting..."));
+    }
     let output = mp
         .launch(&InstanceSpec {
             image: "24.04",
@@ -185,15 +186,8 @@ pub async fn create(
         })
         .await
         .context("launching workspace")?;
-    if let Some(pb) = pb {
-        if output.status.success() {
-            crate::output::progress::finish_ok(
-                &pb,
-                &inception_line("L1", "workspace isolation starting..."),
-            );
-        } else {
-            pb.finish_and_clear();
-        }
+    if !quiet && output.status.success() {
+        reporter.success(&inception_line("L1", "workspace isolation starting..."));
     }
 
     if !output.status.success() {
@@ -205,7 +199,7 @@ pub async fn create(
     verify_cloud_init(mp).await?;
 
     configure_credentials(mp).await;
-    super::services::start_services_with_progress(mp, quiet).await;
+    super::services::start_services_with_progress(mp, reporter, quiet).await;
     pin_host_key(ssh).await;
     Ok(())
 }
@@ -259,23 +253,24 @@ pub async fn delete(mp: &impl InstanceLifecycle) {
 /// # Errors
 ///
 /// Returns an error if the multipass start command fails.
-pub async fn restart(mp: &(impl InstanceLifecycle + ShellExecutor), quiet: bool) -> Result<()> {
+pub async fn restart(
+    mp: &(impl InstanceLifecycle + ShellExecutor),
+    reporter: &impl ProgressReporter,
+    quiet: bool,
+) -> Result<()> {
     if !quiet {
-        println!("✓ {}", inception_line("L0", "sequence started."));
+        reporter.success(&inception_line("L0", "sequence started."));
     }
 
-    let pb = (!quiet).then(|| {
-        crate::output::progress::spinner(&inception_line("L1", "workspace isolation starting..."))
-    });
+    if !quiet {
+        reporter.step(&inception_line("L1", "workspace isolation starting..."));
+    }
     start(mp).await?;
-    if let Some(pb) = pb {
-        crate::output::progress::finish_ok(
-            &pb,
-            &inception_line("L1", "workspace isolation starting..."),
-        );
+    if !quiet {
+        reporter.success(&inception_line("L1", "workspace isolation starting..."));
     }
 
-    super::services::start_services_with_progress(mp, quiet).await;
+    super::services::start_services_with_progress(mp, reporter, quiet).await;
     Ok(())
 }
 
@@ -468,10 +463,17 @@ mod tests {
         }
     }
 
+    struct ReporterStub;
+    impl ProgressReporter for ReporterStub {
+        fn step(&self, _: &str) {}
+        fn success(&self, _: &str) {}
+        fn warn(&self, _: &str) {}
+    }
+
     #[tokio::test]
     async fn restart_calls_start_and_services() {
         let mp = MultipassRestartSpy::new();
-        let result = restart(&mp, true).await;
+        let result = restart(&mp, &ReporterStub, true).await;
         assert!(result.is_ok());
         assert!(mp.start_called.get(), "start() should be called");
         assert!(

@@ -6,8 +6,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 
-use crate::application::ports::ShellExecutor;
-use crate::infra::assets::get_asset;
+use crate::application::ports::{AssetExtractor, ShellExecutor};
 
 /// Write the config hash to `/opt/polis/.config-hash` inside the VM.
 ///
@@ -51,8 +50,11 @@ pub type DigestManifest = HashMap<String, String>;
 /// - Returns an error if the manifest cannot be parsed.
 /// - Returns an error if `docker inspect` fails for any image.
 /// - Returns an error if any image digest does not match the expected value.
-pub async fn verify_image_digests(mp: &impl ShellExecutor) -> Result<()> {
-    let manifest_bytes = get_asset("image-digests.json")?;
+pub async fn verify_image_digests(
+    mp: &impl ShellExecutor,
+    assets: &impl AssetExtractor,
+) -> Result<()> {
+    let manifest_bytes = assets.get_asset("image-digests.json").await?;
     let manifest: DigestManifest =
         serde_json::from_slice(manifest_bytes).context("parsing embedded digest manifest")?;
 
@@ -277,7 +279,11 @@ mod tests {
 
     /// Helper: run digest verification against a synthetic manifest (bypasses
     /// the embedded asset) by directly calling the inner verification logic.
-    async fn verify_manifest(mp: &impl ShellExecutor, manifest: &DigestManifest) -> Result<()> {
+    async fn verify_manifest(
+        mp: &impl ShellExecutor,
+        _assets: &impl AssetExtractor,
+        manifest: &DigestManifest,
+    ) -> Result<()> {
         if manifest.is_empty() {
             eprintln!(
                 "⚠ Warning: image digest manifest is empty — verification skipped (local dev build)"
@@ -313,16 +319,23 @@ mod tests {
         Ok(())
     }
 
+    struct AssetStub;
+    impl AssetExtractor for AssetStub {
+        async fn extract_assets(&self) -> Result<(std::path::PathBuf, Box<dyn std::any::Any>)> {
+            anyhow::bail!("not used")
+        }
+        async fn get_asset(&self, _: &str) -> Result<&'static [u8]> {
+            anyhow::bail!("not used")
+        }
+    }
+
     #[tokio::test]
     async fn empty_manifest_skips_verification() {
         let mp = DigestMock::new(vec![]);
         let manifest: DigestManifest = HashMap::new();
-        let result = verify_manifest(&mp, &manifest).await;
+        let result = verify_manifest(&mp, &AssetStub, &manifest).await;
         assert!(result.is_ok(), "empty manifest should succeed");
-        assert!(
-            mp.calls().is_empty(),
-            "no docker inspect calls for empty manifest"
-        );
+        assert!(mp.calls().is_empty(), "no docker inspect calls");
     }
 
     #[tokio::test]
@@ -335,7 +348,7 @@ mod tests {
         let mut manifest = DigestManifest::new();
         manifest.insert(image.to_owned(), digest.to_owned());
 
-        let result = verify_manifest(&mp, &manifest).await;
+        let result = verify_manifest(&mp, &AssetStub, &manifest).await;
         assert!(result.is_ok(), "matching digest should pass: {result:?}");
     }
 
@@ -350,7 +363,7 @@ mod tests {
         let mut manifest = DigestManifest::new();
         manifest.insert(image.to_owned(), expected.to_owned());
 
-        let err = verify_manifest(&mp, &manifest)
+        let err = verify_manifest(&mp, &AssetStub, &manifest)
             .await
             .expect_err("mismatched digest should fail");
 
@@ -381,7 +394,7 @@ mod tests {
         let mut manifest = DigestManifest::new();
         manifest.insert(image.to_owned(), expected.to_owned());
 
-        let err = verify_manifest(&mp, &manifest)
+        let err = verify_manifest(&mp, &AssetStub, &manifest)
             .await
             .expect_err("should fail");
         let msg = err.to_string();
@@ -418,7 +431,7 @@ mod tests {
         let mut manifest = DigestManifest::new();
         manifest.insert(image.to_owned(), "sha256:abc".to_owned());
 
-        let err = verify_manifest(&FailingMock, &manifest)
+        let err = verify_manifest(&FailingMock, &AssetStub, &manifest)
             .await
             .expect_err("exec failure should propagate");
         assert!(err.to_string().contains("inspecting image"));
@@ -445,7 +458,7 @@ mod tests {
             manifest.insert(img.to_string(), digest.to_string());
         }
 
-        let result = verify_manifest(&mp, &manifest).await;
+        let result = verify_manifest(&mp, &AssetStub, &manifest).await;
         assert!(result.is_ok(), "all matching digests should pass");
         assert_eq!(mp.calls().len(), 3, "should inspect all 3 images");
     }
