@@ -277,6 +277,7 @@ pub fn workspace_state_display(state: WorkspaceState) -> &'static str {
         WorkspaceState::Stopped => "stopped",
         WorkspaceState::Starting => "starting",
         WorkspaceState::Stopping => "stopping",
+        WorkspaceState::NotFound => "not found",
         WorkspaceState::Error => "error",
     }
 }
@@ -341,6 +342,7 @@ mod tests {
             workspace_state_display(WorkspaceState::Stopping),
             "stopping"
         );
+        assert_eq!(workspace_state_display(WorkspaceState::NotFound), "not found");
         assert_eq!(workspace_state_display(WorkspaceState::Error), "error");
     }
 

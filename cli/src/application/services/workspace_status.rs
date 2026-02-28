@@ -59,6 +59,7 @@ async fn get_workspace_status(mp: &(impl InstanceInspector + ShellExecutor)) -> 
     }
 
     let container_running = check_workspace_container(mp).await;
+    let uptime_seconds = get_uptime(mp).await;
 
     WorkspaceStatus {
         status: if container_running {
@@ -66,7 +67,7 @@ async fn get_workspace_status(mp: &(impl InstanceInspector + ShellExecutor)) -> 
         } else {
             WorkspaceState::Starting
         },
-        uptime_seconds: None,
+        uptime_seconds,
     }
 }
 
@@ -75,6 +76,10 @@ async fn check_multipass_status(mp: &impl InstanceInspector) -> Option<Workspace
     let output = mp.info().await.ok()?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("does not exist") || stderr.contains("was not found") {
+            return Some(WorkspaceState::NotFound);
+        }
         return None;
     }
 
@@ -88,6 +93,19 @@ async fn check_multipass_status(mp: &impl InstanceInspector) -> Option<Workspace
         "Stopping" => WorkspaceState::Stopping,
         _ => WorkspaceState::Error,
     })
+}
+
+/// Get VM uptime in seconds via shell execution.
+async fn get_uptime(mp: &impl ShellExecutor) -> Option<u64> {
+    let output = mp.exec(&["cat", "/proc/uptime"]).await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let uptime_str = stdout.split_whitespace().next()?;
+    let uptime: f64 = uptime_str.parse().ok()?;
+    Some(uptime as u64)
 }
 
 /// Check if polis-workspace container is running inside VM.

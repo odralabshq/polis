@@ -231,6 +231,7 @@ pub enum WorkspaceState {
     Stopped,
     Starting,
     Stopping,
+    NotFound,
     Error,
 }
 
@@ -587,6 +588,7 @@ mod proptests {
             Just(WorkspaceState::Stopped),
             Just(WorkspaceState::Starting),
             Just(WorkspaceState::Stopping),
+            Just(WorkspaceState::NotFound),
             Just(WorkspaceState::Error),
         ]
     }
