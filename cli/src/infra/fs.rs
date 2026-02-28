@@ -118,6 +118,11 @@ impl crate::application::ports::LocalFs for LocalFs {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
                 .with_context(|| format!("setting permissions on {}", path.display()))?;
         }
+        #[cfg(not(unix))]
+        {
+            let _ = path; // Mark as used to suppress warnings
+            let _ = mode; // Mark as used to suppress warnings
+        }
         Ok(())
     }
 }

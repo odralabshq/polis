@@ -18,7 +18,18 @@ pub async fn run(
     app: &AppContext,
     mp: &(impl InstanceInspector + ShellExecutor),
 ) -> Result<std::process::ExitCode> {
+    let pb = if app.mode == crate::app::OutputMode::Human && app.output.show_progress() {
+        Some(crate::output::progress::spinner("gathering status..."))
+    } else {
+        None
+    };
+
     let output = gather_status(mp).await;
+
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
+
     app.renderer().render_status(&output)?;
     Ok(std::process::ExitCode::SUCCESS)
 }
