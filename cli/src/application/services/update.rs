@@ -125,7 +125,7 @@ pub async fn update_vm_config(
         .context("pulling Docker images")?;
 
     // Verify image digests
-    verify_image_digests(mp, assets)
+    verify_image_digests(mp, assets, reporter)
         .await
         .context("verifying image digests")?;
 

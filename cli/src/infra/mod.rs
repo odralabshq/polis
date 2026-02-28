@@ -15,3 +15,5 @@ pub mod network;
 pub mod provisioner;
 pub mod ssh;
 pub mod state;
+
+pub mod update;

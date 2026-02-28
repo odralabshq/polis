@@ -27,11 +27,7 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
         &app.state_mgr,
         &app.assets,
         &app.ssh,
-        &app.local_fs,
-        &reporter,
-        args.agent.as_deref(),
-        &assets_dir,
-        version,
+        &app.local_fs, &app.local_fs, &reporter, args.agent.as_deref(), &assets_dir, version,
     )
     .await?;
 

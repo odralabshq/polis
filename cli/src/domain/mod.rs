@@ -21,3 +21,4 @@ pub use health::{
 };
 #[allow(unused_imports)]
 pub use workspace::{WorkspaceState, check_architecture, validate_workspace_id};
+pub mod ssh;

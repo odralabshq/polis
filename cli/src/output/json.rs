@@ -9,6 +9,21 @@ use crate::domain::health::DoctorChecks;
 pub struct JsonRenderer;
 
 impl JsonRenderer {
+
+    /// Render the CLI version information.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_version(version: &str, commit: &str, build_date: &str) -> Result<()> {
+        let val = serde_json::json!({
+            "version": version,
+            "commit": commit,
+            "build_date": build_date
+        });
+        println!("{}", serde_json::to_string_pretty(&val)?);
+        Ok(())
+    }
     /// Render workspace/agent/security status as JSON.
     pub fn render_status(status: &StatusOutput) -> Result<()> {
         println!(

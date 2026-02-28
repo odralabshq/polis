@@ -7,7 +7,7 @@ pub use crate::domain::agent::AgentInfo;
 use anyhow::{Context, Result};
 
 use crate::application::ports::{
-    FileTransfer, InstanceInspector, LocalArtifactWriter, ProgressReporter, ShellExecutor,
+    FileTransfer, InstanceInspector, ProgressReporter, ShellExecutor,
     WorkspaceStateStore,
 };
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
@@ -22,43 +22,35 @@ use crate::application::services::vm::lifecycle::{self as vm, VmState};
 ///
 /// Returns an error if the manifest cannot be read/parsed, or if any file
 /// write fails.
-async fn generate_and_write_artifacts(polis_dir: &std::path::Path, name: &str) -> Result<()> {
-    let polis_dir = polis_dir.to_path_buf();
-    let name = name.to_owned();
-    tokio::task::spawn_blocking(move || {
-        use crate::domain::agent::artifacts;
+async fn generate_and_write_artifacts(local_fs: &impl crate::application::ports::LocalFs, polis_dir: &std::path::Path, name: &str) -> Result<()> {
+    use crate::domain::agent::artifacts;
 
-        let manifest_path = polis_dir.join("agents").join(&name).join("agent.yaml");
-        let content = std::fs::read_to_string(&manifest_path)
-            .with_context(|| format!("reading {}", manifest_path.display()))?;
-        let manifest: polis_common::agent::AgentManifest =
-            serde_yaml::from_str(&content).context("failed to parse agent.yaml")?;
+    let manifest_path = polis_dir.join("agents").join(name).join("agent.yaml");
+    let content = local_fs.read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest: polis_common::agent::AgentManifest =
+        serde_yaml::from_str(&content).context("failed to parse agent.yaml")?;
 
-        let generated_dir = polis_dir.join("agents").join(&name).join(".generated");
-        std::fs::create_dir_all(&generated_dir)
-            .with_context(|| format!("creating {}", generated_dir.display()))?;
+    let generated_dir = polis_dir.join("agents").join(name).join(".generated");
+    local_fs.create_dir_all(&generated_dir)
+        .with_context(|| format!("creating {}", generated_dir.display()))?;
 
-        let compose = artifacts::compose_overlay(&manifest);
-        std::fs::write(generated_dir.join("compose.agent.yaml"), &compose)
-            .context("writing compose.agent.yaml")?;
+    let compose = artifacts::compose_overlay(&manifest);
+    local_fs.write(&generated_dir.join("compose.agent.yaml"), compose)
+        .context("writing compose.agent.yaml")?;
 
-        let unit = artifacts::systemd_unit(&manifest);
-        let hash = artifacts::service_hash(&unit);
-        std::fs::write(generated_dir.join(format!("{name}.service")), &unit)
-            .context("writing .service file")?;
-        std::fs::write(generated_dir.join(format!("{name}.service.sha256")), &hash)
-            .context("writing .service.sha256 file")?;
+    let unit = artifacts::systemd_unit(&manifest);
+    let hash = artifacts::service_hash(&unit);
+    local_fs.write(&generated_dir.join(format!("{name}.service")), unit)
+        .context("writing .service file")?;
+    local_fs.write(&generated_dir.join(format!("{name}.service.sha256")), hash)
+        .context("writing .service.sha256 file")?;
 
-        // Read .env from polis_dir if present; fall back to empty string.
-        let env_content = std::fs::read_to_string(polis_dir.join(".env")).unwrap_or_default();
-        let filtered = artifacts::filtered_env(&env_content, &manifest);
-        std::fs::write(generated_dir.join(format!("{name}.env")), filtered)
-            .context("writing .env file")?;
+    let env_content = local_fs.read_to_string(&polis_dir.join(".env")).unwrap_or_default();
+    let filtered = artifacts::filtered_env(&env_content, &manifest);
+    local_fs.write(&generated_dir.join(format!("{name}.env")), filtered)
+        .context("writing .env file")?;
 
-        Ok::<(), anyhow::Error>(())
-    })
-    .await
-    .context("spawn_blocking for generate_and_write_artifacts")??;
     Ok(())
 }
 
@@ -79,16 +71,16 @@ use crate::domain::workspace::VM_ROOT;
 pub async fn install_agent(
     provisioner: &(impl ShellExecutor + FileTransfer + InstanceInspector),
     _state_mgr: &impl WorkspaceStateStore,
-    _artifact_writer: &impl LocalArtifactWriter,
+    local_fs: &impl crate::application::ports::LocalFs,
     reporter: &impl ProgressReporter,
     agent_path: &str,
 ) -> Result<String> {
     // Step 1: Validate agent folder and get name.
     let folder = std::path::Path::new(agent_path);
-    anyhow::ensure!(folder.exists(), "Path not found: {agent_path}");
+    anyhow::ensure!(local_fs.exists(folder), "Path not found: {agent_path}");
     let manifest_path = folder.join("agent.yaml");
     anyhow::ensure!(
-        manifest_path.exists(),
+        local_fs.exists(&manifest_path),
         "No agent.yaml found in: {agent_path}"
     );
     let content = tokio::task::spawn_blocking({
@@ -126,7 +118,7 @@ pub async fn install_agent(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("cannot determine parent directory of agent folder"))?;
     let polis_dir = parent_dir.parent().unwrap_or(parent_dir);
-    generate_and_write_artifacts(polis_dir, &name).await?;
+    generate_and_write_artifacts(local_fs, polis_dir, &name).await?;
 
     // Step 5: Transfer agent folder to VM.
     reporter.step(&format!("copying '{name}' to VM..."));
@@ -230,6 +222,7 @@ pub async fn remove_agent(
 pub async fn update_agent(
     provisioner: &(impl ShellExecutor + FileTransfer + InstanceInspector),
     state_mgr: &impl WorkspaceStateStore,
+    local_fs: &impl crate::application::ports::LocalFs,
     reporter: &impl ProgressReporter,
 ) -> Result<String> {
     let name = state_mgr
@@ -269,7 +262,7 @@ pub async fn update_agent(
     .await
     .context("spawn_blocking for temp dir setup")??;
 
-    generate_and_write_artifacts(tmp.path(), &name).await?;
+    generate_and_write_artifacts(local_fs, tmp.path(), &name).await?;
 
     // Transfer the regenerated .generated/ folder back into the VM.
     reporter.step("transferring updated artifacts...");

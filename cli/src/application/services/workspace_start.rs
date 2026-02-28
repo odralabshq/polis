@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 
 use crate::application::ports::{
-    AssetExtractor, FileHasher, ProgressReporter, SshConfigurator, VmProvisioner,
+    AssetExtractor, FileHasher, LocalFs, ProgressReporter, SshConfigurator, VmProvisioner,
     WorkspaceStateStore,
 };
 use crate::application::services::vm::{
@@ -46,6 +46,7 @@ pub async fn start_workspace(
     assets: &impl AssetExtractor,
     ssh: &impl SshConfigurator,
     hasher: &impl FileHasher,
+    local_fs: &impl LocalFs,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     assets_dir: &std::path::Path,
@@ -64,6 +65,7 @@ pub async fn start_workspace(
                 assets,
                 ssh,
                 hasher,
+                local_fs,
                 reporter,
                 agent,
                 assets_dir,
@@ -75,7 +77,7 @@ pub async fn start_workspace(
             })
         }
         _ => {
-            restart_vm(provisioner, state_mgr, assets, ssh, reporter, agent).await?;
+            restart_vm(provisioner, state_mgr, assets, ssh, local_fs, reporter, agent).await?;
             wait_ready(provisioner, reporter, false).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
@@ -111,6 +113,7 @@ async fn create_and_start_vm(
     assets: &impl AssetExtractor,
     ssh: &impl SshConfigurator,
     hasher: &impl FileHasher,
+    local_fs: &impl LocalFs,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     assets_dir: &std::path::Path,
@@ -148,14 +151,14 @@ async fn create_and_start_vm(
 
     // Step 6: Verify image digests.
     reporter.step("verifying image digests...");
-    verify_image_digests(provisioner, assets)
+    verify_image_digests(provisioner, assets, reporter)
         .await
         .context("verifying image digests")?;
 
     // Step 7: Set up agent if requested.
     if let Some(name) = agent {
         reporter.step(&format!("setting up agent '{name}'..."));
-        setup_agent(provisioner, name).await?;
+        setup_agent(provisioner, local_fs, name).await?;
     }
 
     // Step 8: Start docker compose.
@@ -189,6 +192,7 @@ async fn restart_vm(
     state_mgr: &impl WorkspaceStateStore,
     _assets: &impl AssetExtractor,
     _ssh: &impl SshConfigurator,
+    local_fs: &impl LocalFs,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
 ) -> Result<()> {
@@ -197,7 +201,7 @@ async fn restart_vm(
     reporter.success("workspace restarted");
 
     if let Some(name) = agent {
-        setup_agent(provisioner, name).await?;
+        setup_agent(provisioner, local_fs, name).await?;
         start_compose(provisioner, agent).await?;
     }
 
@@ -220,7 +224,7 @@ async fn restart_vm(
 /// Reads the manifest from the VM, generates artifacts using the Rust domain
 /// functions, and transfers the `.generated/` folder back into the VM.
 /// This replaces the old `generate-agent.sh` shell script invocation.
-async fn setup_agent<P: VmProvisioner>(provisioner: &P, agent_name: &str) -> Result<()> {
+async fn setup_agent<P: VmProvisioner>(provisioner: &P, local_fs: &impl LocalFs, agent_name: &str) -> Result<()> {
     // Verify agent manifest exists in the VM.
     let manifest_path = format!("{VM_ROOT}/agents/{agent_name}/agent.yaml");
     let check = provisioner
@@ -247,36 +251,24 @@ async fn setup_agent<P: VmProvisioner>(provisioner: &P, agent_name: &str) -> Res
     let stdout_bytes = cat_out.stdout.clone();
     let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
     let tmp_path = tmp.path().to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        use crate::domain::agent::artifacts;
+    
+    use crate::domain::agent::artifacts;
 
-        let manifest: polis_common::agent::AgentManifest =
-            serde_yaml::from_slice(&stdout_bytes).context("parsing agent.yaml from VM")?;
-        crate::domain::agent::validate::validate_full_manifest(&manifest)?;
+    let manifest: polis_common::agent::AgentManifest =
+        serde_yaml::from_slice(&stdout_bytes).context("parsing agent.yaml from VM")?;
+    crate::domain::agent::validate::validate_full_manifest(&manifest)?;
 
-        let generated_dir = tmp_path.join("agents").join(&name).join(".generated");
-        std::fs::create_dir_all(&generated_dir)
-            .with_context(|| format!("creating {}", generated_dir.display()))?;
+    let generated_dir = tmp_path.join("agents").join(&name).join(".generated");
+    local_fs.create_dir_all(&generated_dir)?;
 
-        let compose = artifacts::compose_overlay(&manifest);
-        std::fs::write(generated_dir.join("compose.agent.yaml"), &compose)
-            .context("writing compose.agent.yaml")?;
+    let compose = artifacts::compose_overlay(&manifest);
+    local_fs.write(&generated_dir.join("compose.agent.yaml"), compose)?;
 
-        let unit = artifacts::systemd_unit(&manifest);
-        let hash = artifacts::service_hash(&unit);
-        std::fs::write(generated_dir.join(format!("{name}.service")), &unit)
-            .context("writing .service file")?;
-        std::fs::write(generated_dir.join(format!("{name}.service.sha256")), &hash)
-            .context("writing .service.sha256 file")?;
-
-        // No .env available on VM path — write empty file.
-        std::fs::write(generated_dir.join(format!("{name}.env")), "")
-            .context("writing .env file")?;
-
-        Ok::<(), anyhow::Error>(())
-    })
-    .await
-    .context("spawn_blocking for artifact generation")??;
+    let unit = artifacts::systemd_unit(&manifest);
+    let hash = artifacts::service_hash(&unit);
+    local_fs.write(&generated_dir.join(format!("{name}.service")), unit)?;
+    local_fs.write(&generated_dir.join(format!("{name}.service.sha256")), hash)?;
+    local_fs.write(&generated_dir.join(format!("{name}.env")), "".to_string())?;
 
     // Transfer the generated artifacts back into the VM.
     let generated_src = tmp

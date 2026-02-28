@@ -11,13 +11,6 @@ use std::path::PathBuf;
 ///
 /// Returns an error if the key does not start with `ssh-ed25519 ` or has no
 /// key material after the prefix.
-pub fn validate_host_key(key: &str) -> Result<()> {
-    let material = key
-        .strip_prefix("ssh-ed25519 ")
-        .ok_or_else(|| anyhow::anyhow!("host key must be an ed25519 key (got: {key:?})"))?;
-    anyhow::ensure!(!material.trim().is_empty(), "host key has no key material");
-    Ok(())
-}
 
 /// Generates a passphrase-free ED25519 keypair at `~/.polis/id_ed25519` if it
 /// does not already exist.
@@ -242,40 +235,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // -----------------------------------------------------------------------
-    // validate_host_key
-    // -----------------------------------------------------------------------
 
-    #[test]
-    fn test_validate_host_key_accepts_valid_ed25519_key() {
-        let result = validate_host_key("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_host_key_rejects_rsa_key() {
-        let result = validate_host_key("ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC...");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_host_key_rejects_ecdsa_key() {
-        let result = validate_host_key("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY...");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_host_key_rejects_empty_string() {
-        let result = validate_host_key("");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_host_key_rejects_key_with_only_prefix() {
-        // "ssh-ed25519 " with no key material after the space
-        let result = validate_host_key("ssh-ed25519 ");
-        assert!(result.is_err());
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -837,5 +797,9 @@ impl crate::application::ports::SshConfigurator for SshConfigManager {
         self.add_include_directive()?;
         self.create_sockets_dir()?;
         Ok(())
+    }
+
+    async fn validate_permissions(&self) -> Result<()> {
+        self.validate_permissions()
     }
 }

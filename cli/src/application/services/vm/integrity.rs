@@ -53,6 +53,7 @@ pub type DigestManifest = HashMap<String, String>;
 pub async fn verify_image_digests(
     mp: &impl ShellExecutor,
     assets: &impl AssetExtractor,
+    reporter: &impl crate::application::ports::ProgressReporter,
 ) -> Result<()> {
     let manifest_bytes = assets.get_asset("image-digests.json").await?;
     let manifest: DigestManifest =
@@ -60,9 +61,7 @@ pub async fn verify_image_digests(
 
     // Requirement 18.1 / 18.2: empty manifest → warn and skip (local dev build).
     if manifest.is_empty() {
-        eprintln!(
-            "⚠ Warning: image digest manifest is empty — verification skipped (local dev build)"
-        );
+        reporter.warn("image digest manifest is empty — verification skipped (local dev build)");
         return Ok(());
     }
 
@@ -285,6 +284,7 @@ mod tests {
         manifest: &DigestManifest,
     ) -> Result<()> {
         if manifest.is_empty() {
+            // Test warning
             eprintln!(
                 "⚠ Warning: image digest manifest is empty — verification skipped (local dev build)"
             );

@@ -27,6 +27,7 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode>
         &app.cmd_runner,
         &app.network_probe,
         &app.local_fs,
+        &app.local_fs,
     )
     .await?;
 
@@ -51,6 +52,7 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode>
             &reporter,
             &app.cmd_runner,
             &app.network_probe,
+            &app.local_fs,
             &app.local_fs,
         )
         .await?;

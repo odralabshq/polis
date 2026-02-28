@@ -132,7 +132,7 @@ pub async fn extract_host_key(
         .context("host key output is not valid UTF-8")?
         .trim()
         .to_string();
-    crate::infra::ssh::validate_host_key(&key)?;
+    crate::domain::ssh::validate_host_key(&key)?;
     println!("workspace {key}");
     Ok(ExitCode::SUCCESS)
 }

@@ -17,11 +17,7 @@ use crate::domain::{DoctorChecks, WorkspaceState};
 pub const POLIS_INSTANCE: &str = "polis";
 
 /// Docker container name inside the VM.
-/// MAINT-002: Centralized constant for container references.
-pub const CONTAINER_NAME: &str = "polis-workspace";
 
-/// Path to the polis project root inside the VM.
-pub const VM_ROOT: &str = "/opt/polis";
 
 // ── Value Types ───────────────────────────────────────────────────────────────
 
@@ -295,4 +291,7 @@ pub trait SshConfigurator {
 
     /// Set up the local SSH config.
     async fn setup_config(&self) -> Result<()>;
+
+    /// Validates that the SSH config permissions are secure.
+    async fn validate_permissions(&self) -> Result<()>;
 }

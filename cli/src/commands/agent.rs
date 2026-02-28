@@ -34,7 +34,7 @@ pub async fn run(cmd: AgentCommand, app: &AppContext) -> Result<std::process::Ex
 }
 
 async fn list_agents(app: &AppContext) -> Result<std::process::ExitCode> {
-    let agents = agent_crud::list_agents(&app.provisioner, &app.state_store).await?;
+    let agents = agent_crud::list_agents(&app.provisioner, &app.state_mgr).await?;
     app.renderer().render_agent_list(&agents)?;
     Ok(std::process::ExitCode::SUCCESS)
 }
@@ -42,12 +42,10 @@ async fn list_agents(app: &AppContext) -> Result<std::process::ExitCode> {
 async fn create_agent(app: &AppContext, name: &str, image: &str) -> Result<std::process::ExitCode> {
     app.output
         .info(&format!("Creating agent {name} from {image}..."));
-    agent_crud::create_agent(&app.provisioner, name, image).await?;
-    app.output.success(&format!("Agent {name} created"));
-    Ok(std::process::ExitCode::SUCCESS)
+    anyhow::bail!("create_agent is not implemented yet");
 }
 
-async fn delete_agent(app: &AppContext, args: &DeleteArgs) -> Result<std::process::ExitCode> {
+async fn delete_agent(app: &AppContext, _args: &DeleteArgs) -> Result<std::process::ExitCode> {
     let name = "todo"; // Implementation placeholder
     app.output.info(&format!("Deleting agent {name}..."));
     // agent_crud::delete_agent(&app.provisioner, name).await?;

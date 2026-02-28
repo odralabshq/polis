@@ -27,12 +27,13 @@ pub async fn run_doctor(
     cmd_runner: &impl CommandRunner,
     network_probe: &impl NetworkProbe,
     paths: &impl LocalPaths,
+    fs: &impl crate::application::ports::LocalFs,
 ) -> Result<DoctorChecks> {
     reporter.step("checking prerequisites...");
     let prerequisites = probe_prerequisites(cmd_runner).await?;
 
     reporter.step("checking workspace...");
-    let workspace = probe_workspace(provisioner, cmd_runner, paths).await?;
+    let workspace = probe_workspace(provisioner, cmd_runner, paths, fs).await?;
 
     reporter.step("checking network...");
     let network = probe_network(network_probe).await?;
@@ -87,9 +88,10 @@ async fn probe_workspace(
     provisioner: &(impl InstanceInspector + ShellExecutor),
     cmd_runner: &impl CommandRunner,
     paths: &impl LocalPaths,
+    fs: &impl crate::application::ports::LocalFs,
 ) -> Result<crate::domain::health::WorkspaceChecks> {
     let disk_space_gb = probe_disk_space_gb(cmd_runner).await?;
-    let image = probe_image_cache(paths);
+    let image = probe_image_cache(paths, fs);
 
     // Check VM readiness via provisioner
     let ready = crate::application::services::vm::lifecycle::state(provisioner)
@@ -193,9 +195,9 @@ async fn probe_disk_space_gb(cmd_runner: &impl CommandRunner) -> Result<u64> {
     }
 }
 
-fn probe_image_cache(paths: &impl LocalPaths) -> crate::domain::health::ImageCheckResult {
+fn probe_image_cache(paths: &impl LocalPaths, fs: &impl crate::application::ports::LocalFs) -> crate::domain::health::ImageCheckResult {
     let images_dir = paths.images_dir();
-    let cached = images_dir.join("polis.qcow2").exists();
+    let cached = fs.exists(&images_dir.join("polis.qcow2"));
     crate::domain::health::ImageCheckResult {
         cached,
         version: None,

@@ -18,7 +18,7 @@ pub async fn delete_workspace(
 
     // 2. Stop and delete VM
     reporter.step("Stopping and removing workspace VM...");
-    vm::delete(mp).await?;
+    vm::delete(mp).await;
 
     // 3. Clear workspace state
     state_mgr.clear_async().await?;
@@ -36,24 +36,24 @@ pub async fn delete_all(
     // 1. Delete VM and state
     let state = vm::state(mp).await?;
     if state != vm::VmState::NotFound {
-        vm::delete(mp).await?;
+        vm::delete(mp).await;
     }
     state_mgr.clear_async().await?;
 
     // 2. Remove configuration
-    let config_path = paths.config_dir().join("config.yaml");
+    let config_path = paths.polis_dir()?.join("config.yaml");
     if local_fs.exists(&config_path) {
-        local_fs.remove(&config_path)?;
+        local_fs.remove_file(&config_path)?;
     }
 
     // 3. Remove certificates
-    let certs_dir = paths.config_dir().join("certs");
+    let certs_dir = paths.polis_dir()?.join("certs");
     if local_fs.exists(&certs_dir) {
         local_fs.remove_dir_all(&certs_dir)?;
     }
 
     // 4. Remove agents
-    let agents_dir = paths.config_dir().join("agents");
+    let agents_dir = paths.polis_dir()?.join("agents");
     if local_fs.exists(&agents_dir) {
         local_fs.remove_dir_all(&agents_dir)?;
     }

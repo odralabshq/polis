@@ -7,24 +7,24 @@ use crate::application::services::cleanup_service;
 use crate::commands::DeleteArgs;
 
 /// Run `polis delete [--all]`.
-pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<()> {
+pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::ExitCode> {
     let quiet = app.output.quiet;
     let reporter = app.terminal_reporter();
 
     if args.all {
         if !quiet {
-            println!();
-            println!("This will permanently remove:");
-            println!("  • Your workspace");
-            println!("  • Generated certificates");
-            println!("  • Configuration");
-            println!("  • Cached workspace image (~3.5 GB)");
-            println!();
+            app.output.info("");
+            app.output.info("This will permanently remove:");
+            app.output.info("  • Your workspace");
+            app.output.info("  • Generated certificates");
+            app.output.info("  • Configuration");
+            app.output.info("  • Cached workspace image (~3.5 GB)");
+            app.output.info("");
         }
 
         if !args.yes && !app.confirm("Continue?", false)? {
-            println!("Cancelled.");
-            return Ok(());
+            app.output.info("Cancelled.");
+            return Ok(std::process::ExitCode::SUCCESS);
         }
 
         cleanup_service::delete_all(
@@ -32,7 +32,6 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<()> {
             &app.state_mgr,
             &app.local_fs,
             &app.local_fs,
-            &reporter,
         )
         .await?;
     } else {
@@ -44,8 +43,8 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<()> {
         }
 
         if !args.yes && !app.confirm("Continue?", false)? {
-            println!("Cancelled.");
-            return Ok(());
+            app.output.info("Cancelled.");
+            return Ok(std::process::ExitCode::SUCCESS);
         }
 
         cleanup_service::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await?;
@@ -55,5 +54,5 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<()> {
         println!("\nStart fresh: polis start");
     }
 
-    Ok(())
+    Ok(std::process::ExitCode::SUCCESS)
 }

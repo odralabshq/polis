@@ -16,7 +16,7 @@ pub use styles::Styles;
 
 use anyhow::Result;
 use polis_common::types::StatusOutput;
-use serde_json::Value as JsonValue;
+
 
 use crate::domain::health::DoctorChecks;
 
@@ -33,6 +33,21 @@ pub enum Renderer<'a> {
 }
 
 impl Renderer<'_> {
+
+    /// Render the CLI version information.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_version(&self, version: &str, commit: &str, build_date: &str) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_version(version, commit, build_date);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_version(version, commit, build_date),
+        }
+    }
     /// Render workspace/agent/security status.
     ///
     /// # Errors
