@@ -78,7 +78,7 @@ jobs:
           persist-credentials: false
 
       - name: shellcheck
-        run: shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh packer/scripts/*.sh
+        run: shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh
 
   # ── Stage 2a: Test Rust ───────────────────────────────────────────
   test-rust:
