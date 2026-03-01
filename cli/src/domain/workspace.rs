@@ -76,13 +76,6 @@ pub fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
-/// Generate a unique workspace identifier.
-///
-/// Format: `polis-` followed by 16 lowercase hex characters.
-/// Entropy sources: nanosecond timestamp and two independent `RandomState` hashes.
-#[must_use]
-#[allow(dead_code)] // Called from workspace_start service — not yet wired to binary
-
 #[cfg(test)]
 mod tests {
     use super::*;

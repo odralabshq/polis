@@ -434,8 +434,11 @@ Host workspace
                 let filtered: String = content
                     .lines()
                     .filter(|line| !line.contains("Include ~/.polis/ssh_config"))
-                    .map(|line| format!("{line}\n"))
-                    .collect();
+                    .fold(String::new(), |mut acc, line| {
+                        acc.push_str(line);
+                        acc.push('\n');
+                        acc
+                    });
                 std::fs::write(&self.user_config_path, filtered)
                     .with_context(|| format!("write {}", self.user_config_path.display()))?;
             }
@@ -855,8 +858,11 @@ impl crate::application::ports::SshConfigurator for SshConfigManager {
                 let filtered: String = content
                     .lines()
                     .filter(|line| !line.contains("Include config.d/polis"))
-                    .map(|line| format!("{line}\n"))
-                    .collect();
+                    .fold(String::new(), |mut acc, line| {
+                        acc.push_str(line);
+                        acc.push('\n');
+                        acc
+                    });
                 if filtered != content {
                     std::fs::write(&user_config_path, filtered)
                         .with_context(|| format!("write {}", user_config_path.display()))?;
