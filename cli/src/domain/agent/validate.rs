@@ -55,25 +55,38 @@ pub const ALLOWED_RW_PREFIXES: &[&str] = &["/home/polis/", "/tmp/", "/var/lib/",
 pub fn validate_full_manifest(manifest: &AgentManifest) -> Result<()> {
     let mut errors: Vec<String> = Vec::new();
 
+    validate_metadata(manifest, &mut errors);
+    validate_runtime(manifest, &mut errors);
+    validate_paths(manifest, &mut errors);
+    validate_ports(manifest, &mut errors);
+    validate_security(manifest, &mut errors);
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(AgentError::ValidationFailed(errors.join("\n")).into())
+    }
+}
+
+fn validate_metadata(manifest: &AgentManifest, errors: &mut Vec<String>) {
     if manifest.api_version != "polis.dev/v1" {
         errors.push("Unsupported apiVersion. Expected polis.dev/v1".to_string());
     }
-
     if manifest.kind != "AgentPlugin" {
         errors.push("Unsupported kind. Expected AgentPlugin".to_string());
     }
-
     if !AGENT_NAME_RE.is_match(&manifest.metadata.name) {
         errors.push(format!(
             "metadata.name '{}' must be lowercase alphanumeric with hyphens",
             manifest.metadata.name
         ));
     }
-
     if manifest.spec.packaging != "script" {
         errors.push("Only 'script' packaging is supported".to_string());
     }
+}
 
+fn validate_runtime(manifest: &AgentManifest, errors: &mut Vec<String>) {
     let cmd = &manifest.spec.runtime.command;
     if !cmd.starts_with('/') {
         errors.push("runtime.command must start with /".to_string());
@@ -81,12 +94,12 @@ pub fn validate_full_manifest(manifest: &AgentManifest) -> Result<()> {
     if SHELL_METACHAR_RE.is_match(cmd) {
         errors.push("runtime.command contains shell metacharacters".to_string());
     }
-
     if manifest.spec.runtime.user == "root" {
         errors.push("Agents must run as unprivileged user (not root)".to_string());
     }
+}
 
-    // install/init path escape check
+fn validate_paths(manifest: &AgentManifest, errors: &mut Vec<String>) {
     if manifest.spec.install.contains("..") {
         errors.push("spec.install path escapes agent directory".to_string());
     }
@@ -95,16 +108,20 @@ pub fn validate_full_manifest(manifest: &AgentManifest) -> Result<()> {
     {
         errors.push("spec.init path escapes agent directory".to_string());
     }
+}
 
-    // Port conflict check
+fn validate_ports(manifest: &AgentManifest, errors: &mut Vec<String>) {
     for port_spec in &manifest.spec.ports {
-        let port = port_spec.default;
-        if PLATFORM_PORTS.contains(&port) {
-            errors.push(format!("Port {port} conflicts with platform service"));
+        if PLATFORM_PORTS.contains(&port_spec.default) {
+            errors.push(format!(
+                "Port {} conflicts with platform service",
+                port_spec.default
+            ));
         }
     }
+}
 
-    // readWritePaths prefix check
+fn validate_security(manifest: &AgentManifest, errors: &mut Vec<String>) {
     if let Some(security) = &manifest.spec.security {
         for path in &security.read_write_paths {
             let allowed = ALLOWED_RW_PREFIXES
@@ -117,12 +134,6 @@ pub fn validate_full_manifest(manifest: &AgentManifest) -> Result<()> {
                 ));
             }
         }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(AgentError::ValidationFailed(errors.join("\n")).into())
     }
 }
 

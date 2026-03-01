@@ -128,32 +128,7 @@ impl<'a> HumanRenderer<'a> {
         println!();
 
         // Prerequisites
-        println!("  Prerequisites:");
-        if checks.prerequisites.multipass_found {
-            let ver = checks
-                .prerequisites
-                .multipass_version
-                .as_deref()
-                .unwrap_or("unknown");
-            self.print_check(
-                checks.prerequisites.multipass_version_ok,
-                &format!("Multipass {ver} (need \u{2265} 1.16.0)"),
-            );
-            if !checks.prerequisites.multipass_version_ok {
-                #[cfg(target_os = "linux")]
-                println!("      Update: sudo snap refresh multipass");
-                #[cfg(not(target_os = "linux"))]
-                println!("      Update: https://multipass.run/install");
-            }
-            println!();
-        } else {
-            self.print_check(false, "multipass not found");
-            #[cfg(target_os = "linux")]
-            println!("      Install: sudo snap install multipass");
-            #[cfg(not(target_os = "linux"))]
-            println!("      Install: https://multipass.run/install");
-            println!();
-        }
+        self.render_doctor_prerequisites(checks);
 
         // Workspace
         println!("  Workspace:");
@@ -209,6 +184,34 @@ impl<'a> HumanRenderer<'a> {
             }
         }
 
+        println!();
+    }
+
+    fn render_doctor_prerequisites(&self, checks: &DoctorChecks) {
+        println!("  Prerequisites:");
+        if checks.prerequisites.multipass_found {
+            let ver = checks
+                .prerequisites
+                .multipass_version
+                .as_deref()
+                .unwrap_or("unknown");
+            self.print_check(
+                checks.prerequisites.multipass_version_ok,
+                &format!("Multipass {ver} (need \u{2265} 1.16.0)"),
+            );
+            if !checks.prerequisites.multipass_version_ok {
+                #[cfg(target_os = "linux")]
+                println!("      Update: sudo snap refresh multipass");
+                #[cfg(not(target_os = "linux"))]
+                println!("      Update: https://multipass.run/install");
+            }
+        } else {
+            self.print_check(false, "multipass not found");
+            #[cfg(target_os = "linux")]
+            println!("      Install: sudo snap install multipass");
+            #[cfg(not(target_os = "linux"))]
+            println!("      Install: https://multipass.run/install");
+        }
         println!();
     }
 

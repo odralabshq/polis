@@ -206,9 +206,8 @@ ENVEOF"
 
     # ── Step 6: Wait for workspace container to become healthy ────────────
     log_info "Waiting for workspace to become healthy (up to 120s)..."
-    local max_attempts=60
     local healthy=false
-    for ((i=1; i<=max_attempts; i++)); do
+    for ((i=1; i<=60; i++)); do
         local json
         json=$(multipass exec polis -- docker compose -f /opt/polis/docker-compose.yml ps --format json workspace 2>/dev/null || true)
         if [[ -n "${json}" ]]; then

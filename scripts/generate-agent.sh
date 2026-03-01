@@ -224,6 +224,7 @@ env_optional = reqs.get('envOptional', []) or []
 print(f"ENV_ONE_OF_JSON={sh(json.dumps([str(x) for x in env_one_of]))}")
 print(f"ENV_OPTIONAL_JSON={sh(json.dumps([str(x) for x in env_optional]))}")
 PYEOF
+    return $?
 }
 
 # Source the parsed fields into the current shell

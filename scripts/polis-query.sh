@@ -36,7 +36,7 @@ case "${COMMAND}" in
     # Return the mtime of the ClamAV daily database so the CLI can compute age.
     MTIME=0
     for f in /var/lib/clamav/daily.cld /var/lib/clamav/daily.cvd; do
-      if [ -f "${f}" ]; then
+      if [[ -f "${f}" ]]; then
         MTIME=$(stat -c %Y "${f}")
         break
       fi
@@ -46,7 +46,7 @@ case "${COMMAND}" in
 
   cert-expiry)
     CERT_PATH="${POLIS_ROOT}/certs/ca/ca.pem"
-    if [ -f "${CERT_PATH}" ]; then
+    if [[ -f "${CERT_PATH}" ]]; then
       # Return the raw openssl date string — the CLI already parses this format.
       EXPIRY=$(openssl x509 -enddate -noout -in "${CERT_PATH}" | cut -d= -f2)
     else

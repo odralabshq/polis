@@ -36,6 +36,58 @@ fn read_non_comment_lines(path: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Track brace depth and return whether a line is inside a `#[cfg(test)]` block.
+struct CfgTestTracker {
+    in_test_block: bool,
+    brace_depth: i32,
+    test_block_start_depth: i32,
+}
+
+impl CfgTestTracker {
+    fn new() -> Self {
+        Self {
+            in_test_block: false,
+            brace_depth: 0,
+            test_block_start_depth: 0,
+        }
+    }
+
+    /// Process a line and return `true` if it's inside a `#[cfg(test)]` block.
+    fn process_line(&mut self, line: &str) -> bool {
+        let trimmed = line.trim();
+        if trimmed.contains("#[cfg(test)]") {
+            self.in_test_block = true;
+            self.test_block_start_depth = self.brace_depth;
+        }
+        for ch in line.chars() {
+            match ch {
+                '{' => self.brace_depth += 1,
+                '}' => {
+                    self.brace_depth -= 1;
+                    if self.in_test_block && self.brace_depth <= self.test_block_start_depth {
+                        self.in_test_block = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.in_test_block
+    }
+}
+
+/// Count non-test, non-comment, non-empty lines in a file.
+fn count_non_test_lines(content: &str) -> usize {
+    let mut tracker = CfgTestTracker::new();
+    content
+        .lines()
+        .filter(|line| {
+            let in_test = tracker.process_line(line);
+            let trimmed = line.trim();
+            !in_test && !trimmed.is_empty() && !trimmed.starts_with("//")
+        })
+        .count()
+}
+
 // ── Property 10: No inline JSON branching ─────────────────────────────────────
 
 #[test]
@@ -160,28 +212,7 @@ fn no_concrete_provisioner_types_in_service_signatures() {
     let mut violations: Vec<String> = Vec::new();
 
     for dir in [&infra_dir, &services_dir] {
-        for file in collect_rs_files(dir) {
-            let rel = file
-                .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-                .unwrap_or(&file)
-                .display()
-                .to_string();
-
-            let lines = read_non_comment_lines(&file);
-            for (i, line) in lines.iter().enumerate() {
-                if !line.contains("fn ") {
-                    continue;
-                }
-                for concrete in &concrete_types {
-                    if line.contains(concrete) {
-                        violations.push(format!(
-                            "{rel}:{}: concrete type `{concrete}` in function signature: {line}",
-                            i + 1
-                        ));
-                    }
-                }
-            }
-        }
+        check_concrete_types_in_dir(dir, &concrete_types, &mut violations);
     }
 
     assert!(
@@ -189,6 +220,31 @@ fn no_concrete_provisioner_types_in_service_signatures() {
         "Found concrete provisioner/runner types in service/infra function signatures — use trait bounds instead:\n{}",
         violations.join("\n")
     );
+}
+
+fn check_concrete_types_in_dir(dir: &Path, concrete_types: &[&str], violations: &mut Vec<String>) {
+    for file in collect_rs_files(dir) {
+        let rel = file
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+
+        let lines = read_non_comment_lines(&file);
+        for (i, line) in lines.iter().enumerate() {
+            if !line.contains("fn ") {
+                continue;
+            }
+            for concrete in concrete_types {
+                if line.contains(concrete) {
+                    violations.push(format!(
+                        "{rel}:{}: concrete type `{concrete}` in function signature: {line}",
+                        i + 1
+                    ));
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -243,29 +299,11 @@ fn infra_has_no_print_macros_outside_tests() {
             continue;
         };
 
-        let mut in_test_block = false;
-        let mut brace_depth: i32 = 0;
-        let mut test_block_start_depth: i32 = 0;
-
+        let mut tracker = CfgTestTracker::new();
         for (i, line) in content.lines().enumerate() {
+            let in_test = tracker.process_line(line);
             let trimmed = line.trim();
-            if trimmed.contains("#[cfg(test)]") {
-                in_test_block = true;
-                test_block_start_depth = brace_depth;
-            }
-            for ch in line.chars() {
-                match ch {
-                    '{' => brace_depth += 1,
-                    '}' => {
-                        brace_depth -= 1;
-                        if in_test_block && brace_depth <= test_block_start_depth {
-                            in_test_block = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if in_test_block || trimmed.starts_with("//") {
+            if in_test || trimmed.starts_with("//") {
                 continue;
             }
             if line.contains("println!") || line.contains("eprintln!") {
@@ -408,36 +446,7 @@ fn command_handlers_are_reasonably_sized() {
             continue;
         };
 
-        let mut in_test_block = false;
-        let mut brace_depth: i32 = 0;
-        let mut test_block_start_depth: i32 = 0;
-        let mut line_count = 0;
-
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.contains("#[cfg(test)]") {
-                in_test_block = true;
-                test_block_start_depth = brace_depth;
-            }
-            for ch in line.chars() {
-                match ch {
-                    '{' => brace_depth += 1,
-                    '}' => {
-                        brace_depth -= 1;
-                        if in_test_block && brace_depth <= test_block_start_depth {
-                            in_test_block = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if in_test_block {
-                continue;
-            }
-            if !trimmed.is_empty() && !trimmed.starts_with("//") {
-                line_count += 1;
-            }
-        }
+        let line_count = count_non_test_lines(&content);
 
         if line_count > 125 {
             let rel = file
@@ -500,6 +509,65 @@ fn commands_use_standardized_confirmation() {
 
 // ── Property 14: Blocking I/O safety ─────────────────────────────────────────
 
+/// Track whether a line is inside an async fn and outside `spawn_blocking`.
+struct AsyncContextTracker {
+    in_async_fn: bool,
+    in_spawn_blocking: bool,
+    brace_depth: i32,
+    async_fn_start_depth: i32,
+    spawn_blocking_start_depth: i32,
+}
+
+impl AsyncContextTracker {
+    fn new() -> Self {
+        Self {
+            in_async_fn: false,
+            in_spawn_blocking: false,
+            brace_depth: 0,
+            async_fn_start_depth: 0,
+            spawn_blocking_start_depth: 0,
+        }
+    }
+
+    /// Process a line. Returns `true` if the line is in an async fn but NOT in `spawn_blocking`.
+    fn process_line(&mut self, line: &str) -> bool {
+        let trimmed = line.trim();
+        if (trimmed.contains("async fn ") || trimmed.contains("async fn\t"))
+            && !trimmed.starts_with("//")
+        {
+            self.in_async_fn = true;
+            self.async_fn_start_depth = self.brace_depth;
+        } else if trimmed.contains("fn ")
+            && !trimmed.contains("async ")
+            && !trimmed.starts_with("//")
+        {
+            self.in_async_fn = false;
+            self.in_spawn_blocking = false;
+        }
+        if self.in_async_fn && line.contains("spawn_blocking") {
+            self.in_spawn_blocking = true;
+            self.spawn_blocking_start_depth = self.brace_depth;
+        }
+        for ch in line.chars() {
+            match ch {
+                '{' => self.brace_depth += 1,
+                '}' => {
+                    self.brace_depth -= 1;
+                    if self.in_spawn_blocking && self.brace_depth <= self.spawn_blocking_start_depth
+                    {
+                        self.in_spawn_blocking = false;
+                    }
+                    if self.in_async_fn && self.brace_depth <= self.async_fn_start_depth {
+                        self.in_async_fn = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.in_async_fn && !self.in_spawn_blocking
+    }
+}
+
 #[test]
 fn infra_async_functions_do_not_use_blocking_fs() {
     let infra_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -519,40 +587,11 @@ fn infra_async_functions_do_not_use_blocking_fs() {
             continue;
         };
 
-        let mut in_async_fn = false;
-        let mut in_spawn_blocking = false;
-        let mut brace_depth: i32 = 0;
-        let mut async_fn_start_depth: i32 = 0;
-        let mut spawn_blocking_start_depth: i32 = 0;
-
+        let mut tracker = AsyncContextTracker::new();
         for (i, line) in content.lines().enumerate() {
+            let in_unguarded_async = tracker.process_line(line);
             let trimmed = line.trim();
-            if (trimmed.contains("async fn ") || trimmed.contains("async fn\t"))
-                && !trimmed.starts_with("//")
-            {
-                in_async_fn = true;
-                async_fn_start_depth = brace_depth;
-            }
-            if in_async_fn && line.contains("spawn_blocking") {
-                in_spawn_blocking = true;
-                spawn_blocking_start_depth = brace_depth;
-            }
-            for ch in line.chars() {
-                match ch {
-                    '{' => brace_depth += 1,
-                    '}' => {
-                        brace_depth -= 1;
-                        if in_spawn_blocking && brace_depth <= spawn_blocking_start_depth {
-                            in_spawn_blocking = false;
-                        }
-                        if in_async_fn && brace_depth <= async_fn_start_depth {
-                            in_async_fn = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if !in_async_fn || in_spawn_blocking || trimmed.starts_with("//") {
+            if !in_unguarded_async || trimmed.starts_with("//") {
                 continue;
             }
             if line.contains("std::fs::") || (line.contains("fs::") && line.contains("std::fs")) {
@@ -646,12 +685,6 @@ fn check_file_for_blocking_io(file: &Path) -> Option<Vec<String>> {
 
     let content = std::fs::read_to_string(file).ok()?;
 
-    let mut violations = Vec::new();
-    let mut in_async_fn = false;
-    let mut in_spawn_blocking = false;
-    let mut in_cfg_unix = false;
-    let mut in_cfg_test = false;
-
     let deny_list = [
         ("std::fs::", "use spawn_blocking for fs operations"),
         (
@@ -660,6 +693,11 @@ fn check_file_for_blocking_io(file: &Path) -> Option<Vec<String>> {
         ),
         ("std::net::", "use crate::application::ports::NetworkProbe"),
     ];
+
+    let mut violations = Vec::new();
+    let mut tracker = AsyncContextTracker::new();
+    let mut in_cfg_unix = false;
+    let mut in_cfg_test = false;
 
     for (i, line) in content.lines().enumerate() {
         let trimmed = line.trim();
@@ -673,42 +711,32 @@ fn check_file_for_blocking_io(file: &Path) -> Option<Vec<String>> {
             continue;
         }
 
-        if trimmed.contains("async fn ") {
-            in_async_fn = true;
-            in_spawn_blocking = false;
-        } else if trimmed.contains("fn ") && !trimmed.contains("async ") {
-            in_async_fn = false;
-            in_spawn_blocking = false;
-        }
+        let in_unguarded_async = tracker.process_line(line);
 
-        if trimmed.contains("spawn_blocking") {
-            in_spawn_blocking = true;
-        }
-        if in_spawn_blocking && trimmed == "});" {
-            in_spawn_blocking = false;
-        }
-
-        if trimmed.starts_with('}') && !in_spawn_blocking {
+        if trimmed.starts_with('}') {
             in_cfg_unix = false;
         }
 
-        if in_async_fn && !in_spawn_blocking && !in_cfg_unix && !in_cfg_test {
-            if rel_normalized == "src/application/services/internal.rs"
-                && trimmed.contains("std::process::Command")
-            {
-                continue;
-            }
+        if !in_unguarded_async || in_cfg_unix || in_cfg_test {
+            continue;
+        }
 
-            for (pattern, recommendation) in &deny_list {
-                if trimmed.contains(pattern) {
-                    violations.push(format!(
-                        "  {}:{}: found `{}` in async context ({})",
-                        rel_normalized,
-                        i + 1,
-                        pattern,
-                        recommendation
-                    ));
-                }
+        // Exception: internal.rs ssh_proxy is allowed to use std::process::Command
+        if rel_normalized == "src/application/services/internal.rs"
+            && trimmed.contains("std::process::Command")
+        {
+            continue;
+        }
+
+        for (pattern, recommendation) in &deny_list {
+            if trimmed.contains(pattern) {
+                violations.push(format!(
+                    "  {}:{}: found `{}` in async context ({})",
+                    rel_normalized,
+                    i + 1,
+                    pattern,
+                    recommendation
+                ));
             }
         }
     }

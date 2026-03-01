@@ -73,6 +73,25 @@ pub fn compose_overlay(manifest: &AgentManifest) -> String {
     out.push_str(&format!("      start_period: {health_start_period}\n"));
 
     // Resources
+    append_resource_limits(&mut out, spec);
+
+    // Socat proxy sidecars (one per port)
+    append_socat_sidecars(&mut out, name, spec);
+
+    // Top-level volumes section
+    if !spec.persistence.is_empty() {
+        out.push('\n');
+        out.push_str("volumes:\n");
+        for p in &spec.persistence {
+            out.push_str(&format!("  polis-agent-{name}-{}:\n", p.name));
+            out.push_str(&format!("    name: polis-agent-{name}-{}\n", p.name));
+        }
+    }
+
+    out
+}
+
+fn append_resource_limits(out: &mut String, spec: &polis_common::agent::AgentSpec) {
     let mem_limit = spec.resources.as_ref().map(|r| r.memory_limit.as_str());
     let mem_reservation = spec
         .resources
@@ -90,47 +109,37 @@ pub fn compose_overlay(manifest: &AgentManifest) -> String {
             out.push_str(&format!("          memory: {reservation}\n"));
         }
     }
+}
 
-    // Socat proxy sidecars (one per port)
-    if !spec.ports.is_empty() {
-        out.push('\n');
-        for port_spec in &spec.ports {
-            let container_port = port_spec.container;
-            let host_env = port_spec.host_env.as_str();
-            let default_port = port_spec.default;
-            out.push_str(&format!("  {name}-proxy-{container_port}:\n"));
-            out.push_str("    image: alpine/socat:latest\n");
-            out.push_str("    restart: unless-stopped\n");
-            out.push_str("    ports:\n");
-            if host_env.is_empty() {
-                out.push_str(&format!("      - \"{default_port}:{container_port}\"\n"));
-            } else {
-                out.push_str(&format!(
-                    "      - \"${{{host_env}:-{default_port}}}:{container_port}\"\n"
-                ));
-            }
+fn append_socat_sidecars(out: &mut String, name: &str, spec: &polis_common::agent::AgentSpec) {
+    if spec.ports.is_empty() {
+        return;
+    }
+    out.push('\n');
+    for port_spec in &spec.ports {
+        let container_port = port_spec.container;
+        let host_env = port_spec.host_env.as_str();
+        let default_port = port_spec.default;
+        out.push_str(&format!("  {name}-proxy-{container_port}:\n"));
+        out.push_str("    image: alpine/socat:latest\n");
+        out.push_str("    restart: unless-stopped\n");
+        out.push_str("    ports:\n");
+        if host_env.is_empty() {
+            out.push_str(&format!("      - \"{default_port}:{container_port}\"\n"));
+        } else {
             out.push_str(&format!(
-                "    command: TCP-LISTEN:{container_port},fork,reuseaddr TCP:polis-workspace:{container_port}\n"
+                "      - \"${{{host_env}:-{default_port}}}:{container_port}\"\n"
             ));
-            out.push_str("    networks:\n");
-            out.push_str("      - internal-bridge\n");
-            out.push_str("      - default\n");
-            out.push_str("    depends_on:\n");
-            out.push_str("      - workspace\n");
         }
+        out.push_str(&format!(
+            "    command: TCP-LISTEN:{container_port},fork,reuseaddr TCP:polis-workspace:{container_port}\n"
+        ));
+        out.push_str("    networks:\n");
+        out.push_str("      - internal-bridge\n");
+        out.push_str("      - default\n");
+        out.push_str("    depends_on:\n");
+        out.push_str("      - workspace\n");
     }
-
-    // Top-level volumes section
-    if !spec.persistence.is_empty() {
-        out.push('\n');
-        out.push_str("volumes:\n");
-        for p in &spec.persistence {
-            out.push_str(&format!("  polis-agent-{name}-{}:\n", p.name));
-            out.push_str(&format!("    name: polis-agent-{name}-{}\n", p.name));
-        }
-    }
-
-    out
 }
 
 /// Generate `<name>.service` content — systemd unit with security hardening.

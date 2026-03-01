@@ -13,60 +13,21 @@ use crate::commands::DeleteArgs;
 /// This function will return an error if the underlying operations fail.
 pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::ExitCode> {
     let quiet = app.output.quiet;
-    let reporter = app.terminal_reporter();
 
-    if args.all {
-        if !quiet {
-            app.output.info("");
-            app.output.info("This will permanently remove:");
-            app.output.info("  • Your workspace");
-            app.output.info("  • Generated certificates");
-            app.output.info("  • Configuration");
-            app.output.info("  • Cached workspace image (~3.5 GB)");
-            app.output.info("");
-        }
-
-        if !args.yes && !app.confirm("Continue?", false)? {
-            app.output.info("Cancelled.");
-            return Ok(std::process::ExitCode::SUCCESS);
-        }
-
-        match cleanup_service::delete_all(
-            &app.provisioner,
-            &app.state_mgr,
-            &app.local_fs,
-            &app.local_fs,
-            &app.ssh,
-        )
-        .await
-        {
-            Ok(()) => {}
-            Err(e) => {
-                app.output.error(&e.to_string());
-                return Ok(std::process::ExitCode::FAILURE);
-            }
-        }
+    let confirmed = if args.all {
+        confirm_delete_all(args, app)?
     } else {
-        if !quiet {
-            app.output.info("");
-            app.output.info("This will remove your workspace.");
-            app.output
-                .info("Configuration, certificates, and cached downloads will be preserved.");
-            app.output.info("");
-        }
+        confirm_delete_workspace(args, app)?
+    };
 
-        if !args.yes && !app.confirm("Continue?", false)? {
-            app.output.info("Cancelled.");
-            return Ok(std::process::ExitCode::SUCCESS);
-        }
+    if !confirmed {
+        app.output.info("Cancelled.");
+        return Ok(std::process::ExitCode::SUCCESS);
+    }
 
-        match cleanup_service::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await {
-            Ok(()) => {}
-            Err(e) => {
-                app.output.error(&e.to_string());
-                return Ok(std::process::ExitCode::FAILURE);
-            }
-        }
+    if let Err(e) = execute_delete(args.all, app).await {
+        app.output.error(&e.to_string());
+        return Ok(std::process::ExitCode::FAILURE);
     }
 
     if !quiet {
@@ -74,4 +35,44 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
     }
 
     Ok(std::process::ExitCode::SUCCESS)
+}
+
+fn confirm_delete_all(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
+    if !app.output.quiet {
+        app.output.info("");
+        app.output.info("This will permanently remove:");
+        app.output.info("  • Your workspace");
+        app.output.info("  • Generated certificates");
+        app.output.info("  • Configuration");
+        app.output.info("  • Cached workspace image (~3.5 GB)");
+        app.output.info("");
+    }
+    Ok(args.yes || app.confirm("Continue?", false)?)
+}
+
+fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
+    if !app.output.quiet {
+        app.output.info("");
+        app.output.info("This will remove your workspace.");
+        app.output
+            .info("Configuration, certificates, and cached downloads will be preserved.");
+        app.output.info("");
+    }
+    Ok(args.yes || app.confirm("Continue?", false)?)
+}
+
+async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
+    if all {
+        cleanup_service::delete_all(
+            &app.provisioner,
+            &app.state_mgr,
+            &app.local_fs,
+            &app.local_fs,
+            &app.ssh,
+        )
+        .await
+    } else {
+        let reporter = app.terminal_reporter();
+        cleanup_service::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await
+    }
 }
