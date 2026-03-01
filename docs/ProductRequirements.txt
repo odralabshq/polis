@@ -1,0 +1,583 @@
+# Polis CLI — Product Requirements
+
+## 1. Global Behavior
+
+### REQ-G01: Binary name and invocation
+The CLI binary is named polis. Running polis with no arguments MUST display help text and exit with code 0.
+
+### REQ-G02: Help flag
+polis --help MUST display usage information including all public commands and global flags.
+
+### REQ-G03: Version flag
+polis --version MUST print the version string.
+
+### REQ-G04: Subcommand required
+A subcommand is required. Running polis alone (no subcommand) MUST show help and exit 0 (arg_required_else_help).
+
+### REQ-G05: Unknown command
+Running polis <unknown> MUST exit with a non-zero code and print an error.
+
+### REQ-G06: Global --json flag
+All commands MUST accept a --json flag. When provided, commands that support structured output MUST emit valid JSON to stdout. The flag is global (can appear before or after the subcommand).
+
+### REQ-G07: Global --quiet / -q flag
+All commands MUST accept --quiet or -q. When set, non-error informational output MUST be suppressed. The flag is global.
+
+### REQ-G08: Global --no-color flag
+All commands MUST accept --no-color. When set, all ANSI color/style codes MUST be stripped from output.
+
+### REQ-G09: NO_COLOR environment variable
+If the environment variable NO_COLOR is set (to any value), the CLI MUST behave as if --no-color was passed. The env var and the flag are OR'd — either one disables color.
+
+### REQ-G10: Version propagation
+The --version flag MUST be available on all subcommands (propagate_version).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 2. polis start
+
+### REQ-START-01: Architecture gate
+Before any work, the command MUST check the host architecture. If the host is aarch64/arm64, the command MUST fail with an error message mentioning that Polis requires amd64 and that Sysbox does not support arm64.
+
+### REQ-START-02: Already running — same agent
+If the workspace VM is already running and the requested agent matches the currently active agent (including both being None), the command MUST print an "already running" message and exit successfully (no error).
+
+### REQ-START-03: Already running — different agent
+If the workspace VM is already running but the requested agent differs from the active agent, the command MUST fail with an error instructing the user to stop first (polis stop) and then start with the desired agent.
+
+### REQ-START-04: First-time creation flow
+If no workspace VM exists, the command MUST:
+1. Extract embedded assets (cloud-init, config tarball, image-digests manifest) to a temp directory
+2. Compute SHA256 of the config tarball
+3. Launch a new VM via Multipass with Ubuntu 24.04 cloud-init
+4. Verify cloud-init completed successfully
+5. Transfer the config tarball into the VM and extract it to /opt/polis
+6. Write a .env file with versioned image tags
+7. Pull all Docker images (with a 10-minute timeout)
+8. Verify pulled image digests against the embedded manifest
+9. Set up agent artifacts if --agent was specified
+10. Start docker compose (with agent overlay if applicable)
+11. Wait for all services to become healthy
+12. Write the config hash to the VM (only after successful startup)
+13. Persist workspace state (workspace ID, creation timestamp, active agent) to a local state file
+
+### REQ-START-05: Restart stopped VM
+If the VM exists but is stopped, the command MUST start it, optionally set up the requested agent, start compose, wait for health, and update the persisted state.
+
+### REQ-START-06: --agent <name> flag
+Optional. Specifies which agent to activate. The value must match an agents/<name>/ directory inside the VM. When provided, the agent's manifest is validated and compose overlay is generated before starting services.
+
+### REQ-START-07: --dev flag
+Optional. When set, the command MUST skip pulling images from GHCR, skip digest verification, skip agent setup, skip compose start, and skip health check. This is for local development where images are loaded manually.
+
+### REQ-START-08: Workspace ID generation
+Each new workspace MUST be assigned a unique workspace ID in the format ws-<16 hex chars>.
+
+### REQ-START-09: State persistence
+Workspace state (ID, creation timestamp, image SHA256, image source, active agent) MUST be saved to a local JSON file with 0600 permissions. The parent directory MUST be created if it doesn't exist.
+
+### REQ-START-10: Image digest verification
+After pulling images, the CLI MUST verify each image's digest against the embedded image-digests.json manifest. If any digest mismatches, the command MUST fail with an error listing the expected vs actual digests.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 3. polis stop
+
+### REQ-STOP-01: No workspace
+If no workspace VM exists, the command MUST print "No workspace to stop." and suggest polis start. Exit successfully.
+
+### REQ-STOP-02: Already stopped
+If the workspace VM exists but is already stopped, the command MUST print "Workspace is already stopped." and suggest polis start. Exit successfully.
+
+### REQ-STOP-03: Running workspace
+If the workspace VM is running, the command MUST stop it via Multipass, then print "Workspace stopped. Your data is preserved." and suggest polis start to resume.
+
+### REQ-STOP-04: Quiet mode
+All informational messages MUST be suppressed when --quiet is set.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 4. polis delete
+
+### REQ-DEL-01: Default behavior (no --all)
+Without --all, the command MUST:
+1. Display a warning that the workspace will be removed but config/certs/cache are preserved
+2. Prompt for confirmation (unless --yes is passed)
+3. Stop and delete the VM if it exists
+4. Clear the local state file
+5. Print "Workspace removed."
+
+### REQ-DEL-02: --all flag
+With --all, the command MUST:
+1. Display a warning listing everything that will be removed (workspace, certificates, configuration, cached image ~3.5 GB)
+2. Prompt for confirmation (unless --yes is passed)
+3. Stop and delete the VM if it exists
+4. Clear the local state file
+5. Remove generated certificates
+6. Remove SSH config and known_hosts for polis
+7. Remove configuration file
+8. Remove cached images directory
+9. Print "All Polis data removed."
+
+### REQ-DEL-03: --yes / -y flag
+When set, skip the confirmation prompt and proceed immediately.
+
+### REQ-DEL-04: Cancellation
+If the user declines the confirmation prompt, the command MUST print "Cancelled." and exit successfully without deleting anything.
+
+### REQ-DEL-05: No workspace to delete
+If no workspace VM exists, the delete operation MUST still succeed (idempotent). State file and other artifacts are still cleaned up.
+
+### REQ-DEL-06: Error collection
+During workspace deletion, errors MUST be collected rather than failing fast. If any errors occurred, the command MUST report all of them at the end.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 5. polis status
+
+### REQ-STATUS-01: Gather status
+The command MUST check:
+- Workspace state (running, stopped, not found) via Multipass
+- If running: security status (traffic inspection, credential protection, malware scanning) and agent status (name, health)
+- If not running: security features reported as disabled, no agent info
+
+### REQ-STATUS-02: Human-readable output
+By default, status MUST be printed in a human-readable format showing workspace state, agent info, and security status.
+
+### REQ-STATUS-03: JSON output
+With --json, the command MUST output a valid JSON object containing workspace, agent, security, and events fields. The JSON structure MUST be serializable/deserializable (round-trip safe). Fields with None values MUST be omitted from JSON output.
+
+### REQ-STATUS-04: Uptime formatting
+Uptime MUST be formatted as Xh Ym (hours and minutes). Zero uptime MUST display as 0m.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 6. polis connect
+
+### REQ-CONN-01: SSH config setup
+On first run, the command MUST:
+1. Create ~/.ssh/config.d/polis with SSH config for the workspace host
+2. Add an Include directive to ~/.ssh/config (idempotent, prepended)
+3. Create the SSH control sockets directory
+4. Set proper permissions (config dir: 700, config files: 600)
+
+### REQ-CONN-02: Subsequent runs
+On subsequent runs, the command MUST refresh the polis SSH config (to pick up template changes) and ensure the sockets directory exists.
+
+### REQ-CONN-03: Permission validation
+The command MUST validate SSH config file permissions and fail if they are incorrect.
+
+### REQ-CONN-04: Identity key
+The command MUST ensure a passphrase-free SSH identity key exists and install the public key into the workspace.
+
+### REQ-CONN-05: Host key pinning
+The command MUST extract the workspace's ed25519 host key and write it to a polis-specific known_hosts file so StrictHostKeyChecking can verify it.
+
+### REQ-CONN-06: Connection options display
+After setup, the command MUST print connection instructions:
+- ssh workspace
+- code --remote ssh-remote+workspace /workspace
+- cursor --remote ssh-remote+workspace /workspace
+
+### REQ-CONN-07: No arguments
+The command accepts no arguments.
+
+### REQ-CONN-08: SSH config security
+- ForwardAgent MUST be set to no (never forward agent)
+- StrictHostKeyChecking MUST be set to yes
+- User MUST be polis
+
+### REQ-CONN-09: Host key validation
+Only ed25519 host keys MUST be accepted. RSA and ECDSA keys MUST be rejected. Empty strings and key-type-only strings MUST be rejected.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 7. polis config
+
+### REQ-CFG-01: Subcommands
+polis config MUST have exactly two subcommands: show and set.
+
+### REQ-CFG-02: polis config show
+MUST display the current configuration including:
+- The config file path
+- security.level value
+- Environment variables: POLIS_CONFIG and NO_COLOR
+
+If no config file exists, MUST use defaults (security.level = balanced). MUST NOT create the config file as a side effect.
+
+### REQ-CFG-03: polis config show --json
+With --json, MUST output the config as valid JSON.
+
+### REQ-CFG-04: polis config set <key> <value>
+MUST validate the key against a whitelist. Currently the only valid key is security.level.
+MUST validate the value against allowed values for that key.
+MUST save the config file with 0600 permissions, creating parent directories if needed.
+
+### REQ-CFG-05: Valid config keys
+Only security.level is accepted. Any other key MUST produce an error listing valid keys.
+
+### REQ-CFG-06: Valid security levels
+Only relaxed, balanced, and strict are accepted. Any other value MUST produce an error listing valid values.
+
+### REQ-CFG-07: Live propagation
+After setting security.level, if the workspace VM is running, the new level MUST be propagated to the running workspace via Valkey (Redis-compatible) SET polis:config:security_level <level>. The Valkey password MUST be read from the VM and passed via REDISCLI_AUTH
+environment variable (not via -a flag) to avoid exposure in process listings.
+
+### REQ-CFG-08: Propagation failure tolerance
+If propagation to the running workspace fails (VM not running, password unreadable, Valkey unreachable), the config file MUST still be saved successfully. A warning MUST be printed but the command MUST NOT fail.
+
+### REQ-CFG-09: POLIS_CONFIG environment variable
+If set, the config file path MUST be overridden to the value of this env var.
+
+### REQ-CFG-10: Default security level
+When no config file exists, the default security level MUST be balanced.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 8. polis doctor
+
+### REQ-DOC-01: Diagnostic categories
+The command MUST check four categories:
+1. Prerequisites: Multipass installed, version ≥ 1.16.0
+2. Workspace: disk space (≥ 10 GB), workspace readiness, image cache status
+3. Network: internet connectivity, DNS resolution
+4. Security: process isolation (Sysbox), traffic inspection, malware DB freshness, certificate validity/expiry
+
+### REQ-DOC-02: Issue collection
+All checks MUST run (no short-circuit). Issues MUST be collected into a list with human-readable descriptions.
+
+### REQ-DOC-03: Human-readable output
+By default, results MUST be printed in sections (Prerequisites, Workspace, Network, Security) with pass/fail indicators.
+
+### REQ-DOC-04: --verbose flag
+When set, remediation details MUST be shown for each issue.
+
+### REQ-DOC-05: JSON output
+With --json, MUST output a valid JSON object containing all check results and the issues list.
+
+### REQ-DOC-06: Image cache check
+MUST report the cached image version and SHA256 (truncated to 12 chars for display).
+
+### REQ-DOC-07: Certificate expiry
+MUST report days until certificate expiry. Expired certificates (≤ 0 days) MUST be flagged as an issue. Certificates expiring soon MUST NOT be flagged as an issue (warning only).
+
+### REQ-DOC-08: Version drift detection
+MUST detect if the CLI version differs from the VM image version.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 9. polis exec <cmd>
+
+### REQ-EXEC-01: Command execution
+The command MUST run the given command inside the workspace container (polis-workspace) via docker exec.
+
+### REQ-EXEC-02: Interactive mode
+If stdin is a terminal, the command MUST pass -it flags to docker exec for interactive/TTY mode.
+
+### REQ-EXEC-03: Exit code forwarding
+The exit code from the executed command MUST be forwarded as the CLI's exit code. Non-zero exit codes MUST cause std::process::exit(code).
+
+### REQ-EXEC-04: Required argument
+At least one argument (the command) is required. Hyphen-prefixed values MUST be allowed (e.g., polis exec ls -la).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 10. polis update
+
+### REQ-UPD-01: Update check
+The command MUST check GitHub releases for the OdraLabsHQ/polis repository. It MUST compare the latest release version against the current CLI version using semver.
+
+### REQ-UPD-02: Up to date
+If the current version is equal to or greater than the latest release, MUST print a "CLI vX.Y.Z (latest)" message.
+
+### REQ-UPD-03: Update available
+If a newer version exists, MUST display the current version, available version, and up to 5 release notes (bullet points from the release body).
+
+### REQ-UPD-04: --check flag
+When set, MUST only check for updates and print "Run 'polis update' to apply the update." without downloading or applying anything.
+
+### REQ-UPD-05: Signature verification
+Before applying an update, the CLI MUST download and verify the SHA256 checksum of the release asset. The first 12 characters of the SHA256 MUST be displayed.
+
+### REQ-UPD-06: Confirmation prompt
+Before applying the update, the user MUST be prompted "Update CLI now?" with a default of yes.
+
+### REQ-UPD-07: CLI self-update
+If confirmed, the CLI binary MUST be downloaded and replaced. After success, the user MUST be told to restart their terminal or run exec polis.
+
+### REQ-UPD-08: VM config update
+After CLI self-update, if the workspace VM is running, the command MUST also update the VM config. This involves:
+1. Comparing the new config tarball hash against the hash stored in the VM
+2. If different: stop services, transfer new config, pull new images, verify digests, restart services, write new hash
+3. If same: skip (config is up to date)
+
+### REQ-UPD-09: Platform asset resolution
+The update MUST resolve the correct release asset for the current platform (e.g., polis-linux-amd64.tar.gz).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 11. polis version
+
+### REQ-VER-01: Plain output
+Without --json, MUST print polis <version> (e.g., polis 0.3.0).
+
+### REQ-VER-02: JSON output
+With --json, MUST print {"version": "<version>"} as pretty-printed JSON.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 12. polis agent
+
+### REQ-AGT-00: Agent name validation
+Agent names MUST match the regex ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$. Names with path traversal (../), uppercase letters, underscores, or special characters MUST be rejected. Maximum length is 63 characters.
+
+### 12.1 polis agent add --path <folder>
+
+### REQ-AGT-ADD-01: Path validation
+The specified folder MUST exist and MUST contain an agent.yaml file. If either condition fails, the command MUST error.
+
+### REQ-AGT-ADD-02: Manifest parsing
+The agent.yaml MUST be parsed and metadata.name MUST be present and non-empty. The name MUST pass agent name validation.
+
+### REQ-AGT-ADD-03: VM must be running
+The workspace VM MUST be running. If not, the command MUST error.
+
+### REQ-AGT-ADD-04: Agent must not already exist
+If an agent with the same name already exists in the VM, the command MUST error.
+
+### REQ-AGT-ADD-05: Artifact generation
+The command MUST generate agent artifacts (compose overlay, systemd unit, service hash, filtered env) from the manifest using Rust code (no external yq dependency).
+
+### REQ-AGT-ADD-06: Transfer to VM
+The agent folder and generated artifacts MUST be transferred into the VM at the appropriate path.
+
+### REQ-AGT-ADD-07: Success message
+On success, MUST print the agent name and instruct the user to start with polis start --agent <name>.
+
+### 12.2 polis agent remove <name>
+
+### REQ-AGT-RM-01: Name validation
+The agent name MUST pass agent name validation.
+
+### REQ-AGT-RM-02: Agent must exist
+The agent directory MUST exist in the VM. If not, MUST error with "Agent '<name>' is not installed."
+
+### REQ-AGT-RM-03: Active agent handling
+If the agent being removed is the currently active agent:
+1. Stop the agent's docker compose stack (base + overlay, down)
+2. Remove the agent directory from the VM
+3. Restart the control plane (base compose only, up -d)
+4. Clear the active agent from the persisted state
+
+### REQ-AGT-RM-04: Inactive agent removal
+If the agent is not active, simply remove its directory from the VM.
+
+### 12.3 polis agent list
+
+### REQ-AGT-LIST-01: Scan agents
+The command MUST scan agents/*/agent.yaml inside the VM, excluding _template.
+
+### REQ-AGT-LIST-02: Human-readable output
+MUST display each agent's name, version, description, and whether it's active (marked [active]).
+
+### REQ-AGT-LIST-03: Empty list
+If no agents are installed, MUST print a message suggesting polis agent add --path <folder>.
+
+### REQ-AGT-LIST-04: JSON output
+With --json, MUST output {"agents": [...]} where each entry has name, version, description, and active fields.
+
+### REQ-AGT-LIST-05: Malformed manifests
+If an agent's agent.yaml is malformed, it MUST be skipped with a warning printed to stderr.
+
+### 12.4 polis agent restart
+
+### REQ-AGT-RESTART-01: Active agent required
+MUST fail with an error if no agent is currently active.
+
+### REQ-AGT-RESTART-02: Workspace must be running
+MUST fail if the workspace VM is not running.
+
+### REQ-AGT-RESTART-03: Restart behavior
+MUST run docker compose restart workspace using the base compose file and the active agent's overlay.
+
+### 12.5 polis agent update
+
+### REQ-AGT-UPD-01: Active agent required
+MUST fail with an error if no agent is currently active.
+
+### REQ-AGT-UPD-02: Regenerate artifacts
+MUST read the agent's agent.yaml from the VM, regenerate artifacts locally (Rust, no yq), and transfer the updated .generated/ folder back to the VM.
+
+### REQ-AGT-UPD-03: Recreate workspace
+After transferring artifacts, MUST run docker compose up -d --force-recreate workspace using the base compose file and the agent's overlay.
+
+### 12.6 polis agent shell
+
+### REQ-AGT-SHELL-01: Workspace must be running
+MUST fail if the workspace VM is not running.
+
+### REQ-AGT-SHELL-02: Active agent required
+MUST fail if no agent is currently active.
+
+### REQ-AGT-SHELL-03: User from manifest
+MUST read spec.runtime.user from the agent's agent.yaml in the VM. If not found or unreadable, default to root.
+
+### REQ-AGT-SHELL-04: Interactive shell
+MUST open an interactive bash shell in the workspace container as the resolved user via docker exec -it -u <user>.
+
+### REQ-AGT-SHELL-05: Exit code forwarding
+The container's exit code MUST be forwarded as the CLI's exit code.
+
+### 12.7 polis agent exec <cmd>
+
+### REQ-AGT-EXEC-01: Workspace must be running
+MUST fail if the workspace VM is not running.
+
+### REQ-AGT-EXEC-02: Command execution
+MUST run the given command in the workspace container via docker exec (non-interactive, no TTY).
+
+### REQ-AGT-EXEC-03: Exit code forwarding
+Non-zero exit codes MUST be forwarded via std::process::exit.
+
+### REQ-AGT-EXEC-04: Required argument
+At least one argument (the command) is required. Trailing var args are accepted.
+
+### 12.8 polis agent cmd <args>
+
+### REQ-AGT-CMD-01: Workspace must be running
+MUST fail if the workspace VM is not running.
+
+### REQ-AGT-CMD-02: Active agent required
+MUST fail if no agent is currently active.
+
+### REQ-AGT-CMD-03: commands.sh required
+The agent MUST have a commands.sh file at agents/<name>/commands.sh in the VM. If not, MUST error with "Agent '<name>' has no commands.sh".
+
+### REQ-AGT-CMD-04: Execution
+MUST run bash <commands.sh> <container-name> <args...> via Multipass exec. The container name is passed as the first argument to the script, followed by the user-provided args.
+
+### REQ-AGT-CMD-05: Exit code forwarding
+Non-zero exit codes MUST be forwarded via std::process::exit.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 13. Hidden/Internal Commands
+
+### REQ-INT-01: Hidden from help
+The commands _ssh-proxy, _provision, and _extract-host-key MUST NOT appear in polis --help output.
+
+### REQ-INT-02: _ssh-proxy
+MUST spawn sshd -i inside the workspace container and bridge stdin/stdout between the local process and the container. Used as an SSH ProxyCommand.
+
+### REQ-INT-03: _extract-host-key
+MUST extract the workspace container's ed25519 host public key and print it in workspace <key> format. MUST validate the key is ed25519 (reject RSA, ECDSA).
+
+### REQ-INT-04: _provision
+MUST immediately fail with "Provision command is internal only". This is a placeholder/guard.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 14. SSH Configuration
+
+### REQ-SSH-01: Config file location
+Polis SSH config MUST be written to ~/.ssh/config.d/polis.
+
+### REQ-SSH-02: Include directive
+An Include config.d/polis directive MUST be prepended to ~/.ssh/config. Adding the directive MUST be idempotent.
+
+### REQ-SSH-03: Permissions
+- ~/.ssh/config.d/ directory: 700
+- ~/.ssh/config.d/polis file: 600
+- SSH control sockets directory: 700
+
+### REQ-SSH-04: Known hosts
+Polis MUST maintain a separate known_hosts file for workspace host keys. Updating MUST overwrite (not append). Removing MUST be idempotent (no error if file doesn't exist).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 15. State Management
+
+### REQ-STATE-01: State file
+Workspace state MUST be persisted as JSON. The file MUST have 0600 permissions.
+
+### REQ-STATE-02: State fields
+The state MUST contain: workspace_id, created_at, image_sha256 (optional), image_source (optional), active_agent (optional).
+
+### REQ-STATE-03: Legacy format
+The state loader MUST handle legacy format (without active_agent field) by defaulting it to None.
+
+### REQ-STATE-04: Workspace ID validation
+Workspace IDs MUST match the format ws-<16 hex chars>. IDs with wrong prefix, wrong length, or non-hex characters MUST be rejected.
+
+### REQ-STATE-05: Clear operation
+Clearing state MUST remove the state file. Missing file MUST NOT cause an error.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 16. Output & UX
+
+### REQ-UX-01: Progress indicators
+Long-running operations (VM launch, image pull, health check) MUST show progress spinners/bars when stdout is a TTY and --quiet is not set.
+
+### REQ-UX-02: No progress when not TTY
+Progress indicators MUST be suppressed when stdout is not a terminal.
+
+### REQ-UX-03: Styled output
+Output MUST use styled text (bold, colors) for headers, success markers (✓), warning markers (⚠), and key-value pairs. All styling MUST respect --no-color and NO_COLOR.
+
+### REQ-UX-04: Error format
+Errors MUST be printed to stderr. With --json, errors MUST be formatted as JSON objects.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 17. Security Requirements
+
+### REQ-SEC-01: Config file permissions
+All config files, state files, and SSH keys MUST be created with restrictive permissions (0600 for files, 0700 for directories).
+
+### REQ-SEC-02: No secrets in process list
+Credentials (e.g., Valkey passwords) MUST be passed via environment variables, not command-line arguments, to prevent exposure in ps output.
+
+### REQ-SEC-03: Tarball path validation
+When extracting tarballs, all paths MUST be validated to reject absolute paths and path traversal (../). Violations MUST cause the operation to fail.
+
+### REQ-SEC-04: Agent name sanitization
+Agent names MUST be validated against a strict regex before use in file paths or shell commands to prevent injection.
+
+### REQ-SEC-05: Host key validation
+Only ed25519 SSH host keys MUST be accepted. Other key types MUST be rejected to enforce modern cryptographic standards.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+## 18. Multipass Integration
+
+### REQ-MP-01: VM name
+The workspace VM MUST be named polis.
+
+### REQ-MP-02: Ubuntu image
+VMs MUST be launched with Ubuntu 24.04.
+
+### REQ-MP-03: Operations
+The CLI MUST support these Multipass operations: vm_info, launch, start, stop, delete, purge, transfer, transfer_recursive, exec, exec_with_stdin, exec_spawn, exec_status, version.
+
+### REQ-MP-04: VM state detection
+The CLI MUST detect VM states: Running, Stopped, Starting, NotFound. State detection MUST be based on multipass info output.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
