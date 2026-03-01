@@ -143,10 +143,9 @@ async fn handle_running_vm(
         setup_agent(provisioner, local_fs, name, &envs).await?;
         reporter.step("restarting platform services with agent...");
         start_compose(provisioner, Some(name)).await?;
-        reporter.step("waiting for workspace to become healthy...");
-        wait_ready(provisioner, reporter, false).await?;
-        reporter.success("workspace ready");
 
+        // Persist state before health wait so the CLI tracks the agent
+        // even if health polling times out (e.g. first-time install).
         let mut state = state_mgr
             .load_async()
             .await?
@@ -158,6 +157,10 @@ async fn handle_running_vm(
             });
         state.active_agent = Some(name.to_owned());
         state_mgr.save_async(&state).await?;
+
+        reporter.step("waiting for workspace to become healthy...");
+        wait_ready(provisioner, reporter, false).await?;
+        reporter.success("workspace ready");
 
         return Ok(StartOutcome::Restarted {
             agent: Some(name.to_owned()),

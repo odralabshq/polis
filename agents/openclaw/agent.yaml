@@ -33,7 +33,7 @@ spec:
     interval: 30s
     timeout: 10s
     retries: 5
-    startPeriod: 120s
+    startPeriod: 900s
 
   security:
     protectSystem: strict

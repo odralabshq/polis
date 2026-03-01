@@ -175,7 +175,7 @@ pub fn systemd_unit(manifest: &AgentManifest) -> String {
     out.push_str("Wants=network-online.target\n");
     out.push_str("Requires=polis-init.service\n");
     out.push_str("StartLimitIntervalSec=300\n");
-    out.push_str("StartLimitBurst=3\n");
+    out.push_str("StartLimitBurst=5\n");
     out.push('\n');
     out.push_str("[Service]\n");
     out.push_str("Type=simple\n");
@@ -207,7 +207,6 @@ pub fn systemd_unit(manifest: &AgentManifest) -> String {
     out.push('\n');
     out.push_str("Restart=always\n");
     out.push_str("RestartSec=5\n");
-    out.push_str("StartLimitBurst=3\n");
     out.push('\n');
     out.push_str("NoNewPrivileges=true\n");
     out.push_str(&format!("ProtectSystem={protect_system}\n"));

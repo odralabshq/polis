@@ -366,15 +366,13 @@ EAEOF
 else
     echo "[openclaw-init] Already initialized, checking config..."
 
-    # Ensure controlUi has dangerouslyAllowHostHeaderOriginFallback (needed for non-loopback bind)
+    # Always ensure controlUi has dangerouslyAllowHostHeaderOriginFallback (needed for non-loopback bind).
+    # The gateway may rewrite config on startup, so unconditionally re-apply.
     if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
-        HAS_FALLBACK=$(jq -r '.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback // empty' "$CONFIG_FILE" 2>/dev/null)
-        if [[ "$HAS_FALLBACK" != "true" ]]; then
-            jq '.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
-                && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
-            chmod 600 "$CONFIG_FILE"
-            echo "[openclaw-init] Patched controlUi: added dangerouslyAllowHostHeaderOriginFallback"
-        fi
+        jq '.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
+            && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+        chmod 600 "$CONFIG_FILE"
+        echo "[openclaw-init] Ensured controlUi: dangerouslyAllowHostHeaderOriginFallback=true"
     fi
 
     # Ensure exec approvals stay at security=full (gateway may regenerate the file)
