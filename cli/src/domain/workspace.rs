@@ -78,6 +78,11 @@ pub const CONTAINER_NAME: &str = "polis-workspace";
 /// Path to the polis project root inside the VM.
 pub const VM_ROOT: &str = "/opt/polis";
 
+/// Path to the guest query script inside the VM.
+/// Used by status and doctor services to gather system info via a single exec call,
+/// avoiding Multipass Windows pipe/buffer issues with piped commands.
+pub const QUERY_SCRIPT: &str = "/opt/polis/scripts/polis-query.sh";
+
 /// Encode bytes as lowercase hex string.
 ///
 /// Pure utility used by update signature verification and image digest computation.

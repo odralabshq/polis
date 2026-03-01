@@ -11,7 +11,7 @@ use polis_common::types::{
 };
 
 use crate::application::ports::{InstanceInspector, ShellExecutor};
-use crate::domain::workspace::COMPOSE_PATH;
+use crate::domain::workspace::QUERY_SCRIPT;
 
 /// Gather all workspace status information.
 ///
@@ -128,12 +128,21 @@ async fn check_multipass_status(mp: &impl InstanceInspector) -> Option<Workspace
     })
 }
 
-/// Shell snippet to gather system metrics and container states in one pass.
-///
-/// We output uptime, a separator, and then the JSON container states.
-/// This minimizes Multipass exec overhead (especially high on Windows).
-const GATHER_STATUS_SCRIPT: &str =
-    "cat /proc/uptime && echo '---' && docker compose -f {} ps --format json";
+#[derive(serde::Deserialize)]
+struct StatusResponse {
+    uptime: Option<f64>,
+    containers: Vec<ContainerEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct ContainerEntry {
+    #[serde(rename = "Service")]
+    service: String,
+    #[serde(rename = "State")]
+    state: String,
+    #[serde(rename = "Health")]
+    health: Option<String>,
+}
 
 /// Gather uptime and container info in a single remote call.
 async fn gather_remote_info(
@@ -142,11 +151,8 @@ async fn gather_remote_info(
     let mut containers = HashMap::new();
     let mut uptime = None;
 
-    // We use a consolidated shell command to minimize Multipass exec overhead (high on Windows).
-    // This outputs uptime, a separator, and then the JSON container states.
-    let cmd = GATHER_STATUS_SCRIPT.replace("{}", COMPOSE_PATH);
-
-    let output = mp.exec(&["bash", "-c", &cmd]).await;
+    // Call the query script inside the VM to avoid Multipass Windows pipe issues.
+    let output = mp.exec(&[QUERY_SCRIPT, "status"]).await;
 
     let Ok(o) = output else {
         return (uptime, containers);
@@ -155,46 +161,17 @@ async fn gather_remote_info(
         return (uptime, containers);
     }
 
-    let stdout = String::from_utf8_lossy(&o.stdout);
-    let mut in_json_section = false;
-
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if line == "---" {
-            in_json_section = true;
-            continue;
-        }
-
-        if !in_json_section {
-            // Parsing uptime (first line of output before ---)
-            if let Some(u_str) = line.split_whitespace().next() {
-                if let Ok(u) = u_str.parse::<f64>() {
-                    uptime = Some(u as u64);
-                }
-            }
-        } else {
-            // Parsing docker compose ps JSON output
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                if let (Some(name), Some(state)) = (
-                    json.get("Service").and_then(serde_json::Value::as_str),
-                    json.get("State").and_then(serde_json::Value::as_str),
-                ) {
-                    containers.insert(
-                        name.to_string(),
-                        ContainerInfo {
-                            state: state.to_string(),
-                            health: json
-                                .get("Health")
-                                .and_then(serde_json::Value::as_str)
-                                .map(std::string::ToString::to_string),
-                        },
-                    );
-                }
-            }
+    // Parse the consolidated JSON response.
+    if let Ok(response) = serde_json::from_slice::<StatusResponse>(&o.stdout) {
+        uptime = response.uptime.map(|u| u as u64);
+        for entry in response.containers {
+            containers.insert(
+                entry.service,
+                ContainerInfo {
+                    state: entry.state,
+                    health: entry.health,
+                },
+            );
         }
     }
 

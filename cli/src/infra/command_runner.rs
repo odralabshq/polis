@@ -17,6 +17,20 @@ pub const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default timeout for `multipass exec` commands (runs inside VM, may be slower).
 pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// On Windows, ensure the Multipass default install directory is on PATH
+/// so the CLI can find it even before the user adds it to their system PATH.
+#[cfg(windows)]
+fn ensure_multipass_on_path(cmd: &mut tokio::process::Command, program: &str) {
+    if program == "multipass" {
+        let default_path = "C:\\Program Files\\Multipass\\bin";
+        if let Ok(current_path) = std::env::var("PATH") {
+            if !current_path.contains(default_path) {
+                cmd.env("PATH", format!("{};{}", current_path, default_path));
+            }
+        }
+    }
+}
+
 /// Production `CommandRunner` — uses tokio for async process execution
 /// with guaranteed timeout and kill on all platforms.
 ///
@@ -52,12 +66,16 @@ impl CommandRunner for TokioCommandRunner {
         args: &[&str],
         timeout: Duration,
     ) -> Result<Output> {
-        let mut child = tokio::process::Command::new(program)
-            .args(args)
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
+            .kill_on_drop(true);
+
+        #[cfg(windows)]
+        ensure_multipass_on_path(&mut cmd, program);
+
+        let mut child = cmd.spawn()
             .with_context(|| format!("failed to spawn {program}"))?;
 
         let mut stdout_handle = child.stdout.take();
@@ -99,13 +117,17 @@ impl CommandRunner for TokioCommandRunner {
     ///
     /// This function will return an error if the underlying operations fail.
     async fn run_with_stdin(&self, program: &str, args: &[&str], input: &[u8]) -> Result<Output> {
-        let mut child = tokio::process::Command::new(program)
-            .args(args)
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
+            .kill_on_drop(true);
+
+        #[cfg(windows)]
+        ensure_multipass_on_path(&mut cmd, program);
+
+        let mut child = cmd.spawn()
             .with_context(|| format!("failed to spawn {program}"))?;
 
         let stdin_handle = child.stdin.take();

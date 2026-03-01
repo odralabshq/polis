@@ -10,6 +10,7 @@ use crate::application::ports::{
     ShellExecutor,
 };
 use crate::domain::health::DoctorChecks;
+use crate::domain::workspace::QUERY_SCRIPT;
 
 /// Run the doctor probe/diagnose workflow.
 ///
@@ -230,80 +231,74 @@ async fn probe_process_isolation(mp: &impl ShellExecutor) -> bool {
 }
 
 async fn probe_gate_health(mp: &impl ShellExecutor) -> bool {
-    let output = mp
-        .exec(&[
-            "docker",
-            "compose",
-            "-f",
-            crate::domain::workspace::COMPOSE_PATH,
-            "ps",
-            "--format",
-            "json",
-            "gate",
-        ])
-        .await;
+    #[derive(serde::Deserialize)]
+    struct HealthResponse {
+        gate: Vec<serde_json::Value>,
+    }
+
+    let output = mp.exec(&[QUERY_SCRIPT, "health"]).await;
     let Ok(output) = output else { return false };
     if !output.status.success() {
         return false;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .lines()
-        .next()
-        .and_then(|line| {
-            serde_json::from_str::<serde_json::Value>(line)
-                .ok()
-                .and_then(|c| c.get("State")?.as_str().map(|s| s == "running"))
+
+    serde_json::from_slice::<HealthResponse>(&output.stdout)
+        .ok()
+        .and_then(|res| {
+            res.gate.first().and_then(|c| {
+                c.get("State")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|s| s == "running")
+            })
         })
         .unwrap_or(false)
 }
 
 async fn probe_malware_db(mp: &impl ShellExecutor) -> (bool, u64) {
-    let output = mp
-        .exec(&[
-            "docker", "exec", "polis-scanner", "sh", "-c",
-            "stat -c %Y /var/lib/clamav/daily.cld /var/lib/clamav/daily.cvd 2>/dev/null | sort -rn | head -1",
-        ])
-        .await;
+    #[derive(serde::Deserialize)]
+    struct MalwareResponse {
+        daily_cvd_mtime: u64,
+    }
+
+    let output = mp.exec(&[QUERY_SCRIPT, "malware-db"]).await;
     let Ok(output) = output else {
         return (false, 0);
     };
     if !output.status.success() {
         return (false, 0);
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let Ok(mtime) = stdout.trim().parse::<u64>() else {
+
+    let Ok(res) = serde_json::from_slice::<MalwareResponse>(&output.stdout) else {
         return (false, 0);
     };
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let age_hours = now.saturating_sub(mtime) / 3600;
+    let age_hours = now.saturating_sub(res.daily_cvd_mtime) / 3600;
     (age_hours <= 24, age_hours)
 }
 
 async fn probe_certificates(mp: &impl ShellExecutor) -> (bool, i64) {
-    let output = mp
-        .exec(&[
-            "openssl",
-            "x509",
-            "-enddate",
-            "-noout",
-            "-in",
-            "/opt/polis/certs/ca/ca.pem",
-        ])
-        .await;
+    #[derive(serde::Deserialize)]
+    struct CertResponse {
+        ca_expiry: String,
+    }
+
+    let output = mp.exec(&[QUERY_SCRIPT, "cert-expiry"]).await;
     let Ok(output) = output else {
         return (false, 0);
     };
     if !output.status.success() {
         return (false, 0);
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let Some(date_str) = stdout.strip_prefix("notAfter=").map(str::trim) else {
+
+    let Ok(res) = serde_json::from_slice::<CertResponse>(&output.stdout) else {
         return (false, 0);
     };
+
+    let date_str = res.ca_expiry.trim();
     let Ok(expiry) = chrono::NaiveDateTime::parse_from_str(date_str, "%b %d %H:%M:%S %Y GMT")
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(date_str, "%b  %d %H:%M:%S %Y GMT"))
     else {
