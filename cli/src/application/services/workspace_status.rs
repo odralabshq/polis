@@ -51,8 +51,7 @@ pub async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> Sta
 
     let workspace_info = containers.get("workspace");
     let is_workspace_running = workspace_info
-        .map(|i| i.state == "running")
-        .unwrap_or(false);
+        .is_some_and(|i| i.state == "running");
 
     let agent = workspace_info.map(|i| AgentStatus {
         name: "workspace".to_string(),
@@ -77,13 +76,13 @@ pub async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> Sta
         security: SecurityStatus {
             traffic_inspection: containers
                 .get("gate")
-                .map_or(false, |i| i.state == "running"),
+                .is_some_and(|i| i.state == "running"),
             credential_protection: containers
                 .get("sentinel")
-                .map_or(false, |i| i.state == "running"),
+                .is_some_and(|i| i.state == "running"),
             malware_scanning: containers
                 .get("scanner")
-                .map_or(false, |i| i.state == "running"),
+                .is_some_and(|i| i.state == "running"),
         },
         events: empty_events(),
     }
@@ -163,7 +162,8 @@ async fn gather_remote_info(
 
     // Parse the consolidated JSON response.
     if let Ok(response) = serde_json::from_slice::<StatusResponse>(&o.stdout) {
-        uptime = response.uptime.map(|u| u as u64);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        { uptime = response.uptime.map(|u| u as u64); }
         for entry in response.containers {
             containers.insert(
                 entry.service,
