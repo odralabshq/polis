@@ -276,7 +276,8 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
     "controlUi": {
       "enabled": true,
       "allowInsecureAuth": true,
-      "dangerouslyDisableDeviceAuth": true
+      "dangerouslyDisableDeviceAuth": true,
+      "dangerouslyAllowHostHeaderOriginFallback": true
     },
     "http": {
       "endpoints": {
@@ -364,6 +365,17 @@ EAEOF
     
 else
     echo "[openclaw-init] Already initialized, checking config..."
+
+    # Ensure controlUi has dangerouslyAllowHostHeaderOriginFallback (needed for non-loopback bind)
+    if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
+        HAS_FALLBACK=$(jq -r '.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback // empty' "$CONFIG_FILE" 2>/dev/null)
+        if [[ "$HAS_FALLBACK" != "true" ]]; then
+            jq '.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
+                && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+            chmod 600 "$CONFIG_FILE"
+            echo "[openclaw-init] Patched controlUi: added dangerouslyAllowHostHeaderOriginFallback"
+        fi
+    fi
 
     # Ensure exec approvals stay at security=full (gateway may regenerate the file)
     EXEC_APPROVALS_FILE="${CONFIG_DIR}/exec-approvals.json"

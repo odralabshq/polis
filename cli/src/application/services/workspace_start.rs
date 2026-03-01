@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 pub struct StartOptions<'a, R: crate::application::ports::ProgressReporter> {
     pub reporter: &'a R,
     pub agent: Option<&'a str>,
+    pub envs: Vec<String>,
     pub assets_dir: &'a std::path::Path,
     pub version: &'a str,
 }
@@ -60,13 +61,15 @@ pub async fn start_workspace(
     opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
 ) -> Result<StartOutcome> {
     let reporter = opts.reporter;
-    let StartOptions { agent, assets_dir, version, .. } = opts;
+    let StartOptions { agent, envs, assets_dir, version, .. } = opts;
     crate::domain::workspace::check_architecture()?;
 
     let vm_state = vm::state(provisioner).await?;
 
     match vm_state {
-        VmState::Running => handle_running_vm(state_mgr, agent).await,
+        VmState::Running => {
+            handle_running_vm(provisioner, state_mgr, local_fs, reporter, agent, envs).await
+        }
         VmState::NotFound => {
             create_and_start_vm(
                 provisioner,
@@ -75,7 +78,7 @@ pub async fn start_workspace(
                 ssh,
                 hasher,
                 local_fs,
-                StartOptions { reporter, agent, assets_dir, version },
+                StartOptions { reporter, agent, envs, assets_dir, version },
             )
             .await?;
             Ok(StartOutcome::Created {
@@ -83,7 +86,7 @@ pub async fn start_workspace(
             })
         }
         _ => {
-            restart_vm(provisioner, state_mgr, assets, ssh, local_fs, reporter, agent).await?;
+            restart_vm(provisioner, state_mgr, assets, ssh, local_fs, reporter, agent, envs).await?;
             wait_ready(provisioner, reporter, false).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
@@ -93,9 +96,17 @@ pub async fn start_workspace(
 }
 
 /// Handle the case where the VM is already running.
+///
+/// When no agent is currently active and one is requested, set it up
+/// in-place without stopping the VM. This avoids a stop/start cycle
+/// which triggers the Hyper-V Default Switch DHCP bug on Windows.
 async fn handle_running_vm(
+    provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
+    local_fs: &impl LocalFs,
+    reporter: &impl ProgressReporter,
     agent: Option<&str>,
+    envs: Vec<String>,
 ) -> Result<StartOutcome> {
     let current_agent = state_mgr.load_async().await?.and_then(|s| s.active_agent);
     if current_agent.as_deref() == agent {
@@ -103,6 +114,36 @@ async fn handle_running_vm(
             agent: agent.map(str::to_owned),
         });
     }
+
+    // Allow adding an agent to a running workspace that has no agent.
+    if current_agent.is_none() {
+        if let Some(name) = agent {
+            reporter.step(&format!("setting up agent '{name}'..."));
+            setup_agent(provisioner, local_fs, name, &envs).await?;
+            reporter.step("restarting platform services with agent...");
+            start_compose(provisioner, Some(name)).await?;
+            reporter.step("waiting for workspace to become healthy...");
+            wait_ready(provisioner, reporter, false).await?;
+            reporter.success("workspace ready");
+
+            let mut state = state_mgr
+                .load_async()
+                .await?
+                .unwrap_or_else(|| WorkspaceState {
+                    created_at: Utc::now(),
+                    image_sha256: None,
+                    image_source: None,
+                    active_agent: None,
+                });
+            state.active_agent = Some(name.to_owned());
+            state_mgr.save_async(&state).await?;
+
+            return Ok(StartOutcome::Restarted {
+                agent: Some(name.to_owned()),
+            });
+        }
+    }
+
     let current_desc = current_agent
         .as_deref()
         .map_or_else(|| "no agent".to_string(), |n| format!("agent '{n}'"));
@@ -123,7 +164,7 @@ async fn create_and_start_vm(
     opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
 ) -> Result<()> {
     let reporter = opts.reporter;
-    let StartOptions { agent, assets_dir, version, .. } = opts;
+    let StartOptions { agent, envs, assets_dir, version, .. } = opts;
     // Step 1: Compute config hash before transfer.
     let tar_path = assets_dir.join("polis-setup.config.tar");
     let config_hash = hasher
@@ -163,7 +204,7 @@ async fn create_and_start_vm(
     // Step 7: Set up agent if requested.
     if let Some(name) = agent {
         reporter.step(&format!("setting up agent '{name}'..."));
-        setup_agent(provisioner, local_fs, name).await?;
+        setup_agent(provisioner, local_fs, name, &envs).await?;
     }
 
     // Step 8: Start docker compose.
@@ -199,13 +240,14 @@ async fn restart_vm(
     local_fs: &impl LocalFs,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
+    envs: Vec<String>,
 ) -> Result<()> {
     reporter.step("restarting workspace...");
     vm::restart(provisioner, reporter, true).await?;
     reporter.success("workspace restarted");
 
     if let Some(name) = agent {
-        setup_agent(provisioner, local_fs, name).await?;
+        setup_agent(provisioner, local_fs, name, &envs).await?;
         start_compose(provisioner, agent).await?;
     }
 
@@ -227,7 +269,12 @@ async fn restart_vm(
 /// Reads the manifest from the VM, generates artifacts using the Rust domain
 /// functions, and transfers the `.generated/` folder back into the VM.
 /// This replaces the old `generate-agent.sh` shell script invocation.
-async fn setup_agent<P: VmProvisioner>(provisioner: &P, local_fs: &impl LocalFs, agent_name: &str) -> Result<()> {
+async fn setup_agent<P: VmProvisioner>(
+    provisioner: &P,
+    local_fs: &impl LocalFs,
+    agent_name: &str,
+    envs: &[String],
+) -> Result<()> {
     // Verify agent manifest exists in the VM.
     let manifest_path = format!("{VM_ROOT}/agents/{agent_name}/agent.yaml");
     let check = provisioner
@@ -263,16 +310,25 @@ async fn setup_agent<P: VmProvisioner>(provisioner: &P, local_fs: &impl LocalFs,
     let generated_dir = tmp_path.join("agents").join(&name).join(".generated");
     local_fs.create_dir_all(&generated_dir)?;
 
-    let compose = artifacts::compose_overlay(&manifest);
+    let compose = artifacts::compose_overlay(&manifest).replace("\r\n", "\n");
     local_fs.write(&generated_dir.join("compose.agent.yaml"), compose)?;
 
-    let unit = artifacts::systemd_unit(&manifest);
+    let unit = artifacts::systemd_unit(&manifest).replace("\r\n", "\n");
     let hash = artifacts::service_hash(&unit);
     local_fs.write(&generated_dir.join(format!("{name}.service")), unit)?;
     local_fs.write(&generated_dir.join(format!("{name}.service.sha256")), hash)?;
-    local_fs.write(&generated_dir.join(format!("{name}.env")), String::new())?;
+    
+    // Write environment variables to the agent's .env file, forcing LF line endings.
+    let env_content = if envs.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", envs.join("\n")).replace("\r\n", "\n")
+    };
+    local_fs.write(&generated_dir.join(format!("{name}.env")), env_content)?;
 
     // Transfer the generated artifacts back into the VM.
+    // Remove existing .generated to avoid nested directories from
+    // `multipass transfer --recursive` (which nests src inside dest if dest exists).
     let generated_src = tmp
         .path()
         .join("agents")
@@ -280,6 +336,10 @@ async fn setup_agent<P: VmProvisioner>(provisioner: &P, local_fs: &impl LocalFs,
         .join(".generated");
     let generated_src_str = generated_src.to_string_lossy().to_string();
     let generated_dest = format!("{VM_ROOT}/agents/{agent_name}/.generated");
+    provisioner
+        .exec(&["rm", "-rf", &generated_dest])
+        .await
+        .context("removing old generated artifacts")?;
     let transfer_out = provisioner
         .transfer_recursive(&generated_src_str, &generated_dest)
         .await

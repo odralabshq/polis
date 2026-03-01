@@ -85,14 +85,21 @@ pub async fn transfer_config(
     .await
     .context("fixing script permissions in VM")?;
 
-    // 6. Strip Windows CRLF line endings from shell scripts.
-    // Windows tar preserves CRLF from the working tree; bash fails with
-    // "\r': command not found" if not stripped.
+    // 6. Strip Windows CRLF line endings from all text config files.
+    // Windows tar preserves CRLF from the working tree; bash/systemd/docker
+    // fail with cryptic errors if not stripped.
     mp.exec(&[
         "find",
         "/opt/polis",
-        "-name",
-        "*.sh",
+        "(",
+        "-name", "*.sh",
+        "-o", "-name", "*.yaml",
+        "-o", "-name", "*.yml",
+        "-o", "-name", "*.env",
+        "-o", "-name", "*.service",
+        "-o", "-name", "*.toml",
+        "-o", "-name", "*.conf",
+        ")",
         "-exec",
         "sed",
         "-i",
@@ -101,7 +108,7 @@ pub async fn transfer_config(
         "+",
     ])
     .await
-    .context("stripping CRLF from shell scripts in VM")?;
+    .context("stripping CRLF from config files in VM")?;
 
     Ok(())
 }

@@ -26,12 +26,10 @@ pub static SHELL_METACHAR_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Platform-reserved ports that agents must not use.
-pub const PLATFORM_PORTS: &[u16] = &[
-    80, 443, 8080, 8443, 9090, 9091, 9092, 9093, 3000, 5432, 6379, 27017,
-];
+pub const PLATFORM_PORTS: &[u16] = &[53, 1344, 6379, 8080, 18080];
 
 /// Allowed prefixes for readWritePaths (same as generate-agent.sh).
-pub const ALLOWED_RW_PREFIXES: &[&str] = &["/opt/polis/agents/", "/tmp/", "/var/tmp/"];
+pub const ALLOWED_RW_PREFIXES: &[&str] = &["/home/polis/", "/tmp/", "/var/lib/", "/var/log/"];
 
 /// Validate a parsed `AgentManifest` against the same rules as
 /// `generate-agent.sh`. Returns `Ok(())` or an error listing all violations.

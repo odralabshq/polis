@@ -134,9 +134,9 @@ function Invoke-PolisInit {
     $envContent = $envLines -join "`n"
     & multipass exec polis -- bash -c "printf '%s\n' '$envContent' > /opt/polis/.env"
 
-    # Fix script permissions and strip Windows CRLF line endings
-    & multipass exec polis -- find /opt/polis -name '*.sh' -exec chmod +x '{}' +
-    & multipass exec polis -- find /opt/polis -name '*.sh' -exec sed -i 's/\r//' '{}' +
+    # Fix script permissions and strip Windows CRLF line endings from all text config files
+    & multipass exec polis -- bash -c "find /opt/polis -name '*.sh' -exec chmod +x '{}' +"
+    & multipass exec polis -- bash -c "find /opt/polis \( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \) -exec sed -i 's/\r//' '{}' +"
     Write-Ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
@@ -232,4 +232,12 @@ Invoke-PolisInit
 
 Write-Host ""
 Write-Ok "Polis (dev build) installed successfully!"
+Write-Host ""
+Write-Host "NEXT STEPS:" -ForegroundColor Yellow
+Write-Host "1. Verify status:" -ForegroundColor Gray
+Write-Host "   polis status"
+Write-Host "2. Start an AI agent (e.g., OpenClaw):" -ForegroundColor Gray
+Write-Host "   polis start --agent openclaw -e ANTHROPIC_API_KEY=<your_key>"
+Write-Host "3. Connect to the dashboard:" -ForegroundColor Gray
+Write-Host "   polis connect"
 Write-Host ""

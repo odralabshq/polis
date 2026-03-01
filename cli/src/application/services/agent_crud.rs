@@ -252,10 +252,16 @@ pub async fn update_agent(
     generate_and_write_artifacts(local_fs, tmp.path(), &name)?;
 
     // Transfer the regenerated .generated/ folder back into the VM.
+    // Remove existing .generated to avoid nested directories from
+    // `multipass transfer --recursive` (which nests src inside dest if dest exists).
     reporter.step("transferring updated artifacts...");
     let generated_src = agent_dir.join(".generated");
     let generated_src_str = generated_src.to_string_lossy().to_string();
     let generated_dest = format!("{VM_ROOT}/agents/{name}/.generated");
+    provisioner
+        .exec(&["rm", "-rf", &generated_dest])
+        .await
+        .context("removing old generated artifacts")?;
     let transfer_out = provisioner
         .transfer_recursive(&generated_src_str, &generated_dest)
         .await

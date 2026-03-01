@@ -20,7 +20,7 @@ fn get_health_timeout() -> (u32, Duration) {
     let timeout_secs: u64 = std::env::var("POLIS_HEALTH_TIMEOUT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(60);
+        .unwrap_or(300);
     let delay = Duration::from_secs(2);
     #[allow(clippy::cast_possible_truncation)]
     let max_attempts = (timeout_secs / 2) as u32;
@@ -30,7 +30,7 @@ fn get_health_timeout() -> (u32, Duration) {
 /// Wait for workspace to become healthy.
 ///
 /// Polls every 2 seconds. Timeout configurable via `POLIS_HEALTH_TIMEOUT` env var
-/// (default: 60 seconds).
+/// (default: 300 seconds).
 ///
 /// # Errors
 ///

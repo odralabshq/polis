@@ -14,6 +14,10 @@ pub struct StartArgs {
     /// Agent to activate (must match agents/<name>/ directory inside the VM)
     #[arg(long)]
     pub agent: Option<String>,
+
+    /// Environment variables to pass to the agent (e.g. -e KEY=VAL)
+    #[arg(short = 'e', long = "env")]
+    pub envs: Vec<String>,
 }
 
 /// # Errors
@@ -28,6 +32,7 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     let opts = crate::application::services::workspace_start::StartOptions {
         reporter: &reporter,
         agent: args.agent.as_deref(),
+        envs: args.envs.clone(),
         assets_dir: &assets_dir,
         version,
     };

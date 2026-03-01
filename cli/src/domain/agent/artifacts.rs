@@ -50,6 +50,10 @@ pub fn compose_overlay(manifest: &AgentManifest) -> String {
         "      - ./agents/{name}/.generated/{name}.service:/etc/systemd/system/{name}.service:ro\n"
     ));
     out.push_str(&format!("      - ./agents/{name}/.generated/{name}.service.sha256:/etc/systemd/system/{name}.service.sha256:ro\n"));
+    // Mount agent env file so init scripts can read it (e.g. /run/{name}-env)
+    out.push_str(&format!(
+        "      - ./agents/{name}/.generated/{name}.env:/run/{name}-env:ro\n"
+    ));
 
     // Persistence volume mounts
     for p in &spec.persistence {
