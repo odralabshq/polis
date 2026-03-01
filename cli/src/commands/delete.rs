@@ -31,13 +31,21 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
             return Ok(std::process::ExitCode::SUCCESS);
         }
 
-        cleanup_service::delete_all(
+        match cleanup_service::delete_all(
             &app.provisioner,
             &app.state_mgr,
             &app.local_fs,
             &app.local_fs,
+            &app.ssh,
         )
-        .await?;
+        .await
+        {
+            Ok(()) => {}
+            Err(e) => {
+                app.output.error(&e.to_string());
+                return Ok(std::process::ExitCode::FAILURE);
+            }
+        }
     } else {
         if !quiet {
             app.output.info("");
@@ -51,7 +59,13 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
             return Ok(std::process::ExitCode::SUCCESS);
         }
 
-        cleanup_service::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await?;
+        match cleanup_service::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await {
+            Ok(()) => {}
+            Err(e) => {
+                app.output.error(&e.to_string());
+                return Ok(std::process::ExitCode::FAILURE);
+            }
+        }
     }
 
     if !quiet {

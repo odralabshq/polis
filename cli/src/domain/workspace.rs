@@ -7,16 +7,12 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::error::WorkspaceError;
-
 /// Workspace state persisted to `~/.polis/state.json`.
 ///
 /// The `created_at` field accepts the legacy `started_at` name for backward
 /// compatibility with older state files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceState {
-    /// Workspace identifier (e.g., "polis-abc123def456").
-    pub workspace_id: String,
     /// When workspace was created (accepts legacy `"started_at"` field).
     #[serde(alias = "started_at")]
     pub created_at: DateTime<Utc>,
@@ -29,23 +25,6 @@ pub struct WorkspaceState {
     /// Currently active agent name, or None for control-plane-only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_agent: Option<String>,
-}
-
-/// SEC-004: Validates workspace ID format.
-///
-/// A valid workspace ID is `polis-` followed by exactly 16 lowercase hex characters.
-///
-/// # Errors
-///
-/// Returns an error if the ID doesn't match the expected format.
-pub fn validate_workspace_id(id: &str) -> Result<()> {
-    if !id.starts_with("polis-") || id.len() != 22 {
-        return Err(WorkspaceError::InvalidId(id.to_string()).into());
-    }
-    if !id[6..].chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(WorkspaceError::InvalidId(id.to_string()).into());
-    }
-    Ok(())
 }
 
 /// Check that the host architecture is amd64.
@@ -103,51 +82,10 @@ pub fn hex_encode(bytes: &[u8]) -> String {
 /// Entropy sources: nanosecond timestamp and two independent `RandomState` hashes.
 #[must_use]
 #[allow(dead_code)] // Called from workspace_start service — not yet wired to binary
-pub fn generate_workspace_id() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-
-    let mut hasher = RandomState::new().build_hasher();
-    hasher.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
-    );
-    hasher.write_u64(RandomState::new().build_hasher().finish());
-    hasher.write_u64(RandomState::new().build_hasher().finish());
-    format!("polis-{:016x}", hasher.finish())
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Valid 22-character workspace ID for tests (polis- + 16 hex chars).
-    const TEST_WORKSPACE_ID: &str = "polis-0123456789abcdef";
-
-    #[test]
-    fn test_validate_workspace_id_valid_format() {
-        assert!(validate_workspace_id(TEST_WORKSPACE_ID).is_ok());
-        assert!(validate_workspace_id("polis-aaaaaaaaaaaaaaaa").is_ok());
-        assert!(validate_workspace_id("polis-AAAAAAAAAAAAAAAA").is_ok());
-    }
-
-    #[test]
-    fn test_validate_workspace_id_rejects_short_id() {
-        assert!(validate_workspace_id("polis-abc123").is_err());
-        assert!(validate_workspace_id("polis-test").is_err());
-    }
-
-    #[test]
-    fn test_validate_workspace_id_rejects_wrong_prefix() {
-        assert!(validate_workspace_id("other-0123456789abcdef").is_err());
-    }
-
-    #[test]
-    fn test_validate_workspace_id_rejects_non_hex_chars() {
-        assert!(validate_workspace_id("polis-ghijklmnopqrstuv").is_err());
-    }
 
     #[test]
     fn test_hex_encode_empty_returns_empty() {

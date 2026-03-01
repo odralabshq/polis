@@ -362,4 +362,16 @@ pub trait SshConfigurator {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     async fn validate_permissions(&self) -> Result<()>;
+
+    /// Removes the polis SSH config file.
+    /// Idempotent — no error if the file does not exist.
+    /// # Errors
+    /// This function will return an error if the file exists but cannot be removed.
+    async fn remove_config(&self) -> Result<()>;
+
+    /// Removes the `Include config.d/polis` directive from `~/.ssh/config`.
+    /// Idempotent — no error if the directive is not present.
+    /// # Errors
+    /// This function will return an error if the user SSH config cannot be read or written.
+    async fn remove_include_directive(&self) -> Result<()>;
 }

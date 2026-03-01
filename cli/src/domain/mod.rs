@@ -17,8 +17,8 @@ pub use error::{AgentError, ConfigError, WorkspaceError};
 #[allow(unused_imports)]
 pub use health::{
     DoctorChecks, ImageCheckResult, NetworkChecks, PrerequisiteChecks, SecurityChecks,
-    VersionDrift, WorkspaceChecks, collect_issues,
+    WorkspaceChecks, collect_issues,
 };
 #[allow(unused_imports)]
-pub use workspace::{WorkspaceState, check_architecture, validate_workspace_id};
+pub use workspace::{WorkspaceState, check_architecture};
 pub mod ssh;

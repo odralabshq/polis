@@ -11,9 +11,10 @@ use std::process::ExitCode;
 /// This function will return an error if the underlying operations fail.
 pub fn run(app: &AppContext) -> Result<ExitCode> {
     let version = env!("CARGO_PKG_VERSION");
-    let commit = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
-    let build_date = option_env!("VERGEN_BUILD_DATE").unwrap_or("unknown");
+    let build_date = option_env!("VERGEN_BUILD_TIMESTAMP")
+        .or(option_env!("VERGEN_BUILD_DATE"))
+        .unwrap_or("unknown");
 
-    app.renderer().render_version(version, commit, build_date)?;
+    app.renderer().render_version(version, build_date)?;
     Ok(ExitCode::SUCCESS)
 }

@@ -25,8 +25,6 @@ pub enum WorkspaceError {
     #[error("Agent mismatch: workspace has '{active}' but '{requested}' was requested.")]
     AgentMismatch { active: String, requested: String },
 
-    #[error("Invalid workspace ID: {0}")]
-    InvalidId(String),
 }
 
 // ── Agent errors ──────────────────────────────────────────────────────────────

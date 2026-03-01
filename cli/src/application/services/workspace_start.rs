@@ -182,7 +182,6 @@ async fn create_and_start_vm(
 
     // Step 11: Persist state.
     let state = WorkspaceState {
-        workspace_id: crate::domain::workspace::generate_workspace_id(),
         created_at: Utc::now(),
         image_sha256: None,
         image_source: None,
@@ -214,7 +213,6 @@ async fn restart_vm(
         .load_async()
         .await?
         .unwrap_or_else(|| WorkspaceState {
-            workspace_id: crate::domain::workspace::generate_workspace_id(),
             created_at: Utc::now(),
             image_sha256: None,
             image_source: None,

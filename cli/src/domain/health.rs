@@ -50,23 +50,8 @@ pub struct WorkspaceChecks {
 pub struct ImageCheckResult {
     /// Whether a cached image exists at `~/.polis/images/polis.qcow2`.
     pub cached: bool,
-    /// Version from `image.json` (if available).
-    pub version: Option<String>,
-    /// SHA-256 preview (first 12 hex chars) from `image.json`.
-    pub sha256_preview: Option<String>,
     /// Value of `POLIS_IMAGE` env var if set (override active).
     pub polis_image_override: Option<String>,
-    /// Whether cached version differs from latest available.
-    pub version_drift: Option<VersionDrift>,
-}
-
-/// Version drift between cached and latest available image.
-#[derive(Debug, Serialize)]
-pub struct VersionDrift {
-    /// Currently cached version.
-    pub current: String,
-    /// Latest available version.
-    pub latest: String,
 }
 
 /// Network health checks.
@@ -259,19 +244,6 @@ mod tests {
     fn test_image_check_result_default_is_not_cached() {
         let result = ImageCheckResult::default();
         assert!(!result.cached);
-        assert!(result.version.is_none());
-        assert!(result.sha256_preview.is_none());
         assert!(result.polis_image_override.is_none());
-        assert!(result.version_drift.is_none());
-    }
-
-    #[test]
-    fn test_version_drift_fields_accessible() {
-        let drift = VersionDrift {
-            current: "1.0.0".to_string(),
-            latest: "1.1.0".to_string(),
-        };
-        assert_eq!(drift.current, "1.0.0");
-        assert_eq!(drift.latest, "1.1.0");
     }
 }

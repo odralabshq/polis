@@ -216,10 +216,7 @@ fn probe_image_cache(paths: &impl LocalPaths, fs: &impl crate::application::port
     let cached = fs.exists(&images_dir.join("polis.qcow2"));
     crate::domain::health::ImageCheckResult {
         cached,
-        version: None,
-        sha256_preview: None,
         polis_image_override: std::env::var("POLIS_IMAGE").ok(),
-        version_drift: None,
     }
 }
 

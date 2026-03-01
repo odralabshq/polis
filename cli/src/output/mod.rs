@@ -39,13 +39,13 @@ impl Renderer<'_> {
     /// # Errors
     ///
     /// Returns an error if JSON serialization fails.
-    pub fn render_version(&self, version: &str, commit: &str, build_date: &str) -> Result<()> {
+    pub fn render_version(&self, version: &str, build_date: &str) -> Result<()> {
         match self {
             Renderer::Human(r) => {
-                r.render_version(version, commit, build_date);
+                r.render_version(version, build_date);
                 Ok(())
             }
-            Renderer::Json(_) => JsonRenderer::render_version(version, commit, build_date),
+            Renderer::Json(_) => JsonRenderer::render_version(version, build_date),
         }
     }
     /// Render workspace/agent/security status.

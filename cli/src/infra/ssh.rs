@@ -290,9 +290,11 @@ impl SshConfigManager {
         let home =
             dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
         Ok(Self::with_paths(
-            home.join(".polis").join("ssh_config"),
+            home.join(".ssh").join("config.d").join("polis"),
             home.join(".ssh").join("config"),
-            Box::new(OsSocketsDir::new(home.join(".polis").join("sockets"))),
+            Box::new(OsSocketsDir::new(
+                home.join(".ssh").join("config.d").join("polis-sockets"),
+            )),
         ))
     }
 
@@ -321,15 +323,16 @@ impl SshConfigManager {
         if self.user_config_path.exists() {
             let content = std::fs::read_to_string(&self.user_config_path)
                 .with_context(|| format!("read {}", self.user_config_path.display()))?;
-            if content.contains("Include ~/.polis/ssh_config") {
+            if content.contains("Include config.d/polis") {
                 return Ok(true);
             }
         }
         Ok(false)
     }
 
-    /// Writes the hardened polis SSH config to `~/.polis/ssh_config`.
-    /// Sets file permissions to 600 and parent directory to 700 on Unix.
+    /// Writes the hardened polis SSH config to `~/.ssh/config.d/polis`.
+    /// Creates `~/.ssh/config.d/` with 0700 permissions if it does not exist.
+    /// Sets file permissions to 0600 on Unix.
     /// # Errors
     /// Returns an error if the file cannot be written or permissions cannot be set.
     pub fn create_polis_config(&self) -> Result<()> {
@@ -338,7 +341,7 @@ impl SshConfigManager {
         // Windows OpenSSH ProxyCommand requires absolute path to executable.
         #[cfg(not(windows))]
         let config = "\
-# ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
+# ~/.ssh/config.d/polis (managed by polis — DO NOT EDIT)
 Host workspace
     HostName workspace
     User polis
@@ -347,7 +350,7 @@ Host workspace
     UserKnownHostsFile ~/.polis/known_hosts
     IdentityFile ~/.polis/id_ed25519
     ControlMaster auto
-    ControlPath ~/.polis/sockets/%r@%h:%p
+    ControlPath ~/.ssh/config.d/polis-sockets/%r@%h:%p
     ControlPersist 30s
     ForwardAgent no
     IdentitiesOnly yes
@@ -355,7 +358,7 @@ Host workspace
         #[cfg(windows)]
         let config = format!(
             "\
-# ~/.polis/ssh_config (managed by polis — DO NOT EDIT)
+# ~/.ssh/config.d/polis (managed by polis — DO NOT EDIT)
 Host workspace
     HostName workspace
     User polis
@@ -381,12 +384,12 @@ Host workspace
         Ok(())
     }
 
-    /// Prepends `Include ~/.polis/ssh_config` to `~/.ssh/config`, creating
+    /// Prepends `Include config.d/polis` to `~/.ssh/config`, creating
     /// the file if absent. Idempotent.
     /// # Errors
     /// Returns an error if the file cannot be read or written.
     pub fn add_include_directive(&self) -> Result<()> {
-        const INCLUDE: &str = "Include ~/.polis/ssh_config\n";
+        const INCLUDE: &str = "Include config.d/polis\n";
         if let Some(parent) = self.user_config_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create dir {}", parent.display()))?;
@@ -395,7 +398,7 @@ Host workspace
         if self.user_config_path.exists() {
             let content = std::fs::read_to_string(&self.user_config_path)
                 .with_context(|| format!("read {}", self.user_config_path.display()))?;
-            if content.contains("Include ~/.polis/ssh_config") {
+            if content.contains("Include config.d/polis") {
                 return Ok(());
             }
             std::fs::write(&self.user_config_path, format!("{INCLUDE}{content}"))
@@ -405,6 +408,38 @@ Host workspace
                 .with_context(|| format!("write {}", self.user_config_path.display()))?;
         }
         set_permissions(&self.user_config_path, 0o600)?;
+        Ok(())
+    }
+
+    /// Removes the legacy `~/.polis/ssh_config` file and the old
+    /// `Include ~/.polis/ssh_config` directive from `~/.ssh/config`.
+    /// Idempotent — no error if the legacy file does not exist.
+    /// # Errors
+    /// Returns an error if the file cannot be removed or the user SSH config
+    /// cannot be read or written.
+    pub fn remove_legacy_config(&self) -> Result<()> {
+        let legacy_path = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+            .join(".polis")
+            .join("ssh_config");
+
+        if legacy_path.exists() {
+            std::fs::remove_file(&legacy_path)
+                .with_context(|| format!("remove {}", legacy_path.display()))?;
+
+            // Remove the old Include directive from ~/.ssh/config
+            if self.user_config_path.exists() {
+                let content = std::fs::read_to_string(&self.user_config_path)
+                    .with_context(|| format!("read {}", self.user_config_path.display()))?;
+                let filtered: String = content
+                    .lines()
+                    .filter(|line| !line.contains("Include ~/.polis/ssh_config"))
+                    .map(|line| format!("{line}\n"))
+                    .collect();
+                std::fs::write(&self.user_config_path, filtered)
+                    .with_context(|| format!("write {}", self.user_config_path.display()))?;
+            }
+        }
         Ok(())
     }
 
@@ -454,9 +489,11 @@ mod ssh_config_manager_tests {
 
     fn manager_in(dir: &tempfile::TempDir) -> SshConfigManager {
         SshConfigManager::with_paths(
-            dir.path().join("polis").join("ssh_config"),
+            dir.path().join("ssh").join("config.d").join("polis"),
             dir.path().join("ssh").join("config"),
-            Box::new(OsSocketsDir::new(dir.path().join("polis").join("sockets"))),
+            Box::new(OsSocketsDir::new(
+                dir.path().join("ssh").join("config.d").join("polis-sockets"),
+            )),
         )
     }
 
@@ -504,8 +541,10 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
-            .expect("config file should exist");
+        let content = std::fs::read_to_string(
+            dir.path().join("ssh").join("config.d").join("polis"),
+        )
+        .expect("config file should exist");
         assert!(
             content.contains("ForwardAgent no"),
             "V-001: ForwardAgent must be no"
@@ -517,8 +556,10 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
-            .expect("config file should exist");
+        let content = std::fs::read_to_string(
+            dir.path().join("ssh").join("config.d").join("polis"),
+        )
+        .expect("config file should exist");
         assert!(
             !content.contains("ForwardAgent yes"),
             "V-001: ForwardAgent yes must never appear"
@@ -530,8 +571,10 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
-            .expect("config file should exist");
+        let content = std::fs::read_to_string(
+            dir.path().join("ssh").join("config.d").join("polis"),
+        )
+        .expect("config file should exist");
         assert!(
             content.contains("StrictHostKeyChecking yes"),
             "V-002: StrictHostKeyChecking must be yes"
@@ -543,8 +586,10 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let content = std::fs::read_to_string(dir.path().join("polis").join("ssh_config"))
-            .expect("config file should exist");
+        let content = std::fs::read_to_string(
+            dir.path().join("ssh").join("config.d").join("polis"),
+        )
+        .expect("config file should exist");
         assert!(content.contains("User polis"), "V-011: User must be polis");
         assert!(
             !content.contains("User vscode"),
@@ -559,7 +604,7 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let mode = std::fs::metadata(dir.path().join("polis").join("ssh_config"))
+        let mode = std::fs::metadata(dir.path().join("ssh").join("config.d").join("polis"))
             .expect("metadata")
             .permissions()
             .mode();
@@ -573,11 +618,11 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let mode = std::fs::metadata(dir.path().join("polis"))
+        let mode = std::fs::metadata(dir.path().join("ssh").join("config.d"))
             .expect("metadata")
             .permissions()
             .mode();
-        assert_eq!(mode & 0o777, 0o700, "V-004: .polis dir must be 700");
+        assert_eq!(mode & 0o777, 0o700, "V-004: config.d dir must be 700");
     }
 
     // -----------------------------------------------------------------------
@@ -598,7 +643,7 @@ mod ssh_config_manager_tests {
         mgr.add_include_directive().expect("add_include_directive");
         let content = std::fs::read_to_string(ssh_dir.join("config")).expect("config should exist");
         assert!(
-            content.starts_with("Include ~/.polis/ssh_config\n"),
+            content.starts_with("Include config.d/polis\n"),
             "Include must be at the top of ~/.ssh/config"
         );
     }
@@ -610,7 +655,7 @@ mod ssh_config_manager_tests {
         mgr.add_include_directive().expect("add_include_directive");
         let content = std::fs::read_to_string(dir.path().join("ssh").join("config"))
             .expect("config should be created");
-        assert!(content.contains("Include ~/.polis/ssh_config"));
+        assert!(content.contains("Include config.d/polis"));
     }
 
     #[test]
@@ -621,7 +666,7 @@ mod ssh_config_manager_tests {
         mgr.add_include_directive().expect("second call");
         let content = std::fs::read_to_string(dir.path().join("ssh").join("config"))
             .expect("config should exist");
-        let count = content.matches("Include ~/.polis/ssh_config").count();
+        let count = content.matches("Include config.d/polis").count();
         assert_eq!(count, 1, "Include directive must appear exactly once");
     }
 
@@ -635,7 +680,7 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_sockets_dir().expect("create_sockets_dir");
-        assert!(dir.path().join("polis").join("sockets").is_dir());
+        assert!(dir.path().join("ssh").join("config.d").join("polis-sockets").is_dir());
     }
 
     #[cfg(unix)]
@@ -645,7 +690,7 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_sockets_dir().expect("create_sockets_dir");
-        let mode = std::fs::metadata(dir.path().join("polis").join("sockets"))
+        let mode = std::fs::metadata(dir.path().join("ssh").join("config.d").join("polis-sockets"))
             .expect("metadata")
             .permissions()
             .mode();
@@ -673,7 +718,7 @@ mod ssh_config_manager_tests {
         mgr.create_polis_config().expect("create_polis_config");
         // Deliberately set wrong permissions
         std::fs::set_permissions(
-            dir.path().join("polis").join("ssh_config"),
+            dir.path().join("ssh").join("config.d").join("polis"),
             std::fs::Permissions::from_mode(0o644),
         )
         .expect("set permissions");
@@ -709,7 +754,7 @@ mod ssh_config_manager_tests {
             let mgr = manager_in(&dir);
             mgr.create_polis_config().expect("create_polis_config");
             let content = std::fs::read_to_string(
-                dir.path().join("polis").join("ssh_config"),
+                dir.path().join("ssh").join("config.d").join("polis"),
             )
             .expect("config file should exist");
 
@@ -724,7 +769,7 @@ mod ssh_config_manager_tests {
                 "Unix config must include ControlMaster auto"
             );
             proptest::prop_assert!(
-                content.contains("ControlPath ~/.polis/sockets/%r@%h:%p"),
+                content.contains("ControlPath ~/.ssh/config.d/polis-sockets/%r@%h:%p"),
                 "Unix config must include ControlPath"
             );
             proptest::prop_assert!(
@@ -770,6 +815,7 @@ impl crate::application::ports::SshConfigurator for SshConfigManager {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     async fn setup_config(&self) -> Result<()> {
+        self.remove_legacy_config()?;
         self.create_polis_config()?;
         self.add_include_directive()?;
         self.create_sockets_dir()?;
@@ -780,5 +826,46 @@ impl crate::application::ports::SshConfigurator for SshConfigManager {
     /// This function will return an error if the underlying operations fail.
     async fn validate_permissions(&self) -> Result<()> {
         self.validate_permissions()
+    }
+
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn remove_config(&self) -> Result<()> {
+        let path = self.polis_config_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            if path.exists() {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("remove {}", path.display()))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking panicked: {e}"))??;
+        Ok(())
+    }
+
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn remove_include_directive(&self) -> Result<()> {
+        let user_config_path = self.user_config_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            if user_config_path.exists() {
+                let content = std::fs::read_to_string(&user_config_path)
+                    .with_context(|| format!("read {}", user_config_path.display()))?;
+                let filtered: String = content
+                    .lines()
+                    .filter(|line| !line.contains("Include config.d/polis"))
+                    .map(|line| format!("{line}\n"))
+                    .collect();
+                if filtered != content {
+                    std::fs::write(&user_config_path, filtered)
+                        .with_context(|| format!("write {}", user_config_path.display()))?;
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking panicked: {e}"))??;
+        Ok(())
     }
 }

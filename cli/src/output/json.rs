@@ -15,10 +15,9 @@ impl JsonRenderer {
     /// # Errors
     ///
     /// Returns an error if JSON serialization fails.
-    pub fn render_version(version: &str, commit: &str, build_date: &str) -> Result<()> {
+    pub fn render_version(version: &str, build_date: &str) -> Result<()> {
         let val = serde_json::json!({
             "version": version,
-            "commit": commit,
             "build_date": build_date
         });
         println!("{}", serde_json::to_string_pretty(&val)?);
@@ -57,9 +56,20 @@ impl JsonRenderer {
     ///
     /// This function will return an error if the underlying operations fail.
     pub fn render_config(config: &crate::domain::config::PolisConfig) -> Result<()> {
+        let polis_config_env = std::env::var("POLIS_CONFIG").ok();
+        let no_color_env = std::env::var("NO_COLOR").ok();
+        let val = serde_json::json!({
+            "security": {
+                "level": config.security.level
+            },
+            "environment": {
+                "polis_config": polis_config_env,
+                "no_color": no_color_env
+            }
+        });
         println!(
             "{}",
-            serde_json::to_string_pretty(config).context("JSON serialization")?
+            serde_json::to_string_pretty(&val).context("JSON serialization")?
         );
         Ok(())
     }

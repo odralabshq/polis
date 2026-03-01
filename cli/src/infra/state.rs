@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use crate::application::ports::WorkspaceStateStore;
-use crate::domain::workspace::{WorkspaceState, validate_workspace_id};
+use crate::domain::workspace::WorkspaceState;
 
 /// State file manager — implements `WorkspaceStateStore` for the infra layer.
 pub struct StateManager {
@@ -37,8 +37,7 @@ impl StateManager {
     ///
     /// # Errors
     ///
-    /// Returns an error if the file exists but cannot be read or parsed,
-    /// or if the workspace ID fails validation.
+    /// Returns an error if the file exists but cannot be read or parsed.
     pub fn load(&self) -> Result<Option<WorkspaceState>> {
         self.load_sync()
     }
@@ -56,7 +55,7 @@ impl StateManager {
     ///
     /// # Errors
     ///
-    /// This function will return an error if the underlying operations fail.
+    /// Returns an error if the file exists but cannot be read or parsed.
     fn load_sync(&self) -> Result<Option<WorkspaceState>> {
         if !self.path.exists() {
             return Ok(None);
@@ -65,7 +64,6 @@ impl StateManager {
             .with_context(|| format!("reading state file {}", self.path.display()))?;
         let state: WorkspaceState = serde_json::from_str(&content)
             .with_context(|| format!("parsing state file {}", self.path.display()))?;
-        validate_workspace_id(&state.workspace_id)?;
         Ok(Some(state))
     }
 

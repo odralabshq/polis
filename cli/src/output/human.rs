@@ -15,11 +15,11 @@ pub struct HumanRenderer<'a> {
 impl<'a> HumanRenderer<'a> {
 
     /// Render the CLI version information.
-    pub fn render_version(&self, version: &str, commit: &str, build_date: &str) {
+    pub fn render_version(&self, version: &str, build_date: &str) {
         if self.ctx.quiet {
             return;
         }
-        self.ctx.info(&format!("polis v{version} ({commit} {build_date})"));
+        self.ctx.info(&format!("polis v{version} ({build_date})"));
     }
     /// Create a new `HumanRenderer` wrapping the given output context.
     #[must_use]
