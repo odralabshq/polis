@@ -12,12 +12,6 @@ CA_DIR="${1:-./certs/ca}"
 echo "=== Polis CA Certificate Generator ==="
 echo "CA directory: ${CA_DIR}"
 
-# Idempotency: skip if both key and cert already exist
-if [[ -f "${CA_DIR}/ca.key" ]] && [[ -f "${CA_DIR}/ca.pem" ]]; then
-    echo "CA certificate already exists. Skipping."
-    exit 0
-fi
-
 # Cleanup any partially-written files on error or interrupt
 trap 'rm -f "${CA_DIR}/ca.key" "${CA_DIR}/ca.pem"' ERR
 

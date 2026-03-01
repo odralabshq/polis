@@ -220,8 +220,8 @@ setup-ca:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	./scripts/generate-ca.sh ./certs/ca
-	sudo chown root:root ./certs/ca/ca.key
-	chmod 600 ./certs/ca/ca.key
+	sudo chown 65532:65532 ./certs/ca/ca.key
+	sudo chmod 600 ./certs/ca/ca.key
 	echo "✓ CA ready"
 
 setup-valkey:
@@ -238,32 +238,9 @@ setup-toolbox:
 	set -euo pipefail
 	echo "→ Generating Toolbox certs..."
 	sudo rm -f ./certs/toolbox/*.key ./certs/toolbox/*.pem 2>/dev/null || true
-	./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca >/dev/null
+	sudo ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca >/dev/null
 	sudo chown 65532:65532 ./certs/toolbox/toolbox.key
 	echo "✓ Toolbox certs ready"
-
-# Windows-only: Generate certs on HOST (dev flow) — mirrors just setup
-setup-windows: setup-ca-windows setup-valkey-windows setup-toolbox-windows
-	@echo "✓ Setup complete"
-
-setup-ca-windows:
-	bash -c './scripts/generate-ca.sh ./certs/ca'
-
-setup-valkey-windows:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	echo "→ Generating Valkey certs and secrets..."
-	./services/state/scripts/generate-certs.sh ./certs/valkey
-	./services/state/scripts/generate-secrets.sh ./secrets .
-	echo "✓ Valkey certs and secrets ready"
-
-setup-toolbox-windows:
-	#!/usr/bin/env bash
-	set -euo pipefail
-	echo "→ Generating Toolbox certs..."
-	./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
-	echo "✓ Toolbox certs ready"
-
 
 # ── Dev VM ──────────────────────────────────────────────────────────
 dev-create:
@@ -307,4 +284,4 @@ clean:
 
 # WARNING: Removes certs, secrets, and .env
 clean-all: clean
-	rm -rf certs/ secrets/ .env
+	sudo rm -rf certs/ secrets/ .env
