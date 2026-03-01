@@ -74,6 +74,8 @@ pub async fn transfer_config(
     mp.exec(&[
         "find",
         "/opt/polis",
+        "-type",
+        "f",
         "-name",
         "*.sh",
         "-exec",
@@ -91,6 +93,8 @@ pub async fn transfer_config(
     mp.exec(&[
         "find",
         "/opt/polis",
+        "-type",
+        "f",
         "(",
         "-name",
         "*.sh",
@@ -116,7 +120,7 @@ pub async fn transfer_config(
         "-exec",
         "sed",
         "-i",
-        "s/\\r//",
+        "s/\\r$//",
         "{}",
         "+",
     ])

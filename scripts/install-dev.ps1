@@ -116,6 +116,10 @@ function Invoke-PolisInit {
 
     & multipass exec polis -- rm -f /tmp/polis-setup.config.tar
 
+    # Overlay repo's docker-compose.yml (may be newer than tarball)
+    $composeFile = Join-Path $RepoDir "docker-compose.yml"
+    & multipass transfer $composeFile polis:/opt/polis/docker-compose.yml
+
     # Write .env with version
     $cliVersion = (& $polis --version 2>&1) -replace '^polis\s+', ''
     $tag = "v$cliVersion"
@@ -135,8 +139,8 @@ function Invoke-PolisInit {
     & multipass exec polis -- bash -c "printf '%s\n' '$envContent' > /opt/polis/.env"
 
     # Fix script permissions and strip Windows CRLF line endings from all text config files
-    & multipass exec polis -- bash -c "find /opt/polis -name '*.sh' -exec chmod +x '{}' +"
-    & multipass exec polis -- bash -c "find /opt/polis \( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \) -exec sed -i 's/\r//' '{}' +"
+    & multipass exec polis -- bash -c "find /opt/polis -type f -name '*.sh' -exec chmod +x '{}' +"
+    & multipass exec polis -- bash -c "find /opt/polis -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \) -exec sed -i 's/\r$//' '{}' +"
     Write-Ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
