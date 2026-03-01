@@ -51,41 +51,22 @@ log_error(){ echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
 check_multipass() {
     if ! command -v multipass &>/dev/null; then
-        log_error "Multipass is required but not installed"
-        case "$(uname -s)" in
-            Darwin) echo "  Install: https://multipass.run/install  (requires macOS 13 Ventura or later)" ;;
-            Linux)  echo "  Install: sudo snap install multipass" ;;
-            *)      echo "  Install: https://multipass.run/install" ;;
-        esac
+        log_error "Multipass is required but not installed."
+        echo "  Install: https://multipass.run/install"
         exit 1
     fi
 
-    local os version_line installed_version
-    os=$(uname -s)
+    local version_line installed_version ver_clean
     version_line=$(multipass version 2>/dev/null | head -1 || true)
     installed_version=$(echo "${version_line}" | awk '{print $2}')
     if [[ -n "${installed_version}" ]]; then
-        if ! printf '%s\n%s\n' "1.16.0" "${installed_version}" | sort -V -C; then
+        ver_clean="${installed_version%%+*}"
+        if ! printf '%s\n%s\n' "1.16.0" "${ver_clean}" | sort -V -C; then
             log_error "Multipass ${installed_version} is too old (need ≥ 1.16.0)."
-            case "${os}" in
-                Linux)  echo "  Update: sudo snap refresh multipass" ;;
-                Darwin) echo "  Update: https://multipass.run/install" ;;
-                *)      echo "  Update: https://multipass.run/install" ;;
-            esac
+            echo "  Update: https://multipass.run/install"
             exit 1
         fi
         log_ok "Multipass ${installed_version} OK"
-    fi
-
-    if [[ "${os}" == "Linux" ]] && command -v snap &>/dev/null; then
-        local socket="/var/snap/multipass/common/multipass_socket"
-        if [[ -S "${socket}" ]] && ! [[ -r "${socket}" && -w "${socket}" ]]; then
-            local socket_group
-            socket_group=$(stat -c '%G' "${socket}" 2>/dev/null || true)
-            log_warn "Your user cannot access the multipass socket."
-            echo "  Fix: sudo usermod -aG ${socket_group} \$USER"
-            echo "  Then log out and back in, or run: newgrp ${socket_group}"
-        fi
     fi
     return 0
 }
@@ -269,9 +250,15 @@ install_cli
 create_symlink
 
 # Remove any existing VM for a clean reinstall
-if multipass info polis &>/dev/null 2>&1; then
+log_info "Checking for existing polis VM..."
+vm_found=false
+if timeout 30 multipass list --format csv 2>/dev/null | grep -q '^polis,'; then
+    vm_found=true
+fi
+
+if ${vm_found}; then
     log_info "Existing polis VM found — deleting for clean reinstall..."
-    multipass delete polis && multipass purge
+    multipass delete polis --purge 2>/dev/null
     log_ok "VM deleted"
 fi
 rm -f "${INSTALL_DIR}/state.json"
