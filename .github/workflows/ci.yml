@@ -32,7 +32,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # master
         with:
           toolchain: stable
           components: rustfmt, clippy
@@ -91,7 +91,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # master
         with:
           toolchain: stable
 
@@ -117,7 +117,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # master
         with:
           toolchain: stable
 
@@ -192,7 +192,7 @@ jobs:
           docker save ${{ env.POLIS_IMAGES }} | zstd -T0 -3 -o polis-images.tar.zst
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: polis-images
           path: polis-images.tar.zst
@@ -242,7 +242,7 @@ jobs:
           persist-credentials: false
 
       - name: Download image artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: polis-images
 
@@ -250,7 +250,7 @@ jobs:
         run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
       - name: Scan ${{ matrix.image }} with Trivy
-        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # v0.34.0
+        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # v0.34.1
         with:
           image-ref: 'ghcr.io/odralabshq/${{ matrix.image }}:latest'
           format: 'sarif'
@@ -260,7 +260,7 @@ jobs:
           skip-setup-trivy: false
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        uses: github/codeql-action/upload-sarif@e34fc2711fb7964ca6850c8a8382121f34745f3b # v4.32.4
         with:
           sarif_file: 'trivy-${{ matrix.image }}.sarif'
           category: 'trivy-${{ matrix.image }}'
@@ -290,7 +290,7 @@ jobs:
         run: source ./scripts/ci-helpers.sh && install_sysbox
 
       - name: Download image artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: polis-images
 
@@ -339,7 +339,7 @@ jobs:
         run: source ./scripts/ci-helpers.sh && install_sysbox
 
       - name: Download image artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: polis-images
 
@@ -385,7 +385,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload Semgrep SARIF
-        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        uses: github/codeql-action/upload-sarif@e34fc2711fb7964ca6850c8a8382121f34745f3b # v4.32.4
         with:
           sarif_file: semgrep.sarif
           category: semgrep-sast
@@ -411,7 +411,7 @@ jobs:
           soft_fail: true
 
       - name: Upload Checkov SARIF
-        uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+        uses: github/codeql-action/upload-sarif@e34fc2711fb7964ca6850c8a8382121f34745f3b # v4.32.4
         with:
           sarif_file: results.sarif
           category: checkov-iac

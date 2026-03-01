@@ -24,7 +24,7 @@ jobs:
           results_format: sarif
           publish_results: true
 
-      - uses: github/codeql-action/upload-sarif@9da17a5aa4abec2340d6e6c8d8efb0770b1c9cb8 # v4.32.3
+      - uses: github/codeql-action/upload-sarif@e34fc2711fb7964ca6850c8a8382121f34745f3b # v4.32.4
         with:
           sarif_file: scorecard.sarif
           category: ossf-scorecard
