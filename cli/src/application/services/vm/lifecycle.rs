@@ -142,7 +142,7 @@ pub async fn create(
     check_prerequisites(mp).await?;
 
     if !quiet {
-        reporter.success(&inception_line("L0", "sequence started."));
+        reporter.success(&super::inception_line("L0", "sequence started."));
     }
 
     // Extract embedded assets (cloud-init.yaml, etc.) to a temp dir.
@@ -173,7 +173,10 @@ pub async fn create(
         .to_string();
 
     if !quiet {
-        reporter.step(&inception_line("L1", "workspace isolation starting..."));
+        reporter.step(&super::inception_line(
+            "L1",
+            "workspace isolation starting...",
+        ));
     }
     let output = mp
         .launch(&InstanceSpec {
@@ -187,7 +190,10 @@ pub async fn create(
         .await
         .context("launching workspace")?;
     if !quiet && output.status.success() {
-        reporter.success(&inception_line("L1", "workspace isolation starting..."));
+        reporter.success(&super::inception_line(
+            "L1",
+            "workspace isolation starting...",
+        ));
     }
 
     if !output.status.success() {
@@ -259,15 +265,21 @@ pub async fn restart(
     quiet: bool,
 ) -> Result<()> {
     if !quiet {
-        reporter.success(&inception_line("L0", "sequence started."));
+        reporter.success(&super::inception_line("L0", "sequence started."));
     }
 
     if !quiet {
-        reporter.step(&inception_line("L1", "workspace isolation starting..."));
+        reporter.step(&super::inception_line(
+            "L1",
+            "workspace isolation starting...",
+        ));
     }
     start(mp).await?;
     if !quiet {
-        reporter.success(&inception_line("L1", "workspace isolation starting..."));
+        reporter.success(&super::inception_line(
+            "L1",
+            "workspace isolation starting...",
+        ));
     }
 
     super::services::start_services_with_progress(mp, reporter, quiet).await;
@@ -275,21 +287,6 @@ pub async fn restart(
 }
 
 // ── Private helpers ──────────────────────────────────────────────────────────
-
-fn inception_line(level: &str, msg: &str) -> String {
-    use owo_colors::{OwoColorize, Stream::Stdout, Style};
-    let tag_style = match level {
-        "L0" => Style::new().truecolor(107, 33, 168),
-        "L1" => Style::new().truecolor(93, 37, 163),
-        "L2" => Style::new().truecolor(64, 47, 153),
-        _ => Style::new().truecolor(46, 53, 147),
-    };
-    format!(
-        "{}  {}",
-        "[inception]".if_supports_color(Stdout, |t| t.style(tag_style)),
-        msg
-    )
-}
 
 const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
 
@@ -338,7 +335,7 @@ async fn pin_host_key(ssh: &impl SshConfigurator) {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::process::{ExitStatus, Output};
+    use std::process::Output;
 
     use anyhow::Result;
 
@@ -346,34 +343,15 @@ mod tests {
     use crate::application::ports::{
         InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
     };
-
-    /// Build an `ExitStatus` from a logical exit code (cross-platform).
-    #[cfg(unix)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::unix::process::ExitStatusExt;
-        ExitStatus::from_raw(code << 8)
-    }
-
-    #[cfg(windows)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::windows::process::ExitStatusExt;
-        #[allow(clippy::cast_sign_loss)]
-        ExitStatus::from_raw(code as u32)
-    }
+    use crate::application::services::vm::test_support::{
+        exit_status, fail_output, impl_shell_executor_stubs, ok_output,
+    };
 
     fn ok(stdout: &[u8]) -> Output {
-        Output {
-            status: exit_status(0),
-            stdout: stdout.to_vec(),
-            stderr: Vec::new(),
-        }
+        ok_output(stdout)
     }
     fn fail() -> Output {
-        Output {
-            status: exit_status(1),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }
+        fail_output()
     }
 
     struct MultipassVmInfoStub(Output);
@@ -479,24 +457,7 @@ mod tests {
             self.exec_called.set(true);
             Ok(ok(b""))
         }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            anyhow::bail!("not expected")
-        }
+        impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
     }
 
     struct ReporterStub;
@@ -520,30 +481,10 @@ mod tests {
 
     struct MultipassExitStatusStub(i32);
     impl ShellExecutor for MultipassExitStatusStub {
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        async fn exec(&self, _: &[&str]) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
         async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
             Ok(exit_status(self.0))
         }
+        impl_shell_executor_stubs!(exec, exec_with_stdin, exec_spawn);
     }
 
     #[tokio::test]

@@ -63,51 +63,24 @@ pub(super) async fn start_services_with_progress(
     quiet: bool,
 ) {
     if !quiet {
-        reporter.step(&inception_line("L2", "agent isolation starting..."));
+        reporter.step(&super::inception_line("L2", "agent isolation starting..."));
     }
     start_services(mp).await;
     if !quiet {
-        reporter.success(&inception_line("L2", "agent isolation starting..."));
+        reporter.success(&super::inception_line("L2", "agent isolation starting..."));
     }
-}
-
-fn inception_line(level: &str, msg: &str) -> String {
-    use owo_colors::{OwoColorize, Stream::Stdout, Style};
-    let tag_style = match level {
-        "L0" => Style::new().truecolor(107, 33, 168),
-        "L1" => Style::new().truecolor(93, 37, 163),
-        "L2" => Style::new().truecolor(64, 47, 153),
-        _ => Style::new().truecolor(46, 53, 147),
-    };
-    format!(
-        "{}  {}",
-        "[inception]".if_supports_color(Stdout, |t| t.style(tag_style)),
-        msg
-    )
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::process::{ExitStatus, Output};
+    use std::process::Output;
 
     use anyhow::Result;
 
     use super::*;
     use crate::application::ports::ShellExecutor;
-
-    #[cfg(unix)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::unix::process::ExitStatusExt;
-        ExitStatus::from_raw(code << 8)
-    }
-
-    #[cfg(windows)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::windows::process::ExitStatusExt;
-        #[allow(clippy::cast_sign_loss)]
-        ExitStatus::from_raw(code as u32)
-    }
+    use crate::application::services::vm::test_support::{exit_status, impl_shell_executor_stubs};
 
     struct PullImagesStub {
         exit_code: i32,
@@ -150,15 +123,7 @@ mod tests {
                 stderr: self.stderr.clone(),
             })
         }
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            anyhow::bail!("not expected")
-        }
+        impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
     }
 
     #[tokio::test]

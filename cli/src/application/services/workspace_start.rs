@@ -3,7 +3,6 @@
 //! Imports only from `crate::domain` and `crate::application::ports`.
 //! All I/O is routed through injected port traits.
 
-use crate::domain::agent::artifacts;
 use anyhow::{Context, Result};
 
 pub struct StartOptions<'a, R: crate::application::ports::ProgressReporter> {
@@ -335,15 +334,6 @@ async fn setup_agent<P: VmProvisioner>(
     crate::domain::agent::validate::validate_full_manifest(&manifest)?;
 
     let generated_dir = tmp_path.join("agents").join(&name).join(".generated");
-    local_fs.create_dir_all(&generated_dir)?;
-
-    let compose = artifacts::compose_overlay(&manifest).replace("\r\n", "\n");
-    local_fs.write(&generated_dir.join("compose.agent.yaml"), compose)?;
-
-    let unit = artifacts::systemd_unit(&manifest).replace("\r\n", "\n");
-    let hash = artifacts::service_hash(&unit);
-    local_fs.write(&generated_dir.join(format!("{name}.service")), unit)?;
-    local_fs.write(&generated_dir.join(format!("{name}.service.sha256")), hash)?;
 
     // Write environment variables to the agent's .env file, forcing LF line endings.
     let env_content = if envs.is_empty() {
@@ -351,7 +341,14 @@ async fn setup_agent<P: VmProvisioner>(
     } else {
         format!("{}\n", envs.join("\n")).replace("\r\n", "\n")
     };
-    local_fs.write(&generated_dir.join(format!("{name}.env")), env_content)?;
+
+    crate::application::services::agent_crud::write_artifacts_to_dir(
+        local_fs,
+        &generated_dir,
+        &name,
+        &manifest,
+        env_content,
+    )?;
 
     // Transfer the generated artifacts back into the VM.
     // Remove existing .generated to avoid nested directories from

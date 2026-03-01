@@ -11,6 +11,44 @@ use crate::application::ports::{
 };
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
 
+/// Write generated agent artifacts to `<generated_dir>/`.
+///
+/// Shared by `generate_and_write_artifacts` (local install) and
+/// `setup_agent` (VM-based update/start).
+pub(crate) fn write_artifacts_to_dir(
+    local_fs: &impl crate::application::ports::LocalFs,
+    generated_dir: &std::path::Path,
+    name: &str,
+    manifest: &polis_common::agent::AgentManifest,
+    env_content: String,
+) -> Result<()> {
+    use crate::domain::agent::artifacts;
+
+    local_fs
+        .create_dir_all(generated_dir)
+        .with_context(|| format!("creating {}", generated_dir.display()))?;
+
+    let compose = artifacts::compose_overlay(manifest);
+    local_fs
+        .write(&generated_dir.join("compose.agent.yaml"), compose)
+        .context("writing compose.agent.yaml")?;
+
+    let unit = artifacts::systemd_unit(manifest);
+    let hash = artifacts::service_hash(&unit);
+    local_fs
+        .write(&generated_dir.join(format!("{name}.service")), unit)
+        .context("writing .service file")?;
+    local_fs
+        .write(&generated_dir.join(format!("{name}.service.sha256")), hash)
+        .context("writing .service.sha256 file")?;
+
+    local_fs
+        .write(&generated_dir.join(format!("{name}.env")), env_content)
+        .context("writing .env file")?;
+
+    Ok(())
+}
+
 /// Generate agent artifacts from `agent.yaml` and write them to
 /// `<polis_dir>/agents/<name>/.generated/`.
 ///
@@ -26,8 +64,6 @@ fn generate_and_write_artifacts(
     polis_dir: &std::path::Path,
     name: &str,
 ) -> Result<()> {
-    use crate::domain::agent::artifacts;
-
     let manifest_path = polis_dir.join("agents").join(name).join("agent.yaml");
     let content = local_fs
         .read_to_string(&manifest_path)
@@ -36,33 +72,13 @@ fn generate_and_write_artifacts(
         serde_yaml::from_str(&content).context("failed to parse agent.yaml")?;
 
     let generated_dir = polis_dir.join("agents").join(name).join(".generated");
-    local_fs
-        .create_dir_all(&generated_dir)
-        .with_context(|| format!("creating {}", generated_dir.display()))?;
-
-    let compose = artifacts::compose_overlay(&manifest);
-    local_fs
-        .write(&generated_dir.join("compose.agent.yaml"), compose)
-        .context("writing compose.agent.yaml")?;
-
-    let unit = artifacts::systemd_unit(&manifest);
-    let hash = artifacts::service_hash(&unit);
-    local_fs
-        .write(&generated_dir.join(format!("{name}.service")), unit)
-        .context("writing .service file")?;
-    local_fs
-        .write(&generated_dir.join(format!("{name}.service.sha256")), hash)
-        .context("writing .service.sha256 file")?;
 
     let env_content = local_fs
         .read_to_string(&polis_dir.join(".env"))
         .unwrap_or_default();
-    let filtered = artifacts::filtered_env(&env_content, &manifest);
-    local_fs
-        .write(&generated_dir.join(format!("{name}.env")), filtered)
-        .context("writing .env file")?;
+    let filtered = crate::domain::agent::artifacts::filtered_env(&env_content, &manifest);
 
-    Ok(())
+    write_artifacts_to_dir(local_fs, &generated_dir, name, &manifest, filtered)
 }
 
 /// Path to the polis project root inside the VM.

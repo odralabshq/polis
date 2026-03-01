@@ -98,46 +98,16 @@ pub async fn verify_image_digests(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::process::{ExitStatus, Output};
+    use std::process::Output;
     use std::sync::Mutex;
 
     use anyhow::Result;
 
     use super::*;
     use crate::application::ports::ShellExecutor;
-
-    // ── Cross-platform ExitStatus helper ─────────────────────────────────────
-
-    #[cfg(unix)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::unix::process::ExitStatusExt;
-        ExitStatus::from_raw(code << 8)
-    }
-
-    #[cfg(windows)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::windows::process::ExitStatusExt;
-        #[allow(clippy::cast_sign_loss)]
-        ExitStatus::from_raw(code as u32)
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    fn ok_output(stdout: &str) -> Output {
-        Output {
-            status: exit_status(0),
-            stdout: stdout.as_bytes().to_vec(),
-            stderr: Vec::new(),
-        }
-    }
-
-    fn fail_output() -> Output {
-        Output {
-            status: exit_status(1),
-            stdout: Vec::new(),
-            stderr: b"docker inspect failed".to_vec(),
-        }
-    }
+    use crate::application::services::vm::test_support::{
+        fail_output, impl_shell_executor_stubs, ok_output,
+    };
 
     // ── Mock ─────────────────────────────────────────────────────────────────
 
@@ -180,29 +150,12 @@ mod tests {
             let combined = args.join(" ");
             for (key, stdout) in &self.responses {
                 if combined.contains(key.as_str()) {
-                    return Ok(ok_output(stdout));
+                    return Ok(ok_output(stdout.as_bytes()));
                 }
             }
             Ok(fail_output())
         }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            anyhow::bail!("not expected")
-        }
+        impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
     }
 
     // ── write_config_hash tests ───────────────────────────────────────────────
@@ -229,7 +182,7 @@ mod tests {
             self.exec_calls
                 .borrow_mut()
                 .push(args.iter().map(std::string::ToString::to_string).collect());
-            Ok(ok_output(""))
+            Ok(ok_output(b""))
         }
         /// # Errors
         ///
@@ -239,20 +192,9 @@ mod tests {
                 args.iter().map(std::string::ToString::to_string).collect(),
                 stdin.to_vec(),
             ));
-            Ok(ok_output(""))
+            Ok(ok_output(b""))
         }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            anyhow::bail!("not expected")
-        }
+        impl_shell_executor_stubs!(exec_spawn, exec_status);
     }
 
     #[tokio::test]
@@ -300,55 +242,8 @@ mod tests {
 
     // ── verify_image_digests tests ────────────────────────────────────────────
 
-    /// Helper: run digest verification against a synthetic manifest (bypasses
-    /// the embedded asset) by directly calling the inner verification logic.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if the underlying operations fail.
-    async fn verify_manifest(
-        mp: &impl ShellExecutor,
-        _assets: &impl AssetExtractor,
-        manifest: &DigestManifest,
-    ) -> Result<()> {
-        if manifest.is_empty() {
-            // Test warning
-            eprintln!(
-                "⚠ Warning: image digest manifest is empty — verification skipped (local dev build)"
-            );
-            return Ok(());
-        }
-
-        for (image, expected_digest) in manifest {
-            let output = mp
-                .exec(&[
-                    "docker",
-                    "inspect",
-                    "--format",
-                    "{{index .RepoDigests 0}}",
-                    image,
-                ])
-                .await
-                .with_context(|| format!("inspecting image {image}"))?;
-
-            let actual = String::from_utf8_lossy(&output.stdout);
-            let actual = actual.trim();
-
-            if !actual.contains(expected_digest.as_str()) {
-                anyhow::bail!(
-                    "Image digest mismatch for {image}\n\
-                     Expected: {expected_digest}\n\
-                     Actual:   {actual}\n\n\
-                     This may indicate image tampering.\n\
-                     Recovery: polis delete && polis start"
-                );
-            }
-        }
-        Ok(())
-    }
-
-    struct AssetStub;
-    impl AssetExtractor for AssetStub {
+    struct ManifestStub(&'static [u8]);
+    impl AssetExtractor for ManifestStub {
         /// # Errors
         ///
         /// This function will return an error if the underlying operations fail.
@@ -359,15 +254,22 @@ mod tests {
         ///
         /// This function will return an error if the underlying operations fail.
         async fn get_asset(&self, _: &str) -> Result<&'static [u8]> {
-            anyhow::bail!("not used")
+            Ok(self.0)
         }
+    }
+
+    struct ReporterStub;
+    impl crate::application::ports::ProgressReporter for ReporterStub {
+        fn step(&self, _: &str) {}
+        fn success(&self, _: &str) {}
+        fn warn(&self, _: &str) {}
     }
 
     #[tokio::test]
     async fn empty_manifest_skips_verification() {
         let mp = DigestMock::new(vec![]);
-        let manifest: DigestManifest = HashMap::new();
-        let result = verify_manifest(&mp, &AssetStub, &manifest).await;
+        let stub = ManifestStub(b"{}");
+        let result = verify_image_digests(&mp, &stub, &ReporterStub).await;
         assert!(result.is_ok(), "empty manifest should succeed");
         assert!(mp.calls().is_empty(), "no docker inspect calls");
     }
@@ -379,10 +281,11 @@ mod tests {
         let repo_digest = format!("{image}@{digest}");
         let mp = DigestMock::new(vec![(image, &repo_digest)]);
 
-        let mut manifest = DigestManifest::new();
-        manifest.insert(image.to_owned(), digest.to_owned());
+        let manifest_json = format!("{{\"{image}\":\"{digest}\"}}");
+        let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
+        let stub = ManifestStub(manifest_bytes);
 
-        let result = verify_manifest(&mp, &AssetStub, &manifest).await;
+        let result = verify_image_digests(&mp, &stub, &ReporterStub).await;
         assert!(result.is_ok(), "matching digest should pass: {result:?}");
     }
 
@@ -394,10 +297,11 @@ mod tests {
         let repo_digest = format!("{image}@{actual_digest}");
         let mp = DigestMock::new(vec![(image, &repo_digest)]);
 
-        let mut manifest = DigestManifest::new();
-        manifest.insert(image.to_owned(), expected.to_owned());
+        let manifest_json = format!("{{\"{image}\":\"{expected}\"}}");
+        let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
+        let stub = ManifestStub(manifest_bytes);
 
-        let err = verify_manifest(&mp, &AssetStub, &manifest)
+        let err = verify_image_digests(&mp, &stub, &ReporterStub)
             .await
             .expect_err("mismatched digest should fail");
 
@@ -425,10 +329,11 @@ mod tests {
         let repo_digest = format!("{image}@{actual}");
         let mp = DigestMock::new(vec![(image, &repo_digest)]);
 
-        let mut manifest = DigestManifest::new();
-        manifest.insert(image.to_owned(), expected.to_owned());
+        let manifest_json = format!("{{\"{image}\":\"{expected}\"}}");
+        let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
+        let stub = ManifestStub(manifest_bytes);
 
-        let err = verify_manifest(&mp, &AssetStub, &manifest)
+        let err = verify_image_digests(&mp, &stub, &ReporterStub)
             .await
             .expect_err("should fail");
         let msg = err.to_string();
@@ -448,36 +353,17 @@ mod tests {
         struct FailingMock;
         #[allow(clippy::items_after_statements)]
         impl ShellExecutor for FailingMock {
-            /// # Errors
-            ///
-            /// This function will return an error if the underlying operations fail.
             async fn exec(&self, _: &[&str]) -> Result<Output> {
                 Err(anyhow::anyhow!("multipass exec failed"))
             }
-            /// # Errors
-            ///
-            /// This function will return an error if the underlying operations fail.
-            async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
-                anyhow::bail!("not expected")
-            }
-            /// # Errors
-            ///
-            /// This function will return an error if the underlying operations fail.
-            fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-                anyhow::bail!("not expected")
-            }
-            /// # Errors
-            ///
-            /// This function will return an error if the underlying operations fail.
-            async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-                anyhow::bail!("not expected")
-            }
+            impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
         }
 
-        let mut manifest = DigestManifest::new();
-        manifest.insert(image.to_owned(), "sha256:abc".to_owned());
+        let manifest_json = format!("{{\"{image}\":\"sha256:abc\"}}");
+        let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
+        let stub = ManifestStub(manifest_bytes);
 
-        let err = verify_manifest(&FailingMock, &AssetStub, &manifest)
+        let err = verify_image_digests(&FailingMock, &stub, &ReporterStub)
             .await
             .expect_err("exec failure should propagate");
         assert!(err.to_string().contains("inspecting image"));
@@ -485,7 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_images_all_verified() {
-        let images = vec![
+        let images = [
             ("ghcr.io/odralabshq/polis-resolver:v1.0", "sha256:aaa"),
             ("ghcr.io/odralabshq/polis-gate:v1.0", "sha256:bbb"),
             ("ghcr.io/odralabshq/polis-sentinel:v1.0", "sha256:ccc"),
@@ -499,12 +385,17 @@ mod tests {
             responses.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
         let mp = DigestMock::new(responses_ref);
-        let mut manifest = DigestManifest::new();
-        for (img, digest) in &images {
-            manifest.insert(img.to_string(), digest.to_string());
-        }
 
-        let result = verify_manifest(&mp, &AssetStub, &manifest).await;
+        let manifest_json = images
+            .iter()
+            .map(|(img, digest)| format!("\"{img}\":\"{digest}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        let manifest_json = format!("{{{manifest_json}}}");
+        let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
+        let stub = ManifestStub(manifest_bytes);
+
+        let result = verify_image_digests(&mp, &stub, &ReporterStub).await;
         assert!(result.is_ok(), "all matching digests should pass");
         assert_eq!(mp.calls().len(), 3, "should inspect all 3 images");
     }

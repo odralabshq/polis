@@ -49,6 +49,37 @@ impl TokioCommandRunner {
     }
 }
 
+/// Read stdout and stderr from child handles, wait for exit, and return `Output`.
+async fn collect_output(
+    child: &mut tokio::process::Child,
+    stdout_handle: &mut Option<tokio::process::ChildStdout>,
+    stderr_handle: &mut Option<tokio::process::ChildStderr>,
+    program: &str,
+) -> Result<Output> {
+    let (status, stdout, stderr) = tokio::join!(
+        child.wait(),
+        async {
+            let mut buf = Vec::new();
+            if let Some(h) = stdout_handle {
+                let _ = h.read_to_end(&mut buf).await;
+            }
+            buf
+        },
+        async {
+            let mut buf = Vec::new();
+            if let Some(h) = stderr_handle {
+                let _ = h.read_to_end(&mut buf).await;
+            }
+            buf
+        },
+    );
+    Ok(Output {
+        status: status.with_context(|| format!("waiting for {program}"))?,
+        stdout,
+        stderr,
+    })
+}
+
 impl CommandRunner for TokioCommandRunner {
     /// # Errors
     ///
@@ -83,30 +114,7 @@ impl CommandRunner for TokioCommandRunner {
         let mut stderr_handle = child.stderr.take();
 
         tokio::select! {
-            result = async {
-                let (status, stdout, stderr) = tokio::join!(
-                    child.wait(),
-                    async {
-                        let mut buf = Vec::new();
-                        if let Some(ref mut h) = stdout_handle {
-                            let _ = h.read_to_end(&mut buf).await;
-                        }
-                        buf
-                    },
-                    async {
-                        let mut buf = Vec::new();
-                        if let Some(ref mut h) = stderr_handle {
-                            let _ = h.read_to_end(&mut buf).await;
-                        }
-                        buf
-                    },
-                );
-                Ok(Output {
-                    status: status.with_context(|| format!("waiting for {program}"))?,
-                    stdout,
-                    stderr,
-                })
-            } => result,
+            result = collect_output(&mut child, &mut stdout_handle, &mut stderr_handle, program) => result,
             () = tokio::time::sleep(timeout) => {
                 let _ = child.kill().await;
                 anyhow::bail!("{program} timed out after {}s", timeout.as_secs())
@@ -146,29 +154,9 @@ impl CommandRunner for TokioCommandRunner {
 
         tokio::select! {
             result = async {
-                let (status, stdout, stderr) = tokio::join!(
-                    child.wait(),
-                    async {
-                        let mut buf = Vec::new();
-                        if let Some(ref mut h) = stdout_handle {
-                            let _ = h.read_to_end(&mut buf).await;
-                        }
-                        buf
-                    },
-                    async {
-                        let mut buf = Vec::new();
-                        if let Some(ref mut h) = stderr_handle {
-                            let _ = h.read_to_end(&mut buf).await;
-                        }
-                        buf
-                    },
-                );
+                let output = collect_output(&mut child, &mut stdout_handle, &mut stderr_handle, program).await?;
                 let _ = stdin_task.await;
-                Ok(Output {
-                    status: status.with_context(|| format!("waiting for {program}"))?,
-                    stdout,
-                    stderr,
-                })
+                Ok(output)
             } => result,
             () = tokio::time::sleep(self.timeout) => {
                 let _ = child.kill().await;

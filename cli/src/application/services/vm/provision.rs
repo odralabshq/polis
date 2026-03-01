@@ -270,33 +270,13 @@ pub async fn generate_certs_and_secrets(mp: &impl ShellExecutor) -> Result<()> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::process::{ExitStatus, Output};
+    use std::process::Output;
 
     use anyhow::Result;
 
     use super::*;
     use crate::application::ports::{FileTransfer, ShellExecutor};
-
-    #[cfg(unix)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::unix::process::ExitStatusExt;
-        ExitStatus::from_raw(code << 8)
-    }
-
-    #[cfg(windows)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::windows::process::ExitStatusExt;
-        #[allow(clippy::cast_sign_loss)]
-        ExitStatus::from_raw(code as u32)
-    }
-
-    fn ok(stdout: &[u8]) -> Output {
-        Output {
-            status: exit_status(0),
-            stdout: stdout.to_vec(),
-            stderr: Vec::new(),
-        }
-    }
+    use crate::application::services::vm::test_support::{impl_shell_executor_stubs, ok_output};
 
     struct TransferConfigSpy {
         transferred: std::cell::RefCell<Vec<(String, String)>>,
@@ -322,7 +302,7 @@ mod tests {
             self.transferred
                 .borrow_mut()
                 .push((src.to_string(), dst.to_string()));
-            Ok(ok(b""))
+            Ok(ok_output(b""))
         }
         /// # Errors
         ///
@@ -339,7 +319,7 @@ mod tests {
             self.exec_calls
                 .borrow_mut()
                 .push(args.iter().map(std::string::ToString::to_string).collect());
-            Ok(ok(b""))
+            Ok(ok_output(b""))
         }
         /// # Errors
         ///
@@ -349,20 +329,9 @@ mod tests {
                 args.iter().map(std::string::ToString::to_string).collect(),
                 stdin.to_vec(),
             ));
-            Ok(ok(b""))
+            Ok(ok_output(b""))
         }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        fn exec_spawn(&self, _: &[&str]) -> Result<tokio::process::Child> {
-            anyhow::bail!("not expected")
-        }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
-        async fn exec_status(&self, _: &[&str]) -> Result<std::process::ExitStatus> {
-            anyhow::bail!("not expected")
-        }
+        impl_shell_executor_stubs!(exec_spawn, exec_status);
     }
 
     fn make_safe_tarball() -> (tempfile::TempDir, std::path::PathBuf) {
