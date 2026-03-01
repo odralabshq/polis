@@ -26,7 +26,7 @@ setup_certs_and_secrets() {
     ./services/state/scripts/generate-secrets.sh ./secrets .
     mkdir -p ./certs/toolbox
     ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
-    ./scripts/fix-cert-ownership.sh
+    ./scripts/fix-cert-ownership.sh .
     return 0
 }
 
