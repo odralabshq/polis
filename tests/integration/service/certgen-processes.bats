@@ -51,7 +51,7 @@ setup() {
     # Run openssl from host against mounted certs
     local cert_mod key_mod
     cert_mod=$(openssl x509 -noout -modulus -in "$PROJECT_ROOT/certs/ca/ca.pem" 2>/dev/null | md5sum)
-    key_mod=$(openssl rsa -noout -modulus -in "$PROJECT_ROOT/certs/ca/ca.key" 2>/dev/null | md5sum)
+    key_mod=$(sudo openssl rsa -noout -modulus -in "$PROJECT_ROOT/certs/ca/ca.key" 2>/dev/null | md5sum)
     [[ "$cert_mod" == "$key_mod" ]] || fail "CA key does not match cert"
 }
 

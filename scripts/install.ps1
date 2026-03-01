@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # Polis Installer for Windows
 # =============================================================================
 # One-line install: irm https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.ps1 | iex
@@ -10,8 +10,6 @@ Set-StrictMode -Version Latest
 
 $Version          = if ($env:POLIS_VERSION)  { $env:POLIS_VERSION }  else { "0.3.0-preview-11" }
 $InstallDir       = if ($env:POLIS_HOME)     { $env:POLIS_HOME }     else { Join-Path $env:USERPROFILE ".polis" }
-$CdnBaseUrl       = if ($env:POLIS_CDN_URL)  { $env:POLIS_CDN_URL }  else { "https://d1qggvwquwdnma.cloudfront.net" }
-$ImageDir         = Join-Path $InstallDir "images"
 $RepoOwner        = "OdraLabsHQ"
 $RepoName         = "polis"
 $MultipassMin     = [version]"1.16.0"
@@ -47,6 +45,21 @@ function Install-Multipass {
     $url = "https://github.com/canonical/multipass/releases/download/v${MultipassVersion}/multipass-${MultipassVersion}+win-Windows.msi"
     Write-Info "Downloading Multipass ${MultipassVersion}..."
     Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
+
+    # SHA256 hash for Multipass MSI — update when bumping $MultipassVersion
+    $MultipassSha256 = if ($env:MULTIPASS_SHA256_WIN) { $env:MULTIPASS_SHA256_WIN } else { "PLACEHOLDER_UPDATE_WHEN_BUMPING_VERSION" }
+
+    Write-Info "Verifying Multipass MSI SHA256..."
+    $msiHash = (Get-FileHash $msi -Algorithm SHA256).Hash.ToLower()
+    if ($msiHash -ne $MultipassSha256.ToLower()) {
+        Write-Err "Multipass MSI SHA256 mismatch!"
+        Write-Host "  Expected: $MultipassSha256"
+        Write-Host "  Actual:   $msiHash"
+        Remove-Item $msi -Force -ErrorAction SilentlyContinue
+        throw "Multipass MSI SHA256 mismatch."
+    }
+    Write-Ok "Multipass MSI SHA256 verified"
+
     Write-Info "Installing Multipass (this may take a minute)..."
     $proc = Start-Process msiexec -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait -PassThru
     Remove-Item $msi -Force -ErrorAction SilentlyContinue
@@ -134,108 +147,10 @@ function Add-ToUserPath {
     }
 }
 
-# -- Image ---------------------------------------------------------------------
-
-function Get-Image {
-    $ghBase    = "https://github.com/${RepoOwner}/${RepoName}/releases/download/${Version}"
-    $versions  = Invoke-RestMethod -Uri "$ghBase/versions.json" -UseBasicParsing
-    $imageName = $versions.vm_image.asset
-    $dest      = Join-Path $ImageDir $imageName
-    $sidecar   = "$dest.sha256"
-
-    New-Item -ItemType Directory -Force -Path $ImageDir | Out-Null
-
-    # Try CDN first, fall back to GitHub (S3 keys use v-prefixed version)
-    $cdnUrl     = "${CdnBaseUrl}/v${Version}/${imageName}"
-    $ghUrl      = "${ghBase}/${imageName}"
-    $downloaded = $false
-
-    Write-Info "Downloading VM image from CDN (this may take a few minutes)..."
-    try {
-        Invoke-WebRequest -Uri $cdnUrl -OutFile $dest -UseBasicParsing -ErrorAction Stop
-        $downloaded = $true
-    } catch {
-        Write-Warn "CDN unavailable, falling back to GitHub..."
-    }
-
-    if (-not $downloaded) {
-        Write-Info "Downloading VM image from GitHub (this may take a few minutes)..."
-        Invoke-WebRequest -Uri $ghUrl -OutFile $dest -UseBasicParsing
-    }
-
-    # Download signed sidecar for CLI integrity verification
-    Invoke-WebRequest -Uri "$ghBase/$imageName.sha256" -OutFile $sidecar -UseBasicParsing
-
-    # Checksum always fetched from GitHub (separate origin from binary)
-    Write-Info "Verifying image SHA256..."
-    $checksumFile = Join-Path $env:TEMP "polis-checksums.sha256"
-    Invoke-WebRequest -Uri "$ghBase/checksums.sha256" -OutFile $checksumFile -UseBasicParsing
-    $expected = (Get-Content $checksumFile | Where-Object { $_ -like "*$imageName*" } | ForEach-Object { ($_ -split '\s+')[0] }) | Select-Object -First 1
-    Remove-Item $checksumFile -Force -ErrorAction SilentlyContinue
-    if (-not $expected) {
-        Write-Warn "Could not find checksum for $imageName - skipping verification"
-    } else {
-        $actual = (Get-FileHash $dest -Algorithm SHA256).Hash.ToLower()
-        if ($actual -ne $expected.ToLower()) {
-            Write-Err "Image SHA256 mismatch!"
-            Write-Host "  Expected: $expected"
-            Write-Host "  Actual:   $actual"
-            Remove-Item $dest -Force -ErrorAction SilentlyContinue
-            Remove-Item $sidecar -Force -ErrorAction SilentlyContinue
-            throw "Image SHA256 mismatch."
-        }
-        Write-Ok "Image SHA256 verified: $expected"
-    }
-    return $dest
-}
-
-# -- Init ----------------------------------------------------------------------
-
-function Invoke-PolisInit {
-    param([string]$ImagePath)
-    $polis = Join-Path $InstallDir "bin\polis.exe"
-
-    # Check if a polis VM already exists (suppress all errors — expected to fail if no VM)
-    $vmExists = $false
-    try {
-        $ErrorActionPreference = "Continue"
-        $null = & multipass info polis 2>&1
-        if ($LASTEXITCODE -eq 0) { $vmExists = $true }
-        $ErrorActionPreference = "Stop"
-    } catch {
-        $ErrorActionPreference = "Stop"
-    }
-
-    if ($vmExists) {
-        Write-Warn "An existing polis VM was found."
-        $confirm = Read-Host "Remove it and start fresh? [y/N]"
-        if ($confirm -eq 'y') {
-            Write-Info "Removing existing polis VM..."
-            & multipass delete polis
-            & multipass purge
-        } else {
-            Write-Info "Keeping existing VM. Skipping removal."
-        }
-    }
-    Remove-Item (Join-Path $InstallDir "state.json") -Force -ErrorAction SilentlyContinue
-
-    Write-Info "Running: polis start --image $ImagePath"
-    $ErrorActionPreference = "Continue"
-    & $polis start --image $ImagePath
-    $startExitCode = $LASTEXITCODE
-    $ErrorActionPreference = "Stop"
-    if ($startExitCode -ne 0) {
-        Write-Err "polis start failed. Run manually:"
-        Write-Host "  polis start --image $ImagePath"
-        throw "polis start failed."
-    }
-}
-
 # -- Main ----------------------------------------------------------------------
 
 function Invoke-PolisInstall {
     $ErrorActionPreference = "Stop"
-    # Suppress progress bars — makes Invoke-WebRequest 10-50x faster on PS 5.x
     $ProgressPreference = "SilentlyContinue"
 
     Write-Host ""
@@ -248,8 +163,48 @@ function Invoke-PolisInstall {
     Write-Info "Installing Polis ${Version}"
     Install-Cli
     Add-ToUserPath
-    $imagePath = Get-Image
-    Invoke-PolisInit -ImagePath $imagePath
+
+    # Repair existing VM instead of destroying it
+    $vmExists = $false
+    try {
+        $ErrorActionPreference = "Continue"
+        $null = & multipass info polis 2>&1
+        if ($LASTEXITCODE -eq 0) { $vmExists = $true }
+        $ErrorActionPreference = "Stop"
+    } catch {
+        $ErrorActionPreference = "Stop"
+    }
+
+    $polis = Join-Path $InstallDir "bin\polis.exe"
+
+    if ($vmExists) {
+        Write-Warn "Existing polis VM found, attempting repair..."
+        $ErrorActionPreference = "Continue"
+        & $polis doctor --fix
+        $fixExitCode = $LASTEXITCODE
+        $ErrorActionPreference = "Stop"
+        if ($fixExitCode -eq 0) {
+            Write-Ok "VM repaired and running"
+            exit 0
+        } else {
+            Write-Err "Repair failed. To start fresh (destroys VM data):"
+            Write-Host "  polis delete; polis start"
+            exit 1
+        }
+    }
+
+    Remove-Item (Join-Path $InstallDir "state.json") -Force -ErrorAction SilentlyContinue
+
+    # Start (creates VM, generates certs inside VM)
+    Write-Info "Starting Polis..."
+    $ErrorActionPreference = "Continue"
+    & $polis start
+    $startExitCode = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($startExitCode -ne 0) {
+        Write-Err "polis start failed."
+        throw "polis start failed."
+    }
 
     Write-Host ""
     Write-Ok "Polis installed successfully!"

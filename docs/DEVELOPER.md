@@ -6,32 +6,72 @@ This guide covers the development workflow, tools, and CI/CD for building Polis 
 
 ## Quick Start
 
+**Linux / macOS (QEMU):**
+
 ```bash
-# 1. Setup (generate certs and secrets)
+# 1. Install prerequisites
+just install-tools
+
+# 2. Setup (generate certs and secrets)
 just setup
 
-# 2. Build CLI + Docker images + VM image
+# 3. Build CLI + Docker images + VM image
 just build
 
-# 3. Install dev build
+# 4. Install dev build
 bash scripts/install-dev.sh
 
-# 4. Run workspace
+# 5. Run workspace
 polis run
+```
+
+**Windows (Hyper-V):**
+
+```powershell
+# 1. Install prerequisites (Docker Desktop, Packer, ADK, Hyper-V, …)
+just install-tools-windows
+
+# 2. Log out and back in (Hyper-V Administrators group), reboot if Hyper-V was just enabled
+
+# 3. Verify all tools present
+just check-tools-windows
+
+# 4. Build CLI + Docker images + Hyper-V VM image
+just build-windows
 ```
 
 ## Prerequisites
 
+### Linux / macOS
+
 | Tool | Required | Install |
 |------|----------|---------|
-| just | Yes | `curl -sSf https://just.systems/install.sh \| bash` |
+| `just` | Yes | `curl -sSf https://just.systems/install.sh \| bash` |
 | Docker | Yes | `just install-tools` |
 | shellcheck | For linting | `just install-tools` |
 | hadolint | For Dockerfile linting | `just install-tools` |
 | container-structure-test | For image validation | `just install-tools` |
 | Multipass | For dev VM | `just install-tools` |
 | Packer | For VM builds | `just install-tools` (adds HashiCorp apt repo) |
-| QEMU + xorriso | For VM builds | `just install-tools` |
+| QEMU + xorriso | For VM builds (QEMU builder) | `just install-tools` |
+| Rust toolchain | For CLI build | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+
+### Windows (Hyper-V builder)
+
+Run `just install-tools-windows` to install everything automatically, or install manually:
+
+| Tool | Required | Install |
+|------|----------|---------|
+| `just` | Yes | `winget install Casey.Just` |
+| Docker Desktop | Yes | `winget install Docker.DockerDesktop` |
+| Packer | Yes | `winget install HashiCorp.Packer` |
+| Windows ADK (Deployment Tools) | Yes — provides `oscdimg` for Packer seed ISO | `winget install Microsoft.WindowsADK` |
+| Hyper-V Windows Feature | Yes | `Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All` |
+| Hyper-V Administrators group | Yes | `Add-LocalGroupMember -Group 'Hyper-V Administrators' -Member $env:USERNAME` |
+| Rust toolchain | Yes | `winget install Rustlang.Rustup` or <https://rustup.rs> |
+| shellcheck | For linting | `winget install koalaman.shellcheck` |
+| hadolint | For Dockerfile linting | see `scripts/install-tools-windows.ps1` |
+| zipsign | For artifact signing | `cargo install zipsign` |
 
 ## Project Structure
 
@@ -65,17 +105,22 @@ Run `just --list` to see all available recipes.
 
 ### Setup & Build
 
-| Recipe | Description |
-|--------|-------------|
-| `just setup` | Generate all certificates and secrets |
-| `just setup-ca` | Generate CA certificate only |
-| `just setup-valkey` | Generate Valkey certs and secrets |
-| `just setup-toolbox` | Generate Toolbox certificates |
-| `just build` | Build CLI + Docker images + VM image |
-| `just build-cli` | Build the Rust CLI binary |
-| `just build-docker` | Build all Docker images |
-| `just build-vm` | Build VM image via Packer (sign included) |
-| `just build-service <name>` | Build a specific Docker service |
+| Recipe | Platform | Description |
+|--------|----------|-------------|
+| `just setup` | Linux/macOS | Generate all certificates and secrets |
+| `just setup-ca` | Linux/macOS | Generate CA certificate only |
+| `just setup-valkey` | Linux/macOS | Generate Valkey certs and secrets |
+| `just setup-toolbox` | Linux/macOS | Generate Toolbox certificates |
+| `just build` | Linux/macOS | Build CLI + Docker images + QEMU VM image |
+| `just build-windows` | **Windows** | Build CLI + Docker images + Hyper-V VM image |
+| `just build-cli` | Both | Build the Rust CLI binary |
+| `just build-docker` | Both | Build all Docker images |
+| `just build-vm` | Linux/macOS | Build QEMU VM image via Packer (sign included) |
+| `just build-vm-hyperv` | **Windows** | Build Hyper-V `.vhdx` image via Packer (sign included) |
+| `just build-service <name>` | Both | Build a specific Docker service |
+| `just install-tools` | Linux/macOS | Install all build prerequisites |
+| `just install-tools-windows` | **Windows** | Install all build prerequisites (winget + ADK + Hyper-V) |
+| `just check-tools-windows` | **Windows** | Verify all prerequisites are present (no installs) |
 
 ### Lifecycle
 
@@ -224,6 +269,7 @@ Validates Packer configuration without building:
 ```
 
 Tests include:
+
 - `packer validate` syntax check
 - `packer fmt` formatting check
 - Shellcheck on provisioner scripts
@@ -238,6 +284,7 @@ Validates Dockerfiles and docker-compose.yml:
 ```
 
 Tests include:
+
 - Hadolint Dockerfile linting (if installed)
 - `docker compose config` validation
 - Security constraints (cap_drop, read_only, no-new-privileges)
@@ -254,11 +301,13 @@ container-structure-test test --image polis-gate-oss:latest --config tests/conta
 ```
 
 Or run via BATS wrapper (part of integration tests):
+
 ```bash
 ./tests/run-tests.sh integration
 ```
 
 Tests validate:
+
 - Required binaries exist (g3proxy, c-icap, coredns, etc.)
 - Correct user (65532/nonroot)
 - Config files in place
@@ -299,6 +348,7 @@ setup() {
 ```
 
 Key rules:
+
 - One assertion per test
 - Use `run` before commands to capture output
 - Unit tests must NOT call Docker
@@ -427,6 +477,7 @@ validate → docker (build + tag + push to GHCR + generate versions.json)
 VM images are also uploaded to S3 (`polis-releases` bucket) and served via CloudFront CDN for faster downloads. The `install.sh` and `install.ps1` scripts download images from the CDN by default, with automatic fallback to GitHub Releases.
 
 Docker images pushed to GHCR:
+
 - `ghcr.io/odralabshq/polis-gate-oss:vX.X.X`
 - `ghcr.io/odralabshq/polis-sentinel-oss:vX.X.X`
 - `ghcr.io/odralabshq/polis-resolver-oss:vX.X.X`
@@ -435,6 +486,7 @@ Docker images pushed to GHCR:
 ### Release Process
 
 1. Create and push a tag:
+
    ```bash
    git tag v0.3.0
    git push origin v0.3.0
@@ -510,7 +562,9 @@ The update command checks GitHub releases for a newer version, verifies the sign
 
 ## Building VM Images
 
-### Install Build Tools
+### Linux / macOS (QEMU builder)
+
+#### Install Build Tools
 
 Packer is not in the default Ubuntu apt repos — it requires the HashiCorp apt repo. Run:
 
@@ -520,7 +574,7 @@ just install-tools
 
 This installs: docker.io, shellcheck, hadolint (v2.12.0), container-structure-test (v1.19.3), multipass, packer (via HashiCorp repo), qemu-system-x86, qemu-utils, ovmf, xorriso.
 
-### Local Build
+#### Local Build
 
 ```bash
 # Build CLI binary
@@ -543,12 +597,94 @@ just build-vm headless=false
 ```
 
 This runs:
-1. `cargo build --release` - Build the CLI binary
-2. `docker compose build` - Build all service images
-3. `docker save` - Export images to `.build/polis-images.tar`
-4. `packer build` - Create VM with Docker, Sysbox, and pre-loaded images
+
+1. `cargo build --release` — Build the CLI binary
+2. `docker compose build` — Build all service images
+3. `docker save` — Export images to `.build/polis-images.tar`
+4. `packer build` — Create VM with Docker, Sysbox, and pre-loaded images
 
 Output: `packer/output/polis-<version>-amd64.qcow2`
+
+---
+
+### Windows (Hyper-V builder)
+
+Windows uses Hyper-V instead of QEMU to produce a `.vhdx` image. The entire build chain is PowerShell-native — no WSL or Cygwin required.
+
+#### Prerequisites
+
+```powershell
+# Install all prerequisites in one step:
+just install-tools-windows
+
+# Then log out and back in (Hyper-V Administrators group membership),
+# and reboot if Hyper-V was just enabled.
+
+# Verify everything is ready:
+just check-tools-windows
+```
+
+Key Windows-specific requirements:
+
+- **Hyper-V** Windows feature enabled (requires reboot if newly enabled)
+- **Hyper-V Administrators** group membership (log out/in to take effect)
+- **Windows ADK** — Deployment Tools feature, which provides `oscdimg.exe` that Packer uses to create the autoinstall seed ISO
+- **Docker Desktop** running before the build starts
+
+#### Local Build
+
+```powershell
+# Build everything (CLI + Docker images + Hyper-V VM)
+just build-windows
+
+# Or build steps individually:
+just build-cli          # Rust CLI binary
+just build-docker       # Docker images
+just build-vm-hyperv    # Hyper-V VM only (amd64, headless)
+
+# Debug: open Hyper-V console during build
+just build-vm-hyperv headless=false
+```
+
+The build runs:
+
+1. `cargo build --release` — CLI binary
+2. `docker compose build` — all 9 service images
+3. `export-images-windows.ps1` — `docker save` → `.build/polis-images.tar` (≈500 MB)
+4. `bundle-config-windows.ps1` — bundles compose config → `.build/polis-config.tar.gz`
+5. `build-agents-windows.ps1` — bundles agent artifacts → `.build/polis-agents.tar.gz`
+6. `packer build -only=hyperv-iso.polis` — creates the Hyper-V VM and runs Goss tests
+7. `sign-vm-hyperv.ps1` — signs the `.vhdx` with `zipsign`
+
+Output: `packer/output-hyperv/polis-<version>-amd64.vhdx`
+
+#### PowerShell Scripts
+
+All Windows build logic lives in `packer/scripts/` as standalone `.ps1` files:
+
+| Script | Purpose |
+|--------|---------|
+| `build-vm-hyperv.ps1` | Packer orchestration — also finds `oscdimg` automatically |
+| `sign-vm-hyperv.ps1` | Signs `.vhdx` with `zipsign`, generates dev key if absent |
+| `bundle-config-windows.ps1` | Bundles Docker Compose config and certs |
+| `build-agents-windows.ps1` | Bundles pre-generated agent artifacts |
+| `export-images-windows.ps1` | `docker save` with digest-stripping for compatibility |
+
+You can run any script directly for debugging:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass packer\scripts\export-images-windows.ps1
+```
+
+#### Hyper-V Switch
+
+Packer uses the **Default Switch** (created automatically by Hyper-V). If you need a different switch:
+
+```powershell
+just build-vm-hyperv hyperv_switch_name="MySwitch"
+```
+
+Or set the `HYPERV_SWITCH_NAME` environment variable before building.
 
 ### VM Image Validation (Goss)
 
@@ -565,6 +701,7 @@ The Packer build includes Goss tests that validate the VM before finalizing:
 If any test fails, the build aborts — no broken images are produced.
 
 To run Goss tests manually inside a VM:
+
 ```bash
 goss -g /path/to/goss.yaml validate
 ```
@@ -591,6 +728,7 @@ sudo usermod -aG kvm $USER
 ```
 
 Verify before building:
+
 ```bash
 ls -la /dev/kvm
 groups | grep kvm
@@ -601,6 +739,7 @@ groups | grep kvm
 If developing inside a VM (e.g. Multipass on Windows), enable nested virtualization on the host first.
 
 Multipass / Hyper-V — PowerShell as Admin on Windows host:
+
 ```powershell
 multipass stop polis-dev
 Set-VMProcessor -VMName "polis-dev" -ExposeVirtualizationExtensions $true
@@ -628,6 +767,7 @@ The filesystem inside the VM expands automatically on next boot via `growpart`.
 VMware Workstation: VM Settings → Processors → enable "Virtualize Intel VT-x/EPT or AMD-V/RVI"
 
 VirtualBox — PowerShell on Windows host:
+
 ```powershell
 VBoxManage modifyvm "polis-dev" --nested-hw-virt on
 ```
@@ -734,6 +874,7 @@ just build-vm
 ```
 
 This installs:
+
 - CLI from `cli/target/release/polis` → `~/.polis/bin/polis`
 - Symlink at `~/.local/bin/polis`
 - VM image from `packer/output/*.qcow2` via `polis init --image file://...`
@@ -758,22 +899,26 @@ POLIS_HOME=/opt/polis ./scripts/install-dev.sh
 ### Common Issues
 
 **Docker permission denied:**
+
 ```bash
 sudo usermod -aG docker $USER
 # Log out and back in
 ```
 
 **Multipass not found (dev-vm.sh):**
+
 ```bash
 just install-tools
 ```
 
 **Shellcheck not found (just lint-shell):**
+
 ```bash
 just install-tools
 ```
 
 **Packer plugin missing:**
+
 ```bash
 cd packer && packer init .
 ```
@@ -782,10 +927,53 @@ cd packer && packer init .
 Packer isn't in the default Ubuntu repos. Use `just install-tools` — it adds the HashiCorp apt repo automatically.
 
 **`could not find a supported CD ISO creation command`:**
+
+*Linux:*
+
 ```bash
 sudo apt-get install -y xorriso
+# or:
+just install-tools
 ```
-Or just re-run `just install-tools` which includes xorriso.
+
+*Windows:* Packer needs `oscdimg` from the Windows ADK:
+
+```powershell
+winget install Microsoft.WindowsADK
+# Then open a new terminal so the PATH update takes effect.
+# Or just run:
+just install-tools-windows
+```
+
+**`Failed creating Hyper-V driver: Current user is not a member of 'Hyper-V Administrators' or 'Administrators' group`:**
+
+```powershell
+# Run in an elevated PowerShell:
+Add-LocalGroupMember -Group 'Hyper-V Administrators' -Member $env:USERNAME
+# Then log out and back in.
+```
+
+Or run `just install-tools-windows` which handles this automatically.
+
+**Hyper-V feature not enabled:**
+
+```powershell
+# Elevated PowerShell:
+Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All
+# Reboot when prompted.
+```
+
+**`docker compose config` returns no images (export-images-windows.ps1):**
+Make sure Docker Desktop is running before starting the build.
+
+**`packer build` fails immediately on Windows with exit code 1:**
+Check that `packer init` has been run to download plugins:
+
+```powershell
+cd packer; packer init .
+```
+
+The `build-vm-hyperv.ps1` script runs this automatically, but if it was interrupted previously the plugin directory may be incomplete.
 
 ### Logs
 

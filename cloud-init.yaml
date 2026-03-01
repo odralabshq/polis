@@ -1,108 +1,231 @@
 #cloud-config
-# Polis Developer VM Cloud-Init Configuration
-# This provisions a VM for development with Docker and Sysbox
-# The polis directory will be mounted from the host machine
+# ============================================================================
+# Polis Workspace — Cloud-Init Provisioning
+# ============================================================================
+# Provisions a Multipass VM with Docker CE, Sysbox, and VM hardening.
+# Polis config (docker-compose, certs, agents) is transferred by the CLI
+# after launch — this file handles OS-level setup only.
 #
-# UID/GID Mapping Strategy (inspired by VS Code Dev Containers):
-# - Sets ubuntu user to UID/GID 1000:1000 (most common host user ID)
-# - Prevents permission issues with mounted directories
-# - Files created in container are owned by your host user
+# Test on Linux:
+#   multipass launch 24.04 --name polis-test --cpus 2 --memory 8G --disk 20G \
+#     --cloud-init cloud-init.yaml --timeout 900
+#
+# Test on Windows (Hyper-V):
+#   multipass launch 24.04 --name polis-test --cpus 2 --memory 8G --disk 20G \
+#     --cloud-init cloud-init.yaml --timeout 900
+#
+# Verify:
+#   multipass exec polis-test -- cloud-init status --wait
+#   multipass exec polis-test -- docker --version
+#   multipass exec polis-test -- docker compose version
+#   multipass exec polis-test -- docker info | grep -A2 Runtimes
+#   multipass exec polis-test -- sysctl kernel.dmesg_restrict
+#   multipass exec polis-test -- systemctl is-active auditd
+#   multipass exec polis-test -- ls -la /opt/polis/
+#
+# Cleanup:
+#   multipass delete polis-test && multipass purge
+# ============================================================================
 
-package_update: true
-package_upgrade: true
+hostname: polis-vm
+manage_etc_hosts: true
 
-# Install required system packages
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    # V-011: lock password-based authentication for ubuntu user
+    lock_passwd: true
+    groups: [docker]
+
+# V-003: package_upgrade: false — saves 2-3 minutes; security updates come from base image
+# Note: package_update is also false — apt-get update is run explicitly in runcmd with retry
+package_update: false
+package_upgrade: false
+
+# ── Base packages (Docker CE installed via runcmd from official apt repo) ────
+# NOTE: yq is NOT installed — completely eliminated from VM (V-003).
+# yq is only needed at CI/build time by generate-agent.sh.
+# The CLI handles all runtime agent manifest parsing via serde_yaml.
 packages:
-  - apt-transport-https
+  - netcat-openbsd
+  - jq
+  - auditd
   - ca-certificates
   - curl
   - gnupg
-  - lsb-release
-  - jq
-  - git
-  - build-essential
+  - openssl
+  - apparmor
+  - apparmor-utils
 
-# Configure system settings for Docker and Sysbox
+# ── Config files (written before runcmd) ─────────────────────────────────────
 write_files:
-  # Docker daemon configuration for Sysbox
+  # Docker daemon — Sysbox runtime + hardening
+  # NOTE: live-restore intentionally omitted — Sysbox issue #270 confirms it
+  # breaks network namespace management.
   - path: /etc/docker/daemon.json
     content: |
       {
         "runtimes": {
-          "sysbox-runc": {
-            "path": "/usr/bin/sysbox-runc"
-          }
+          "sysbox-runc": { "path": "/usr/bin/sysbox-runc" }
         },
-        "default-address-pools": [
-          {
-            "base": "172.20.0.0/16",
-            "size": 24
-          }
-        ]
+        "no-new-privileges": true,
+        "userland-proxy": false
       }
-    permissions: '0644'
+
+  # Sysctl hardening (CIS Ubuntu 24.04 Level 1)
+  - path: /etc/sysctl.d/99-polis-hardening.conf
+    content: |
+      # ASLR — full randomization
+      kernel.randomize_va_space = 2
+      # Restrict dmesg to root
+      kernel.dmesg_restrict = 1
+      # Hide kernel pointers from unprivileged users
+      kernel.kptr_restrict = 2
+      # Disable core dumps for SUID binaries
+      fs.suid_dumpable = 0
+      # Restrict ptrace to parent processes only
+      kernel.yama.ptrace_scope = 2
+
+  # Docker audit rules
+  - path: /etc/audit/rules.d/docker.rules
+    content: |
+      -w /usr/bin/docker -p rwxa -k docker
+      -w /var/lib/docker -p rwxa -k docker
+      -w /etc/docker -p rwxa -k docker
+      -w /usr/lib/systemd/system/docker.service -p rwxa -k docker
+      -w /etc/default/docker -p rwxa -k docker
+      -w /etc/docker/daemon.json -p rwxa -k docker
+      -w /usr/bin/containerd -p rwxa -k docker
+
+  # polis.service — auto-start docker compose on VM reboot
+  - path: /etc/systemd/system/polis.service
+    content: |
+      [Unit]
+      Description=Polis Workspace Services
+      After=network-online.target docker.service
+      Wants=network-online.target
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=docker compose -f /opt/polis/docker-compose.yml up -d
+      ExecStop=docker compose -f /opt/polis/docker-compose.yml down
+      Restart=on-failure
+      User=ubuntu
+      WorkingDirectory=/opt/polis
+
+      [Install]
+      WantedBy=multi-user.target
 
 runcmd:
-  # 0. Set ubuntu user to UID/GID 1000:1000 for permission compatibility
-  # This matches the most common host user ID (first non-root user on Linux/macOS)
-  # Prevents "permission denied" errors when editing files from host
+  # ── apt-get update with retry (V-002: 3 attempts, 10s backoff) ───────────
   - |
-    # Check if ubuntu user already has UID 1000
-    current_uid=$(id -u ubuntu)
-    if [ "$current_uid" != "1000" ]; then
-      echo "Changing ubuntu user UID/GID to 1000:1000 for host compatibility..."
-      # Stop any processes running as ubuntu
-      pkill -u ubuntu || true
-      # Change UID/GID
-      usermod -u 1000 ubuntu
-      groupmod -g 1000 ubuntu
-      # Fix ownership of ubuntu's home directory
-      chown -R 1000:1000 /home/ubuntu
-      echo "ubuntu user UID/GID set to 1000:1000"
-    else
-      echo "ubuntu user already has UID 1000"
+    set -eu
+    for attempt in 1 2 3; do
+      echo "apt-get update attempt ${attempt}/3..."
+      if apt-get update; then
+        break
+      fi
+      if [ "${attempt}" -eq 3 ]; then
+        echo "FATAL: apt-get update failed after 3 attempts" >&2
+        exit 1
+      fi
+      echo "apt-get update failed, retrying in 10s..."
+      sleep 10
+    done
+
+  # ── Install Docker CE from official apt repo (V-001: set -eu) ──
+  # Uses docker-ce + containerd.io for correct runc version (avoids
+  # Ubuntu's docker.io which ships runc 1.3.x conflicting with Sysbox).
+  # GPG fingerprint verified against known-good value (Req 1.2).
+  - |
+    set -eu
+    DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | tee /etc/apt/keyrings/docker.asc > /dev/null
+    chmod a+r /etc/apt/keyrings/docker.asc
+    ACTUAL=$(gpg --show-keys --with-colons --with-fingerprint /etc/apt/keyrings/docker.asc 2>/dev/null | awk -F: '/^fpr/{print $10; exit}')
+    if [ "${ACTUAL}" != "${DOCKER_GPG_FINGERPRINT}" ]; then
+      echo "FATAL: Docker GPG fingerprint mismatch (expected ${DOCKER_GPG_FINGERPRINT}, got ${ACTUAL})" >&2
+      exit 1
     fi
-
-  # 1. Install Docker Engine
-  - |
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
     apt-get update
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    
-  # 2. Install Sysbox (required for workspace isolation)
-  - |
-    SYSBOX_VERSION="0.6.4"
-    wget https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
-    apt-get install -y ./sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
-    rm sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb
-    
-  # 3. Restart Docker to pick up Sysbox runtime
-  - systemctl restart docker
-  
-  # 4. Add ubuntu user to docker group
-  - usermod -aG docker ubuntu
-  
-  # 5. Verify installation
-  - docker info | grep -i sysbox
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    usermod -aG docker ubuntu
 
-final_message: |
-  Polis Dev VM is ready!
-  
-  UID/GID Configuration:
-  - ubuntu user set to UID/GID 1000:1000
-  - This matches most host systems (prevents permission issues)
-  - Files you create on host will be editable in VM and vice versa
-  
-  Next steps:
-  1. Mount your local polis directory: multipass mount ./polis polis-dev:/home/ubuntu/polis
-  2. Access VM: multipass shell polis-dev
-  3. Configure API keys: cd ~/polis && nano .env
-  4. Build from source: just clean-all && just build && just setup && just up
-  
-  The VM has:
-  - Docker Engine with docker-compose
-  - Sysbox runtime (sysbox-runc)
-  - Ubuntu user (UID 1000) in docker group
-  
-  No permission issues expected with mounted directories!
+  # ── Install Sysbox v0.6.7 with SHA256 verification + retry (V-001, V-002) ─
+  # Download from official Nestybox releases. amd64 only — Sysbox does not
+  # support arm64 as of v0.6.7.
+  # SHA256 for sysbox-ce_0.6.7-0.linux_amd64.deb from downloads.nestybox.com
+  - |
+    set -eu
+    SYSBOX_VERSION="0.6.7-0"
+    SYSBOX_DEB="sysbox-ce_${SYSBOX_VERSION}.linux_amd64.deb"
+    SYSBOX_URL="https://downloads.nestybox.com/sysbox/releases/v0.6.7/${SYSBOX_DEB}"
+    # SHA256 checksum for sysbox-ce_0.6.7-0.linux_amd64.deb
+    SYSBOX_SHA256="b7ac389e5a19592cadf16e0ca30e40919516128f6e1b7f99e1cb4ff64554172e"
+    for attempt in 1 2 3; do
+      echo "Downloading Sysbox attempt ${attempt}/3..."
+      if curl -fsSL -o "/tmp/${SYSBOX_DEB}" "${SYSBOX_URL}"; then
+        break
+      fi
+      if [ "${attempt}" -eq 3 ]; then
+        echo "FATAL: Sysbox download failed after 3 attempts" >&2
+        exit 1
+      fi
+      echo "Sysbox download failed, retrying in 10s..."
+      sleep 10
+    done
+    ACTUAL=$(sha256sum "/tmp/${SYSBOX_DEB}" | awk '{print $1}')
+    if [ "${ACTUAL}" != "${SYSBOX_SHA256}" ]; then
+      echo "FATAL: Sysbox SHA256 mismatch (expected ${SYSBOX_SHA256}, got ${ACTUAL})" >&2
+      exit 1
+    fi
+    apt-get install -y "/tmp/${SYSBOX_DEB}"
+    rm -f "/tmp/${SYSBOX_DEB}"
+
+  # ── Restart Docker to pick up Sysbox runtime + daemon.json ───────────────
+  # Sysbox postinst stops Docker — restart cleanly with fresh netns state.
+  # live-restore is intentionally omitted from daemon.json (Sysbox issue #270).
+  - |
+    set -eu
+    systemctl stop docker.socket docker || true
+    systemctl stop sysbox sysbox-mgr sysbox-fs || true
+    rm -f /var/run/docker/netns/*
+    systemctl start sysbox-mgr sysbox-fs sysbox || true
+    systemctl reset-failed docker || true
+    systemctl start docker
+    sleep 5
+
+  # ── Apply VM hardening ────────────────────────────────────────────────────
+  - |
+    set -eu
+    sysctl --system
+    systemctl enable apparmor
+    systemctl start apparmor || true
+    systemctl enable auditd
+    systemctl restart auditd || true
+
+  # ── Install and enable polis.service ─────────────────────────────────────
+  - |
+    set -eu
+    systemctl daemon-reload
+    systemctl enable polis.service
+
+  # ── Create polis directory structure ─────────────────────────────────────
+  - |
+    set -eu
+    mkdir -p /opt/polis
+    chown ubuntu:ubuntu /opt/polis
+
+  # ── V-011: Lock password-based authentication ─────────────────────────────
+  # ubuntu user is locked via lock_passwd: true in users block above.
+  # root account is locked here explicitly.
+  - |
+    set -eu
+    passwd -l root
+
+final_message: "Polis VM provisioned in $UPTIME seconds"

@@ -19,17 +19,14 @@ install_sysbox() {
 
 setup_certs_and_secrets() {
     chmod +x ./services/*/scripts/*.sh ./tests/run-tests.sh
-    just setup-ca
-    chmod 644 ./certs/ca/ca.pem
-    chmod a+r ./certs/ca/ca.key
-    mkdir -p ./certs/toolbox
-    ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
+    # Call scripts in the same order as vm::generate_certs_and_secrets()
+    ./scripts/generate-ca.sh ./certs/ca
     ./services/state/scripts/generate-certs.sh ./certs/valkey
-    chmod 644 ./certs/valkey/*.crt ./certs/toolbox/*.pem
-    chmod a+r ./certs/valkey/*.key ./certs/toolbox/*.key
     touch .env
     ./services/state/scripts/generate-secrets.sh ./secrets .
-    chmod 644 ./secrets/valkey_users.acl
+    mkdir -p ./certs/toolbox
+    ./services/toolbox/scripts/generate-certs.sh ./certs/toolbox ./certs/ca
+    sudo ./scripts/fix-cert-ownership.sh .
     return 0
 }
 

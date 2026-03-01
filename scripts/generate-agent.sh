@@ -12,22 +12,36 @@
 #   <name>.service.sha256    SHA-256 integrity hash of the .service file
 #   <name>.env               Filtered env vars (only those declared in manifest)
 #
-# Requires: yq v4+, sha256sum
+# Requires: python3, sha256sum
 # Exit codes: 0 = success, 1 = validation error, 2 = missing dependency
 set -euo pipefail
 
 AGENT_NAME="${1:?Usage: generate-agent.sh <agent-name> [agents-base-dir]}"
-BASE_DIR="${2:-./agents}"
+BASE_DIR="${2:-agents}"
 AGENT_DIR="${BASE_DIR}/${AGENT_NAME}"
 MANIFEST="${AGENT_DIR}/agent.yaml"
 OUT_DIR="${AGENT_DIR}/.generated"
 
 # ---------------------------------------------------------------------------
+# Skip _template directory
+# ---------------------------------------------------------------------------
+
+if [[ "${AGENT_NAME}" == "_template" ]]; then
+    echo "Skipping _template directory"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
 
-if ! command -v yq &>/dev/null || ! yq --version &>/dev/null 2>&1; then
-    echo "Error: yq is required. Install from https://github.com/mikefarah/yq#install" >&2
+if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 is required" >&2
+    exit 2
+fi
+
+if ! command -v sha256sum &>/dev/null; then
+    echo "Error: sha256sum is required" >&2
     exit 2
 fi
 
@@ -41,32 +55,180 @@ if [[ ! -f "${MANIFEST}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Read all fields before validation
+# Parse manifest with python3 (no yq dependency)
 # ---------------------------------------------------------------------------
 
-API_VERSION=$(yq '.apiVersion' "${MANIFEST}")
-KIND=$(yq '.kind' "${MANIFEST}")
-NAME=$(yq '.metadata.name' "${MANIFEST}")
-DISPLAY_NAME=$(yq '.metadata.displayName // ""' "${MANIFEST}")
-PACKAGING=$(yq '.spec.packaging' "${MANIFEST}")
-RUNTIME_CMD=$(yq '.spec.runtime.command' "${MANIFEST}")
-RUNTIME_USER=$(yq '.spec.runtime.user' "${MANIFEST}")
-RUNTIME_WORKDIR=$(yq '.spec.runtime.workdir // ""' "${MANIFEST}")
-RUNTIME_ENV_FILE=$(yq '.spec.runtime.envFile // ""' "${MANIFEST}")
-SPEC_INSTALL=$(yq '.spec.install // ""' "${MANIFEST}")
-SPEC_INIT=$(yq '.spec.init // ""' "${MANIFEST}")
-HEALTH_CMD=$(yq '.spec.health.command // ""' "${MANIFEST}")
-HEALTH_INTERVAL=$(yq '.spec.health.interval // "30s"' "${MANIFEST}")
-HEALTH_TIMEOUT=$(yq '.spec.health.timeout // "10s"' "${MANIFEST}")
-HEALTH_RETRIES=$(yq '.spec.health.retries // "3"' "${MANIFEST}")
-HEALTH_START_PERIOD=$(yq '.spec.health.startPeriod // "60s"' "${MANIFEST}")
-MEM_LIMIT=$(yq '.spec.resources.memoryLimit // ""' "${MANIFEST}")
-MEM_RESERVATION=$(yq '.spec.resources.memoryReservation // ""' "${MANIFEST}")
-PROTECT_SYSTEM=$(yq '.spec.security.protectSystem // "strict"' "${MANIFEST}")
-PROTECT_HOME=$(yq '.spec.security.protectHome // "true"' "${MANIFEST}")
-PRIVATE_TMP=$(yq '.spec.security.privateTmp // "true"' "${MANIFEST}")
-MEM_MAX=$(yq '.spec.security.memoryMax // ""' "${MANIFEST}")
-CPU_QUOTA=$(yq '.spec.security.cpuQuota // ""' "${MANIFEST}")
+# Use python3 to extract all fields from the YAML manifest at once.
+# Outputs KEY=VALUE lines that are sourced into the shell.
+_parse_manifest() {
+    python3 - "${MANIFEST}" <<'PYEOF'
+import sys, json
+
+try:
+    import yaml
+    with open(sys.argv[1]) as f:
+        data = yaml.safe_load(f)
+except ImportError:
+    # Fallback: minimal YAML parser for the subset used in agent.yaml manifests.
+    # Handles block mappings, block sequences, and scalar values.
+    import re
+
+    def parse_yaml_simple(text):
+        lines = text.splitlines()
+        return _parse_block(lines, 0, 0)[0]
+
+    def _unquote(s):
+        s = s.strip()
+        if len(s) >= 2 and ((s[0] == '"' and s[-1] == '"') or (s[0] == "'" and s[-1] == "'")):
+            return s[1:-1]
+        return s
+
+    def _parse_block(lines, start, base_indent):
+        result = None
+        i = start
+        while i < len(lines):
+            raw = lines[i]
+            stripped = raw.lstrip()
+            if not stripped or stripped.startswith('#'):
+                i += 1
+                continue
+            indent = len(raw) - len(raw.lstrip())
+            if indent < base_indent:
+                break
+            if stripped.startswith('- '):
+                if result is None:
+                    result = []
+                val = _unquote(stripped[2:].split('#')[0].strip())
+                result.append(val)
+                i += 1
+            elif stripped == '-':
+                if result is None:
+                    result = []
+                i += 1
+                child, i = _parse_block(lines, i, indent + 2)
+                result.append(child if child is not None else '')
+            elif ':' in stripped:
+                key_part, _, rest = stripped.partition(':')
+                key = key_part.strip()
+                rest = rest.strip()
+                if result is None:
+                    result = {}
+                if not isinstance(result, dict):
+                    result = {}
+                if rest == '' or rest.startswith('#'):
+                    i += 1
+                    child, i = _parse_block(lines, i, indent + 2)
+                    result[key] = child if child is not None else ''
+                else:
+                    result[key] = _unquote(rest.split('#')[0].strip())
+                    i += 1
+            else:
+                i += 1
+        return result, i
+
+    with open(sys.argv[1]) as f:
+        content = f.read()
+    data = parse_yaml_simple(content)
+
+if data is None:
+    data = {}
+
+def get(d, *keys, default=''):
+    for k in keys:
+        if not isinstance(d, dict):
+            return default
+        d = d.get(k, default)
+        if d == default:
+            return default
+    return d if d is not None else default
+
+meta   = data.get('metadata', {}) or {}
+spec   = data.get('spec', {}) or {}
+rt     = spec.get('runtime', {}) or {}
+health = spec.get('health', {}) or {}
+sec    = spec.get('security', {}) or {}
+res    = spec.get('resources', {}) or {}
+reqs   = spec.get('requirements', {}) or {}
+
+def sh(v):
+    """Escape a value for shell assignment (single-quote wrap)."""
+    return "'" + str(v).replace("'", "'\\''") + "'"
+
+fields = {
+    'API_VERSION':        get(data, 'apiVersion'),
+    'KIND':               get(data, 'kind'),
+    'NAME':               get(meta, 'name'),
+    'DISPLAY_NAME':       get(meta, 'displayName'),
+    'PACKAGING':          get(spec, 'packaging'),
+    'RUNTIME_CMD':        get(rt, 'command'),
+    'RUNTIME_USER':       get(rt, 'user'),
+    'RUNTIME_WORKDIR':    get(rt, 'workdir'),
+    'RUNTIME_ENV_FILE':   get(rt, 'envFile'),
+    'SPEC_INSTALL':       get(spec, 'install'),
+    'SPEC_INIT':          get(spec, 'init'),
+    'HEALTH_CMD':         get(health, 'command'),
+    'HEALTH_INTERVAL':    get(health, 'interval', default='30s'),
+    'HEALTH_TIMEOUT':     get(health, 'timeout', default='10s'),
+    'HEALTH_RETRIES':     get(health, 'retries', default='3'),
+    'HEALTH_START_PERIOD':get(health, 'startPeriod', default='60s'),
+    'MEM_LIMIT':          get(res, 'memoryLimit'),
+    'MEM_RESERVATION':    get(res, 'memoryReservation'),
+    'PROTECT_SYSTEM':     get(sec, 'protectSystem', default='strict'),
+    'PROTECT_HOME':       get(sec, 'protectHome', default='true'),
+    'PRIVATE_TMP':        get(sec, 'privateTmp', default='true'),
+    'MEM_MAX':            get(sec, 'memoryMax'),
+    'CPU_QUOTA':          get(sec, 'cpuQuota'),
+}
+
+for k, v in fields.items():
+    print(f"{k}={sh(v)}")
+
+# Ports: emit as JSON array for shell to consume
+ports = spec.get('ports', []) or []
+ports_json = []
+for p in ports:
+    if isinstance(p, dict):
+        ports_json.append({
+            'container': str(p.get('container', '')),
+            'hostEnv':   str(p.get('hostEnv', '')),
+            'default':   str(p.get('default', '')),
+        })
+print(f"PORTS_JSON={sh(json.dumps(ports_json))}")
+
+# Persistence
+persist = spec.get('persistence', []) or []
+persist_json = []
+for p in persist:
+    if isinstance(p, dict):
+        persist_json.append({
+            'name':          str(p.get('name', '')),
+            'containerPath': str(p.get('containerPath', '')),
+        })
+print(f"PERSIST_JSON={sh(json.dumps(persist_json))}")
+
+# Runtime env map
+rt_env = rt.get('env', {}) or {}
+rt_env_json = {}
+if isinstance(rt_env, dict):
+    rt_env_json = {str(k): str(v) for k, v in rt_env.items()}
+print(f"RT_ENV_JSON={sh(json.dumps(rt_env_json))}")
+
+# ReadWritePaths
+rw_paths = sec.get('readWritePaths', []) or []
+rw_json = [str(p) for p in rw_paths] if isinstance(rw_paths, list) else []
+print(f"RW_PATHS_JSON={sh(json.dumps(rw_json))}")
+
+# Requirements
+env_one_of  = reqs.get('envOneOf', []) or []
+env_optional = reqs.get('envOptional', []) or []
+print(f"ENV_ONE_OF_JSON={sh(json.dumps([str(x) for x in env_one_of]))}")
+print(f"ENV_OPTIONAL_JSON={sh(json.dumps([str(x) for x in env_optional]))}")
+PYEOF
+    return $?
+}
+
+# Source the parsed fields into the current shell
+eval "$(_parse_manifest)"
 
 # ---------------------------------------------------------------------------
 # Validation — collect ALL errors before any file generation
@@ -123,24 +285,25 @@ validate_manifest() {
         errors=$((errors + 1))
     fi
 
-    local port_count
-    port_count=$(yq '.spec.ports | length' "${MANIFEST}")
-    for ((i=0; i<port_count; i++)); do
-        local port
-        port=$(yq ".spec.ports[${i}].default" "${MANIFEST}")
+    # Check port conflicts using python3 to parse the JSON array
+    while IFS= read -r port; do
+        [[ -z "${port}" ]] && continue
         for platform_port in "${PLATFORM_PORTS[@]}"; do
             if [[ "${port}" == "${platform_port}" ]]; then
                 echo "Error: Port ${port} conflicts with platform service" >&2
                 errors=$((errors + 1))
             fi
         done
-    done
+    done < <(python3 -c "
+import json, sys
+ports = json.loads(sys.argv[1])
+for p in ports:
+    print(p.get('default', ''))
+" "${PORTS_JSON}")
 
-    local rw_count
-    rw_count=$(yq '.spec.security.readWritePaths | length' "${MANIFEST}")
-    for ((i=0; i<rw_count; i++)); do
-        local rw_path
-        rw_path=$(yq ".spec.security.readWritePaths[${i}]" "${MANIFEST}")
+    # Check readWritePaths
+    while IFS= read -r rw_path; do
+        [[ -z "${rw_path}" ]] && continue
         local allowed=false
         for prefix in "${ALLOWED_RW_PREFIXES[@]}"; do
             if [[ "${rw_path}" == "${prefix}"* ]]; then
@@ -152,7 +315,12 @@ validate_manifest() {
             echo "Error: Path outside allowed prefixes: ${rw_path}" >&2
             errors=$((errors + 1))
         fi
-    done
+    done < <(python3 -c "
+import json, sys
+paths = json.loads(sys.argv[1])
+for p in paths:
+    print(p)
+" "${RW_PATHS_JSON}")
 
     return "${errors}"
 }
@@ -164,104 +332,97 @@ validate_manifest() {
 gen_compose() {
     local out="${OUT_DIR}/compose.agent.yaml"
 
-    # Build ports section lines
-    local ports_yaml=""
-    local port_count
-    port_count=$(yq '.spec.ports | length' "${MANIFEST}")
-    for ((i=0; i<port_count; i++)); do
-        local container_port host_env default_port
-        container_port=$(yq ".spec.ports[${i}].container" "${MANIFEST}")
-        host_env=$(yq ".spec.ports[${i}].hostEnv" "${MANIFEST}")
-        default_port=$(yq ".spec.ports[${i}].default" "${MANIFEST}")
-        ports_yaml="${ports_yaml}      - \"\${${host_env}:-${default_port}}:${container_port}\"
-"
-    done
+    # Build ports, volumes, and socat services via python3
+    python3 - "${PORTS_JSON}" "${PERSIST_JSON}" "${NAME}" "${MANIFEST}" \
+              "${HEALTH_CMD}" "${HEALTH_INTERVAL}" "${HEALTH_TIMEOUT}" \
+              "${HEALTH_RETRIES}" "${HEALTH_START_PERIOD}" \
+              "${MEM_LIMIT}" "${MEM_RESERVATION}" > "${out}" <<'PYEOF'
+import sys, json
 
-    # Build persistence volume mounts and top-level volumes section
-    local volumes_mounts_yaml=""
-    local vol_section_yaml=""
-    local persist_count
-    persist_count=$(yq '.spec.persistence | length' "${MANIFEST}")
-    for ((i=0; i<persist_count; i++)); do
-        local vol_name container_path
-        vol_name=$(yq ".spec.persistence[${i}].name" "${MANIFEST}")
-        container_path=$(yq ".spec.persistence[${i}].containerPath" "${MANIFEST}")
-        volumes_mounts_yaml="${volumes_mounts_yaml}      - polis-agent-${NAME}-${vol_name}:${container_path}
-"
-        vol_section_yaml="${vol_section_yaml}  polis-agent-${NAME}-${vol_name}:
-    name: polis-agent-${NAME}-${vol_name}
-"
-    done
+ports_json    = sys.argv[1]
+persist_json  = sys.argv[2]
+name          = sys.argv[3]
+manifest_path = sys.argv[4]
+health_cmd    = sys.argv[5]
+health_interval    = sys.argv[6]
+health_timeout     = sys.argv[7]
+health_retries     = sys.argv[8]
+health_start_period = sys.argv[9]
+mem_limit     = sys.argv[10]
+mem_reservation = sys.argv[11]
 
-    local healthcheck_test="systemctl is-active polis-init.service && systemctl is-active ${NAME}.service && ${HEALTH_CMD} && ip route | grep -q default"
+ports   = json.loads(ports_json)
+persist = json.loads(persist_json)
 
-    # Socat proxy sidecar: the workspace container uses sysbox-runc which breaks
-    # Docker's iptables-based port publishing. A lightweight socat container on
-    # the default runtime handles port forwarding instead.
-    # It joins internal-bridge (to reach workspace) and default (non-internal,
-    # so Docker can publish ports to the VM host).
-    local socat_services_yaml=""
-    for ((i=0; i<port_count; i++)); do
-        local container_port host_env default_port
-        container_port=$(yq ".spec.ports[${i}].container" "${MANIFEST}")
-        host_env=$(yq ".spec.ports[${i}].hostEnv" "${MANIFEST}")
-        default_port=$(yq ".spec.ports[${i}].default" "${MANIFEST}")
-        socat_services_yaml="${socat_services_yaml}  ${NAME}-proxy-${container_port}:
-    image: alpine/socat:latest
-    restart: unless-stopped
-    ports:
-      - \"\${${host_env}:-${default_port}}:${container_port}\"
-    command: TCP-LISTEN:${container_port},fork,reuseaddr TCP:polis-workspace:${container_port}
-    networks:
-      - internal-bridge
-      - default
-    depends_on:
-      - workspace
-"
-    done
+lines = []
+lines.append(f"# Generated from {manifest_path} - DO NOT EDIT")
+lines.append("services:")
+lines.append("  workspace:")
+lines.append("    env_file:")
+lines.append("      - .env")
+lines.append("    volumes:")
+lines.append(f"      - ./agents/{name}/:/opt/agents/{name}/:ro")
+lines.append(f"      - ./agents/{name}/.generated/{name}.service:/etc/systemd/system/{name}.service:ro")
+lines.append(f"      - ./agents/{name}/.generated/{name}.service.sha256:/etc/systemd/system/{name}.service.sha256:ro")
 
-    {
-        echo "# Generated from ${MANIFEST} - DO NOT EDIT"
-        echo "services:"
-        echo "  workspace:"
-        # NOTE: ports are NOT published on workspace directly because it uses
-        # sysbox-runc which breaks Docker's iptables port publishing. The socat
-        # proxy sidecar(s) below handle port forwarding instead.
-        echo "    env_file:"
-        echo "      - .env"
-        echo "    volumes:"
-        echo "      - ./agents/${NAME}/:/opt/agents/${NAME}/:ro"
-        echo "      - ./agents/${NAME}/.generated/${NAME}.service:/etc/systemd/system/${NAME}.service:ro"
-        echo "      - ./agents/${NAME}/.generated/${NAME}.service.sha256:/etc/systemd/system/${NAME}.service.sha256:ro"
-        printf '%s' "${volumes_mounts_yaml}"
-        echo "    healthcheck:"
-        echo "      test: [\"CMD-SHELL\", \"${healthcheck_test}\"]"
-        echo "      interval: ${HEALTH_INTERVAL}"
-        echo "      timeout: ${HEALTH_TIMEOUT}"
-        echo "      retries: ${HEALTH_RETRIES}"
-        echo "      start_period: ${HEALTH_START_PERIOD}"
-        if [[ -n "${MEM_LIMIT}" || -n "${MEM_RESERVATION}" ]]; then
-            echo "    deploy:"
-            echo "      resources:"
-            if [[ -n "${MEM_LIMIT}" ]]; then
-                echo "        limits:"
-                echo "          memory: ${MEM_LIMIT}"
-            fi
-            if [[ -n "${MEM_RESERVATION}" ]]; then
-                echo "        reservations:"
-                echo "          memory: ${MEM_RESERVATION}"
-            fi
-        fi
-        if [[ -n "${socat_services_yaml}" ]]; then
-            echo ""
-            printf '%s' "${socat_services_yaml}"
-        fi
-        if [[ -n "${vol_section_yaml}" ]]; then
-            echo ""
-            echo "volumes:"
-            printf '%s' "${vol_section_yaml}"
-        fi
-    } > "${out}"
+for p in persist:
+    vol_name = p['name']
+    container_path = p['containerPath']
+    lines.append(f"      - polis-agent-{name}-{vol_name}:{container_path}")
+
+healthcheck_test = (
+    f"systemctl is-active polis-init.service && "
+    f"systemctl is-active {name}.service && "
+    f"{health_cmd} && "
+    f"ip route | grep -q default"
+)
+lines.append("    healthcheck:")
+lines.append(f'      test: ["CMD-SHELL", "{healthcheck_test}"]')
+lines.append(f"      interval: {health_interval}")
+lines.append(f"      timeout: {health_timeout}")
+lines.append(f"      retries: {health_retries}")
+lines.append(f"      start_period: {health_start_period}")
+
+if mem_limit or mem_reservation:
+    lines.append("    deploy:")
+    lines.append("      resources:")
+    if mem_limit:
+        lines.append("        limits:")
+        lines.append(f"          memory: {mem_limit}")
+    if mem_reservation:
+        lines.append("        reservations:")
+        lines.append(f"          memory: {mem_reservation}")
+
+# Socat proxy sidecars
+if ports:
+    lines.append("")
+    for p in ports:
+        container_port = p['container']
+        host_env       = p['hostEnv']
+        default_port   = p['default']
+        lines.append(f"  {name}-proxy-{container_port}:")
+        lines.append(f"    image: alpine/socat:latest")
+        lines.append(f"    restart: unless-stopped")
+        lines.append(f"    ports:")
+        lines.append(f'      - "${{{host_env}:-{default_port}}}:{container_port}"')
+        lines.append(f"    command: TCP-LISTEN:{container_port},fork,reuseaddr TCP:polis-workspace:{container_port}")
+        lines.append(f"    networks:")
+        lines.append(f"      - internal-bridge")
+        lines.append(f"      - default")
+        lines.append(f"    depends_on:")
+        lines.append(f"      - workspace")
+
+# Top-level volumes
+if persist:
+    lines.append("")
+    lines.append("volumes:")
+    for p in persist:
+        vol_name = p['name']
+        lines.append(f"  polis-agent-{name}-{vol_name}:")
+        lines.append(f"    name: polis-agent-{name}-{vol_name}")
+
+print('\n'.join(lines))
+PYEOF
 }
 
 # ---------------------------------------------------------------------------
@@ -271,81 +432,83 @@ gen_compose() {
 gen_systemd() {
     local out="${OUT_DIR}/${NAME}.service"
 
-    # Build Environment= lines from spec.runtime.env map
-    local env_lines=""
-    local env_count
-    env_count=$(yq '.spec.runtime.env | length' "${MANIFEST}")
-    if [[ "${env_count}" -gt 0 ]]; then
-        while IFS= read -r line; do
-            env_lines="${env_lines}Environment=\"${line}\"
-"
-        done < <(yq '.spec.runtime.env | to_entries | .[] | .key + "=" + .value' "${MANIFEST}")
-    fi
+    python3 - "${RT_ENV_JSON}" "${RW_PATHS_JSON}" \
+              "${NAME}" "${DISPLAY_NAME}" "${RUNTIME_USER}" \
+              "${RUNTIME_WORKDIR}" "${RUNTIME_ENV_FILE}" \
+              "${SPEC_INIT}" "${RUNTIME_CMD}" \
+              "${PROTECT_SYSTEM}" "${PROTECT_HOME}" "${PRIVATE_TMP}" \
+              "${MEM_MAX}" "${CPU_QUOTA}" "${MANIFEST}" > "${out}" <<'PYEOF'
+import sys, json
 
-    # Build ReadWritePaths value
-    local rw_paths=""
-    local rw_count
-    rw_count=$(yq '.spec.security.readWritePaths | length' "${MANIFEST}")
-    if [[ "${rw_count}" -gt 0 ]]; then
-        rw_paths=$(yq '.spec.security.readWritePaths | join(" ")' "${MANIFEST}")
-    fi
+rt_env_json    = sys.argv[1]
+rw_paths_json  = sys.argv[2]
+name           = sys.argv[3]
+display_name   = sys.argv[4]
+runtime_user   = sys.argv[5]
+runtime_workdir = sys.argv[6]
+runtime_env_file = sys.argv[7]
+spec_init      = sys.argv[8]
+runtime_cmd    = sys.argv[9]
+protect_system = sys.argv[10]
+protect_home   = sys.argv[11]
+private_tmp    = sys.argv[12]
+mem_max        = sys.argv[13]
+cpu_quota      = sys.argv[14]
+manifest_path  = sys.argv[15]
 
-    {
-        echo "# Generated from ${MANIFEST} - DO NOT EDIT"
-        echo "[Unit]"
-        if [[ -n "${DISPLAY_NAME}" ]]; then
-            echo "Description=${DISPLAY_NAME}"
-        fi
-        echo "After=network-online.target polis-init.service"
-        echo "Wants=network-online.target"
-        echo "Requires=polis-init.service"
-        echo "StartLimitIntervalSec=300"
-        echo "StartLimitBurst=3"
-        echo ""
-        echo "[Service]"
-        echo "Type=simple"
-        echo "User=${RUNTIME_USER}"
-        if [[ -n "${RUNTIME_WORKDIR}" ]]; then
-            echo "WorkingDirectory=${RUNTIME_WORKDIR}"
-        fi
-        echo ""
-        if [[ -n "${RUNTIME_ENV_FILE}" ]]; then
-            echo "EnvironmentFile=-${RUNTIME_ENV_FILE}"
-        fi
-        echo ""
-        echo "Environment=NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/polis-ca.crt"
-        echo "Environment=SSL_CERT_FILE=/usr/local/share/ca-certificates/polis-ca.crt"
-        echo "Environment=REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/polis-ca.crt"
-        if [[ -n "${env_lines}" ]]; then
-            printf '%s' "${env_lines}"
-        fi
-        echo ""
-        if [[ -n "${SPEC_INIT}" ]]; then
-            echo "ExecStartPre=+/bin/bash /opt/agents/${NAME}/${SPEC_INIT}"
-        fi
-        echo "ExecStart=${RUNTIME_CMD}"
-        echo ""
-        echo "Restart=always"
-        echo "RestartSec=5"
-        echo "StartLimitBurst=3"
-        echo ""
-        echo "NoNewPrivileges=true"
-        echo "ProtectSystem=${PROTECT_SYSTEM}"
-        echo "ProtectHome=${PROTECT_HOME}"
-        if [[ -n "${rw_paths}" ]]; then
-            echo "ReadWritePaths=${rw_paths}"
-        fi
-        echo "PrivateTmp=${PRIVATE_TMP}"
-        if [[ -n "${MEM_MAX}" ]]; then
-            echo "MemoryMax=${MEM_MAX}"
-        fi
-        if [[ -n "${CPU_QUOTA}" ]]; then
-            echo "CPUQuota=${CPU_QUOTA}"
-        fi
-        echo ""
-        echo "[Install]"
-        echo "WantedBy=multi-user.target"
-    } > "${out}"
+rt_env   = json.loads(rt_env_json)
+rw_paths = json.loads(rw_paths_json)
+
+lines = []
+lines.append(f"# Generated from {manifest_path} - DO NOT EDIT")
+lines.append("[Unit]")
+if display_name:
+    lines.append(f"Description={display_name}")
+lines.append("After=network-online.target polis-init.service")
+lines.append("Wants=network-online.target")
+lines.append("Requires=polis-init.service")
+lines.append("StartLimitIntervalSec=300")
+lines.append("StartLimitBurst=3")
+lines.append("")
+lines.append("[Service]")
+lines.append("Type=simple")
+lines.append(f"User={runtime_user}")
+if runtime_workdir:
+    lines.append(f"WorkingDirectory={runtime_workdir}")
+lines.append("")
+if runtime_env_file:
+    lines.append(f"EnvironmentFile=-{runtime_env_file}")
+lines.append("")
+lines.append("Environment=NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/polis-ca.crt")
+lines.append("Environment=SSL_CERT_FILE=/usr/local/share/ca-certificates/polis-ca.crt")
+lines.append("Environment=REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/polis-ca.crt")
+for k, v in rt_env.items():
+    lines.append(f'Environment="{k}={v}"')
+lines.append("")
+if spec_init:
+    lines.append(f"ExecStartPre=+/bin/bash /opt/agents/{name}/{spec_init}")
+lines.append(f"ExecStart={runtime_cmd}")
+lines.append("")
+lines.append("Restart=always")
+lines.append("RestartSec=5")
+lines.append("StartLimitBurst=3")
+lines.append("")
+lines.append("NoNewPrivileges=true")
+lines.append(f"ProtectSystem={protect_system}")
+lines.append(f"ProtectHome={protect_home}")
+if rw_paths:
+    lines.append(f"ReadWritePaths={' '.join(rw_paths)}")
+lines.append(f"PrivateTmp={private_tmp}")
+if mem_max:
+    lines.append(f"MemoryMax={mem_max}")
+if cpu_quota:
+    lines.append(f"CPUQuota={cpu_quota}")
+lines.append("")
+lines.append("[Install]")
+lines.append("WantedBy=multi-user.target")
+
+print('\n'.join(lines))
+PYEOF
 }
 
 # ---------------------------------------------------------------------------
@@ -364,35 +527,28 @@ gen_env() {
     local out="${OUT_DIR}/${NAME}.env"
     local env_file=".env"
 
-    # Collect all declared keys from manifest
-    local declared_keys=()
-    local one_of_count
-    one_of_count=$(yq '.spec.requirements.envOneOf | length' "${MANIFEST}")
-    for ((i=0; i<one_of_count; i++)); do
-        declared_keys+=("$(yq ".spec.requirements.envOneOf[${i}]" "${MANIFEST}")")
-    done
-    local optional_count
-    optional_count=$(yq '.spec.requirements.envOptional | length' "${MANIFEST}")
-    for ((i=0; i<optional_count; i++)); do
-        declared_keys+=("$(yq ".spec.requirements.envOptional[${i}]" "${MANIFEST}")")
-    done
+    python3 - "${ENV_ONE_OF_JSON}" "${ENV_OPTIONAL_JSON}" "${env_file}" > "${out}" <<'PYEOF'
+import sys, json, os
 
-    # Write filtered env file
-    : > "${out}"
-    if [[ -f "${env_file}" ]]; then
-        while IFS= read -r line || [[ -n "${line}" ]]; do
-            # Skip comments and blank lines
-            [[ "${line}" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "${line}" ]] && continue
-            local key="${line%%=*}"
-            for declared in "${declared_keys[@]}"; do
-                if [[ "${key}" == "${declared}" ]]; then
-                    echo "${line}" >> "${out}"
-                    break
-                fi
-            done
-        done < "${env_file}"
-    fi
+env_one_of_json  = sys.argv[1]
+env_optional_json = sys.argv[2]
+env_file         = sys.argv[3]
+
+declared_keys = set(json.loads(env_one_of_json)) | set(json.loads(env_optional_json))
+
+if not os.path.isfile(env_file):
+    sys.exit(0)
+
+with open(env_file) as f:
+    for line in f:
+        line = line.rstrip('\n')
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        key = line.split('=', 1)[0]
+        if key in declared_keys:
+            print(line)
+PYEOF
 
     echo "✓ Generated artifacts for '${NAME}' in .generated/"
 }

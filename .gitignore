@@ -45,3 +45,7 @@ docs/reviews
 
 # Packer output (VM images)
 packer/output/
+packer/output-hyperv/
+
+# Packer ISO/plugin cache
+packer/packer_cache/

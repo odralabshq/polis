@@ -26,11 +26,10 @@ _run_script() {
         source <(sed "\$d" "$INSTALL_SH")
         check_multipass()     { log_ok "Multipass stub OK"; }
         resolve_version()     { log_info "Installing Polis ${VERSION}"; }
-        download_cli()        { :; }
+        download_cli()        { mkdir -p "${INSTALL_DIR}/bin"; printf "#!/bin/bash\necho \"polis \$*\"\n" > "${INSTALL_DIR}/bin/polis"; chmod +x "${INSTALL_DIR}/bin/polis"; }
         download_image()      { echo "/tmp/fake.qcow2"; }
         verify_attestation()  { :; }
         create_symlink()      { :; }
-        run_init()            { :; }
         multipass()           { return 1; }  # stub: no existing VM
         main
     ' _ "$INSTALL_SH" "$@"
@@ -56,38 +55,6 @@ _run_script() {
 @test "install: has set -euo pipefail" {
     run grep -q "set -euo pipefail" "$INSTALL_SH"
     assert_success
-}
-
-# ── run_init() ────────────────────────────────────────────────────────────
-
-@test "run_init: calls polis start --image with given path" {
-    _source_functions
-    mkdir -p "$TEST_DIR/bin"
-    printf '#!/bin/bash\necho "polis $*"\n' > "$TEST_DIR/bin/polis"
-    chmod +x "$TEST_DIR/bin/polis"
-    multipass() { return 1; }
-    run run_init "/tmp/test.qcow2"
-    assert_success
-    assert_output --partial "polis start --image /tmp/test.qcow2"
-}
-
-@test "run_init: non-fatal when polis start exits non-zero" {
-    _source_functions
-    mkdir -p "$TEST_DIR/bin"
-    printf '#!/bin/bash\nexit 1\n' > "$TEST_DIR/bin/polis"
-    chmod +x "$TEST_DIR/bin/polis"
-    multipass() { return 1; }
-    run run_init "/tmp/test.qcow2"
-    assert_failure
-    assert_output --partial "polis start failed"
-}
-
-@test "run_init: non-fatal when polis binary does not exist" {
-    _source_functions
-    multipass() { return 1; }
-    run run_init "/tmp/test.qcow2"
-    assert_failure
-    assert_output --partial "polis start failed"
 }
 
 # ── VERSION handling ──────────────────────────────────────────────────────

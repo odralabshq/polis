@@ -40,6 +40,7 @@ impl AgentMetadata {
     /// `requirements.envOneOf` when `provider` is not set.
     ///
     /// Returns `"Unknown"` when neither source yields a known provider.
+    #[must_use]
     pub fn effective_provider(&self, requirements: Option<&AgentRequirements>) -> String {
         if let Some(p) = &self.provider
             && !p.is_empty()
@@ -175,7 +176,7 @@ pub struct AgentCapabilities {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

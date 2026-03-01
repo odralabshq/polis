@@ -1,48 +1,37 @@
 //! `polis stop` — stop workspace, preserving all data.
 
 use anyhow::Result;
+use std::process::ExitCode;
 
-use crate::multipass::Multipass;
-use crate::workspace::vm;
+use crate::app::AppContext;
+use crate::application::services::vm::lifecycle::{self as vm, VmState};
 
 /// Run `polis stop`.
 ///
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be stopped.
-pub async fn run(mp: &impl Multipass, quiet: bool) -> Result<()> {
+pub async fn run(app: &AppContext) -> Result<ExitCode> {
+    let mp = &app.provisioner;
+    let ctx = &app.output;
     let state = vm::state(mp).await?;
 
     match state {
-        vm::VmState::NotFound => {
-            if !quiet {
-                println!();
-                println!("No workspace to stop.");
-                println!();
-                println!("Create one: polis start");
-            }
+        VmState::NotFound => {
+            ctx.info("No workspace to stop.");
+            ctx.info("Create one: polis start");
         }
-        vm::VmState::Stopped => {
-            if !quiet {
-                println!();
-                println!("Workspace is already stopped.");
-                println!();
-                println!("Resume: polis start");
-            }
+        VmState::Stopped => {
+            ctx.info("Workspace is already stopped.");
+            ctx.info("Resume: polis start");
         }
-        vm::VmState::Running | vm::VmState::Starting => {
-            if !quiet {
-                println!("Stopping workspace...");
-            }
+        VmState::Running | VmState::Starting => {
+            ctx.info("Stopping workspace...");
             vm::stop(mp).await?;
-            if !quiet {
-                println!();
-                println!("Workspace stopped. Your data is preserved.");
-                println!();
-                println!("Resume: polis start");
-            }
+            ctx.success("Workspace stopped. Your data is preserved.");
+            ctx.info("Resume: polis start");
         }
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

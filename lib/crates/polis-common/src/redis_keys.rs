@@ -79,24 +79,29 @@ pub mod approval {
         &[".api.telegram.org", ".api.slack.com", ".discord.com"];
 
     /// Generate the approval command for a given request_id
+    #[must_use]
     pub fn approval_command(request_id: &str) -> String {
-        format!("{} {}", APPROVE_PREFIX, request_id)
+        format!("{APPROVE_PREFIX} {request_id}")
     }
 }
 
 /// Helper functions for key construction
+#[must_use]
 pub fn blocked_key(request_id: &str) -> String {
     format!("{}:{}", keys::BLOCKED, request_id)
 }
 
+#[must_use]
 pub fn approved_key(request_id: &str) -> String {
     format!("{}:{}", keys::APPROVED, request_id)
 }
 
+#[must_use]
 pub fn auto_approve_key(pattern: &str) -> String {
     format!("{}:{}", keys::AUTO_APPROVE, pattern)
 }
 
+#[must_use]
 pub fn ott_key(ott_code: &str) -> String {
     format!("{}:{}", keys::OTT_MAPPING, ott_code)
 }

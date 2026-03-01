@@ -19,6 +19,12 @@ pub struct Styles {
     pub bold: Style,
     /// Headers/section titles
     pub header: Style,
+    /// Governance label (dark blue)
+    pub governance: Style,
+    /// Security label (medium blue)
+    pub security: Style,
+    /// Observability label (light blue)
+    pub observability: Style,
 }
 
 impl Styles {
@@ -31,5 +37,8 @@ impl Styles {
         self.dim = Style::new().dimmed();
         self.bold = Style::new().bold();
         self.header = Style::new().bold().cyan();
+        self.governance = Style::new().truecolor(37, 56, 144);
+        self.security = Style::new().truecolor(26, 107, 160);
+        self.observability = Style::new().truecolor(26, 151, 179);
     }
 }

@@ -2,7 +2,9 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::process::ExitCode;
 
+use crate::app::AppContext;
 use crate::commands;
 
 /// Secure workspaces for AI coding agents
@@ -14,6 +16,7 @@ use crate::commands;
     subcommand_required = true,
     arg_required_else_help = true
 )]
+#[allow(clippy::struct_excessive_bools)] // Clap CLI struct — bools map to flags, not state
 pub struct Cli {
     /// Output in JSON format
     #[arg(long, global = true)]
@@ -26,6 +29,10 @@ pub struct Cli {
     /// Disable colored output
     #[arg(long, global = true)]
     pub no_color: bool,
+
+    /// Skip interactive confirmation prompts (also set by `CI` or `POLIS_YES` env vars)
+    #[arg(short = 'y', long, global = true)]
+    pub yes: bool,
 
     #[command(subcommand)]
     pub command: Command,
@@ -57,6 +64,9 @@ pub enum Command {
         /// Show remediation details for each issue
         #[arg(long)]
         verbose: bool,
+        /// Attempt to automatically repair detected issues
+        #[arg(long)]
+        fix: bool,
     },
 
     /// Run a command in the workspace
@@ -89,69 +99,53 @@ impl Cli {
     /// # Errors
     ///
     /// Returns an error if the command fails or is not yet implemented.
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<ExitCode> {
         let Cli {
             no_color,
             quiet,
             json,
+            yes,
             command,
         } = self;
         let no_color = no_color || std::env::var("NO_COLOR").is_ok();
-        let mp = crate::multipass::MultipassCli;
 
-        match command {
-            Command::Start(args) => commands::start::run(&args, &mp, quiet).await,
+        // Construct AppContext once at the top — passed as &AppContext to all handlers.
+        let app = AppContext::new(&crate::app::AppFlags {
+            output: crate::app::OutputFlags {
+                no_color,
+                quiet,
+                json,
+            },
+            behaviour: crate::app::BehaviourFlags { yes },
+        })?;
 
-            Command::Stop => commands::stop::run(&mp, quiet).await,
-
-            Command::Delete(args) => {
-                let state_mgr = crate::state::StateManager::new()?;
-                commands::delete::run(&args, &mp, &state_mgr, quiet).await
-            }
-
-            Command::Status => {
-                let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::status::run(&ctx, json, &mp).await
-            }
-
-            Command::Connect(args) => {
-                let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::connect::run(&ctx, args, &mp).await
-            }
-
-            Command::Config(cmd) => {
-                let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::config::run(&ctx, cmd, json, &mp).await
-            }
-
+        let exit_code = match command {
+            Command::Start(args) => commands::start::run(&args, &app).await?,
+            Command::Stop => commands::stop::run(&app).await?,
+            Command::Delete(args) => commands::delete::run(&args, &app).await?,
+            Command::Status => commands::status::run(&app, &app.provisioner).await?,
+            Command::Connect(args) => commands::connect::run(&app, args).await?,
+            Command::Config(cmd) => commands::config::run(&app, cmd, &app.provisioner).await?,
             Command::Update(args) => {
-                let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::update::run(&args, &ctx, &commands::update::GithubUpdateChecker, &mp)
-                    .await
+                commands::update::run(&args, &app, &crate::infra::update::GithubUpdateChecker)
+                    .await?
             }
-
-            Command::Doctor { verbose } => {
-                let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::doctor::run(&ctx, json, verbose, &mp).await
-            }
-
-            Command::Exec(args) => commands::exec::run(&args, &mp).await,
-
-            Command::Version => commands::version::run(json),
-
-            Command::Agent(cmd) => {
-                let mp = crate::multipass::MultipassCli;
-                let ctx = crate::output::OutputContext::new(no_color, quiet);
-                commands::agent::run(cmd, &mp, &ctx, json).await
-            }
+            Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await?,
+            Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,
+            Command::Version => commands::version::run(&app)?,
+            Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
 
             // --- Internal commands ---
             #[allow(clippy::large_futures)]
-            Command::SshProxy => commands::internal::ssh_proxy(&mp).await,
-            Command::ExtractHostKey => commands::internal::extract_host_key(&mp).await,
+            Command::SshProxy => commands::internal::ssh_proxy(&app.provisioner).await?,
+            Command::ExtractHostKey => {
+                commands::internal::extract_host_key(&app.provisioner).await?
+            }
             Command::Provision => {
                 anyhow::bail!("Provision command is internal only")
             }
-        }
+        };
+
+        Ok(exit_code)
     }
 }

@@ -390,8 +390,8 @@ services:
   host-init:
     build:
       context: .
-      dockerfile: services/host-init/Dockerfile
-    image: ghcr.io/odralabshq/polis-host-init-oss:${POLIS_HOST_INIT_VERSION:-latest}
+      dockerfile: services/init/Dockerfile
+    image: ghcr.io/odralabshq/polis-init-oss:${POLIS_HOST_INIT_VERSION:-latest}
     container_name: polis-host-init
     network_mode: host
     cap_drop:
@@ -408,15 +408,15 @@ services:
       - -c
       - |
         INT_BR="br-$$(docker network inspect polis_internal-bridge --format '{{.Id}}' | cut -c1-12)"
-        iptables -C DOCKER-USER -i "$$INT_BR" -o "$$INT_BR" -j ACCEPT 2>/dev/null ||
-        iptables -I DOCKER-USER -i "$$INT_BR" -o "$$INT_BR" -j ACCEPT
+        nft list chain ip filter DOCKER-USER 2>/dev/null | grep -q "iifname \"$$INT_BR\" oifname \"$$INT_BR\" accept" ||
+        nft insert rule ip filter DOCKER-USER iifname "$$INT_BR" oifname "$$INT_BR" accept
     restart: "no"
 
   # =========================================================
   # SCANNER INIT (ClamAV Volume permission setup)
   # =========================================================
   scanner-init:
-    image: dhi.io/alpine-base:3.23-dev@sha256:2b318097756a2d92fb8fc059beaf512f8607224a17767d56e557618ca61296cb
+    image: ghcr.io/odralabshq/polis-init-oss:${POLIS_HOST_INIT_VERSION:-latest}
     container_name: polis-scanner-init
     cap_drop:
       - ALL
@@ -440,7 +440,7 @@ services:
   # STATE INIT (Valkey Volume permission setup)
   # =========================================================
   state-init:
-    image: dhi.io/alpine-base:3.23-dev@sha256:2b318097756a2d92fb8fc059beaf512f8607224a17767d56e557618ca61296cb
+    image: ghcr.io/odralabshq/polis-init-oss:${POLIS_HOST_INIT_VERSION:-latest}
     container_name: polis-state-init
     cap_drop:
       - ALL
