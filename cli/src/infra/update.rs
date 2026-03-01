@@ -193,9 +193,7 @@ pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>> {
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::wildcard_imports)]
 mod tests {
     use super::*;
-        use crate::domain::workspace::hex_encode;
-        
-
+    use crate::domain::workspace::hex_encode;
 
     // -----------------------------------------------------------------------
     // parse_release_notes — unit

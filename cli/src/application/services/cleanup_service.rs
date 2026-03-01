@@ -1,6 +1,8 @@
 //! Application service — workspace cleanup use-case.
 
-use crate::application::ports::{LocalFs, LocalPaths, ProgressReporter, SshConfigurator, VmProvisioner};
+use crate::application::ports::{
+    LocalFs, LocalPaths, ProgressReporter, SshConfigurator, VmProvisioner,
+};
 use crate::application::services::vm::lifecycle as vm;
 use anyhow::Result;
 
@@ -34,7 +36,10 @@ pub async fn delete_workspace(
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Cleanup completed with errors:\n{}", errors.join("\n")))
+        Err(anyhow::anyhow!(
+            "Cleanup completed with errors:\n{}",
+            errors.join("\n")
+        ))
     }
 }
 
@@ -70,42 +75,48 @@ pub async fn delete_all(
         Ok(polis_dir) => {
             let config_path = polis_dir.join("config.yaml");
             if local_fs.exists(&config_path)
-                && let Err(e) = local_fs.remove_file(&config_path) {
-                    errors.push(format!("Failed to remove config.yaml: {e}"));
-                }
+                && let Err(e) = local_fs.remove_file(&config_path)
+            {
+                errors.push(format!("Failed to remove config.yaml: {e}"));
+            }
 
             // 4. Remove certificates
             let certs_dir = polis_dir.join("certs");
             if local_fs.exists(&certs_dir)
-                && let Err(e) = local_fs.remove_dir_all(&certs_dir) {
-                    errors.push(format!("Failed to remove certs dir: {e}"));
-                }
+                && let Err(e) = local_fs.remove_dir_all(&certs_dir)
+            {
+                errors.push(format!("Failed to remove certs dir: {e}"));
+            }
 
             // 5. Remove agents
             let agents_dir = polis_dir.join("agents");
             if local_fs.exists(&agents_dir)
-                && let Err(e) = local_fs.remove_dir_all(&agents_dir) {
-                    errors.push(format!("Failed to remove agents dir: {e}"));
-                }
+                && let Err(e) = local_fs.remove_dir_all(&agents_dir)
+            {
+                errors.push(format!("Failed to remove agents dir: {e}"));
+            }
 
             // 7. Remove SSH known_hosts
             let known_hosts = polis_dir.join("known_hosts");
             if local_fs.exists(&known_hosts)
-                && let Err(e) = local_fs.remove_file(&known_hosts) {
-                    errors.push(format!("Failed to remove known_hosts: {e}"));
-                }
+                && let Err(e) = local_fs.remove_file(&known_hosts)
+            {
+                errors.push(format!("Failed to remove known_hosts: {e}"));
+            }
 
             // 8. Remove SSH identity keys
             let id_ed25519 = polis_dir.join("id_ed25519");
             if local_fs.exists(&id_ed25519)
-                && let Err(e) = local_fs.remove_file(&id_ed25519) {
-                    errors.push(format!("Failed to remove id_ed25519: {e}"));
-                }
+                && let Err(e) = local_fs.remove_file(&id_ed25519)
+            {
+                errors.push(format!("Failed to remove id_ed25519: {e}"));
+            }
             let id_ed25519_pub = polis_dir.join("id_ed25519.pub");
             if local_fs.exists(&id_ed25519_pub)
-                && let Err(e) = local_fs.remove_file(&id_ed25519_pub) {
-                    errors.push(format!("Failed to remove id_ed25519.pub: {e}"));
-                }
+                && let Err(e) = local_fs.remove_file(&id_ed25519_pub)
+            {
+                errors.push(format!("Failed to remove id_ed25519.pub: {e}"));
+            }
         }
     }
 
@@ -122,14 +133,18 @@ pub async fn delete_all(
     // 10. Remove cached images directory
     let images_dir = paths.images_dir();
     if local_fs.exists(&images_dir)
-        && let Err(e) = local_fs.remove_dir_all(&images_dir) {
-            errors.push(format!("Failed to remove images dir: {e}"));
-        }
+        && let Err(e) = local_fs.remove_dir_all(&images_dir)
+    {
+        errors.push(format!("Failed to remove images dir: {e}"));
+    }
 
     if errors.is_empty() {
         println!("All Polis data removed.");
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Cleanup completed with errors:\n{}", errors.join("\n")))
+        Err(anyhow::anyhow!(
+            "Cleanup completed with errors:\n{}",
+            errors.join("\n")
+        ))
     }
 }

@@ -14,7 +14,6 @@ pub struct StartOptions<'a, R: crate::application::ports::ProgressReporter> {
     pub version: &'a str,
 }
 
-
 use chrono::Utc;
 
 use crate::application::ports::{
@@ -61,7 +60,13 @@ pub async fn start_workspace(
     opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
 ) -> Result<StartOutcome> {
     let reporter = opts.reporter;
-    let StartOptions { agent, envs, assets_dir, version, .. } = opts;
+    let StartOptions {
+        agent,
+        envs,
+        assets_dir,
+        version,
+        ..
+    } = opts;
     crate::domain::workspace::check_architecture()?;
 
     let vm_state = vm::state(provisioner).await?;
@@ -78,7 +83,13 @@ pub async fn start_workspace(
                 ssh,
                 hasher,
                 local_fs,
-                StartOptions { reporter, agent, envs, assets_dir, version },
+                StartOptions {
+                    reporter,
+                    agent,
+                    envs,
+                    assets_dir,
+                    version,
+                },
             )
             .await?;
             Ok(StartOutcome::Created {
@@ -86,7 +97,17 @@ pub async fn start_workspace(
             })
         }
         _ => {
-            restart_vm(provisioner, state_mgr, assets, ssh, local_fs, reporter, agent, envs).await?;
+            restart_vm(
+                provisioner,
+                state_mgr,
+                assets,
+                ssh,
+                local_fs,
+                reporter,
+                agent,
+                envs,
+            )
+            .await?;
             wait_ready(provisioner, reporter, false).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
@@ -116,32 +137,32 @@ async fn handle_running_vm(
     }
 
     // Allow adding an agent to a running workspace that has no agent.
-    if current_agent.is_none() {
-        if let Some(name) = agent {
-            reporter.step(&format!("setting up agent '{name}'..."));
-            setup_agent(provisioner, local_fs, name, &envs).await?;
-            reporter.step("restarting platform services with agent...");
-            start_compose(provisioner, Some(name)).await?;
-            reporter.step("waiting for workspace to become healthy...");
-            wait_ready(provisioner, reporter, false).await?;
-            reporter.success("workspace ready");
+    if current_agent.is_none()
+        && let Some(name) = agent
+    {
+        reporter.step(&format!("setting up agent '{name}'..."));
+        setup_agent(provisioner, local_fs, name, &envs).await?;
+        reporter.step("restarting platform services with agent...");
+        start_compose(provisioner, Some(name)).await?;
+        reporter.step("waiting for workspace to become healthy...");
+        wait_ready(provisioner, reporter, false).await?;
+        reporter.success("workspace ready");
 
-            let mut state = state_mgr
-                .load_async()
-                .await?
-                .unwrap_or_else(|| WorkspaceState {
-                    created_at: Utc::now(),
-                    image_sha256: None,
-                    image_source: None,
-                    active_agent: None,
-                });
-            state.active_agent = Some(name.to_owned());
-            state_mgr.save_async(&state).await?;
-
-            return Ok(StartOutcome::Restarted {
-                agent: Some(name.to_owned()),
+        let mut state = state_mgr
+            .load_async()
+            .await?
+            .unwrap_or_else(|| WorkspaceState {
+                created_at: Utc::now(),
+                image_sha256: None,
+                image_source: None,
+                active_agent: None,
             });
-        }
+        state.active_agent = Some(name.to_owned());
+        state_mgr.save_async(&state).await?;
+
+        return Ok(StartOutcome::Restarted {
+            agent: Some(name.to_owned()),
+        });
     }
 
     let current_desc = current_agent
@@ -164,7 +185,13 @@ async fn create_and_start_vm(
     opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
 ) -> Result<()> {
     let reporter = opts.reporter;
-    let StartOptions { agent, envs, assets_dir, version, .. } = opts;
+    let StartOptions {
+        agent,
+        envs,
+        assets_dir,
+        version,
+        ..
+    } = opts;
     // Step 1: Compute config hash before transfer.
     let tar_path = assets_dir.join("polis-setup.config.tar");
     let config_hash = hasher
@@ -232,6 +259,7 @@ async fn create_and_start_vm(
 }
 
 /// Restart a stopped VM.
+#[allow(clippy::too_many_arguments)]
 async fn restart_vm(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
@@ -301,7 +329,6 @@ async fn setup_agent<P: VmProvisioner>(
     let stdout_bytes = cat_out.stdout.clone();
     let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
     let tmp_path = tmp.path().to_path_buf();
-    
 
     let manifest: polis_common::agent::AgentManifest =
         serde_yaml::from_slice(&stdout_bytes).context("parsing agent.yaml from VM")?;
@@ -317,7 +344,7 @@ async fn setup_agent<P: VmProvisioner>(
     let hash = artifacts::service_hash(&unit);
     local_fs.write(&generated_dir.join(format!("{name}.service")), unit)?;
     local_fs.write(&generated_dir.join(format!("{name}.service.sha256")), hash)?;
-    
+
     // Write environment variables to the agent's .env file, forcing LF line endings.
     let env_content = if envs.is_empty() {
         String::new()

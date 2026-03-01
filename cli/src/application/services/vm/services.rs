@@ -135,7 +135,6 @@ mod tests {
         }
     }
 
-
     struct ReporterStub;
     impl ProgressReporter for ReporterStub {
         fn step(&self, _: &str) {}

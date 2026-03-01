@@ -211,7 +211,10 @@ async fn probe_disk_space_gb(cmd_runner: &impl CommandRunner) -> Result<u64> {
     }
 }
 
-fn probe_image_cache(paths: &impl LocalPaths, fs: &impl crate::application::ports::LocalFs) -> crate::domain::health::ImageCheckResult {
+fn probe_image_cache(
+    paths: &impl LocalPaths,
+    fs: &impl crate::application::ports::LocalFs,
+) -> crate::domain::health::ImageCheckResult {
     let images_dir = paths.images_dir();
     let cached = fs.exists(&images_dir.join("polis.qcow2"));
     crate::domain::health::ImageCheckResult {

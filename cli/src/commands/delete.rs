@@ -50,7 +50,8 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
         if !quiet {
             app.output.info("");
             app.output.info("This will remove your workspace.");
-            app.output.info("Configuration, certificates, and cached downloads will be preserved.");
+            app.output
+                .info("Configuration, certificates, and cached downloads will be preserved.");
             app.output.info("");
         }
 

@@ -1,8 +1,8 @@
 //! Human-readable terminal renderer.
 
-use polis_common::types::{AgentHealth, WorkspaceState};
 use owo_colors::OwoColorize as _;
 use polis_common::types::StatusOutput;
+use polis_common::types::{AgentHealth, WorkspaceState};
 
 use crate::domain::health::DoctorChecks;
 use crate::output::OutputContext;
@@ -13,7 +13,6 @@ pub struct HumanRenderer<'a> {
 }
 
 impl<'a> HumanRenderer<'a> {
-
     /// Render the CLI version information.
     pub fn render_version(&self, version: &str, build_date: &str) {
         if self.ctx.quiet {
@@ -29,8 +28,6 @@ impl<'a> HumanRenderer<'a> {
 
     /// Render workspace/agent/security status.
     pub fn render_status(&self, status: &StatusOutput) {
-        
-
         self.ctx.kv(
             "Workspace:",
             workspace_state_display(status.workspace.status),
@@ -44,7 +41,6 @@ impl<'a> HumanRenderer<'a> {
         }
 
         if let Some(uptime) = status.workspace.uptime_seconds {
-            
             self.ctx.kv("Uptime:", &format_uptime(uptime));
         }
 
@@ -342,7 +338,10 @@ mod tests {
             workspace_state_display(WorkspaceState::Stopping),
             "stopping"
         );
-        assert_eq!(workspace_state_display(WorkspaceState::NotFound), "not found");
+        assert_eq!(
+            workspace_state_display(WorkspaceState::NotFound),
+            "not found"
+        );
         assert_eq!(workspace_state_display(WorkspaceState::Error), "error");
     }
 

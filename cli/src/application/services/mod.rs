@@ -8,10 +8,10 @@
 pub mod agent_crud;
 pub mod cleanup_service;
 pub mod config_service;
+pub mod connect;
 pub mod update;
 pub mod vm;
 pub mod workspace_doctor;
 pub mod workspace_repair;
 pub mod workspace_start;
 pub mod workspace_status;
-pub mod connect;

@@ -76,5 +76,3 @@ fn show_connection_options(ctx: &crate::output::OutputContext) {
     ctx.info("    code --remote ssh-remote+workspace /workspace");
     ctx.info("    cursor --remote ssh-remote+workspace /workspace");
 }
-
-

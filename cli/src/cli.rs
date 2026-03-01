@@ -127,7 +127,8 @@ impl Cli {
             Command::Connect(args) => commands::connect::run(&app, args).await?,
             Command::Config(cmd) => commands::config::run(&app, cmd, &app.provisioner).await?,
             Command::Update(args) => {
-                commands::update::run(&args, &app, &crate::infra::update::GithubUpdateChecker).await?
+                commands::update::run(&args, &app, &crate::infra::update::GithubUpdateChecker)
+                    .await?
             }
             Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await?,
             Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,

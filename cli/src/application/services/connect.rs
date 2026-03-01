@@ -1,6 +1,6 @@
-use anyhow::{Context, Result};
 use crate::application::ports::{ShellExecutor, SshConfigurator};
 use crate::domain::workspace::CONTAINER_NAME;
+use anyhow::{Context, Result};
 
 /// Validates that a public key has a safe format for use in shell commands.
 ///
@@ -25,10 +25,7 @@ pub fn validate_pubkey(key: &str) -> Result<()> {
 /// # Errors
 ///
 /// This function will return an error if the underlying operations fail.
-pub async fn install_vm_pubkey(
-    mp: &impl ShellExecutor,
-    pubkey: &str,
-) -> Result<()> {
+pub async fn install_vm_pubkey(mp: &impl ShellExecutor, pubkey: &str) -> Result<()> {
     validate_pubkey(pubkey)?;
     let key = pubkey.trim();
 
@@ -55,10 +52,7 @@ pub async fn install_vm_pubkey(
 /// # Errors
 ///
 /// This function will return an error if the underlying operations fail.
-pub async fn install_pubkey(
-    mp: &impl ShellExecutor,
-    pubkey: &str,
-) -> Result<()> {
+pub async fn install_pubkey(mp: &impl ShellExecutor, pubkey: &str) -> Result<()> {
     validate_pubkey(pubkey)?;
 
     let key = pubkey.trim();

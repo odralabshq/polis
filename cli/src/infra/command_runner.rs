@@ -75,7 +75,8 @@ impl CommandRunner for TokioCommandRunner {
         #[cfg(windows)]
         ensure_multipass_on_path(&mut cmd, program);
 
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .with_context(|| format!("failed to spawn {program}"))?;
 
         let mut stdout_handle = child.stdout.take();
@@ -127,7 +128,8 @@ impl CommandRunner for TokioCommandRunner {
         #[cfg(windows)]
         ensure_multipass_on_path(&mut cmd, program);
 
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .with_context(|| format!("failed to spawn {program}"))?;
 
         let stdin_handle = child.stdin.take();
@@ -205,5 +207,3 @@ impl CommandRunner for TokioCommandRunner {
             .with_context(|| format!("waiting for {program}"))
     }
 }
-
-

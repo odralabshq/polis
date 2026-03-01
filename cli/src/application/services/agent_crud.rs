@@ -7,8 +7,7 @@ pub use crate::domain::agent::AgentInfo;
 use anyhow::{Context, Result};
 
 use crate::application::ports::{
-    FileTransfer, InstanceInspector, ProgressReporter, ShellExecutor,
-    WorkspaceStateStore,
+    FileTransfer, InstanceInspector, ProgressReporter, ShellExecutor, WorkspaceStateStore,
 };
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
 
@@ -22,33 +21,45 @@ use crate::application::services::vm::lifecycle::{self as vm, VmState};
 ///
 /// Returns an error if the manifest cannot be read/parsed, or if any file
 /// write fails.
-fn generate_and_write_artifacts(local_fs: &impl crate::application::ports::LocalFs, polis_dir: &std::path::Path, name: &str) -> Result<()> {
+fn generate_and_write_artifacts(
+    local_fs: &impl crate::application::ports::LocalFs,
+    polis_dir: &std::path::Path,
+    name: &str,
+) -> Result<()> {
     use crate::domain::agent::artifacts;
 
     let manifest_path = polis_dir.join("agents").join(name).join("agent.yaml");
-    let content = local_fs.read_to_string(&manifest_path)
+    let content = local_fs
+        .read_to_string(&manifest_path)
         .with_context(|| format!("reading {}", manifest_path.display()))?;
     let manifest: polis_common::agent::AgentManifest =
         serde_yaml::from_str(&content).context("failed to parse agent.yaml")?;
 
     let generated_dir = polis_dir.join("agents").join(name).join(".generated");
-    local_fs.create_dir_all(&generated_dir)
+    local_fs
+        .create_dir_all(&generated_dir)
         .with_context(|| format!("creating {}", generated_dir.display()))?;
 
     let compose = artifacts::compose_overlay(&manifest);
-    local_fs.write(&generated_dir.join("compose.agent.yaml"), compose)
+    local_fs
+        .write(&generated_dir.join("compose.agent.yaml"), compose)
         .context("writing compose.agent.yaml")?;
 
     let unit = artifacts::systemd_unit(&manifest);
     let hash = artifacts::service_hash(&unit);
-    local_fs.write(&generated_dir.join(format!("{name}.service")), unit)
+    local_fs
+        .write(&generated_dir.join(format!("{name}.service")), unit)
         .context("writing .service file")?;
-    local_fs.write(&generated_dir.join(format!("{name}.service.sha256")), hash)
+    local_fs
+        .write(&generated_dir.join(format!("{name}.service.sha256")), hash)
         .context("writing .service.sha256 file")?;
 
-    let env_content = local_fs.read_to_string(&polis_dir.join(".env")).unwrap_or_default();
+    let env_content = local_fs
+        .read_to_string(&polis_dir.join(".env"))
+        .unwrap_or_default();
     let filtered = artifacts::filtered_env(&env_content, &manifest);
-    local_fs.write(&generated_dir.join(format!("{name}.env")), filtered)
+    local_fs
+        .write(&generated_dir.join(format!("{name}.env")), filtered)
         .context("writing .env file")?;
 
     Ok(())
@@ -245,7 +256,8 @@ pub async fn update_agent(
     // Write manifest to a temp dir and run the Rust generator.
     let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
     let agent_dir = tmp.path().join("agents").join(&name);
-    let stdout_str = String::from_utf8(cat_out.stdout).context("parsing agent.yaml from VM as UTF-8")?;
+    let stdout_str =
+        String::from_utf8(cat_out.stdout).context("parsing agent.yaml from VM as UTF-8")?;
     local_fs.create_dir_all(&agent_dir)?;
     local_fs.write(&agent_dir.join("agent.yaml"), stdout_str)?;
 

@@ -47,7 +47,6 @@ fn show_config(app: &AppContext) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-
 /// # Errors
 /// This function will return an error if the underlying operations fail.
 async fn set_config(app: &AppContext, key: &str, value: &str) -> Result<ExitCode> {
@@ -66,13 +65,18 @@ async fn set_config(app: &AppContext, key: &str, value: &str) -> Result<ExitCode
     app.output.success(&format!("Set {key} = {value}"));
 
     if key == "security.level" {
-                if crate::application::services::config_service::propagate_security_level(&app.provisioner, value).await? {
-                    app.output.success("Security level active in workspace");
-                } else {
-                    app.output.warn("Could not propagate to workspace (is it running?)");
-                }
+        if crate::application::services::config_service::propagate_security_level(
+            &app.provisioner,
+            value,
+        )
+        .await?
+        {
+            app.output.success("Security level active in workspace");
+        } else {
+            app.output
+                .warn("Could not propagate to workspace (is it running?)");
+        }
     }
 
     Ok(ExitCode::SUCCESS)
 }
-

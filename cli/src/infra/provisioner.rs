@@ -9,11 +9,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
+use crate::application::ports::CommandRunner;
 use crate::application::ports::{
     FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, POLIS_INSTANCE, ShellExecutor,
 };
-use crate::application::ports::CommandRunner;
-use crate::infra::command_runner::{TokioCommandRunner, DEFAULT_CMD_TIMEOUT, DEFAULT_EXEC_TIMEOUT};
+use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, DEFAULT_EXEC_TIMEOUT, TokioCommandRunner};
 
 /// Infrastructure adapter that routes all multipass CLI calls through a `CommandRunner`.
 ///

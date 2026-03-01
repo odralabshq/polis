@@ -1,6 +1,5 @@
 //! `polis update` — self-update with checksum and signature verification.
 
-
 use anyhow::{Context, Result};
 use clap::Args;
 
@@ -34,7 +33,11 @@ pub struct UpdateArgs {
 /// Returns an error if the version check, signature verification, download, or
 /// user prompt fails.
 #[allow(clippy::unused_async)] // async contract: will gain awaits when download is made async
-pub async fn run(args: &UpdateArgs, app: &AppContext, checker: &impl UpdateChecker) -> Result<std::process::ExitCode> {
+pub async fn run(
+    args: &UpdateArgs,
+    app: &AppContext,
+    checker: &impl UpdateChecker,
+) -> Result<std::process::ExitCode> {
     let ctx = &app.output;
     let mp = &app.provisioner;
     let current = env!("CARGO_PKG_VERSION");
@@ -163,15 +166,14 @@ fn apply_cli_update(
     Ok(())
 }
 
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::wildcard_imports)]
 mod tests {
+    use super::*;
     use crate::application::services::update::SignatureInfo;
     use crate::domain::workspace::hex_encode;
-    use super::*;
 
     // -----------------------------------------------------------------------
     // run() via UpdateChecker trait mock — unit

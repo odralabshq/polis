@@ -9,7 +9,6 @@ use crate::domain::health::DoctorChecks;
 pub struct JsonRenderer;
 
 impl JsonRenderer {
-
     /// Render the CLI version information.
     ///
     /// # Errors

@@ -17,7 +17,6 @@ pub use styles::Styles;
 use anyhow::Result;
 use polis_common::types::StatusOutput;
 
-
 use crate::domain::health::DoctorChecks;
 
 /// Enum-dispatched output renderer.
@@ -33,7 +32,6 @@ pub enum Renderer<'a> {
 }
 
 impl Renderer<'_> {
-
     /// Render the CLI version information.
     ///
     /// # Errors

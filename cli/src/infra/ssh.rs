@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-
 /// Generates a passphrase-free ED25519 keypair at `~/.polis/id_ed25519` if it
 /// does not already exist.
 /// Returns the public key string (`ssh-ed25519 <material>`).
@@ -220,8 +219,6 @@ mod tests {
         let result = mgr.remove();
         assert!(result.is_ok());
     }
-
-
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +492,10 @@ mod ssh_config_manager_tests {
             dir.path().join("ssh").join("config.d").join("polis"),
             dir.path().join("ssh").join("config"),
             Box::new(OsSocketsDir::new(
-                dir.path().join("ssh").join("config.d").join("polis-sockets"),
+                dir.path()
+                    .join("ssh")
+                    .join("config.d")
+                    .join("polis-sockets"),
             )),
         )
     }
@@ -544,10 +544,9 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let content = std::fs::read_to_string(
-            dir.path().join("ssh").join("config.d").join("polis"),
-        )
-        .expect("config file should exist");
+        let content =
+            std::fs::read_to_string(dir.path().join("ssh").join("config.d").join("polis"))
+                .expect("config file should exist");
         assert!(
             content.contains("ForwardAgent no"),
             "V-001: ForwardAgent must be no"
@@ -559,10 +558,9 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let content = std::fs::read_to_string(
-            dir.path().join("ssh").join("config.d").join("polis"),
-        )
-        .expect("config file should exist");
+        let content =
+            std::fs::read_to_string(dir.path().join("ssh").join("config.d").join("polis"))
+                .expect("config file should exist");
         assert!(
             !content.contains("ForwardAgent yes"),
             "V-001: ForwardAgent yes must never appear"
@@ -574,10 +572,9 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let content = std::fs::read_to_string(
-            dir.path().join("ssh").join("config.d").join("polis"),
-        )
-        .expect("config file should exist");
+        let content =
+            std::fs::read_to_string(dir.path().join("ssh").join("config.d").join("polis"))
+                .expect("config file should exist");
         assert!(
             content.contains("StrictHostKeyChecking yes"),
             "V-002: StrictHostKeyChecking must be yes"
@@ -589,10 +586,9 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_polis_config().expect("create_polis_config");
-        let content = std::fs::read_to_string(
-            dir.path().join("ssh").join("config.d").join("polis"),
-        )
-        .expect("config file should exist");
+        let content =
+            std::fs::read_to_string(dir.path().join("ssh").join("config.d").join("polis"))
+                .expect("config file should exist");
         assert!(content.contains("User polis"), "V-011: User must be polis");
         assert!(
             !content.contains("User vscode"),
@@ -683,7 +679,13 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_sockets_dir().expect("create_sockets_dir");
-        assert!(dir.path().join("ssh").join("config.d").join("polis-sockets").is_dir());
+        assert!(
+            dir.path()
+                .join("ssh")
+                .join("config.d")
+                .join("polis-sockets")
+                .is_dir()
+        );
     }
 
     #[cfg(unix)]
@@ -693,10 +695,15 @@ mod ssh_config_manager_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let mgr = manager_in(&dir);
         mgr.create_sockets_dir().expect("create_sockets_dir");
-        let mode = std::fs::metadata(dir.path().join("ssh").join("config.d").join("polis-sockets"))
-            .expect("metadata")
-            .permissions()
-            .mode();
+        let mode = std::fs::metadata(
+            dir.path()
+                .join("ssh")
+                .join("config.d")
+                .join("polis-sockets"),
+        )
+        .expect("metadata")
+        .permissions()
+        .mode();
         assert_eq!(mode & 0o777, 0o700, "V-007: sockets dir must be 700");
     }
 

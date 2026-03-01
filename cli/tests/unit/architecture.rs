@@ -629,7 +629,8 @@ fn application_has_no_blocking_io() {
         }
     }
 
-    assert!(violations.is_empty(), 
+    assert!(
+        violations.is_empty(),
         "Found blocking I/O calls in async functions in application/ layer:\n{}",
         violations.join("\n")
     );
@@ -657,10 +658,7 @@ fn check_file_for_blocking_io(file: &Path) -> Option<Vec<String>> {
             "std::process::Command",
             "use crate::application::ports::ShellExecutor",
         ),
-        (
-            "std::net::",
-            "use crate::application::ports::NetworkProbe",
-        ),
+        ("std::net::", "use crate::application::ports::NetworkProbe"),
     ];
 
     for (i, line) in content.lines().enumerate() {
@@ -714,8 +712,12 @@ fn check_file_for_blocking_io(file: &Path) -> Option<Vec<String>> {
             }
         }
     }
-    
-    if violations.is_empty() { None } else { Some(violations) }
+
+    if violations.is_empty() {
+        None
+    } else {
+        Some(violations)
+    }
 }
 
 /// No module-level #![`allow(dead_code)`] in domain/, application/, or infra/ layers.
