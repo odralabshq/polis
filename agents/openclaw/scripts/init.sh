@@ -548,14 +548,12 @@ if [[ -d "${CONFIG_DIR}/agents/main" ]]; then
     chmod 600 "${MAIN_AUTH_DIR}/auth-profiles.json"
 fi
 
-# Set ownership (use -R carefully to avoid permission issues)
-chown polis:polis "${CONFIG_DIR}"
-chown polis:polis "${ENV_FILE}"
-chown -R polis:polis "${CONFIG_DIR}/agents" 2>/dev/null || true
-chown polis:polis "${CONFIG_DIR}/workspace" 2>/dev/null || true
-chown polis:polis "${CONFIG_DIR}/sessions" 2>/dev/null || true
-chown polis:polis "${CONFIG_FILE}" 2>/dev/null || true
-chown polis:polis "${TOKEN_FILE}" 2>/dev/null || true
+# Normalize ownership/permissions.
+# This self-heals cases where root-owned files are left behind by prior admin commands.
+chown -R polis:polis "${CONFIG_DIR}" 2>/dev/null || true
+[[ -f "${ENV_FILE}" ]] && chmod 600 "${ENV_FILE}" 2>/dev/null || true
+[[ -f "${CONFIG_FILE}" ]] && chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
+[[ -f "${TOKEN_FILE}" ]] && chmod 600 "${TOKEN_FILE}" 2>/dev/null || true
 
 echo "[openclaw-init] Initialization complete"
 echo "[openclaw-init] Gateway token: ${GATEWAY_TOKEN:0:8}...${GATEWAY_TOKEN: -8}"
