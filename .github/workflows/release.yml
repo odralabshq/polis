@@ -348,10 +348,6 @@ jobs:
             target: x86_64-pc-windows-gnu
             artifact: polis-windows-amd64
             binary: polis.exe
-          - os: macos-14
-            target: aarch64-apple-darwin
-            artifact: polis-macos-aarch64
-            binary: polis
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -523,9 +519,6 @@ jobs:
             cli-bin/polis-windows-amd64.exe
             cli-bin/polis-windows-amd64.sha256
             cli-bin/polis-windows-amd64.zip
-            cli-bin/polis-macos-aarch64
-            cli-bin/polis-macos-aarch64.sha256
-            cli-bin/polis-macos-aarch64.tar.gz
             release-assets/image-digests.json
             release-assets/sbom-*.spdx.json
         env:
