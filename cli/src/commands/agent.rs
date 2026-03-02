@@ -62,7 +62,13 @@ fn create_agent(app: &AppContext, name: &str, image: &str) -> Result<std::proces
 /// This function will return an error if the underlying operations fail.
 async fn delete_agent(app: &AppContext, name: &str) -> Result<std::process::ExitCode> {
     app.output.info(&format!("Deleting agent {name}..."));
-    agent_crud::remove_agent(&app.provisioner, &app.state_mgr, &app.terminal_reporter(), name).await?;
+    agent_crud::remove_agent(
+        &app.provisioner,
+        &app.state_mgr,
+        &app.terminal_reporter(),
+        name,
+    )
+    .await?;
     app.output.success(&format!("Agent {name} deleted"));
     Ok(std::process::ExitCode::SUCCESS)
 }
