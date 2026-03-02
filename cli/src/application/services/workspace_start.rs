@@ -323,7 +323,17 @@ async fn setup_agent<P: VmProvisioner>(
     // Generate artifacts in a temp dir using pure Rust domain functions.
     let name = agent_name.to_owned();
     let stdout_bytes = cat_out.stdout.clone();
-    let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
+    // Generate artifacts in a temp dir under ~/polis/tmp so the Multipass
+    // snap daemon (AppArmor-confined) can read it for transfer.
+    let base = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join("polis")
+        .join("tmp");
+    local_fs.create_dir_all(&base).context("creating ~/polis/tmp")?;
+    let tmp = tempfile::Builder::new()
+        .prefix("polis-agent-")
+        .tempdir_in(&base)
+        .context("creating temp dir for agent artifacts")?;
     let tmp_path = tmp.path().to_path_buf();
 
     let manifest: polis_common::agent::AgentManifest =
