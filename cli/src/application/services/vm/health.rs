@@ -44,14 +44,22 @@ pub async fn wait_ready(
     let (max_attempts, delay) = get_health_timeout();
     let heartbeat_every = (60 / delay.as_secs()).max(1) as u32;
 
+    // Check once before starting the spinner — if already healthy, skip it.
+    if check(mp).await == HealthStatus::Healthy {
+        if !quiet {
+            reporter.success(success_msg);
+        }
+        return Ok(());
+    }
+
     reporter.start_waiting("starting services...");
 
     for attempt in 1..=max_attempts {
         match check(mp).await {
             HealthStatus::Healthy => {
+                let was_spinning = reporter.is_spinning();
                 reporter.stop_waiting(true, success_msg);
-                // On non-TTY stop_waiting is a no-op, so emit a plain success line.
-                if !quiet && !reporter.is_spinning() {
+                if !quiet && !was_spinning {
                     reporter.success(success_msg);
                 }
                 return Ok(());
