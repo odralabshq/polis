@@ -107,6 +107,10 @@ pub async fn start_workspace(
                 envs,
             )
             .await?;
+            let msg = agent.map_or_else(
+                || "workspace ready".to_string(),
+                |n| format!("workspace ready with agent: {n}"),
+            );
             wait_ready(provisioner, reporter, false, &msg).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
