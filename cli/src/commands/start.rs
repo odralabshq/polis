@@ -64,7 +64,7 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
     if ctx.quiet {
         return;
     }
-    let label = agent.map_or_else(|| "workspace running".to_string(), |n| format!("workspace running · agent: {n}"));
+    let label = agent.map_or_else(|| "workspace running".to_string(), |n| format!("workspace running with agent: {n}"));
     ctx.success(&label);
     ctx.blank();
     ctx.kv("Connect", "polis connect");
