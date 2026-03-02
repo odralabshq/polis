@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 # Ensure TLS 1.2 for GitHub downloads (PS 5.1 defaults to TLS 1.0)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Version          = if ($env:POLIS_VERSION)  { $env:POLIS_VERSION }  else { "0.3.0-preview-11" }
+$Version          = $null  # Resolved in Invoke-PolisInstall via Resolve-Version
 $InstallDir       = if ($env:POLIS_HOME)     { $env:POLIS_HOME }     else { Join-Path $env:USERPROFILE ".polis" }
 $RepoOwner        = "OdraLabsHQ"
 $RepoName         = "polis"
@@ -76,13 +76,13 @@ function Test-WSL2 {
 }
 
 function Install-Multipass {
-    $msi = Join-Path $env:TEMP "multipass-${MultipassVersion}+win-Windows.msi"
-    $url = "https://github.com/canonical/multipass/releases/download/v${MultipassVersion}/multipass-${MultipassVersion}+win-Windows.msi"
+    $msi = Join-Path $env:TEMP "multipass-${MultipassVersion}+win-win64.msi"
+    $url = "https://github.com/canonical/multipass/releases/download/v${MultipassVersion}/multipass-${MultipassVersion}+win-win64.msi"
     Write-Info "Downloading Multipass ${MultipassVersion}..."
     Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
 
     # SHA256 hash for Multipass MSI — update when bumping $MultipassVersion
-    $MultipassSha256 = if ($env:MULTIPASS_SHA256_WIN) { $env:MULTIPASS_SHA256_WIN } else { "PLACEHOLDER_UPDATE_WHEN_BUMPING_VERSION" }
+    $MultipassSha256 = if ($env:MULTIPASS_SHA256_WIN) { $env:MULTIPASS_SHA256_WIN } else { "5b697c4312f2267041adf001ba750ff8b8fcf4fd68675493661cb30af742f283" }
 
     Write-Info "Verifying Multipass MSI SHA256..."
     $msiHash = (Get-FileHash $msi -Algorithm SHA256).Hash.ToLower()
@@ -146,17 +146,35 @@ function Assert-Multipass {
 
 # -- CLI -----------------------------------------------------------------------
 
+function Resolve-Version {
+    if ($env:POLIS_VERSION) {
+        $script:Version = $env:POLIS_VERSION
+        return
+    }
+    Write-Info "Detecting latest Polis release..."
+    # Use releases API (returns pre-releases too, unlike /releases/latest)
+    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/${RepoOwner}/${RepoName}/releases?per_page=1" -UseBasicParsing
+    if (-not $releases -or $releases.Count -eq 0) {
+        Write-Err "Could not detect latest version from GitHub."
+        Write-Host '  Set POLIS_VERSION manually: $env:POLIS_VERSION="0.4.0"; .\install.ps1'
+        throw "Version detection failed."
+    }
+    $tag = $releases[0].tag_name
+    $script:Version = $tag -replace '^v', ''
+    Write-Ok "Detected version: $script:Version"
+}
+
 function Install-Cli {
     $binDir = Join-Path $InstallDir "bin"
     New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
-    $base = "https://github.com/${RepoOwner}/${RepoName}/releases/download/${Version}"
+    $base = "https://github.com/${RepoOwner}/${RepoName}/releases/download/v${Version}"
     $exe  = Join-Path $binDir "polis.exe"
     $sha  = Join-Path $env:TEMP "polis.sha256"
 
     Write-Info "Downloading CLI ${Version}..."
-    Invoke-WebRequest -Uri "$base/polis-windows-amd64.exe"        -OutFile $exe -UseBasicParsing
-    Invoke-WebRequest -Uri "$base/polis-windows-amd64.exe.sha256" -OutFile $sha -UseBasicParsing
+    Invoke-WebRequest -Uri "$base/polis-windows-amd64.exe"    -OutFile $exe -UseBasicParsing
+    Invoke-WebRequest -Uri "$base/polis-windows-amd64.sha256" -OutFile $sha -UseBasicParsing
 
     Write-Info "Verifying CLI SHA256..."
     $expected = (Get-Content $sha -Raw).Trim().Split()[0]
@@ -195,6 +213,7 @@ function Invoke-PolisInstall {
     Write-Host ""
 
     Assert-Multipass
+    Resolve-Version
     Write-Info "Installing Polis ${Version}"
     Install-Cli
     Add-ToUserPath

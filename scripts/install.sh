@@ -7,15 +7,13 @@
 
 set -euo pipefail
 
-VERSION="${POLIS_VERSION:-0.3.0}"
 INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 CURL_PROTO="=https"
 
 # SHA256 hashes for Multipass downloads — update when bumping MULTIPASS_VERSION
-MULTIPASS_SHA256_LINUX_AMD64="${MULTIPASS_SHA256_LINUX_AMD64:-PLACEHOLDER_UPDATE_WHEN_BUMPING_VERSION}"
-MULTIPASS_SHA256_MACOS="${MULTIPASS_SHA256_MACOS:-PLACEHOLDER_UPDATE_WHEN_BUMPING_VERSION}"
+MULTIPASS_SHA256_MACOS="${MULTIPASS_SHA256_MACOS:-758d10dc1b71872b0ee7a17070b93fc788dba5ba45c36b980e42fd895d273489}"
 
 # Colors
 RED='\033[0;31m'
@@ -90,26 +88,8 @@ install_multipass_linux() {
         echo "  Install snapd: https://snapcraft.io/docs/installing-snapd"
         exit 1
     fi
-    local snap_file
-    snap_file=$(mktemp --suffix=".snap")
-    trap 'rm -f "${snap_file}"' EXIT
-    curl -fsSL --proto "${CURL_PROTO}" \
-        "https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass_${MULTIPASS_VERSION}_amd64.snap" \
-        -o "${snap_file}"
-
-    local snap_sha256
-    snap_sha256=$(sha256sum "${snap_file}" | cut -d' ' -f1)
-    if [[ "${snap_sha256}" != "${MULTIPASS_SHA256_LINUX_AMD64}" ]]; then
-        log_error "Multipass snap SHA256 mismatch!"
-        echo "  Expected: ${MULTIPASS_SHA256_LINUX_AMD64}" >&2
-        echo "  Actual:   ${snap_sha256}" >&2
-        rm -f "${snap_file}"
-        exit 1
-    fi
-    log_ok "Multipass snap SHA256 verified"
-
-    sudo snap install "${snap_file}" --dangerous
-    rm -f "${snap_file}"
+    log_info "Installing Multipass ${MULTIPASS_VERSION} from Snap Store..."
+    sudo snap install multipass
     return 0
 }
 
@@ -184,10 +164,31 @@ check_multipass() {
     return 0
 }
 
+detect_version() {
+    if [[ -n "${POLIS_VERSION:-}" ]]; then
+        VERSION="${POLIS_VERSION}"
+        return 0
+    fi
+    log_info "Detecting latest Polis release..."
+    # Use tags API sorted by date — works for pre-releases (unlike /releases/latest)
+    local tag
+    tag=$(curl -fsSL --proto "${CURL_PROTO}" \
+        "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=1" \
+        | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+    if [[ -z "${tag}" ]]; then
+        log_error "Could not detect latest version from GitHub."
+        echo "  Set POLIS_VERSION manually: POLIS_VERSION=0.4.0 bash install.sh"
+        exit 1
+    fi
+    VERSION="${tag#v}"
+    log_ok "Detected version: ${VERSION}"
+    return 0
+}
+
 download_cli() {
     local arch base_url bin_dir binary_name checksum_file expected actual
     arch=$(check_arch)
-    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
+    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v${VERSION}"
     bin_dir="${INSTALL_DIR}/bin"
     binary_name="polis-linux-${arch}"
     tarball="${binary_name}.tar.gz"
@@ -235,6 +236,7 @@ main() {
     print_logo
     check_arch >/dev/null
     check_multipass
+    detect_version
     log_info "Installing Polis ${VERSION}"
     download_cli
     create_symlink
