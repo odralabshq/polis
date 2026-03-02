@@ -21,7 +21,8 @@ pub struct ConnectArgs {}
 pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::ExitCode> {
     let ctx = &app.output;
     let mp = &app.provisioner;
-    if SshConfigurator::is_configured(&app.ssh).await? {
+    let already_configured = SshConfigurator::is_configured(&app.ssh).await?;
+    if already_configured {
         // Refresh polis config to pick up any template changes (idempotent).
         SshConfigurator::setup_config(&app.ssh).await?;
     } else {
@@ -43,7 +44,7 @@ pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::E
     // Pin the workspace host key so StrictHostKeyChecking can verify it.
     crate::application::services::connect::pin_host_key(mp, &app.ssh).await;
 
-    show_connection_options(ctx);
+    show_connection_options(ctx, already_configured);
     Ok(std::process::ExitCode::SUCCESS)
 }
 
@@ -70,9 +71,14 @@ async fn setup_ssh_config(app: &AppContext) -> Result<()> {
     Ok(())
 }
 
-fn show_connection_options(ctx: &crate::output::OutputContext) {
-    ctx.info("Connect with:");
-    ctx.info("    ssh workspace");
-    ctx.info("    code --remote ssh-remote+workspace /workspace");
-    ctx.info("    cursor --remote ssh-remote+workspace /workspace");
+fn show_connection_options(ctx: &crate::output::OutputContext, already_configured: bool) {
+    if already_configured {
+        ctx.success("workspace ready to connect");
+    } else {
+        ctx.success("workspace connected");
+    }
+    println!();
+    ctx.kv("SSH     ", "ssh workspace");
+    ctx.kv("VS Code ", "code --remote ssh-remote+workspace /workspace");
+    ctx.kv("Cursor  ", "cursor --remote ssh-remote+workspace /workspace");
 }
