@@ -420,7 +420,7 @@ jobs:
           cargo install zipsign --version 0.2.1 --locked
           $keyFile = [System.IO.Path]::GetTempFileName()
           [System.IO.File]::WriteAllBytes($keyFile, [System.Convert]::FromBase64String($env:POLIS_SIGNING_KEY))
-          zipsign sign file --context "" "${{ matrix.artifact }}.zip" $keyFile -o "${{ matrix.artifact }}.zip.signed" -f
+          zipsign sign zip --context "" "${{ matrix.artifact }}.zip" $keyFile -o "${{ matrix.artifact }}.zip.signed" -f
           Move-Item "${{ matrix.artifact }}.zip.signed" "${{ matrix.artifact }}.zip" -Force
           Remove-Item $keyFile
           echo "✓ Signed: ${{ matrix.artifact }}.zip"

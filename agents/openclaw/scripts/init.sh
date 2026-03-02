@@ -151,19 +151,40 @@ get_container_env_early() {
 inject_polis_soul() {
     local ws_soul="${CONFIG_DIR}/workspace/SOUL.md"
     local marker="## Polis Security Workspace"
+    local bundled_soul="/usr/local/share/openclaw/SOUL.md"
     
     mkdir -p "${CONFIG_DIR}/workspace"
-    
-    # Skip if already injected with current shell-only section
-    if [[ -f "$ws_soul" ]] && grep -qF "## Security Tools" "$ws_soul" 2>/dev/null; then
-        echo "[openclaw-init] Polis security section already in workspace SOUL.md"
-        return 0
+
+    # Preserve baseline OpenClaw instructions.
+    # If SOUL.md is missing, seed it from the bundled file before appending Polis notes.
+    if [[ ! -f "$ws_soul" ]]; then
+        if [[ -f "$bundled_soul" ]]; then
+            cp "$bundled_soul" "$ws_soul"
+            chmod 644 "$ws_soul"
+            echo "[openclaw-init] Seeded workspace SOUL.md from bundled instructions"
+        else
+            cat > "$ws_soul" << 'SOULEOF'
+# OpenClaw Agent
+SOULEOF
+            chmod 644 "$ws_soul"
+            echo "[openclaw-init] Created workspace SOUL.md baseline"
+        fi
     fi
-    
-    # Remove old section (MCP or shell-only) if present — upgrade path
+
+    # Upgrade path: older versions could leave workspace SOUL with only the
+    # appended Polis section and no baseline instructions.
+    if [[ -f "$ws_soul" ]] && grep -qF "$marker" "$ws_soul" 2>/dev/null && grep -qE '^[[:space:]]*---[[:space:]]*$' "$ws_soul"; then
+        if [[ -f "$bundled_soul" ]] && ! grep -qF "# Polis Security Agent" "$ws_soul" 2>/dev/null; then
+            cp "$bundled_soul" "$ws_soul"
+            chmod 644 "$ws_soul"
+            echo "[openclaw-init] Restored workspace SOUL.md baseline (upgrade path)"
+        fi
+    fi
+
+    # Skip if already injected.
     if [[ -f "$ws_soul" ]] && grep -qF "$marker" "$ws_soul" 2>/dev/null; then
-        sed -i "/^---$/,\${ /^## Polis Security Workspace$/,\$d; /^---$/d }" "$ws_soul"
-        echo "[openclaw-init] Removed old security section, will re-inject"
+        echo "[openclaw-init] Polis security section already present in workspace SOUL.md"
+        return 0
     fi
     
     # Append polis security section (works whether file exists or not)
@@ -234,6 +255,12 @@ All commands output JSON. They communicate with the polis-toolbox service over H
 
 Periodically run `polis-list-pending` or `polis-security-status` to check for blocked requests you haven't handled yet.
 
+### Telegram and channel connectivity
+
+If a user asks to connect Telegram (or another channel), do not answer with "I can't connect to Telegram".
+You can manage channels from this workspace using OpenClaw CLI channel commands.
+Check channel status first, then provide or execute the exact setup command needed.
+
 **You cannot approve requests yourself.** Only a human can complete the approval by typing the OTT code back.
 POLIS_SOUL
     
@@ -260,6 +287,7 @@ IDEOF
 - **Role**: Workspace operator
 - **Environment**: Polis secure workspace (Linux container)
 - **Preferences**: Direct answers, run tools without asking permission for read-only operations
+- **Capabilities**: You can manage OpenClaw channels (including Telegram) via CLI commands available in this workspace
 USEREOF
     chmod 644 "${CONFIG_DIR}/workspace/USER.md"
 }

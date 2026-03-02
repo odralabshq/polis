@@ -1,7 +1,7 @@
 # Polis — Secure Workspace for AI Coding Agents
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.0--preview-orange.svg)](https://github.com/OdraLabsHQ/polis/releases)
+[![Version](https://img.shields.io/badge/version-0.4.0-orange.svg)](https://github.com/OdraLabsHQ/polis/releases)
 
 > **⚠️ Experimental Preview** — Polis is under active development This platform in not yet recommended for production use.
 
@@ -20,7 +20,7 @@ Polis solves this by routing all agent traffic through a TLS-intercepting proxy 
 | OS | Architecture | Status |
 |----|-------------|--------|
 | Linux | amd64 | ✅ Supported |
-| Windows | amd64 | 🔜 Coming soon |
+| Windows | amd64 | ✅ Supported |
 | macOS | arm64 | 🔜 Coming soon |
 
 ### Linux (amd64)
@@ -29,9 +29,13 @@ Polis solves this by routing all agent traffic through a TLS-intercepting proxy 
 curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
 ```
 
-### Windows (PowerShell) — Coming soon
+### Windows (PowerShell)
 
-🔜 Windows amd64 support is on the roadmap.
+Works on PowerShell 5.1 and newer:
+
+```powershell
+irm https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.ps1 | iex
+```
 
 ### macOS — Coming soon
 
@@ -50,6 +54,12 @@ polis start --agent=openclaw   # Start Polis with pre-configured openclaw agent
 ```
 
 To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
+
+### Windows Networking Notes
+
+- Set your active network adapter to a **Private** network profile. Multipass VMs may not get an IP on Public networks.
+- Turn off VPN during VM creation and startup if you experience networking issues.
+- Applications running at `localhost` inside the workspace container are accessible through the VM IP. Find it with `multipass list`.
 
 ---
 
@@ -233,17 +243,39 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 | Platform | Status | Notes |
 |----------|--------|-------|
 | **Linux** (amd64) | ✅ Supported | Recommended |
-| **Windows** (amd64) | 🔜 Coming soon | On the roadmap |
+| **Windows** (amd64) | ✅ Supported | Requires Hyper-V or VirtualBox |
 | **macOS** (arm64) | 🔜 Coming soon | On the roadmap |
 
 ---
 
 ## 🔧 Troubleshooting
 
-**Multipass not found:**
+**Multipass not found (Linux):**
 
 ```bash
 sudo snap install multipass
+```
+
+**Multipass not found (Windows):**
+
+The installer handles this automatically. If you need to install manually, enable Hyper-V or install VirtualBox first, then download from [multipass.run](https://multipass.run/install).
+
+**Windows VM has no network / can't reach internet:**
+
+```powershell
+# Switch your network adapter to Private profile
+Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
+# Disconnect VPN, then restart the VM
+multipass restart polis
+```
+
+**Accessing agent UI on Windows:**
+
+The agent UI runs on `localhost` inside the VM. Use the VM IP instead:
+
+```powershell
+multipass list   # Find the polis VM IP
+# Open http://<vm-ip>:18789 in your browser
 ```
 
 **Workspace won't start:**
@@ -260,8 +292,6 @@ polis start          # Try again
 polis delete --all   # Remove everything
 polis start          # Fresh install
 ```
-
----
 
 ---
 
