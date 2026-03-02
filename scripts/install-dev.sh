@@ -184,8 +184,9 @@ ENVEOF"
         done
     "
 
-    # Pull go-httpbin (small third-party test image)
-    multipass exec polis -- docker pull mccutchen/go-httpbin 2>/dev/null || true
+    # go-httpbin is a test-only image (profiles: ["test"]).
+    # It is included in the tarball when built via `just build`.
+    # Skip pulling it here — it is not needed for normal operation.
 
     # ── Step 4: Generate certs and secrets ────────────────────────────────
     log_info "Generating certificates and secrets..."
@@ -266,4 +267,12 @@ run_init
 
 echo ""
 log_ok "Polis (dev build) installed successfully!"
+echo ""
+echo "NEXT STEPS:"
+echo "1. Verify status:"
+echo "   polis status"
+echo "2. Start an AI agent (e.g., OpenClaw):"
+echo "   polis start --agent openclaw -e ANTHROPIC_API_KEY=<your_key>"
+echo "3. Connect to the dashboard:"
+echo "   polis connect"
 echo ""

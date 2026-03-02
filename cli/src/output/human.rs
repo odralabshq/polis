@@ -239,7 +239,7 @@ impl<'a> HumanRenderer<'a> {
         } else if expire_days > 0 {
             println!(
                 "    {} certificates expire soon",
-                "\u{26a0}".style(self.ctx.styles.warning)
+                "!".style(self.ctx.styles.warning)
             );
         } else {
             self.print_check(false, "certificates expired");

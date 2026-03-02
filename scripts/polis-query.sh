@@ -34,12 +34,10 @@ case "${COMMAND}" in
 
   malware-db)
     # Return the mtime of the ClamAV daily database so the CLI can compute age.
+    # The database lives inside the scanner container, not on the VM host.
     MTIME=0
     for f in /var/lib/clamav/daily.cld /var/lib/clamav/daily.cvd; do
-      if [[ -f "${f}" ]]; then
-        MTIME=$(stat -c %Y "${f}")
-        break
-      fi
+      RESULT=$(docker compose -f "${COMPOSE_FILE}" exec -T scanner stat -c %Y "${f}" 2>/dev/null) && MTIME="${RESULT}" && break
     done
     printf '{"daily_cvd_mtime":%s}\n' "${MTIME}"
     ;;

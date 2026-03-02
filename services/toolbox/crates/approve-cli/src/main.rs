@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[command(name = "polis-approve", version, about)]
 struct Cli {
     /// Valkey URL (must use rediss:// for TLS)
-    #[arg(long, default_value = "rediss://valkey:6379")]
+    #[arg(long, default_value = "rediss://state:6379")]
     valkey_url: String,
 
     /// Valkey ACL username

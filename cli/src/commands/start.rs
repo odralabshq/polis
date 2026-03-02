@@ -51,8 +51,8 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
         StartOutcome::AlreadyRunning { agent } => {
             print_already_running_message(agent.as_deref(), &app.output);
         }
-        StartOutcome::Created { agent } | StartOutcome::Restarted { agent } => {
-            print_success_message(agent.as_deref(), &app.output);
+        StartOutcome::Created { .. } | StartOutcome::Restarted { .. } => {
+            print_success_message(&app.output);
         }
     }
 
@@ -64,28 +64,21 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
     if ctx.quiet {
         return;
     }
-    ctx.info("Workspace is running.");
-    if let Some(name) = agent {
-        ctx.kv("Agent", name);
-    }
-    ctx.guarantees();
+    let label = agent.map_or_else(
+        || "workspace running".to_string(),
+        |n| format!("workspace running with agent: {n}"),
+    );
+    ctx.success(&label);
+    ctx.blank();
     ctx.kv("Connect", "polis connect");
     ctx.kv("Status", "polis status");
 }
 
-/// Print success message after workspace is ready.
-fn print_success_message(agent: Option<&str>, ctx: &OutputContext) {
+fn print_success_message(ctx: &OutputContext) {
     if ctx.quiet {
         return;
     }
-    ctx.guarantees();
-    if let Some(name) = agent {
-        ctx.success(&format!("Workspace ready. Agent: {name}"));
-        ctx.kv("Agent shell", "polis agent shell");
-        ctx.kv("Agent commands", "polis agent cmd help");
-    } else {
-        ctx.success("Workspace ready.");
-    }
+    ctx.blank();
     ctx.kv("Connect", "polis connect");
     ctx.kv("Status", "polis status");
 }

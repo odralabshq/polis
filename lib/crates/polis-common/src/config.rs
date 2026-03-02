@@ -41,7 +41,7 @@ const fn default_admin_addr() -> SocketAddr {
 }
 
 fn default_redis_url() -> String {
-    "redis://valkey:6379".to_string()
+    "redis://state:6379".to_string()
 }
 
 impl Default for AgentServerConfig {
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn agent_default_redis_url() {
         let cfg = AgentServerConfig::default();
-        assert_eq!(cfg.redis_url, "redis://valkey:6379");
+        assert_eq!(cfg.redis_url, "redis://state:6379");
     }
 
     #[test]
@@ -103,6 +103,6 @@ mod tests {
     #[test]
     fn admin_default_redis_url() {
         let cfg = AdminServerConfig::default();
-        assert_eq!(cfg.redis_url, "redis://valkey:6379");
+        assert_eq!(cfg.redis_url, "redis://state:6379");
     }
 }

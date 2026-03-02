@@ -20,7 +20,7 @@ fn get_health_timeout() -> (u32, Duration) {
     let timeout_secs: u64 = std::env::var("POLIS_HEALTH_TIMEOUT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(300);
+        .unwrap_or(900);
     let delay = Duration::from_secs(2);
     #[allow(clippy::cast_possible_truncation)]
     let max_attempts = (timeout_secs / 2) as u32;
@@ -39,30 +39,36 @@ pub async fn wait_ready(
     mp: &impl ShellExecutor,
     reporter: &impl ProgressReporter,
     quiet: bool,
+    success_msg: &str,
 ) -> Result<()> {
-    // Branding lines should ideally be moved to a domain helper or handled by the reporter.
-    // For now, we'll keep the logic but remove the direct output dependency.
-    let msg_start = "agent isolation complete...";
-    let msg_end = "agent containment active.";
-
-    if !quiet {
-        reporter.step(msg_start);
-    }
-
     let (max_attempts, delay) = get_health_timeout();
 
-    for _attempt in 1..=max_attempts {
-        match check(mp).await {
-            HealthStatus::Healthy => {
-                if !quiet {
-                    reporter.success(msg_end);
-                }
-                return Ok(());
-            }
-            _ => tokio::time::sleep(delay).await,
+    // Check once before starting the stage — if already healthy, skip it.
+    if check(mp).await == HealthStatus::Healthy {
+        if !quiet {
+            reporter.success(success_msg);
         }
+        return Ok(());
     }
 
+    if !quiet {
+        reporter.begin_stage("starting services...");
+    }
+
+    for _attempt in 1..=max_attempts {
+        if check(mp).await == HealthStatus::Healthy {
+            if !quiet {
+                reporter.complete_stage();
+            }
+            reporter.success(success_msg);
+            return Ok(());
+        }
+        tokio::time::sleep(delay).await;
+    }
+
+    if !quiet {
+        reporter.fail_stage();
+    }
     anyhow::bail!(
         "Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs"
     )

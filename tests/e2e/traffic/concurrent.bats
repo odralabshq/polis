@@ -7,6 +7,8 @@ setup_file() {
     load "../../lib/constants.bash"
     load "../../lib/guards.bash"
     require_container "$CTR_WORKSPACE"
+    require_container "$CTR_GATE"
+    require_container "$CTR_SENTINEL"
     approve_host "$HTTPBIN_HOST" 600
 }
 

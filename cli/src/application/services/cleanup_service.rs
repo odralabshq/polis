@@ -54,6 +54,7 @@ pub async fn delete_all(
     local_fs: &impl LocalFs,
     paths: &impl LocalPaths,
     ssh: &impl SshConfigurator,
+    reporter: &impl ProgressReporter,
 ) -> Result<()> {
     // 1. Delete VM (fail-fast: prerequisite check)
     let state = vm::state(mp).await?;
@@ -121,7 +122,7 @@ pub async fn delete_all(
     remove_if_exists(local_fs, &paths.images_dir(), "images dir", &mut errors);
 
     if errors.is_empty() {
-        println!("All Polis data removed.");
+        reporter.success("all workspace data removed.");
         Ok(())
     } else {
         Err(anyhow::anyhow!(

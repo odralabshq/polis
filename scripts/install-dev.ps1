@@ -19,6 +19,42 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Write-Logo {
+    $esc = [char]27
+    # Purple → teal gradient, one color per column (matches install-dev.sh)
+    $c = @(
+        "$esc[38;2;107;33;168m",  # cO
+        "$esc[38;2;93;37;163m",   # cD
+        "$esc[38;2;64;47;153m",   # cR
+        "$esc[38;2;46;53;147m",   # cA1
+        "$esc[38;2;37;56;144m",   # cL
+        "$esc[38;2;26;107;160m",  # cA2
+        "$esc[38;2;26;151;179m",  # cB
+        "$esc[38;2;20;184;166m"   # cS
+    )
+    $x = "$esc[0m"
+    $rows = @(
+        @(" ▄████▄ ", "█████▄ ", "█████▄ ", " ▄████▄ ", "  ██      ", " ▄████▄ ", "█████▄ ", " ▄████▄"),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "██     "),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "██     "),
+        @("██    ██", "██   ██", "█████▀ ", "████████", "  ██      ", "████████", "█████▀ ", " ▀████▄"),
+        @("██    ██", "██   ██", "██  ██ ", "██    ██", "  ██      ", "██    ██", "██   ██", "      ██"),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "      ██"),
+        @(" ▀████▀ ", "█████▀ ", "██   ██", "██    ██", "  ████████", "██    ██", "█████▀ ", " ▀████▀")
+    )
+    Write-Host ""
+    foreach ($row in $rows) {
+        $line = ""
+        for ($i = 0; $i -lt $row.Count; $i++) {
+            $line += "$($c[$i])$($row[$i])$x "
+        }
+        Write-Host $line
+    }
+    Write-Host ""
+}
+
+Write-Logo
+
 # ── Multipass check ───────────────────────────────────────────────────────────
 
 function Assert-Multipass {
@@ -116,6 +152,19 @@ function Invoke-PolisInit {
 
     & multipass exec polis -- rm -f /tmp/polis-setup.config.tar
 
+    # Overlay repo's docker-compose.yml (may be newer than tarball)
+    $composeFile = Join-Path $RepoDir "docker-compose.yml"
+    & multipass transfer $composeFile polis:/opt/polis/docker-compose.yml
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay docker-compose.yml"; exit 1 }
+
+    # Overlay repo's agents/ directory (may be newer than tarball)
+    # This keeps agent scripts/manifests in sync with current branch fixes.
+    $agentsDir = Join-Path $RepoDir "agents"
+    & multipass exec polis -- rm -rf /opt/polis/agents
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to remove stale agents directory"; exit 1 }
+    & multipass transfer --recursive $agentsDir polis:/opt/polis/
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay agents directory"; exit 1 }
+
     # Write .env with version
     $cliVersion = (& $polis --version 2>&1) -replace '^polis\s+', ''
     $tag = "v$cliVersion"
@@ -135,8 +184,8 @@ function Invoke-PolisInit {
     & multipass exec polis -- bash -c "printf '%s\n' '$envContent' > /opt/polis/.env"
 
     # Fix script permissions and strip Windows CRLF line endings from all text config files
-    & multipass exec polis -- bash -c "find /opt/polis -name '*.sh' -exec chmod +x '{}' +"
-    & multipass exec polis -- bash -c "find /opt/polis \( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \) -exec sed -i 's/\r//' '{}' +"
+    & multipass exec polis -- bash -c "find /opt/polis -type f -name '*.sh' -exec chmod +x '{}' +"
+    & multipass exec polis -- bash -c "find /opt/polis -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \) -exec sed -i 's/\r$//' '{}' +"
     Write-Ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
@@ -153,8 +202,9 @@ function Invoke-PolisInit {
     $tagScript = 'docker images --format ''{{.Repository}}:{{.Tag}}'' | grep '':latest'' | while read -r img; do base=${img%%:*}; docker tag $img ${base}:' + $tag + '; done'
     & multipass exec polis -- bash -c $tagScript
 
-    # Pull go-httpbin (small third-party test image)
-    & multipass exec polis -- docker pull mccutchen/go-httpbin 2>$null
+    # go-httpbin is a test-only image (profiles: ["test"]).
+    # It is included in the tarball when built via `just build`.
+    # Skip pulling it here — it is not needed for normal operation.
 
     # ── Step 4: Generate certs and secrets ────────────────────────────────
     Write-Info "Generating certificates and secrets..."

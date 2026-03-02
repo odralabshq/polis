@@ -18,7 +18,7 @@ set -euo pipefail
 # Environment Variable Defaults
 # =============================================================================
 
-VALKEY_HOST="${VALKEY_HOST:-valkey}"
+VALKEY_HOST="${VALKEY_HOST:-state}"
 VALKEY_PORT="${VALKEY_PORT:-6379}"
 VALKEY_PASSWORD_FILE="${VALKEY_PASSWORD_FILE:-/run/secrets/valkey_password}"
 VALKEY_TLS_CERT="${VALKEY_TLS_CERT:-/etc/valkey/tls/client.crt}"

@@ -4,7 +4,9 @@ use anyhow::Result;
 use std::process::ExitCode;
 
 use crate::app::AppContext;
+use crate::application::ports::ProgressReporter;
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
+use crate::output::reporter::TerminalReporter;
 
 /// Run `polis stop`.
 ///
@@ -14,6 +16,7 @@ use crate::application::services::vm::lifecycle::{self as vm, VmState};
 pub async fn run(app: &AppContext) -> Result<ExitCode> {
     let mp = &app.provisioner;
     let ctx = &app.output;
+    let reporter = TerminalReporter::new(ctx);
     let state = vm::state(mp).await?;
 
     match state {
@@ -26,10 +29,18 @@ pub async fn run(app: &AppContext) -> Result<ExitCode> {
             ctx.info("Resume: polis start");
         }
         VmState::Running | VmState::Starting => {
-            ctx.info("Stopping workspace...");
-            vm::stop(mp).await?;
-            ctx.success("Workspace stopped. Your data is preserved.");
-            ctx.info("Resume: polis start");
+            reporter.begin_stage("Stopping workspace...");
+            match vm::stop(mp).await {
+                Ok(()) => {
+                    reporter.complete_stage();
+                    ctx.info("Your data is preserved.");
+                    ctx.info("Resume: polis start");
+                }
+                Err(e) => {
+                    reporter.fail_stage();
+                    return Err(e);
+                }
+            }
         }
     }
 

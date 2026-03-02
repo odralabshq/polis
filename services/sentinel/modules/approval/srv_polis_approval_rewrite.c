@@ -243,7 +243,7 @@ int rewrite_init_service(ci_service_xdata_t *srv_xdata,
     /* Step 3: Connect to Valkey with TLS + ACL                   */
     /*         User: governance-reqmod (least-privilege)           */
     /*         Env vars:                                          */
-    /*           VALKEY_HOST (default: "valkey")                   */
+    /*           VALKEY_HOST (default: "state")                   */
     /*           VALKEY_PORT (default: 6379)                       */
     /*           Password read from /run/secrets/valkey_reqmod_password */
     /*           VALKEY_TLS_CERT, VALKEY_TLS_KEY, VALKEY_TLS_CA   */

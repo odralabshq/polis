@@ -638,7 +638,7 @@ static int apply_security_policy(const char *host, int has_credential)
 /*
  * dlp_valkey_init - Connect to Valkey as dlp-reader with TLS + ACL.
  *
- * Reads polis_VALKEY_HOST env var (default: "valkey"), port 6379.
+ * Reads polis_VALKEY_HOST env var (default: "state"), port 6379.
  * Creates TLS context with CA, client cert, client key from
  * /etc/valkey/tls/. Reads password from Docker secret file at
  * /run/secrets/valkey_dlp_password, strips trailing newline,
