@@ -119,6 +119,15 @@ function Invoke-PolisInit {
     # Overlay repo's docker-compose.yml (may be newer than tarball)
     $composeFile = Join-Path $RepoDir "docker-compose.yml"
     & multipass transfer $composeFile polis:/opt/polis/docker-compose.yml
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay docker-compose.yml"; exit 1 }
+
+    # Overlay repo's agents/ directory (may be newer than tarball)
+    # This keeps agent scripts/manifests in sync with current branch fixes.
+    $agentsDir = Join-Path $RepoDir "agents"
+    & multipass exec polis -- rm -rf /opt/polis/agents
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to remove stale agents directory"; exit 1 }
+    & multipass transfer --recursive $agentsDir polis:/opt/polis/
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay agents directory"; exit 1 }
 
     # Write .env with version
     $cliVersion = (& $polis --version 2>&1) -replace '^polis\s+', ''
