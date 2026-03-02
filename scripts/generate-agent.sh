@@ -354,6 +354,12 @@ mem_reservation = sys.argv[11]
 ports   = json.loads(ports_json)
 persist = json.loads(persist_json)
 
+# Reject values containing characters that could break out of the CMD-SHELL JSON array
+for label, val in [("health.command", health_cmd), ("metadata.name", name)]:
+    if any(c in val for c in '"\n\r'):
+        print(f"Error: {label} contains illegal characters (quotes or newlines)", file=sys.stderr)
+        sys.exit(1)
+
 lines = []
 lines.append(f"# Generated from {manifest_path} - DO NOT EDIT")
 lines.append("services:")
@@ -458,6 +464,19 @@ manifest_path  = sys.argv[15]
 
 rt_env   = json.loads(rt_env_json)
 rw_paths = json.loads(rw_paths_json)
+
+# Reject values containing newlines that could inject systemd directives
+for label, val in [
+    ("runtime.command", runtime_cmd),
+    ("spec.init", spec_init),
+    ("metadata.displayName", display_name),
+    ("runtime.user", runtime_user),
+    ("runtime.workdir", runtime_workdir),
+    ("runtime.envFile", runtime_env_file),
+]:
+    if '\n' in val or '\r' in val:
+        print(f"Error: {label} contains illegal newline characters", file=sys.stderr)
+        sys.exit(1)
 
 lines = []
 lines.append(f"# Generated from {manifest_path} - DO NOT EDIT")
