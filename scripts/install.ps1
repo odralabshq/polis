@@ -29,6 +29,10 @@ function Show-WindowsNetworkingNote {
 function Confirm-InstallerProceed {
     Write-Host ""
     Write-Host "WARNING: A clean reinstall deletes the existing 'polis' VM and removes previous workspace data." -ForegroundColor Red
+    if ($env:POLIS_INSTALL_ASSUME_Y -eq "1" -or $env:CI -eq "true" -or $env:GITHUB_ACTIONS -eq "true" -or -not [Environment]::UserInteractive) {
+        Write-Host "[INFO] Non-interactive mode detected — proceeding automatically."
+        return
+    }
     $reply = (Read-Host "Continue with installation? (y/n)").Trim().ToLowerInvariant()
     if ($reply -notin @("y", "yes")) {
         Write-Warn "Installation cancelled by user."

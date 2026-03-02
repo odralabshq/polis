@@ -258,7 +258,9 @@ services:
       - /run/clamav:size=10M,mode=755,uid=65532,gid=65532
       - /var/lock:size=10M,mode=1777,uid=65532,gid=65532
     networks:
-      gateway-bridge: {}
+      gateway-bridge:
+        aliases:
+          - valkey
       internet: {}
     volumes:
       - scanner-db:/var/lib/clamav
@@ -473,7 +475,9 @@ services:
     entrypoint: []
     command: ["valkey-server", "/etc/valkey/valkey.conf"]
     networks:
-      gateway-bridge: {}
+      gateway-bridge:
+        aliases:
+          - valkey
     depends_on:
       state-init:
         condition: service_completed_successfully
@@ -548,7 +552,7 @@ services:
     environment:
       - RUST_LOG=info
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
-      - polis_AGENT_VALKEY_URL=rediss://state:6379
+      - polis_AGENT_VALKEY_URL=rediss://valkey:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
       - polis_AGENT_VALKEY_PASS_FILE=/run/secrets/valkey_mcp_agent_password
       - polis_AGENT_TLS_CERT=/etc/toolbox/tls/toolbox.pem

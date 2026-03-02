@@ -55,6 +55,10 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 confirm_installer_proceed() {
     echo ""
     echo -e "${RED}WARNING: A clean reinstall deletes the existing 'polis' VM and removes previous workspace data.${NC}"
+    if [[ "${POLIS_INSTALL_ASSUME_Y:-}" == "1" || "${CI:-}" == "true" || ! -t 0 ]]; then
+        log_info "Non-interactive mode detected — proceeding automatically."
+        return 0
+    fi
     read -r -p "Continue with installation? (y/n) " reply
     case "${reply,,}" in
         y|yes) ;;
