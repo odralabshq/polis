@@ -184,7 +184,7 @@ pub trait ProgressReporter {
     fn warn(&self, message: &str);
     /// Start an indeterminate wait with a live elapsed-time indicator.
     /// Default: no-op (e.g. quiet mode, tests).
-    fn start_waiting(&self) {}
+    fn start_waiting(&self, _msg: &str) {}
     /// Stop the wait indicator. `success` controls the final symbol.
     /// Default: no-op.
     fn stop_waiting(&self, _success: bool) {}

@@ -54,7 +54,7 @@ impl ProgressReporter for TerminalReporter<'_> {
         }
     }
 
-    fn start_waiting(&self) {
+    fn start_waiting(&self, msg: &str) {
         if self.ctx.quiet || !self.ctx.is_tty {
             return;
         }
@@ -62,9 +62,10 @@ impl ProgressReporter for TerminalReporter<'_> {
         pb.set_style(
             ProgressStyle::default_spinner()
                 .tick_strings(&["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"])
-                .template("  {spinner:.cyan} starting up... {elapsed}")
+                .template("  {spinner:.cyan} {msg} {elapsed}")
                 .expect("valid template"),
         );
+        pb.set_message(msg.to_owned());
         pb.enable_steady_tick(std::time::Duration::from_millis(100));
         self.spinner.set(Some(pb));
     }

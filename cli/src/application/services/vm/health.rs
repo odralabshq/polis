@@ -43,7 +43,7 @@ pub async fn wait_ready(
     let (max_attempts, delay) = get_health_timeout();
     let heartbeat_every = (60 / delay.as_secs()).max(1) as u32;
 
-    reporter.start_waiting();
+    reporter.start_waiting("starting services...");
 
     for attempt in 1..=max_attempts {
         match check(mp).await {
@@ -60,10 +60,10 @@ pub async fn wait_ready(
                 // Suppressed when a live spinner is active.
                 if !quiet && !reporter.is_spinning() {
                     if attempt == 1 {
-                        reporter.step("workspace is starting up...");
+                        reporter.step("starting services...");
                     } else if attempt % heartbeat_every == 0 {
                         let elapsed_min = (attempt as u64 * delay.as_secs()) / 60;
-                        reporter.step(&format!("workspace is starting up... ({elapsed_min}m elapsed)"));
+                        reporter.step(&format!("starting services... ({elapsed_min}m elapsed)"));
                     }
                 }
                 tokio::time::sleep(delay).await;
