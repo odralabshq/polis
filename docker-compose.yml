@@ -321,7 +321,8 @@ services:
     networks:
       internal-bridge: {}
     env_file:
-      - .env
+      - path: .env
+        required: false
     tmpfs:
       - /run
       - /run/lock
