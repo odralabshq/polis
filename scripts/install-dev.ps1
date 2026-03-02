@@ -19,6 +19,42 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Write-Logo {
+    $esc = [char]27
+    # Purple → teal gradient, one color per column (matches install-dev.sh)
+    $c = @(
+        "$esc[38;2;107;33;168m",  # cO
+        "$esc[38;2;93;37;163m",   # cD
+        "$esc[38;2;64;47;153m",   # cR
+        "$esc[38;2;46;53;147m",   # cA1
+        "$esc[38;2;37;56;144m",   # cL
+        "$esc[38;2;26;107;160m",  # cA2
+        "$esc[38;2;26;151;179m",  # cB
+        "$esc[38;2;20;184;166m"   # cS
+    )
+    $x = "$esc[0m"
+    $rows = @(
+        @(" ▄████▄ ", "█████▄ ", "█████▄ ", " ▄████▄ ", "  ██      ", " ▄████▄ ", "█████▄ ", " ▄████▄"),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "██     "),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "██     "),
+        @("██    ██", "██   ██", "█████▀ ", "████████", "  ██      ", "████████", "█████▀ ", " ▀████▄"),
+        @("██    ██", "██   ██", "██  ██ ", "██    ██", "  ██      ", "██    ██", "██   ██", "      ██"),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "      ██"),
+        @(" ▀████▀ ", "█████▀ ", "██   ██", "██    ██", "  ████████", "██    ██", "█████▀ ", " ▀████▀")
+    )
+    Write-Host ""
+    foreach ($row in $rows) {
+        $line = ""
+        for ($i = 0; $i -lt $row.Count; $i++) {
+            $line += "$($c[$i])$($row[$i])$x "
+        }
+        Write-Host $line
+    }
+    Write-Host ""
+}
+
+Write-Logo
+
 # ── Multipass check ───────────────────────────────────────────────────────────
 
 function Assert-Multipass {
