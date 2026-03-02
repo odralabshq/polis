@@ -158,10 +158,18 @@ impl OutputContext {
         }
     }
 
-    /// Print a warning message prefixed with `⚠`. Suppressed when `quiet`.
+    /// Print an in-progress step message prefixed with `→`. Suppressed when `quiet`.
+    pub fn step(&self, msg: &str) {
+        if !self.quiet {
+            use owo_colors::OwoColorize as _;
+            println!("  {} {msg}", "→".cyan());
+        }
+    }
+
+    /// Print a warning message prefixed with `!`. Suppressed when `quiet`.
     pub fn warn(&self, msg: &str) {
         if !self.quiet {
-            println!("  {} {msg}", "⚠".style(self.styles.warning));
+            println!("  {} {msg}", "!".style(self.styles.warning));
         }
     }
 
@@ -170,10 +178,10 @@ impl OutputContext {
         eprintln!("  {} {msg}", "✗".style(self.styles.error));
     }
 
-    /// Print an info message prefixed with `ℹ`. Suppressed when `quiet`.
+    /// Print an info message prefixed with `·`. Suppressed when `quiet`.
     pub fn info(&self, msg: &str) {
         if !self.quiet {
-            println!("  {} {msg}", "ℹ".style(self.styles.info));
+            println!("  {} {msg}", "·".style(self.styles.info));
         }
     }
 
@@ -181,6 +189,13 @@ impl OutputContext {
     pub fn header(&self, msg: &str) {
         if !self.quiet {
             println!("  {}", msg.style(self.styles.header));
+        }
+    }
+
+    /// Print a blank line. Suppressed when `quiet`.
+    pub fn blank(&self) {
+        if !self.quiet {
+            println!();
         }
     }
 

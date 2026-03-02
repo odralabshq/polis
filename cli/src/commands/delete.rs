@@ -62,6 +62,7 @@ fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool>
 }
 
 async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
+    let reporter = app.terminal_reporter();
     if all {
         cleanup_service::delete_all(
             &app.provisioner,
@@ -69,10 +70,10 @@ async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
             &app.local_fs,
             &app.local_fs,
             &app.ssh,
+            &reporter,
         )
         .await
     } else {
-        let reporter = app.terminal_reporter();
         cleanup_service::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await
     }
 }

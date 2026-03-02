@@ -40,29 +40,38 @@ pub async fn wait_ready(
     reporter: &impl ProgressReporter,
     quiet: bool,
 ) -> Result<()> {
-    // Branding lines should ideally be moved to a domain helper or handled by the reporter.
-    // For now, we'll keep the logic but remove the direct output dependency.
-    let msg_start = "agent isolation complete...";
-    let msg_end = "agent containment active.";
-
-    if !quiet {
-        reporter.step(msg_start);
-    }
-
     let (max_attempts, delay) = get_health_timeout();
+    let heartbeat_every = (60 / delay.as_secs()).max(1) as u32;
 
-    for _attempt in 1..=max_attempts {
+    reporter.start_waiting();
+
+    for attempt in 1..=max_attempts {
         match check(mp).await {
             HealthStatus::Healthy => {
-                if !quiet {
-                    reporter.success(msg_end);
+                reporter.stop_waiting(true);
+                // On non-TTY stop_waiting is a no-op, so emit a plain success line.
+                if !quiet && !reporter.is_spinning() {
+                    reporter.success("workspace ready");
                 }
                 return Ok(());
             }
-            _ => tokio::time::sleep(delay).await,
+            _ => {
+                // Heartbeat for non-TTY output (CI logs, piped).
+                // Suppressed when a live spinner is active.
+                if !quiet && !reporter.is_spinning() {
+                    if attempt == 1 {
+                        reporter.step("workspace is starting up...");
+                    } else if attempt % heartbeat_every == 0 {
+                        let elapsed_min = (attempt as u64 * delay.as_secs()) / 60;
+                        reporter.step(&format!("workspace is starting up... ({elapsed_min}m elapsed)"));
+                    }
+                }
+                tokio::time::sleep(delay).await;
+            }
         }
     }
 
+    reporter.stop_waiting(false);
     anyhow::bail!(
         "Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs"
     )

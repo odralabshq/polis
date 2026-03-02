@@ -139,9 +139,9 @@ async fn handle_running_vm(
     if current_agent.is_none()
         && let Some(name) = agent
     {
-        reporter.step(&format!("setting up agent '{name}'..."));
+        reporter.step(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
-        reporter.step("restarting platform services with agent...");
+        reporter.step("starting services...");
         start_compose(provisioner, Some(name)).await?;
 
         // Persist state before health wait so the CLI tracks the agent
@@ -158,9 +158,8 @@ async fn handle_running_vm(
         state.active_agent = Some(name.to_owned());
         state_mgr.save_async(&state).await?;
 
-        reporter.step("waiting for workspace to become healthy...");
+        reporter.step("waiting for workspace to become ready...");
         wait_ready(provisioner, reporter, false).await?;
-        reporter.success("workspace ready");
 
         return Ok(StartOutcome::Restarted {
             agent: Some(name.to_owned()),
@@ -200,50 +199,45 @@ async fn create_and_start_vm(
         .sha256_file(&tar_path)
         .context("computing config tarball SHA256")?;
 
-    reporter.step("workspace isolation starting...");
+    reporter.step("preparing workspace...");
 
     // Step 2: Launch VM with cloud-init.
     vm::create(provisioner, assets, ssh, reporter, true).await?;
-    reporter.success("workspace isolation started");
 
     // Step 3: Transfer config tarball.
-    reporter.step("transferring configuration...");
+    reporter.step("securing workspace...");
     transfer_config(provisioner, assets_dir, version)
         .await
         .context("transferring config to VM")?;
 
     // Step 4: Generate certificates and secrets.
-    reporter.step("generating certificates and secrets...");
     generate_certs_and_secrets(provisioner)
         .await
         .context("generating certificates and secrets")?;
 
     // Step 5: Pull Docker images.
-    reporter.step("pulling Docker images...");
+    reporter.step("pulling images...");
     pull_images(provisioner, reporter)
         .await
         .context("pulling Docker images")?;
 
     // Step 6: Verify image digests.
-    reporter.step("verifying image digests...");
     verify_image_digests(provisioner, assets, reporter)
         .await
         .context("verifying image digests")?;
 
     // Step 7: Set up agent if requested.
     if let Some(name) = agent {
-        reporter.step(&format!("setting up agent '{name}'..."));
+        reporter.step(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
     }
 
     // Step 8: Start docker compose.
-    reporter.step("starting platform services...");
+    reporter.step("starting services...");
     start_compose(provisioner, agent).await?;
 
     // Step 9: Wait for health.
-    reporter.step("waiting for workspace to become healthy...");
-    wait_ready(provisioner, reporter, true).await?;
-    reporter.success("workspace ready");
+    wait_ready(provisioner, reporter, false).await?;
 
     // Step 10: Write config hash after successful startup.
     write_config_hash(provisioner, &config_hash)
@@ -272,12 +266,12 @@ async fn restart_vm(
     agent: Option<&str>,
     envs: Vec<String>,
 ) -> Result<()> {
-    reporter.step("restarting workspace...");
-    vm::restart(provisioner, reporter, true).await?;
-    reporter.success("workspace restarted");
+    vm::restart(provisioner, reporter, false).await?;
 
     if let Some(name) = agent {
+        reporter.step(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
+        reporter.step("starting services...");
         start_compose(provisioner, agent).await?;
     }
 
@@ -329,7 +323,17 @@ async fn setup_agent<P: VmProvisioner>(
     // Generate artifacts in a temp dir using pure Rust domain functions.
     let name = agent_name.to_owned();
     let stdout_bytes = cat_out.stdout.clone();
-    let tmp = tempfile::tempdir().context("creating temp dir for artifact generation")?;
+    // Generate artifacts in a temp dir under ~/polis/tmp so the Multipass
+    // snap daemon (AppArmor-confined) can read it for transfer.
+    let base = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join("polis")
+        .join("tmp");
+    local_fs.create_dir_all(&base).context("creating ~/polis/tmp")?;
+    let tmp = tempfile::Builder::new()
+        .prefix("polis-agent-")
+        .tempdir_in(&base)
+        .context("creating temp dir for agent artifacts")?;
     let tmp_path = tmp.path().to_path_buf();
 
     let manifest: polis_common::agent::AgentManifest =
