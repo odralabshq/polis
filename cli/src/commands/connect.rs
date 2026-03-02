@@ -31,6 +31,10 @@ pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::E
 
     SshConfigurator::validate_permissions(&app.ssh).await?;
 
+    if !already_configured {
+        ctx.step("configuring access keys...");
+    }
+
     // Ensure a passphrase-free identity key exists and is installed in the workspace.
     let pubkey = SshConfigurator::ensure_identity(&app.ssh).await?;
 
@@ -40,6 +44,10 @@ pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::E
 
     // Install pubkey into the workspace container's polis user.
     crate::application::services::connect::install_pubkey(mp, &pubkey).await?;
+
+    if !already_configured {
+        ctx.step("pinning workspace identity...");
+    }
 
     // Pin the workspace host key so StrictHostKeyChecking can verify it.
     crate::application::services::connect::pin_host_key(mp, &app.ssh).await;
@@ -53,10 +61,6 @@ pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::E
 /// This function will return an error if the underlying operations fail.
 async fn setup_ssh_config(app: &AppContext) -> Result<()> {
     let ctx = &app.output;
-    ctx.blank();
-    ctx.info("Setting up SSH access...");
-    ctx.blank();
-
     let confirmed = app.confirm("Add SSH configuration to ~/.ssh/config?", true)?;
 
     if !confirmed {
@@ -64,10 +68,8 @@ async fn setup_ssh_config(app: &AppContext) -> Result<()> {
         return Ok(());
     }
 
+    ctx.step("configuring SSH...");
     SshConfigurator::setup_config(&app.ssh).await?;
-
-    ctx.info("SSH configured");
-    ctx.blank();
     Ok(())
 }
 

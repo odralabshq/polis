@@ -158,6 +158,14 @@ impl OutputContext {
         }
     }
 
+    /// Print an in-progress step message prefixed with `→`. Suppressed when `quiet`.
+    pub fn step(&self, msg: &str) {
+        if !self.quiet {
+            use owo_colors::OwoColorize as _;
+            println!("  {} {msg}", "→".cyan());
+        }
+    }
+
     /// Print a warning message prefixed with `!`. Suppressed when `quiet`.
     pub fn warn(&self, msg: &str) {
         if !self.quiet {
