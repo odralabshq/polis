@@ -57,9 +57,13 @@ pub async fn wait_ready(
                 return Ok(());
             }
             _ => {
-                if !quiet && attempt % heartbeat_every == 0 {
-                    let elapsed_min = (attempt as u64 * delay.as_secs()) / 60;
-                    reporter.step(&format!("workspace is starting up... ({elapsed_min}m elapsed)"));
+                if !quiet {
+                    if attempt == 1 {
+                        reporter.step("workspace is starting up...");
+                    } else if attempt % heartbeat_every == 0 {
+                        let elapsed_min = (attempt as u64 * delay.as_secs()) / 60;
+                        reporter.step(&format!("workspace is starting up... ({elapsed_min}m elapsed)"));
+                    }
                 }
                 tokio::time::sleep(delay).await;
             }
