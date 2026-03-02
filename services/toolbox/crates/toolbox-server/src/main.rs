@@ -30,7 +30,7 @@ use crate::tools::PolisAgentTools;
 ///
 /// Each field maps to `polis_AGENT_<FIELD>`:
 ///   - `polis_AGENT_LISTEN_ADDR`     (default `0.0.0.0:8080`)
-///   - `polis_AGENT_VALKEY_URL`      (default `redis://valkey:6379`)
+///   - `polis_AGENT_VALKEY_URL`      (default `redis://state:6379`)
 ///   - `polis_AGENT_VALKEY_USER`     (required)
 ///   - `polis_AGENT_VALKEY_PASS_FILE` (required, path to Docker secret)
 ///   - `polis_AGENT_TLS_CERT`        (optional, path to TLS cert)
@@ -63,7 +63,7 @@ fn default_listen_addr() -> String {
 }
 
 fn default_valkey_url() -> String {
-    "redis://valkey:6379".to_string()
+    "redis://state:6379".to_string()
 }
 
 // ===================================================================
