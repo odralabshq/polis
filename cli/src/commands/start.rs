@@ -74,7 +74,6 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
     ctx.kv("Status", "polis status");
 }
 
-/// Print success message after workspace is ready.
 fn print_success_message(ctx: &OutputContext) {
     if ctx.quiet {
         return;

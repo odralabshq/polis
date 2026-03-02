@@ -189,13 +189,13 @@ function Invoke-PolisInit {
     Write-Ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
-    Write-Info "Verifying components..."
+    Write-Info "Loading Docker images into VM..."
     & multipass transfer $imagesTar polis:/tmp/polis-images.tar.zst
     if ($LASTEXITCODE -ne 0) { Write-Err "Failed to transfer images tarball"; exit 1 }
 
     & multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst'
-    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to load components"; exit 1 }
-    Write-Ok "Components verified"
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to load Docker images"; exit 1 }
+    Write-Ok "Docker images loaded"
 
     # Tag images with CLI version
     Write-Info "Tagging images as $tag..."

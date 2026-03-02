@@ -164,16 +164,16 @@ ENVEOF"
     log_ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
-    log_info "Verifying components..."
+    log_info "Loading Docker images into VM..."
     multipass transfer "${images_tar}" polis:/tmp/polis-images.tar.zst || {
         log_error "Failed to transfer images tarball"
         return 1
     }
     multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst' || {
-        log_error "Failed to load components"
+        log_error "Failed to load Docker images"
         return 1
     }
-    log_ok "Components verified"
+    log_ok "Docker images loaded"
 
     # Tag images with CLI version
     log_info "Tagging images as ${tag}..."
