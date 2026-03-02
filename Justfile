@@ -190,16 +190,7 @@ save-docker-images:
 	#!/usr/bin/env bash
 	set -euo pipefail
 	mkdir -p .build/assets
-	VERSION="v$(cargo metadata --no-deps --format-version 1 --manifest-path cli/Cargo.toml \
-		| jq -r '.packages[0].version')"
 	IMAGES=$(docker compose config --images | sort -u)
-	# Tag all images with the CLI version so docker-compose .env resolves
-	for img in $IMAGES; do
-		base="${img%%:*}"
-		if [ "$base" != "$img" ] && docker image inspect "$base:latest" &>/dev/null; then
-			docker tag "$base:latest" "$base:$VERSION"
-		fi
-	done
 	echo "→ Saving $(echo "$IMAGES" | wc -w) images..."
 	docker save $IMAGES | zstd -T0 -3 -o .build/polis-images.tar.zst --force
 	echo "✓ Saved .build/polis-images.tar.zst ($(du -h .build/polis-images.tar.zst | cut -f1))"

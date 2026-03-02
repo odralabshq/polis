@@ -82,5 +82,8 @@ fn show_connection_options(ctx: &crate::output::OutputContext, already_configure
     ctx.blank();
     ctx.kv("SSH     ", "ssh workspace");
     ctx.kv("VS Code ", "code --remote ssh-remote+workspace /workspace");
-    ctx.kv("Cursor  ", "cursor --remote ssh-remote+workspace /workspace");
+    ctx.kv(
+        "Cursor  ",
+        "cursor --remote ssh-remote+workspace /workspace",
+    );
 }

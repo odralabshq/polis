@@ -168,7 +168,7 @@ pub async fn create(
         .to_string();
 
     if !quiet {
-        reporter.step("preparing workspace...");
+        reporter.begin_stage("preparing workspace...");
     }
     let output = mp
         .launch(&InstanceSpec {
@@ -182,7 +182,7 @@ pub async fn create(
         .await
         .context("launching workspace")?;
     if !quiet && output.status.success() {
-        reporter.success("workspace prepared");
+        reporter.complete_stage();
     }
 
     if !output.status.success() {
@@ -254,11 +254,11 @@ pub async fn restart(
     quiet: bool,
 ) -> Result<()> {
     if !quiet {
-        reporter.step("starting workspace...");
+        reporter.begin_stage("starting workspace...");
     }
     start(mp).await?;
     if !quiet {
-        reporter.success("workspace started");
+        reporter.complete_stage();
     }
 
     super::services::start_services_with_progress(mp, reporter, quiet).await;

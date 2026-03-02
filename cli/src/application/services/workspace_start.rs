@@ -107,7 +107,10 @@ pub async fn start_workspace(
                 envs,
             )
             .await?;
-            let msg = agent.map_or_else(|| "workspace ready".to_string(), |n| format!("workspace ready with agent: {n}"));
+            let msg = agent.map_or_else(
+                || "workspace ready".to_string(),
+                |n| format!("workspace ready with agent: {n}"),
+            );
             wait_ready(provisioner, reporter, false, &msg).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
@@ -140,7 +143,7 @@ async fn handle_running_vm(
     if current_agent.is_none()
         && let Some(name) = agent
     {
-        reporter.step(&format!("installing agent '{name}'..."));
+        reporter.begin_stage(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
         start_compose(provisioner, Some(name)).await?;
 
@@ -199,13 +202,13 @@ async fn create_and_start_vm(
         .sha256_file(&tar_path)
         .context("computing config tarball SHA256")?;
 
-    reporter.step("preparing workspace...");
+    reporter.begin_stage("preparing workspace...");
 
     // Step 2: Launch VM with cloud-init.
     vm::create(provisioner, assets, ssh, reporter, true).await?;
 
     // Step 3: Transfer config tarball.
-    reporter.step("securing workspace...");
+    reporter.begin_stage("securing workspace...");
     transfer_config(provisioner, assets_dir, version)
         .await
         .context("transferring config to VM")?;
@@ -216,7 +219,7 @@ async fn create_and_start_vm(
         .context("generating certificates and secrets")?;
 
     // Step 5: Pull Docker images.
-    reporter.step("pulling images...");
+    reporter.begin_stage("verifying components...");
     pull_images(provisioner, reporter)
         .await
         .context("pulling Docker images")?;
@@ -228,7 +231,7 @@ async fn create_and_start_vm(
 
     // Step 7: Set up agent if requested.
     if let Some(name) = agent {
-        reporter.step(&format!("installing agent '{name}'..."));
+        reporter.begin_stage(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
     }
 
@@ -236,7 +239,10 @@ async fn create_and_start_vm(
     start_compose(provisioner, agent).await?;
 
     // Step 9: Wait for health.
-    let msg = agent.map_or_else(|| "workspace ready".to_string(), |n| format!("workspace ready with agent: {n}"));
+    let msg = agent.map_or_else(
+        || "workspace ready".to_string(),
+        |n| format!("workspace ready with agent: {n}"),
+    );
     wait_ready(provisioner, reporter, false, &msg).await?;
 
     // Step 10: Write config hash after successful startup.
@@ -269,7 +275,7 @@ async fn restart_vm(
     vm::restart(provisioner, reporter, false).await?;
 
     if let Some(name) = agent {
-        reporter.step(&format!("installing agent '{name}'..."));
+        reporter.begin_stage(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
         start_compose(provisioner, agent).await?;
     }
@@ -328,7 +334,9 @@ async fn setup_agent<P: VmProvisioner>(
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
         .join("polis")
         .join("tmp");
-    local_fs.create_dir_all(&base).context("creating ~/polis/tmp")?;
+    local_fs
+        .create_dir_all(&base)
+        .context("creating ~/polis/tmp")?;
     let tmp = tempfile::Builder::new()
         .prefix("polis-agent-")
         .tempdir_in(&base)

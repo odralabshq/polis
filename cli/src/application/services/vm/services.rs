@@ -63,11 +63,11 @@ pub(super) async fn start_services_with_progress(
     quiet: bool,
 ) {
     if !quiet {
-        reporter.step("securing workspace...");
+        reporter.begin_stage("securing workspace...");
     }
     start_services(mp).await;
     if !quiet {
-        reporter.success("workspace secured");
+        reporter.complete_stage();
     }
 }
 

@@ -42,9 +42,8 @@ pub async fn wait_ready(
     success_msg: &str,
 ) -> Result<()> {
     let (max_attempts, delay) = get_health_timeout();
-    let heartbeat_every = (60 / delay.as_secs()).max(1) as u32;
 
-    // Check once before starting the spinner — if already healthy, skip it.
+    // Check once before starting the stage — if already healthy, skip it.
     if check(mp).await == HealthStatus::Healthy {
         if !quiet {
             reporter.success(success_msg);
@@ -52,35 +51,24 @@ pub async fn wait_ready(
         return Ok(());
     }
 
-    reporter.start_waiting("starting services...");
-
-    for attempt in 1..=max_attempts {
-        match check(mp).await {
-            HealthStatus::Healthy => {
-                let was_spinning = reporter.is_spinning();
-                reporter.stop_waiting(true, success_msg);
-                if !quiet && !was_spinning {
-                    reporter.success(success_msg);
-                }
-                return Ok(());
-            }
-            _ => {
-                // Heartbeat for non-TTY output (CI logs, piped).
-                // Suppressed when a live spinner is active.
-                if !quiet && !reporter.is_spinning() {
-                    if attempt == 1 {
-                        reporter.step("starting services...");
-                    } else if attempt % heartbeat_every == 0 {
-                        let elapsed_min = (attempt as u64 * delay.as_secs()) / 60;
-                        reporter.step(&format!("starting services... ({elapsed_min}m elapsed)"));
-                    }
-                }
-                tokio::time::sleep(delay).await;
-            }
-        }
+    if !quiet {
+        reporter.begin_stage("starting services...");
     }
 
-    reporter.stop_waiting(false, success_msg);
+    for _attempt in 1..=max_attempts {
+        if check(mp).await == HealthStatus::Healthy {
+            if !quiet {
+                reporter.complete_stage();
+            }
+            reporter.success(success_msg);
+            return Ok(());
+        }
+        tokio::time::sleep(delay).await;
+    }
+
+    if !quiet {
+        reporter.fail_stage();
+    }
     anyhow::bail!(
         "Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs"
     )

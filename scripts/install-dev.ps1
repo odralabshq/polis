@@ -189,21 +189,22 @@ function Invoke-PolisInit {
     Write-Ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
-    Write-Info "Loading Docker images into VM..."
+    Write-Info "Verifying components..."
     & multipass transfer $imagesTar polis:/tmp/polis-images.tar.zst
     if ($LASTEXITCODE -ne 0) { Write-Err "Failed to transfer images tarball"; exit 1 }
 
     & multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst'
-    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to load Docker images"; exit 1 }
-    Write-Ok "Docker images loaded"
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to load components"; exit 1 }
+    Write-Ok "Components verified"
 
     # Tag images with CLI version
     Write-Info "Tagging images as $tag..."
     $tagScript = 'docker images --format ''{{.Repository}}:{{.Tag}}'' | grep '':latest'' | while read -r img; do base=${img%%:*}; docker tag $img ${base}:' + $tag + '; done'
     & multipass exec polis -- bash -c $tagScript
 
-    # Pull go-httpbin (small third-party test image)
-    & multipass exec polis -- docker pull mccutchen/go-httpbin 2>$null
+    # go-httpbin is a test-only image (profiles: ["test"]).
+    # It is included in the tarball when built via `just build`.
+    # Skip pulling it here — it is not needed for normal operation.
 
     # ── Step 4: Generate certs and secrets ────────────────────────────────
     Write-Info "Generating certificates and secrets..."

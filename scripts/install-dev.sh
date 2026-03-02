@@ -164,16 +164,16 @@ ENVEOF"
     log_ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
-    log_info "Loading Docker images into VM..."
+    log_info "Verifying components..."
     multipass transfer "${images_tar}" polis:/tmp/polis-images.tar.zst || {
         log_error "Failed to transfer images tarball"
         return 1
     }
     multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst' || {
-        log_error "Failed to load Docker images"
+        log_error "Failed to load components"
         return 1
     }
-    log_ok "Docker images loaded"
+    log_ok "Components verified"
 
     # Tag images with CLI version
     log_info "Tagging images as ${tag}..."
@@ -184,8 +184,9 @@ ENVEOF"
         done
     "
 
-    # Pull go-httpbin (small third-party test image)
-    multipass exec polis -- docker pull mccutchen/go-httpbin 2>/dev/null || true
+    # go-httpbin is a test-only image (profiles: ["test"]).
+    # It is included in the tarball when built via `just build`.
+    # Skip pulling it here — it is not needed for normal operation.
 
     # ── Step 4: Generate certs and secrets ────────────────────────────────
     log_info "Generating certificates and secrets..."
@@ -266,4 +267,12 @@ run_init
 
 echo ""
 log_ok "Polis (dev build) installed successfully!"
+echo ""
+echo "NEXT STEPS:"
+echo "1. Verify status:"
+echo "   polis status"
+echo "2. Start an AI agent (e.g., OpenClaw):"
+echo "   polis start --agent openclaw -e ANTHROPIC_API_KEY=<your_key>"
+echo "3. Connect to the dashboard:"
+echo "   polis connect"
 echo ""

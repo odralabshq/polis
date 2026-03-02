@@ -4,7 +4,8 @@
 //! trait so application services can emit progress events without depending on
 //! any presentation type directly.
 
-use std::cell::Cell;
+use std::cell::RefCell;
+use std::time::Instant;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize as _;
@@ -17,11 +18,20 @@ use crate::output::OutputContext;
 /// - `step()` prints `"  → {message}"` (suppressed when `ctx.quiet`)
 /// - `success()` prints `"  ✓ {message}"` (suppressed when `ctx.quiet`)
 /// - `warn()` prints `"  ! {message}"` (suppressed when `ctx.quiet`)
-/// - `start_waiting()` starts a live elapsed-time spinner on TTY
-/// - `stop_waiting(success)` finishes the spinner with ✓ or ✗
+/// - `begin_stage()` starts a timed spinner on TTY, auto-completing any prior stage
+/// - `complete_stage()` finishes the spinner with ✓ and elapsed time
+/// - `fail_stage()` finishes the spinner with ✗ and elapsed time
 pub struct TerminalReporter<'a> {
     ctx: &'a OutputContext,
-    spinner: Cell<Option<ProgressBar>>,
+    stage: RefCell<Option<ActiveStage>>,
+}
+
+/// A currently-running timed stage.
+struct ActiveStage {
+    message: String,
+    start: Instant,
+    /// `None` when not on a TTY (non-TTY still tracks timing for the log line).
+    spinner: Option<ProgressBar>,
 }
 
 impl<'a> TerminalReporter<'a> {
@@ -30,7 +40,28 @@ impl<'a> TerminalReporter<'a> {
     pub fn new(ctx: &'a OutputContext) -> Self {
         Self {
             ctx,
-            spinner: Cell::new(None),
+            stage: RefCell::new(None),
+        }
+    }
+
+    /// Finish the active stage, printing a final status line.
+    fn finish_active_stage(&self, success: bool) {
+        let Some(stage) = self.stage.borrow_mut().take() else {
+            return;
+        };
+        let elapsed = stage.start.elapsed().as_secs();
+        let time = format!("{}:{:02}", elapsed / 60, elapsed % 60);
+
+        if let Some(pb) = &stage.spinner {
+            pb.finish_and_clear();
+        }
+
+        if !self.ctx.quiet {
+            if success {
+                println!("  {} {} {time}", "✓".green(), stage.message);
+            } else {
+                println!("  {} {} {time}", "✗".red(), stage.message);
+            }
         }
     }
 }
@@ -54,56 +85,60 @@ impl ProgressReporter for TerminalReporter<'_> {
         }
     }
 
-    fn start_waiting(&self, msg: &str) {
-        if self.ctx.quiet || !self.ctx.is_tty {
+    fn begin_stage(&self, message: &str) {
+        if self.ctx.quiet {
             return;
         }
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .tick_strings(&["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"])
-                .template("  {spinner:.cyan} {msg}")
-                .expect("valid template"),
-        );
-        pb.set_message(format!("{msg} 0:00"));
-        pb.enable_steady_tick(std::time::Duration::from_millis(100));
-        // Spawn a task to update the elapsed time every second in mm:ss format.
-        let pb_clone = pb.downgrade();
-        let msg_owned = msg.to_owned();
-        let start = std::time::Instant::now();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                let Some(pb) = pb_clone.upgrade() else { break };
-                if pb.is_finished() { break }
-                let secs = start.elapsed().as_secs();
-                pb.set_message(format!("{msg_owned} {}:{:02}", secs / 60, secs % 60));
-            }
+
+        // Auto-complete any active stage with success.
+        self.finish_active_stage(true);
+
+        let spinner = if self.ctx.is_tty {
+            let pb = ProgressBar::new_spinner();
+            #[allow(clippy::expect_used)] // Template is a compile-time constant.
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"])
+                    .template("  {spinner:.cyan} {msg}")
+                    .expect("valid template"),
+            );
+            pb.set_message(format!("{message} 0:00"));
+            pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
+            // Spawn a task to update elapsed time every second.
+            let weak = pb.downgrade();
+            let msg_owned = message.to_owned();
+            let start = Instant::now();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    let Some(pb) = weak.upgrade() else { break };
+                    if pb.is_finished() {
+                        break;
+                    }
+                    let secs = start.elapsed().as_secs();
+                    pb.set_message(format!("{msg_owned} {}:{:02}", secs / 60, secs % 60));
+                }
+            });
+            Some(pb)
+        } else {
+            // Non-TTY: print a plain step line as a breadcrumb.
+            println!("  {} {message}", "→".cyan());
+            None
+        };
+
+        *self.stage.borrow_mut() = Some(ActiveStage {
+            message: message.to_owned(),
+            start: Instant::now(),
+            spinner,
         });
-        self.spinner.set(Some(pb));
     }
 
-    fn stop_waiting(&self, success: bool, msg: &str) {
-        if let Some(pb) = self.spinner.take() {
-            if success {
-                pb.set_style(
-                    ProgressStyle::default_spinner()
-                        .template("  {prefix} {msg}")
-                        .expect("valid template"),
-                );
-                pb.set_prefix("✓");
-                pb.finish_with_message(msg.to_owned());
-            } else {
-                pb.abandon();
-            }
-        }
+    fn complete_stage(&self) {
+        self.finish_active_stage(true);
     }
 
-    fn is_spinning(&self) -> bool {
-        // SAFETY: we only peek, not take
-        let pb = self.spinner.take();
-        let result = pb.is_some();
-        self.spinner.set(pb);
-        result
+    fn fail_stage(&self) {
+        self.finish_active_stage(false);
     }
 }

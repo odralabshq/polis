@@ -175,21 +175,24 @@ pub trait CommandRunner {
 /// Abstracts progress reporting so services can emit events without
 /// depending on the Presentation layer. Sync trait — no async needed.
 pub trait ProgressReporter {
-    /// Emit an in-progress step message.
+    /// Emit an in-progress step message (→). Not timed.
     fn step(&self, message: &str);
-    /// Emit a success message.
+    /// Emit a success message (✓). Not timed.
     fn success(&self, message: &str);
-    /// Emit a warning message.
+    /// Emit a warning message (!).
     #[allow(dead_code)] // Not yet called from all service implementations
     fn warn(&self, message: &str);
-    /// Start an indeterminate wait with a live elapsed-time indicator.
-    /// Default: no-op (e.g. quiet mode, tests).
-    fn start_waiting(&self, _msg: &str) {}
-    /// Stop the wait indicator. `success` controls the final symbol.
+
+    /// Begin a timed stage with a live spinner and elapsed clock.
+    /// If a previous stage is still active, auto-completes it with ✓ first.
+    /// Default: no-op (tests, quiet mode).
+    fn begin_stage(&self, _message: &str) {}
+    /// Complete the active stage with ✓ and final elapsed time.
     /// Default: no-op.
-    fn stop_waiting(&self, _success: bool, _msg: &str) {}
-    /// Returns true if a live spinner is currently active (suppresses text heartbeats).
-    fn is_spinning(&self) -> bool { false }
+    fn complete_stage(&self) {}
+    /// Fail the active stage with ✗ and final elapsed time.
+    /// Default: no-op.
+    fn fail_stage(&self) {}
 }
 
 // ── State and Filesystem Ports ────────────────────────────────────────────────
