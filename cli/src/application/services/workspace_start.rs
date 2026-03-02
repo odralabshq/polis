@@ -30,7 +30,6 @@ use crate::domain::workspace::{VM_ROOT, WorkspaceState};
 
 /// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
-#[allow(dead_code)] // Public API — not yet called from commands/start.rs
 pub enum StartOutcome {
     /// Workspace was already running with the same agent config.
     AlreadyRunning { agent: Option<String> },
