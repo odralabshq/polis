@@ -20,6 +20,41 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Write-Logo {
+    $esc = [char]27
+    $c = @(
+        "$esc[38;2;107;33;168m",
+        "$esc[38;2;93;37;163m",
+        "$esc[38;2;64;47;153m",
+        "$esc[38;2;46;53;147m",
+        "$esc[38;2;37;56;144m",
+        "$esc[38;2;26;107;160m",
+        "$esc[38;2;26;151;179m",
+        "$esc[38;2;20;184;166m"
+    )
+    $x = "$esc[0m"
+    $rows = @(
+        @(" ▄████▄ ", "█████▄ ", "█████▄ ", " ▄████▄ ", "  ██      ", " ▄████▄ ", "█████▄ ", " ▄████▄"),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "██     "),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "██     "),
+        @("██    ██", "██   ██", "█████▀ ", "████████", "  ██      ", "████████", "█████▀ ", " ▀████▄"),
+        @("██    ██", "██   ██", "██  ██ ", "██    ██", "  ██      ", "██    ██", "██   ██", "      ██"),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "      ██"),
+        @(" ▀████▀ ", "█████▀ ", "██   ██", "██    ██", "  ████████", "██    ██", "█████▀ ", " ▀████▀")
+    )
+    Write-Host ""
+    foreach ($row in $rows) {
+        $line = ""
+        for ($i = 0; $i -lt $row.Count; $i++) {
+            $line += "$($c[$i])$($row[$i])$x "
+        }
+        Write-Host $line
+    }
+    Write-Host ""
+}
+
+Write-Logo
+
 # -- Multipass -----------------------------------------------------------------
 
 function Test-HyperV {
