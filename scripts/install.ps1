@@ -20,6 +20,22 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Show-WindowsNetworkingNote {
+    Write-Warn "Windows networking note for Multipass:"
+    Write-Host "  - Use a Private network profile on your active adapter."
+    Write-Host "  - Turn off VPN during VM creation/startup if networking is unstable."
+}
+
+function Confirm-InstallerProceed {
+    Write-Host ""
+    Write-Host "WARNING: A clean reinstall deletes the existing 'polis' VM and removes previous workspace data." -ForegroundColor Red
+    $reply = (Read-Host "Continue with installation? (y/n)").Trim().ToLowerInvariant()
+    if ($reply -notin @("y", "yes")) {
+        Write-Warn "Installation cancelled by user."
+        exit 1
+    }
+}
+
 function Write-Logo {
     $esc = [char]27
     $c = @(
@@ -212,7 +228,9 @@ function Invoke-PolisInstall {
     Write-Host "+===============================================================+"
     Write-Host ""
 
+    Confirm-InstallerProceed
     Assert-Multipass
+    Show-WindowsNetworkingNote
     Resolve-Version
     Write-Info "Installing Polis ${Version}"
     Install-Cli

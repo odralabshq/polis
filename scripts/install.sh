@@ -52,6 +52,19 @@ log_ok()    { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
+confirm_installer_proceed() {
+    echo ""
+    echo -e "${RED}WARNING: A clean reinstall deletes the existing 'polis' VM and removes previous workspace data.${NC}"
+    read -r -p "Continue with installation? (y/n) " reply
+    case "${reply,,}" in
+        y|yes) ;;
+        *)
+            log_warn "Installation cancelled by user."
+            exit 1
+            ;;
+    esac
+}
+
 check_arch() {
     local arch
     arch=$(uname -m)
@@ -235,6 +248,7 @@ create_symlink() {
 
 main() {
     print_logo
+    confirm_installer_proceed
     check_arch >/dev/null
     check_multipass
     detect_version

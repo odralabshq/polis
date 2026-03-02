@@ -28,6 +28,8 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     let (assets_dir, _assets_guard) = app.assets_dir().context("extracting assets")?;
     let version = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
+    app.output
+        .info("Starting workspace. Agent initialization may take several minutes depending on the selected agent.");
 
     let opts = crate::application::services::workspace_start::StartOptions {
         reporter: &reporter,

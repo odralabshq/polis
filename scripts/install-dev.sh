@@ -49,6 +49,19 @@ log_ok()   { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
 log_error(){ echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
+confirm_destructive_reinstall() {
+    echo ""
+    echo -e "${RED}WARNING: Continuing will delete the existing 'polis' VM and remove previous workspace data.${NC}"
+    read -r -p "Proceed with clean reinstall? (y/n) " reply
+    case "${reply,,}" in
+        y|yes) ;;
+        *)
+            log_warn "Installation cancelled by user."
+            exit 1
+            ;;
+    esac
+}
+
 check_multipass() {
     if ! command -v multipass &>/dev/null; then
         log_error "Multipass is required but not installed."
@@ -257,6 +270,7 @@ if timeout 30 multipass list --format csv 2>/dev/null | grep -q '^polis,'; then
 fi
 
 if ${vm_found}; then
+    confirm_destructive_reinstall
     log_info "Existing polis VM found — deleting for clean reinstall..."
     multipass delete polis --purge 2>/dev/null
     log_ok "VM deleted"
@@ -271,8 +285,9 @@ echo ""
 echo "NEXT STEPS:"
 echo "1. Verify status:"
 echo "   polis status"
-echo "2. Start an AI agent (e.g., OpenClaw):"
-echo "   polis start --agent openclaw -e ANTHROPIC_API_KEY=<your_key>"
+echo "2. Start an AI agent (pass your provider API key directly):"
+echo "   polis start --agent openclaw -e OPENAI_API_KEY=sk-..."
+echo "   Note: agent initialization may take several minutes depending on the selected agent."
 echo "3. Connect to the dashboard:"
 echo "   polis connect"
 echo ""
