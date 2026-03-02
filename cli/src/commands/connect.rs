@@ -52,22 +52,22 @@ pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::E
 ///
 /// This function will return an error if the underlying operations fail.
 async fn setup_ssh_config(app: &AppContext) -> Result<()> {
-    // setup_ssh_config is interactive — uses eprintln for user-facing messages.
-    eprintln!();
-    eprintln!("Setting up SSH access...");
-    eprintln!();
+    let ctx = &app.output;
+    ctx.blank();
+    ctx.info("Setting up SSH access...");
+    ctx.blank();
 
     let confirmed = app.confirm("Add SSH configuration to ~/.ssh/config?", true)?;
 
     if !confirmed {
-        eprintln!("Skipped. You can set up SSH manually later.");
+        ctx.info("Skipped. You can set up SSH manually later.");
         return Ok(());
     }
 
     SshConfigurator::setup_config(&app.ssh).await?;
 
-    eprintln!("SSH configured");
-    eprintln!();
+    ctx.info("SSH configured");
+    ctx.blank();
     Ok(())
 }
 
@@ -77,7 +77,7 @@ fn show_connection_options(ctx: &crate::output::OutputContext, already_configure
     } else {
         ctx.success("workspace connected");
     }
-    println!();
+    ctx.blank();
     ctx.kv("SSH     ", "ssh workspace");
     ctx.kv("VS Code ", "code --remote ssh-remote+workspace /workspace");
     ctx.kv("Cursor  ", "cursor --remote ssh-remote+workspace /workspace");

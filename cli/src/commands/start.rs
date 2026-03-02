@@ -66,7 +66,7 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
     }
     let label = agent.map_or_else(|| "workspace running".to_string(), |n| format!("workspace running · agent: {n}"));
     ctx.success(&label);
-    println!();
+    ctx.blank();
     ctx.kv("Connect", "polis connect");
     ctx.kv("Status", "polis status");
 }
@@ -78,7 +78,7 @@ fn print_success_message(agent: Option<&str>, ctx: &OutputContext) {
     }
     let label = agent.map_or_else(|| "workspace ready".to_string(), |n| format!("workspace ready · agent: {n}"));
     ctx.success(&label);
-    println!();
+    ctx.blank();
     ctx.kv("Connect", "polis connect");
     ctx.kv("Status", "polis status");
 }

@@ -184,6 +184,13 @@ impl OutputContext {
         }
     }
 
+    /// Print a blank line. Suppressed when `quiet`.
+    pub fn blank(&self) {
+        if !self.quiet {
+            println!();
+        }
+    }
+
     /// Print a key-value pair with the key dimmed. Suppressed when `quiet`.
     pub fn kv(&self, key: &str, value: &str) {
         if !self.quiet {
