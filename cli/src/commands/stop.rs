@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::process::ExitCode;
 
 use crate::app::AppContext;
-use crate::application::ports::ProgressReporter as _;
+use crate::application::ports::ProgressReporter;
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
 use crate::output::reporter::TerminalReporter;
 
