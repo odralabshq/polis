@@ -50,8 +50,10 @@ pub async fn wait_ready(
     }
 
     let (max_attempts, delay) = get_health_timeout();
+    // Emit a heartbeat every 60 s so the user knows the workspace is still starting up.
+    let heartbeat_every = (60 / delay.as_secs()).max(1) as u32;
 
-    for _attempt in 1..=max_attempts {
+    for attempt in 1..=max_attempts {
         match check(mp).await {
             HealthStatus::Healthy => {
                 if !quiet {
@@ -59,7 +61,13 @@ pub async fn wait_ready(
                 }
                 return Ok(());
             }
-            _ => tokio::time::sleep(delay).await,
+            _ => {
+                if !quiet && attempt % heartbeat_every == 0 {
+                    let elapsed_min = (attempt as u64 * delay.as_secs()) / 60;
+                    reporter.step(&format!("workspace is starting up... ({elapsed_min}m elapsed)"));
+                }
+                tokio::time::sleep(delay).await;
+            }
         }
     }
 
