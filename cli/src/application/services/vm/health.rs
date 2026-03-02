@@ -43,40 +43,22 @@ pub async fn wait_ready(
     let (max_attempts, delay) = get_health_timeout();
     let heartbeat_every = (60 / delay.as_secs()).max(1) as u32;
 
-    // On a TTY, show a live elapsed-time spinner. On piped output, fall back to
-    // periodic heartbeat steps so CI logs still show progress.
-    let pb = if !quiet && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        let pb = indicatif::ProgressBar::new_spinner();
-        pb.set_style(
-            indicatif::ProgressStyle::default_spinner()
-                .tick_strings(&["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"])
-                .template("  {spinner:.cyan} starting up... {elapsed}")
-                .expect("valid template"),
-        );
-        pb.enable_steady_tick(std::time::Duration::from_millis(100));
-        Some(pb)
-    } else {
-        None
-    };
+    reporter.start_waiting();
 
     for attempt in 1..=max_attempts {
         match check(mp).await {
             HealthStatus::Healthy => {
-                if let Some(pb) = pb {
-                    pb.set_style(
-                        indicatif::ProgressStyle::default_spinner()
-                            .template("  {prefix} {msg}")
-                            .expect("valid template"),
-                    );
-                    pb.set_prefix("\u{2713}"); // ✓
-                    pb.finish_with_message("workspace ready");
-                } else if !quiet {
+                reporter.stop_waiting(true);
+                // On non-TTY stop_waiting is a no-op, so emit a plain success line.
+                if !quiet && !reporter.is_spinning() {
                     reporter.success("workspace ready");
                 }
                 return Ok(());
             }
             _ => {
-                if !quiet && pb.is_none() {
+                // Heartbeat for non-TTY output (CI logs, piped).
+                // Suppressed when a live spinner is active.
+                if !quiet && !reporter.is_spinning() {
                     if attempt == 1 {
                         reporter.step("workspace is starting up...");
                     } else if attempt % heartbeat_every == 0 {
@@ -89,10 +71,7 @@ pub async fn wait_ready(
         }
     }
 
-    if let Some(pb) = pb {
-        pb.abandon();
-    }
-
+    reporter.stop_waiting(false);
     anyhow::bail!(
         "Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs"
     )

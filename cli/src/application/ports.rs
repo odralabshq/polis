@@ -182,6 +182,14 @@ pub trait ProgressReporter {
     /// Emit a warning message.
     #[allow(dead_code)] // Not yet called from all service implementations
     fn warn(&self, message: &str);
+    /// Start an indeterminate wait with a live elapsed-time indicator.
+    /// Default: no-op (e.g. quiet mode, tests).
+    fn start_waiting(&self) {}
+    /// Stop the wait indicator. `success` controls the final symbol.
+    /// Default: no-op.
+    fn stop_waiting(&self, _success: bool) {}
+    /// Returns true if a live spinner is currently active (suppresses text heartbeats).
+    fn is_spinning(&self) -> bool { false }
 }
 
 // ── State and Filesystem Ports ────────────────────────────────────────────────
