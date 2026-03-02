@@ -62,11 +62,24 @@ impl ProgressReporter for TerminalReporter<'_> {
         pb.set_style(
             ProgressStyle::default_spinner()
                 .tick_strings(&["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"])
-                .template("  {spinner:.cyan} {msg} {elapsed}")
+                .template("  {spinner:.cyan} {msg}")
                 .expect("valid template"),
         );
-        pb.set_message(msg.to_owned());
+        pb.set_message(format!("{msg} 0:00"));
         pb.enable_steady_tick(std::time::Duration::from_millis(100));
+        // Spawn a task to update the elapsed time every second in mm:ss format.
+        let pb_clone = pb.downgrade();
+        let msg_owned = msg.to_owned();
+        let start = std::time::Instant::now();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                let Some(pb) = pb_clone.upgrade() else { break };
+                if pb.is_finished() { break }
+                let secs = start.elapsed().as_secs();
+                pb.set_message(format!("{msg_owned} {}:{:02}", secs / 60, secs % 60));
+            }
+        });
         self.spinner.set(Some(pb));
     }
 
