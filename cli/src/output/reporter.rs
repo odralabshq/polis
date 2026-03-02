@@ -41,7 +41,7 @@ impl ProgressReporter for TerminalReporter<'_> {
 
     fn warn(&self, message: &str) {
         if !self.ctx.quiet {
-            println!("  {} {message}", "⚠".yellow());
+            println!("  {} {message}", "!".yellow());
         }
     }
 }
