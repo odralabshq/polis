@@ -286,10 +286,18 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Download image-digests artifact
+        if: needs.validate.outputs.push_docker == 'true'
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: image-digests
           path: .build/
+
+      - name: Create placeholder image-digests (no push)
+        if: needs.validate.outputs.push_docker != 'true'
+        run: |
+          mkdir -p .build
+          echo '{}' > .build/image-digests.json
+          echo "✓ Created placeholder image-digests.json (push_docker=false)"
 
       - name: Generate agent artifacts
         run: |
@@ -493,16 +501,21 @@ jobs:
           merge-multiple: true
 
       - name: Download image-digests artifact
+        if: needs.validate.outputs.push_docker == 'true'
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: image-digests
           path: ./release-assets
 
       - name: Download SBOMs artifact
+        if: needs.validate.outputs.push_docker == 'true'
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: sboms
           path: ./release-assets
+
+      - name: Ensure release-assets directory exists
+        run: mkdir -p release-assets
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
@@ -519,7 +532,6 @@ jobs:
             cli-bin/polis-windows-amd64.exe
             cli-bin/polis-windows-amd64.sha256
             cli-bin/polis-windows-amd64.zip
-            release-assets/image-digests.json
-            release-assets/sbom-*.spdx.json
+            release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
