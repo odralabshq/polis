@@ -11,6 +11,7 @@ INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 CURL_PROTO="=https"
+CDN_BASE_URL="${POLIS_CDN_URL:-https://d1qggvwquwdnma.cloudfront.net}"
 
 # SHA256 hashes for Multipass downloads — update when bumping MULTIPASS_VERSION
 MULTIPASS_SHA256_MACOS="${MULTIPASS_SHA256_MACOS:-758d10dc1b71872b0ee7a17070b93fc788dba5ba45c36b980e42fd895d273489}"
