@@ -40,24 +40,43 @@ pub async fn wait_ready(
     reporter: &impl ProgressReporter,
     quiet: bool,
 ) -> Result<()> {
-    // Branding lines should ideally be moved to a domain helper or handled by the reporter.
-    // For now, we'll keep the logic but remove the direct output dependency.
-    let msg_end = "workspace ready";
-
     let (max_attempts, delay) = get_health_timeout();
-    // Emit a heartbeat every 60 s so the user knows the workspace is still starting up.
     let heartbeat_every = (60 / delay.as_secs()).max(1) as u32;
+
+    // On a TTY, show a live elapsed-time spinner. On piped output, fall back to
+    // periodic heartbeat steps so CI logs still show progress.
+    let pb = if !quiet && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let pb = indicatif::ProgressBar::new_spinner();
+        pb.set_style(
+            indicatif::ProgressStyle::default_spinner()
+                .tick_strings(&["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"])
+                .template("  {spinner:.cyan} starting up... {elapsed}")
+                .expect("valid template"),
+        );
+        pb.enable_steady_tick(std::time::Duration::from_millis(100));
+        Some(pb)
+    } else {
+        None
+    };
 
     for attempt in 1..=max_attempts {
         match check(mp).await {
             HealthStatus::Healthy => {
-                if !quiet {
-                    reporter.success(msg_end);
+                if let Some(pb) = pb {
+                    pb.set_style(
+                        indicatif::ProgressStyle::default_spinner()
+                            .template("  {prefix} {msg}")
+                            .expect("valid template"),
+                    );
+                    pb.set_prefix("\u{2713}"); // ✓
+                    pb.finish_with_message("workspace ready");
+                } else if !quiet {
+                    reporter.success("workspace ready");
                 }
                 return Ok(());
             }
             _ => {
-                if !quiet {
+                if !quiet && pb.is_none() {
                     if attempt == 1 {
                         reporter.step("workspace is starting up...");
                     } else if attempt % heartbeat_every == 0 {
@@ -68,6 +87,10 @@ pub async fn wait_ready(
                 tokio::time::sleep(delay).await;
             }
         }
+    }
+
+    if let Some(pb) = pb {
+        pb.abandon();
     }
 
     anyhow::bail!(
