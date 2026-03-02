@@ -29,7 +29,12 @@ pub struct ExecArgs {
 pub async fn run(args: &ExecArgs, mp: &impl ShellExecutor) -> Result<ExitCode> {
     let interactive = std::io::stdin().is_terminal();
 
-    let mut docker_args: Vec<&str> = vec!["docker", "exec", "-u", "polis"];
+    let mut docker_args: Vec<&str> = vec![
+        "docker", "exec",
+        "-u", "polis",
+        "-e", "XDG_RUNTIME_DIR=/run/user/1000",
+        "-e", "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+    ];
     if interactive {
         docker_args.push("-it");
     }
