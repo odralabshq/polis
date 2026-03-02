@@ -70,7 +70,7 @@ impl ProgressReporter for TerminalReporter<'_> {
         self.spinner.set(Some(pb));
     }
 
-    fn stop_waiting(&self, success: bool) {
+    fn stop_waiting(&self, success: bool, msg: &str) {
         if let Some(pb) = self.spinner.take() {
             if success {
                 pb.set_style(
@@ -79,7 +79,7 @@ impl ProgressReporter for TerminalReporter<'_> {
                         .expect("valid template"),
                 );
                 pb.set_prefix("✓");
-                pb.finish_with_message("workspace ready");
+                pb.finish_with_message(msg.to_owned());
             } else {
                 pb.abandon();
             }

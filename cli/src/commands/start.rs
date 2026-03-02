@@ -51,8 +51,8 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
         StartOutcome::AlreadyRunning { agent } => {
             print_already_running_message(agent.as_deref(), &app.output);
         }
-        StartOutcome::Created { agent } | StartOutcome::Restarted { agent } => {
-            print_success_message(agent.as_deref(), &app.output);
+        StartOutcome::Created { .. } | StartOutcome::Restarted { .. } => {
+            print_success_message(&app.output);
         }
     }
 
@@ -72,12 +72,10 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
 }
 
 /// Print success message after workspace is ready.
-fn print_success_message(agent: Option<&str>, ctx: &OutputContext) {
+fn print_success_message(ctx: &OutputContext) {
     if ctx.quiet {
         return;
     }
-    let label = agent.map_or_else(|| "workspace ready".to_string(), |n| format!("workspace ready · agent: {n}"));
-    ctx.success(&label);
     ctx.blank();
     ctx.kv("Connect", "polis connect");
     ctx.kv("Status", "polis status");

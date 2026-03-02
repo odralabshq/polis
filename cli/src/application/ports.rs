@@ -187,7 +187,7 @@ pub trait ProgressReporter {
     fn start_waiting(&self, _msg: &str) {}
     /// Stop the wait indicator. `success` controls the final symbol.
     /// Default: no-op.
-    fn stop_waiting(&self, _success: bool) {}
+    fn stop_waiting(&self, _success: bool, _msg: &str) {}
     /// Returns true if a live spinner is currently active (suppresses text heartbeats).
     fn is_spinning(&self) -> bool { false }
 }

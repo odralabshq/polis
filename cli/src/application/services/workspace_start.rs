@@ -107,7 +107,8 @@ pub async fn start_workspace(
                 envs,
             )
             .await?;
-            wait_ready(provisioner, reporter, false).await?;
+            let msg = agent.map_or_else(|| "workspace ready".to_string(), |n| format!("workspace ready · agent: {n}"));
+            wait_ready(provisioner, reporter, false, &msg).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
             })
@@ -157,7 +158,8 @@ async fn handle_running_vm(
         state.active_agent = Some(name.to_owned());
         state_mgr.save_async(&state).await?;
 
-        wait_ready(provisioner, reporter, false).await?;
+        let msg = format!("workspace ready · agent: {name}");
+        wait_ready(provisioner, reporter, false, &msg).await?;
 
         return Ok(StartOutcome::Restarted {
             agent: Some(name.to_owned()),
@@ -234,7 +236,8 @@ async fn create_and_start_vm(
     start_compose(provisioner, agent).await?;
 
     // Step 9: Wait for health.
-    wait_ready(provisioner, reporter, false).await?;
+    let msg = agent.map_or_else(|| "workspace ready".to_string(), |n| format!("workspace ready · agent: {n}"));
+    wait_ready(provisioner, reporter, false, &msg).await?;
 
     // Step 10: Write config hash after successful startup.
     write_config_hash(provisioner, &config_hash)

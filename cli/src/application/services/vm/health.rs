@@ -39,6 +39,7 @@ pub async fn wait_ready(
     mp: &impl ShellExecutor,
     reporter: &impl ProgressReporter,
     quiet: bool,
+    success_msg: &str,
 ) -> Result<()> {
     let (max_attempts, delay) = get_health_timeout();
     let heartbeat_every = (60 / delay.as_secs()).max(1) as u32;
@@ -48,10 +49,10 @@ pub async fn wait_ready(
     for attempt in 1..=max_attempts {
         match check(mp).await {
             HealthStatus::Healthy => {
-                reporter.stop_waiting(true);
+                reporter.stop_waiting(true, success_msg);
                 // On non-TTY stop_waiting is a no-op, so emit a plain success line.
                 if !quiet && !reporter.is_spinning() {
-                    reporter.success("workspace ready");
+                    reporter.success(success_msg);
                 }
                 return Ok(());
             }
@@ -71,7 +72,7 @@ pub async fn wait_ready(
         }
     }
 
-    reporter.stop_waiting(false);
+    reporter.stop_waiting(false, success_msg);
     anyhow::bail!(
         "Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs"
     )
