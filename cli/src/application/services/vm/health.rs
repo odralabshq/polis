@@ -42,8 +42,8 @@ pub async fn wait_ready(
 ) -> Result<()> {
     // Branding lines should ideally be moved to a domain helper or handled by the reporter.
     // For now, we'll keep the logic but remove the direct output dependency.
-    let msg_start = "agent isolation complete...";
-    let msg_end = "agent containment active.";
+    let msg_start = "starting services...";
+    let msg_end = "services ready";
 
     if !quiet {
         reporter.step(msg_start);

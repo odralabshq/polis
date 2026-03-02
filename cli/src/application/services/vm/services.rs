@@ -56,18 +56,18 @@ pub(super) async fn start_services(mp: &impl ShellExecutor) {
     let _ = mp.exec(&["sudo", "systemctl", "start", "polis"]).await;
 }
 
-/// Start services with inception progress spinner.
+/// Start services with progress messages.
 pub(super) async fn start_services_with_progress(
     mp: &impl ShellExecutor,
     reporter: &impl ProgressReporter,
     quiet: bool,
 ) {
     if !quiet {
-        reporter.step(&super::inception_line("L2", "agent isolation starting..."));
+        reporter.step("securing workspace...");
     }
     start_services(mp).await;
     if !quiet {
-        reporter.success(&super::inception_line("L2", "agent isolation starting..."));
+        reporter.success("workspace secured");
     }
 }
 

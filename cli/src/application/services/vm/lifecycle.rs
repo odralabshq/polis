@@ -141,12 +141,7 @@ pub async fn create(
 ) -> Result<()> {
     check_prerequisites(mp).await?;
 
-    if !quiet {
-        reporter.success(&super::inception_line("L0", "sequence started."));
-    }
-
     // Extract embedded assets (cloud-init.yaml, etc.) to a temp dir.
-    // The TempDir guard must be held until launch completes.
     let (assets_path, _assets_guard) = assets
         .extract_assets()
         .await
@@ -173,10 +168,7 @@ pub async fn create(
         .to_string();
 
     if !quiet {
-        reporter.step(&super::inception_line(
-            "L1",
-            "workspace isolation starting...",
-        ));
+        reporter.step("preparing workspace...");
     }
     let output = mp
         .launch(&InstanceSpec {
@@ -190,10 +182,7 @@ pub async fn create(
         .await
         .context("launching workspace")?;
     if !quiet && output.status.success() {
-        reporter.success(&super::inception_line(
-            "L1",
-            "workspace isolation starting...",
-        ));
+        reporter.success("workspace prepared");
     }
 
     if !output.status.success() {
@@ -254,7 +243,7 @@ pub async fn delete(mp: &impl InstanceLifecycle) {
     let _ = mp.purge().await;
 }
 
-/// Restart a stopped VM with inception progress messages.
+/// Restart a stopped VM.
 ///
 /// # Errors
 ///
@@ -265,21 +254,11 @@ pub async fn restart(
     quiet: bool,
 ) -> Result<()> {
     if !quiet {
-        reporter.success(&super::inception_line("L0", "sequence started."));
-    }
-
-    if !quiet {
-        reporter.step(&super::inception_line(
-            "L1",
-            "workspace isolation starting...",
-        ));
+        reporter.step("starting workspace...");
     }
     start(mp).await?;
     if !quiet {
-        reporter.success(&super::inception_line(
-            "L1",
-            "workspace isolation starting...",
-        ));
+        reporter.success("workspace started");
     }
 
     super::services::start_services_with_progress(mp, reporter, quiet).await;
