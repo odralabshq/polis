@@ -263,6 +263,7 @@ main() {
     # Delete existing VM for a clean install
     if multipass info polis &>/dev/null 2>&1; then
         log_warn "Existing polis VM found — deleting..."
+        multipass stop polis || true
         multipass delete polis --purge || true
     fi
 
