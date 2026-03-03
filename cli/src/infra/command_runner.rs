@@ -15,7 +15,7 @@ use crate::application::ports::CommandRunner;
 pub const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default timeout for `multipass exec` commands (runs inside VM, may be slower).
-pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(660);
+pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(960);
 
 /// On Windows, ensure the Multipass default install directory is on PATH
 /// so the CLI can find it even before the user adds it to their system PATH.

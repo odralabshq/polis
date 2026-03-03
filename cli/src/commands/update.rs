@@ -7,7 +7,7 @@ use crate::app::AppContext;
 use crate::application::services::update::{
     UpdateChecker, UpdateInfo, UpdateVmConfigOutcome, update_vm_config,
 };
-use crate::application::services::vm::lifecycle::{self as vm, VmState};
+use crate::application::services::workspace_stop::is_vm_running;
 
 /// Arguments for the update command.
 #[derive(Args)]
@@ -77,8 +77,7 @@ pub async fn run(
     }
 
     // After CLI self-update, update VM config if the VM is running
-    let vm_state = vm::state(mp).await?;
-    if vm_state == VmState::Running {
+    if is_vm_running(mp).await? {
         if !ctx.quiet {
             ctx.info("Updating VM config...");
         }

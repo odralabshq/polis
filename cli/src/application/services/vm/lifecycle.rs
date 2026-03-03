@@ -5,8 +5,8 @@
 use anyhow::{Context, Result};
 
 use crate::application::ports::{
-    AssetExtractor, FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec,
-    ProgressReporter, ShellExecutor, SshConfigurator, VmProvisioner,
+    AssetExtractor, FileTransfer, HostKeyExtractor, InstanceInspector, InstanceLifecycle,
+    InstanceSpec, LocalFs, ProgressReporter, ShellExecutor, SshConfigurator, VmProvisioner,
 };
 
 const VM_CPUS: &str = "2";
@@ -136,6 +136,8 @@ pub async fn create(
     mp: &impl VmProvisioner,
     assets: &impl AssetExtractor,
     ssh: &impl SshConfigurator,
+    local_fs: &impl LocalFs,
+    host_key_extractor: &impl HostKeyExtractor,
     reporter: &impl ProgressReporter,
     quiet: bool,
 ) -> Result<()> {
@@ -193,9 +195,9 @@ pub async fn create(
     // Verify cloud-init completed successfully before proceeding to Phase 2.
     verify_cloud_init(mp).await?;
 
-    configure_credentials(mp).await;
+    configure_credentials(mp, local_fs).await;
     super::services::start_services_with_progress(mp, reporter, quiet).await;
-    pin_host_key(ssh).await;
+    pin_host_key(ssh, host_key_extractor).await;
     Ok(())
 }
 
@@ -291,23 +293,16 @@ async fn check_prerequisites(mp: &impl InstanceInspector) -> Result<()> {
     Ok(())
 }
 
-async fn configure_credentials(mp: &impl FileTransfer) {
+async fn configure_credentials(mp: &impl FileTransfer, local_fs: &impl LocalFs) {
     let ca_cert = std::path::PathBuf::from("certs/ca/ca.pem");
-    if ca_cert.exists() {
+    if local_fs.exists(&ca_cert) {
         let _ = mp.transfer(&ca_cert.to_string_lossy(), "/tmp/ca.pem").await;
     }
 }
 
-async fn pin_host_key(ssh: &impl SshConfigurator) {
-    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("polis"));
-    if let Ok(output) = tokio::process::Command::new(exe)
-        .args(["_extract-host-key"])
-        .output()
-        .await
-        && output.status.success()
-        && let Ok(host_key) = String::from_utf8(output.stdout)
-    {
-        let _ = ssh.update_host_key(host_key.trim()).await;
+async fn pin_host_key(ssh: &impl SshConfigurator, extractor: &impl HostKeyExtractor) {
+    if let Some(host_key) = extractor.extract_host_key().await {
+        let _ = ssh.update_host_key(&host_key).await;
     }
 }
 

@@ -882,3 +882,21 @@ impl crate::application::ports::SshConfigurator for SshConfigManager {
         Ok(())
     }
 }
+
+impl crate::application::ports::HostKeyExtractor for SshConfigManager {
+    async fn extract_host_key(&self) -> Option<String> {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("polis"));
+        let output = tokio::process::Command::new(exe)
+            .args(["_extract-host-key"])
+            .output()
+            .await
+            .ok()?;
+        if output.status.success() {
+            String::from_utf8(output.stdout)
+                .ok()
+                .map(|s| s.trim().to_owned())
+        } else {
+            None
+        }
+    }
+}

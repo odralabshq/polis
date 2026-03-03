@@ -8,8 +8,8 @@ use crate::application::ports::{ProgressReporter, ShellExecutor};
 
 /// Pull all Docker images inside the VM via `docker compose pull`.
 ///
-/// Runs `timeout 600 docker compose -f /opt/polis/docker-compose.yml pull`
-/// inside the VM, enforcing a 10-minute limit.
+/// Runs `timeout 900 docker compose -f /opt/polis/docker-compose.yml pull`
+/// inside the VM, enforcing a 15-minute limit.
 ///
 /// # Errors
 ///
@@ -21,7 +21,7 @@ pub async fn pull_images(mp: &impl ShellExecutor, _reporter: &impl ProgressRepor
     let output = mp
         .exec(&[
             "timeout",
-            "600",
+            "900",
             "docker",
             "compose",
             "-f",
@@ -38,7 +38,7 @@ pub async fn pull_images(mp: &impl ShellExecutor, _reporter: &impl ProgressRepor
     // Exit code 124 means `timeout` killed the process.
     if output.status.code() == Some(124) {
         anyhow::bail!(
-            "Docker image pull timed out after 10 minutes.\n\
+            "Docker image pull timed out after 15 minutes.\n\
              Check your network connectivity and retry with: polis start"
         );
     }
@@ -161,7 +161,7 @@ mod tests {
             .expect_err("expected Err");
         let msg = err.to_string();
         assert!(
-            msg.contains("timed out") || msg.contains("10 minutes"),
+            msg.contains("timed out") || msg.contains("15 minutes"),
             "timeout error must mention timeout: {msg}"
         );
     }

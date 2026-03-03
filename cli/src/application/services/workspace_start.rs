@@ -16,8 +16,8 @@ pub struct StartOptions<'a, R: crate::application::ports::ProgressReporter> {
 use chrono::Utc;
 
 use crate::application::ports::{
-    AssetExtractor, FileHasher, LocalFs, ProgressReporter, SshConfigurator, VmProvisioner,
-    WorkspaceStateStore,
+    AssetExtractor, FileHasher, HostKeyExtractor, LocalFs, ProgressReporter, SshConfigurator,
+    VmProvisioner, WorkspaceStateStore,
 };
 use crate::application::services::vm::{
     health::wait_ready,
@@ -52,7 +52,7 @@ pub async fn start_workspace(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
     assets: &impl AssetExtractor,
-    ssh: &impl SshConfigurator,
+    ssh: &(impl SshConfigurator + HostKeyExtractor),
     hasher: &impl FileHasher,
     local_fs: &impl LocalFs,
     opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
@@ -182,7 +182,7 @@ async fn create_and_start_vm(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
     assets: &impl AssetExtractor,
-    ssh: &impl SshConfigurator,
+    ssh: &(impl SshConfigurator + HostKeyExtractor),
     hasher: &impl FileHasher,
     local_fs: &impl LocalFs,
     opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
@@ -204,7 +204,7 @@ async fn create_and_start_vm(
     reporter.begin_stage("preparing workspace...");
 
     // Step 2: Launch VM with cloud-init.
-    vm::create(provisioner, assets, ssh, reporter, true).await?;
+    vm::create(provisioner, assets, ssh, local_fs, ssh, reporter, true).await?;
 
     // Step 3: Transfer config tarball.
     reporter.begin_stage("securing workspace...");
@@ -272,6 +272,11 @@ async fn restart_vm(
     envs: Vec<String>,
 ) -> Result<()> {
     vm::restart(provisioner, reporter, false).await?;
+
+    reporter.begin_stage("verifying components...");
+    pull_images(provisioner, reporter)
+        .await
+        .context("pulling Docker images")?;
 
     if let Some(name) = agent {
         reporter.begin_stage(&format!("installing agent '{name}'..."));
@@ -393,7 +398,14 @@ async fn setup_agent<P: VmProvisioner>(
 /// Start docker compose with optional agent overlay.
 async fn start_compose<P: VmProvisioner>(provisioner: &P, agent_name: Option<&str>) -> Result<()> {
     let base = format!("{VM_ROOT}/docker-compose.yml");
-    let mut args: Vec<String> = vec!["docker".into(), "compose".into(), "-f".into(), base];
+    let mut args: Vec<String> = vec![
+        "timeout".into(),
+        "120".into(),
+        "docker".into(),
+        "compose".into(),
+        "-f".into(),
+        base,
+    ];
     if let Some(name) = agent_name {
         let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
         args.push("-f".into());
@@ -407,6 +419,12 @@ async fn start_compose<P: VmProvisioner>(provisioner: &P, agent_name: Option<&st
         .await
         .context("starting platform")?;
     if !output.status.success() {
+        if output.status.code() == Some(124) {
+            anyhow::bail!(
+                "docker compose up timed out after 2 minutes.\n\
+                 Diagnose: polis doctor"
+            );
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("failed to start platform.\n{stderr}");
     }
