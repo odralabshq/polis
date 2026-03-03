@@ -28,7 +28,8 @@ function Show-WindowsNetworkingNote {
 
 function Confirm-InstallerProceed {
     Write-Host ""
-    Write-Host "WARNING: A clean reinstall deletes the existing 'polis' VM and removes previous workspace data." -ForegroundColor Red
+    Write-Host "WARNING: If an existing 'polis' VM is found, the installer will attempt to repair it." -ForegroundColor Yellow
+    Write-Host "If repair fails, you can start fresh with: polis delete; polis start" -ForegroundColor Yellow
     if ($env:POLIS_INSTALL_ASSUME_Y -eq "1" -or $env:CI -eq "true" -or $env:GITHUB_ACTIONS -eq "true" -or -not [Environment]::UserInteractive) {
         Write-Host "[INFO] Non-interactive mode detected — proceeding automatically."
         return
