@@ -171,6 +171,14 @@ run_init() {
         return 1
     }
 
+    # Overlay repo's scripts/ directory (may be newer than tarball)
+    # Includes polis-query.sh needed by `polis status`.
+    multipass exec polis -- rm -rf /opt/polis/scripts
+    multipass transfer --recursive "${REPO_DIR}/scripts" polis:/opt/polis/ || {
+        log_error "Failed to overlay scripts directory"
+        return 1
+    }
+
     # Write .env with version
     local cli_version
     cli_version=$("${INSTALL_DIR}/bin/polis" --version 2>&1 | awk '{print $2}')

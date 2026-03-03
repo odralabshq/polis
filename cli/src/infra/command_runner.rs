@@ -184,11 +184,16 @@ impl CommandRunner for TokioCommandRunner {
     ///
     /// This function will return an error if the underlying operations fail.
     async fn run_status(&self, program: &str, args: &[&str]) -> Result<std::process::ExitStatus> {
-        let mut child = tokio::process::Command::new(program)
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(args)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true);
+
+        #[cfg(windows)]
+        ensure_multipass_on_path(&mut cmd, program);
+
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("failed to spawn {program}"))?;
 

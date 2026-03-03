@@ -185,6 +185,14 @@ function Invoke-PolisInit {
     & multipass transfer --recursive $agentsDir polis:/opt/polis/
     if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay agents directory"; exit 1 }
 
+    # Overlay repo's scripts/ directory (may be newer than tarball)
+    # Includes polis-query.sh needed by `polis status`.
+    $scriptsDir = Join-Path $RepoDir "scripts"
+    & multipass exec polis -- rm -rf /opt/polis/scripts
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to remove stale scripts directory"; exit 1 }
+    & multipass transfer --recursive $scriptsDir polis:/opt/polis/
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay scripts directory"; exit 1 }
+
     # Write .env with version
     $cliVersion = (& $polis --version 2>&1) -replace '^polis\s+', ''
     $tag = "v$cliVersion"
