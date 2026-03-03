@@ -12,8 +12,6 @@ use crate::commands::DeleteArgs;
 ///
 /// This function will return an error if the underlying operations fail.
 pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::ExitCode> {
-    let quiet = app.output.quiet;
-
     let confirmed = if args.all {
         confirm_delete_all(args, app)?
     } else {

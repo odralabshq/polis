@@ -355,7 +355,7 @@ jobs:
       - name: Start containers
         run: |
           just up
-          docker compose --profile test up -d httpbin
+          docker compose -f docker-compose.yml -f docker-compose.test.yml up -d httpbin
 
       - name: Wait for healthy
         run: source ./scripts/ci-helpers.sh && wait_for_healthy
