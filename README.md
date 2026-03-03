@@ -262,7 +262,7 @@ Polis ships with a comprehensive bypass list covering common development tools. 
 | Certificate authorities | `*.digicert.com`, `*.globalsign.com`, `letsencrypt.org` |
 | CDNs | `*.s3.amazonaws.com`, `*.cloudfront.net` |
 
-The full list is defined in `polis-governance/src/config.rs` → `default_bypass_domains()`.
+The full list is defined in `services/sentinel/modules/dlp/srv_polis_dlp.c` → `is_new_domain()`.
 
 ---
 
