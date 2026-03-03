@@ -183,8 +183,16 @@ async fn create_and_start_vm(...) -> Result<()> {
 ```
 
 **Modify `restart_vm()`:**
+
+> **Note:** `vm::restart()` internally calls `start_services()` → `systemctl start polis`.
+> Because `stop_workspace()` already cleared `.ready`, the `ConditionPathExists` check
+> causes that internal `systemctl start polis` to be a no-op. We then set the overlay,
+> mark ready, and explicitly start the service ourselves.
+
 ```rust
 async fn restart_vm(...) -> Result<()> {
+    // vm::restart() calls start_services internally, but .ready was cleared
+    // during stop_workspace(), so systemd's ConditionPathExists fails → no-op.
     vm::restart(provisioner, reporter, false).await?;
 
     reporter.begin_stage("verifying components...");
@@ -198,11 +206,10 @@ async fn restart_vm(...) -> Result<()> {
         None
     };
 
-    // Update overlay symlink before starting services.
+    // Update overlay symlink, then gate-open and start services.
     set_active_overlay(provisioner, overlay.as_deref()).await?;
-
-    // Ready marker and service start handled by vm::restart -> start_services
-    // which calls systemctl start polis
+    set_ready_marker(provisioner, true).await?;
+    provisioner.exec(&["sudo", "systemctl", "start", "polis"]).await?;
 
     // ... save state ...
 }
@@ -296,7 +303,7 @@ Update polis.service:
     RemainAfterExit=yes
     # Use overlay if symlink exists, otherwise base compose only.
     ExecStart=/bin/bash -c 'cd /opt/polis && if [ -f compose.active.yaml ]; then docker compose -f docker-compose.yml -f compose.active.yaml up -d --remove-orphans; else docker compose -f docker-compose.yml up -d --remove-orphans; fi'
-    ExecStop=/bin/bash -c 'cd /opt/polis && docker compose -f docker-compose.yml down'
+    ExecStop=/bin/bash -c 'cd /opt/polis && if [ -f compose.active.yaml ]; then docker compose -f docker-compose.yml -f compose.active.yaml down; else docker compose -f docker-compose.yml down; fi'
     Restart=on-failure
     User=ubuntu
     WorkingDirectory=/opt/polis
@@ -324,13 +331,13 @@ Update polis.service:
 
 ```
 1. [Previously] CLI: rm .ready (during stop)
-2. CLI: multipass start polis
-3. systemd: ConditionPathExists fails → polis.service skipped
-4. CLI: pull images, setup agent (if changed)
-5. CLI: update symlink (or remove if no agent)
-6. CLI: touch .ready
-7. CLI: systemctl start polis (via start_services)
-8. Containers start with correct config
+2. CLI: vm::restart() starts VM, internal systemctl start polis is a no-op
+   (ConditionPathExists fails because .ready was cleared in step 1)
+3. CLI: pull images, setup agent (if changed)
+4. CLI: update symlink (or remove if no agent)
+5. CLI: touch .ready
+6. CLI: systemctl start polis (explicit, after overlay is set)
+7. Containers start with correct config
 ```
 
 ### Host Reboot (Uncontrolled)
