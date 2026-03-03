@@ -1,14 +1,12 @@
 //! `polis security` — manage security policy, blocked requests, and domain rules.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Subcommand;
 use std::process::ExitCode;
 
 use crate::app::AppContext;
 use crate::application::ports::ShellExecutor;
-
-/// Container name for the toolbox service (runs polis-approve CLI).
-const TOOLBOX_CONTAINER: &str = "polis-toolbox";
+use crate::application::services::security_service;
 
 /// Security subcommands.
 #[derive(Subcommand)]
@@ -55,180 +53,63 @@ pub async fn run(
     mp: &impl ShellExecutor,
 ) -> Result<ExitCode> {
     match cmd {
-        SecurityCommand::Status => status(app, mp).await,
-        SecurityCommand::Pending => pending(app, mp).await,
-        SecurityCommand::Approve { request_id } => approve(app, mp, &request_id).await,
-        SecurityCommand::Deny { request_id } => deny(app, mp, &request_id).await,
-        SecurityCommand::Log => log(app, mp).await,
-        SecurityCommand::Allow { pattern, action } => allow(app, mp, &pattern, &action).await,
-        SecurityCommand::Level { level } => set_level(app, mp, &level).await,
-    }
-}
-
-/// Run polis-approve inside the toolbox container and capture output.
-///
-/// Reads the mcp-admin password from the mounted Docker secret and injects it
-/// as `polis_VALKEY_PASS` so `polis-approve` can authenticate to Valkey.
-async fn toolbox_approve(mp: &impl ShellExecutor, args: &[&str]) -> Result<String> {
-    // Read the mcp-admin password from the mounted secret
-    let pass_output = mp
-        .exec(&[
-            "docker", "exec", TOOLBOX_CONTAINER,
-            "cat", "/run/secrets/valkey_mcp_admin_password",
-        ])
-        .await
-        .context("failed to read mcp-admin password from toolbox container")?;
-
-    if !pass_output.status.success() {
-        let stderr = String::from_utf8_lossy(&pass_output.stderr);
-        if stderr.contains("No such container") {
-            anyhow::bail!(
-                "Toolbox container is not running. Start the workspace first: polis start"
-            );
-        }
-        anyhow::bail!(
-            "Toolbox container missing Valkey credentials. Try restarting: polis stop && polis start"
-        );
-    }
-
-    let pass = String::from_utf8_lossy(&pass_output.stdout).trim().to_string();
-    let env_arg = format!("polis_VALKEY_PASS={pass}");
-
-    let mut cmd: Vec<&str> = vec![
-        "docker", "exec",
-        "-e", &env_arg,
-        TOOLBOX_CONTAINER, "polis-approve",
-    ];
-    cmd.extend_from_slice(args);
-
-    let output = mp
-        .exec(&cmd)
-        .await
-        .context("failed to exec polis-approve in toolbox container")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if !output.status.success() {
-        let msg = if stderr.is_empty() { &stdout } else { &stderr };
-        anyhow::bail!("polis-approve failed: {}", msg.trim());
-    }
-
-    Ok(stdout)
-}
-
-async fn status(app: &AppContext, mp: &impl ShellExecutor) -> Result<ExitCode> {
-    // Get security level from local config
-    let config =
-        crate::application::services::config_service::load_config(&app.config_store)?;
-    app.output
-        .info(&format!("Security level: {}", config.security.level));
-
-    // Get pending count from toolbox
-    match toolbox_approve(mp, &["list-pending"]).await {
-        Ok(output) => {
-            let trimmed = output.trim();
-            if trimmed == "no pending requests" {
+        SecurityCommand::Status => {
+            let s = security_service::get_status(&app.config_store, mp).await?;
+            app.output.info(&format!("Security level: {}", s.level));
+            if let Some(err) = s.pending_error {
+                app.output
+                    .warn(&format!("Could not query pending requests: {err}"));
+            } else if s.pending_lines.is_empty() {
                 app.output.success("No pending blocked requests");
             } else {
-                let count = trimmed.lines().count();
-                app.output
-                    .warn(&format!("{count} pending blocked request(s)"));
+                app.output.warn(&format!(
+                    "{} pending blocked request(s)",
+                    s.pending_lines.len()
+                ));
             }
+            Ok(ExitCode::SUCCESS)
         }
-        Err(e) => {
-            app.output
-                .warn(&format!("Could not query pending requests: {e}"));
+        SecurityCommand::Pending => {
+            let lines = security_service::list_pending(mp).await?;
+            if lines.is_empty() {
+                app.output.success("No pending blocked requests");
+            } else {
+                for line in &lines {
+                    app.output.info(line);
+                }
+            }
+            Ok(ExitCode::SUCCESS)
         }
-    }
-
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn pending(app: &AppContext, mp: &impl ShellExecutor) -> Result<ExitCode> {
-    let output = toolbox_approve(mp, &["list-pending"]).await?;
-    let trimmed = output.trim();
-
-    if trimmed == "no pending requests" {
-        app.output.success("No pending blocked requests");
-    } else {
-        for line in trimmed.lines() {
-            app.output.info(line);
+        SecurityCommand::Approve { request_id } => {
+            let msg = security_service::approve(mp, &request_id).await?;
+            app.output.success(&msg);
+            Ok(ExitCode::SUCCESS)
         }
-    }
-
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn approve(app: &AppContext, mp: &impl ShellExecutor, request_id: &str) -> Result<ExitCode> {
-    let output = toolbox_approve(mp, &["approve", request_id]).await?;
-    app.output.success(output.trim());
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn deny(app: &AppContext, mp: &impl ShellExecutor, request_id: &str) -> Result<ExitCode> {
-    let output = toolbox_approve(mp, &["deny", request_id]).await?;
-    app.output.success(output.trim());
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn log(_app: &AppContext, mp: &impl ShellExecutor) -> Result<ExitCode> {
-    // Query the Valkey event log via the state container
-    let output = mp
-        .exec(&[
-            "docker", "exec", "polis-state", "sh", "-c",
-            "REDISCLI_AUTH=$(cat /run/secrets/valkey_mcp_admin_password) \
-             valkey-cli --tls \
-             --cert /etc/valkey/tls/client.pem \
-             --key /etc/valkey/tls/client.key \
-             --cacert /etc/valkey/tls/ca.crt \
-             --user mcp-admin --no-auth-warning \
-             ZREVRANGEBYSCORE polis:log:events +inf -inf LIMIT 0 20",
-        ])
-        .await
-        .context("failed to query security log")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
-
-    if trimmed.is_empty() || trimmed == "(empty array)" || trimmed == "(empty list or set)" {
-        println!("No recent security events");
-    } else {
-        for line in trimmed.lines() {
-            println!("{line}");
+        SecurityCommand::Deny { request_id } => {
+            let msg = security_service::deny(mp, &request_id).await?;
+            app.output.success(&msg);
+            Ok(ExitCode::SUCCESS)
+        }
+        SecurityCommand::Log => {
+            let lines = security_service::get_log(mp).await?;
+            if lines.is_empty() {
+                println!("No recent security events");
+            } else {
+                for line in &lines {
+                    println!("{line}");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        SecurityCommand::Allow { pattern, action } => {
+            let msg = security_service::auto_allow(mp, &pattern, &action).await?;
+            app.output.success(&msg);
+            Ok(ExitCode::SUCCESS)
+        }
+        SecurityCommand::Level { level } => {
+            let msg = security_service::set_level(&app.config_store, mp, &level).await?;
+            app.output.success(&msg);
+            Ok(ExitCode::SUCCESS)
         }
     }
-
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn allow(
-    app: &AppContext,
-    mp: &impl ShellExecutor,
-    pattern: &str,
-    action: &str,
-) -> Result<ExitCode> {
-    let output = toolbox_approve(mp, &["auto-approve", pattern, action]).await?;
-    app.output.success(output.trim());
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn set_level(app: &AppContext, mp: &impl ShellExecutor, level: &str) -> Result<ExitCode> {
-    // Validate level
-    match level {
-        "relaxed" | "balanced" | "strict" => {}
-        _ => anyhow::bail!("Invalid security level '{level}': expected relaxed, balanced, or strict"),
-    }
-
-    // Set via polis-approve (updates Valkey directly)
-    let output = toolbox_approve(mp, &["set-security-level", level]).await?;
-    app.output.success(output.trim());
-
-    // Also update local config to keep it in sync
-    let mut config =
-        crate::application::services::config_service::load_config(&app.config_store)?;
-    config.security.level = level.to_string();
-    crate::application::services::config_service::save_config(&app.config_store, &config)?;
-
-    Ok(ExitCode::SUCCESS)
 }

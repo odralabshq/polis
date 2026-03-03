@@ -9,6 +9,7 @@ pub mod agent_crud;
 pub mod cleanup_service;
 pub mod config_service;
 pub mod connect;
+pub mod security_service;
 pub mod update;
 pub mod vm;
 pub mod workspace_doctor;
