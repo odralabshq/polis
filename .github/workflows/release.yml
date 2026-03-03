@@ -67,7 +67,7 @@ jobs:
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag_name=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "push_docker=$PUSH_DOCKER" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *"-"* ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
@@ -358,6 +358,13 @@ jobs:
         with:
           name: prepared-assets
           path: .build/assets/
+
+      - name: Set CLI version from release tag
+        run: |
+          CARGO_VER="${{ needs.validate.outputs.version }}"
+          CARGO_VER="${CARGO_VER#v}"
+          sed -i 's/^version = ".*"/version = "'"${CARGO_VER}"'"/' cli/Cargo.toml
+        shell: bash
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # master

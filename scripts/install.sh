@@ -11,7 +11,7 @@ INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 CURL_PROTO="=https"
-VERSION="${POLIS_VERSION:-v0.4.0-preview}"
+VERSION=""  # resolved by detect_version
 
 # SHA256 hashes for Multipass downloads — update when bumping MULTIPASS_VERSION
 MULTIPASS_SHA256_MACOS="${MULTIPASS_SHA256_MACOS:-758d10dc1b71872b0ee7a17070b93fc788dba5ba45c36b980e42fd895d273489}"
@@ -89,8 +89,9 @@ MULTIPASS_VERSION="${MULTIPASS_VERSION:-1.16.1}"
 semver_gte() {
     local version="$1"
     local minimum="$2"
-    printf '%s\n%s\n' "$minimum" "$version" | sort -V -C
-    return 0
+    local rc=0
+    printf '%s\n%s\n' "$minimum" "$version" | sort -V -C || rc=$?
+    return $rc
 }
 
 install_multipass_linux() {
@@ -112,26 +113,25 @@ install_multipass_linux() {
 }
 
 install_multipass_macos() {
-    local pkg_file
-    pkg_file=$(mktemp --suffix=".pkg")
-    trap 'rm -f "${pkg_file}"' EXIT
+    MACOS_PKG_FILE=$(mktemp /tmp/multipass-XXXXXX.pkg)
+    trap 'rm -f "${MACOS_PKG_FILE}"' EXIT
     curl -fsSL --proto "${CURL_PROTO}" \
         "https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg" \
-        -o "${pkg_file}"
+        -o "${MACOS_PKG_FILE}"
 
     local pkg_sha256
-    pkg_sha256=$(shasum -a 256 "${pkg_file}" | cut -d' ' -f1)
+    pkg_sha256=$(shasum -a 256 "${MACOS_PKG_FILE}" | cut -d' ' -f1)
     if [[ "${pkg_sha256}" != "${MULTIPASS_SHA256_MACOS}" ]]; then
         log_error "Multipass pkg SHA256 mismatch!"
         echo "  Expected: ${MULTIPASS_SHA256_MACOS}" >&2
         echo "  Actual:   ${pkg_sha256}" >&2
-        rm -f "${pkg_file}"
+        rm -f "${MACOS_PKG_FILE}"
         exit 1
     fi
     log_ok "Multipass pkg SHA256 verified"
 
-    sudo installer -pkg "${pkg_file}" -target /
-    rm -f "${pkg_file}"
+    sudo installer -pkg "${MACOS_PKG_FILE}" -target /
+    rm -f "${MACOS_PKG_FILE}"
     return 0
 }
 
@@ -184,7 +184,7 @@ check_multipass() {
 
 detect_version() {
     if [[ -n "${POLIS_VERSION:-}" ]]; then
-        VERSION="${POLIS_VERSION}"
+        VERSION="${POLIS_VERSION#v}"
         return 0
     fi
     log_info "Detecting latest Polis release..."
@@ -204,20 +204,20 @@ detect_version() {
 }
 
 download_cli() {
-    local arch base_url bin_dir binary_name checksum_file expected actual
+    local arch base_url bin_dir binary_name expected actual
     arch=$(check_arch)
     base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v${VERSION}"
     bin_dir="${INSTALL_DIR}/bin"
     binary_name="polis-linux-${arch}"
-    tarball="${binary_name}.tar.gz"
-    checksum_file=$(mktemp)
-    trap 'rm -f "${checksum_file}"' EXIT
+    local tarball="${binary_name}.tar.gz"
+    CHECKSUM_FILE=$(mktemp)
+    trap 'rm -f "${CHECKSUM_FILE}"' EXIT
 
     mkdir -p "${bin_dir}"
 
     log_info "Downloading CLI (${arch})..."
     curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${tarball}" -o "/tmp/${tarball}"
-    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
+    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${CHECKSUM_FILE}"
 
     log_info "Extracting CLI..."
     tar -xzf "/tmp/${tarball}" -C "${bin_dir}" --strip-components=0
@@ -225,7 +225,7 @@ download_cli() {
     rm -f "/tmp/${tarball}"
 
     log_info "Verifying CLI SHA256..."
-    expected=$(cut -d' ' -f1 < "${checksum_file}")
+    expected=$(cut -d' ' -f1 < "${CHECKSUM_FILE}")
     actual=$(sha256sum "${bin_dir}/polis" | cut -d' ' -f1)
 
     if [[ "${actual}" != "${expected}" ]]; then

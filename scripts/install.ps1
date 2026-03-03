@@ -73,8 +73,6 @@ function Write-Logo {
     Write-Host ""
 }
 
-Write-Logo
-
 # -- Multipass -----------------------------------------------------------------
 
 function Test-HyperV {
@@ -164,11 +162,19 @@ function Assert-Multipass {
     }
 }
 
+function Assert-Architecture {
+    if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+        Write-Err "Unsupported architecture: $env:PROCESSOR_ARCHITECTURE"
+        Write-Host "  Polis currently requires x86_64 (AMD64)."
+        throw "Unsupported architecture."
+    }
+}
+
 # -- CLI -----------------------------------------------------------------------
 
 function Resolve-Version {
     if ($env:POLIS_VERSION) {
-        $script:Version = $env:POLIS_VERSION
+        $script:Version = $env:POLIS_VERSION -replace '^v', ''
         return
     }
     Write-Info "Detecting latest Polis release..."
@@ -226,6 +232,8 @@ function Invoke-PolisInstall {
     $ErrorActionPreference = "Stop"
     $ProgressPreference = "SilentlyContinue"
 
+    Write-Logo
+
     Write-Host ""
     Write-Host "+===============================================================+"
     Write-Host "|                    Polis Installer                            |"
@@ -233,6 +241,7 @@ function Invoke-PolisInstall {
     Write-Host ""
 
     Confirm-InstallerProceed
+    Assert-Architecture
     Assert-Multipass
     Show-WindowsNetworkingNote
     Resolve-Version
