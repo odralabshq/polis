@@ -265,9 +265,17 @@ function Invoke-PolisInstall {
     if ($vmExists) {
         Write-Warn "Existing polis VM found — deleting..."
         $ErrorActionPreference = "Continue"
-        & multipass stop polis
+        & multipass stop polis --force 2>$null
         & multipass delete polis --purge
         $ErrorActionPreference = "Stop"
+        # Verify deletion succeeded
+        $null = & multipass info polis 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Err "Failed to delete existing VM. Try manually:"
+            Write-Host "  multipass stop polis; multipass delete polis --purge"
+            throw "VM deletion failed."
+        }
+        Write-Ok "VM deleted"
     }
 
     Remove-Item (Join-Path $InstallDir "state.json") -Force -ErrorAction SilentlyContinue
