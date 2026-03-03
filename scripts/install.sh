@@ -54,8 +54,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
 confirm_installer_proceed() {
     echo ""
-    echo -e "${YELLOW}WARNING: If an existing 'polis' VM is found, the installer will attempt to repair it.${NC}"
-    echo -e "${YELLOW}If repair fails, you can start fresh with: polis delete && polis start${NC}"
+    echo -e "${RED}WARNING: A clean reinstall deletes the existing 'polis' VM and removes previous workspace data.${NC}"
     if [[ "${POLIS_INSTALL_ASSUME_Y:-}" == "1" || "${CI:-}" == "true" || ! -t 0 ]]; then
         log_info "Non-interactive mode detected — proceeding automatically."
         return 0
@@ -261,17 +260,10 @@ main() {
     download_cli
     create_symlink
 
-    # Repair existing VM instead of destroying it
+    # Delete existing VM for a clean install
     if multipass info polis &>/dev/null 2>&1; then
-        log_warn "Existing polis VM found, attempting repair..."
-        if "${INSTALL_DIR}/bin/polis" doctor --fix; then
-            log_ok "VM repaired and running"
-            exit 0
-        else
-            log_error "Repair failed. To start fresh (destroys VM data):"
-            log_error "  polis delete && polis start"
-            exit 1
-        fi
+        log_warn "Existing polis VM found — deleting..."
+        "${INSTALL_DIR}/bin/polis" delete || true
     fi
 
     rm -f "${INSTALL_DIR}/state.json"
