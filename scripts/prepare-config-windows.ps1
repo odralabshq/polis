@@ -46,6 +46,7 @@ $includes = @(
     "docker-compose.yml",
     "scripts/generate-ca.sh",
     "scripts/fix-cert-ownership.sh",
+    "scripts/polis-query.sh",
     "agents"
 )
 

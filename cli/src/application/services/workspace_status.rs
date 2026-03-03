@@ -148,6 +148,7 @@ async fn gather_remote_info(
     let mut uptime = None;
 
     // Call the query script inside the VM to avoid Multipass Windows pipe issues.
+    // If this fails, the script may not be deployed in the VM (check config tarball).
     let output = mp.exec(&[QUERY_SCRIPT, "status"]).await;
 
     let Ok(o) = output else {
