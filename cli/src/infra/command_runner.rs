@@ -99,6 +99,7 @@ impl CommandRunner for TokioCommandRunner {
     ) -> Result<Output> {
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);

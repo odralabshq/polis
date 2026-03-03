@@ -148,7 +148,8 @@ prepare-config:
 	# Build config tarball (sudo needed to read keys owned by container uid 65532)
 	sudo tar cf .build/assets/polis-setup.config.tar \
 		docker-compose.yml \
-		scripts/ \
+		scripts/generate-ca.sh \
+		scripts/fix-cert-ownership.sh \
 		agents/ \
 		services/*/config/ \
 		services/*/scripts/ \

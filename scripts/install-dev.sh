@@ -129,7 +129,7 @@ run_init() {
     log_info "Creating VM with cloud-init..."
     multipass launch 24.04 \
         --name polis \
-        --cpus 2 \
+        --cpus 4 \
         --memory 8G \
         --disk 40G \
         --cloud-init "${cloud_init}" \

@@ -276,7 +276,8 @@ jobs:
           mkdir -p .build/assets
           tar cf .build/assets/polis-setup.config.tar \
             docker-compose.yml \
-            scripts/ \
+            scripts/generate-ca.sh \
+            scripts/fix-cert-ownership.sh \
             agents/ \
             services/*/config/ \
             services/*/scripts/

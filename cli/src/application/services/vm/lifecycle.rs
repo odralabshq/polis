@@ -9,7 +9,7 @@ use crate::application::ports::{
     InstanceSpec, LocalFs, ProgressReporter, ShellExecutor, SshConfigurator, VmProvisioner,
 };
 
-const VM_CPUS: &str = "2";
+const VM_CPUS: &str = "4";
 const VM_MEMORY: &str = "8G";
 const VM_DISK: &str = "40G";
 

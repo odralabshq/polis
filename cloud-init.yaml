@@ -57,6 +57,7 @@ packages:
   - openssl
   - apparmor
   - apparmor-utils
+  - haveged
 
 # ── Config files (written before runcmd) ─────────────────────────────────────
 write_files:
