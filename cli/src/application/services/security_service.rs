@@ -10,6 +10,10 @@ use crate::application::ports::{ConfigStore, ShellExecutor};
 /// Container name for the toolbox service (runs polis-approve CLI).
 const TOOLBOX_CONTAINER: &str = "polis-toolbox";
 
+/// Path to the Valkey CA cert inside the toolbox container.
+/// The `rustls-native-certs` crate respects `SSL_CERT_FILE` to load custom CAs.
+const VALKEY_CA_PATH: &str = "/etc/valkey/tls/ca.crt";
+
 /// Run polis-approve inside the toolbox container and capture output.
 ///
 /// Reads the mcp-admin password from the mounted Docker secret and injects it
@@ -41,13 +45,16 @@ async fn toolbox_approve(mp: &impl ShellExecutor, args: &[&str]) -> Result<Strin
     let pass = String::from_utf8_lossy(&pass_output.stdout)
         .trim()
         .to_string();
-    let env_arg = format!("polis_VALKEY_PASS={pass}");
+    let pass_env = format!("polis_VALKEY_PASS={pass}");
+    let cert_env = format!("SSL_CERT_FILE={VALKEY_CA_PATH}");
 
     let mut cmd: Vec<&str> = vec![
         "docker",
         "exec",
         "-e",
-        &env_arg,
+        &pass_env,
+        "-e",
+        &cert_env,
         TOOLBOX_CONTAINER,
         "polis-approve",
     ];

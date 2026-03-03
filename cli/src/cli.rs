@@ -14,7 +14,8 @@ use crate::commands;
     version,
     propagate_version = true,
     subcommand_required = true,
-    arg_required_else_help = true
+    arg_required_else_help = true,
+    disable_help_subcommand = true
 )]
 #[allow(clippy::struct_excessive_bools)] // Clap CLI struct — bools map to flags, not state
 pub struct Cli {
