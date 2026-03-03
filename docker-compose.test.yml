@@ -18,4 +18,4 @@ services:
 
 networks:
   external-bridge:
-    external: true
+    name: polis_external-bridge

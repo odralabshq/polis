@@ -33,7 +33,12 @@ pub async fn stop_workspace(
         VmState::NotFound => Ok(StopOutcome::NotFound),
         VmState::Stopped => Ok(StopOutcome::AlreadyStopped),
         VmState::Running | VmState::Starting => {
-            reporter.begin_stage("Stopping workspace...");
+            // Clear ready marker so polis.service won't auto-start on next boot.
+            let _ = provisioner
+                .exec(&["rm", "-f", crate::domain::workspace::READY_MARKER_PATH])
+                .await;
+
+            reporter.begin_stage("stopping workspace...");
             vm::stop(provisioner).await?;
             reporter.complete_stage();
             Ok(StopOutcome::Stopped)

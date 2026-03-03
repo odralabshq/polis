@@ -16,8 +16,8 @@ pub struct StartOptions<'a, R: crate::application::ports::ProgressReporter> {
 use chrono::Utc;
 
 use crate::application::ports::{
-    AssetExtractor, FileHasher, HostKeyExtractor, LocalFs, ProgressReporter, SshConfigurator,
-    VmProvisioner, WorkspaceStateStore,
+    AssetExtractor, FileHasher, HostKeyExtractor, LocalFs, ProgressReporter, ShellExecutor,
+    SshConfigurator, VmProvisioner, WorkspaceStateStore,
 };
 use crate::application::services::vm::{
     health::wait_ready,
@@ -26,6 +26,7 @@ use crate::application::services::vm::{
     provision::{generate_certs_and_secrets, transfer_config},
     services::pull_images,
 };
+use crate::domain::workspace::{ACTIVE_OVERLAY_PATH, READY_MARKER_PATH};
 use crate::domain::workspace::{VM_ROOT, WorkspaceState};
 
 /// Outcome of the `start_workspace` use-case.
@@ -144,6 +145,10 @@ async fn handle_running_vm(
     {
         reporter.begin_stage(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
+
+        // Update symlink for future reboots, then start via compose directly.
+        let overlay = crate::domain::agent::overlay_path(name);
+        set_active_overlay(provisioner, Some(&overlay)).await?;
         start_compose(provisioner, Some(name)).await?;
 
         // Persist state before health wait so the CLI tracks the agent
@@ -229,13 +234,21 @@ async fn create_and_start_vm(
         .context("verifying image digests")?;
 
     // Step 7: Set up agent if requested.
-    if let Some(name) = agent {
+    let overlay = if let Some(name) = agent {
         reporter.begin_stage(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
-    }
+        Some(crate::domain::agent::overlay_path(name))
+    } else {
+        None
+    };
 
-    // Step 8: Start docker compose.
-    start_compose(provisioner, agent).await?;
+    // Step 8: Set active overlay symlink and start via systemd.
+    set_active_overlay(provisioner, overlay.as_deref()).await?;
+    set_ready_marker(provisioner, true).await?;
+    provisioner
+        .exec(&["sudo", "systemctl", "start", "polis"])
+        .await
+        .context("starting polis service")?;
 
     // Step 9: Wait for health.
     let msg = agent.map_or_else(
@@ -271,6 +284,8 @@ async fn restart_vm(
     agent: Option<&str>,
     envs: Vec<String>,
 ) -> Result<()> {
+    // vm::restart() calls start_services internally, but .ready was cleared
+    // during stop_workspace(), so systemd's ConditionPathExists fails → no-op.
     vm::restart(provisioner, reporter, false).await?;
 
     reporter.begin_stage("verifying components...");
@@ -278,11 +293,21 @@ async fn restart_vm(
         .await
         .context("pulling Docker images")?;
 
-    if let Some(name) = agent {
+    let overlay = if let Some(name) = agent {
         reporter.begin_stage(&format!("installing agent '{name}'..."));
         setup_agent(provisioner, local_fs, name, &envs).await?;
-        start_compose(provisioner, agent).await?;
-    }
+        Some(crate::domain::agent::overlay_path(name))
+    } else {
+        None
+    };
+
+    // Set overlay symlink, then gate-open and start services.
+    set_active_overlay(provisioner, overlay.as_deref()).await?;
+    set_ready_marker(provisioner, true).await?;
+    provisioner
+        .exec(&["sudo", "systemctl", "start", "polis"])
+        .await
+        .context("starting polis service")?;
 
     let mut state = state_mgr
         .load_async()
@@ -392,6 +417,44 @@ async fn setup_agent<P: VmProvisioner>(
         String::from_utf8_lossy(&transfer_out.stderr)
     );
 
+    Ok(())
+}
+
+/// Set or remove the active compose overlay symlink.
+async fn set_active_overlay(
+    provisioner: &impl ShellExecutor,
+    overlay_path: Option<&str>,
+) -> Result<()> {
+    match overlay_path {
+        Some(path) => {
+            provisioner
+                .exec(&["ln", "-sf", path, ACTIVE_OVERLAY_PATH])
+                .await
+                .context("creating overlay symlink")?;
+        }
+        None => {
+            provisioner
+                .exec(&["rm", "-f", ACTIVE_OVERLAY_PATH])
+                .await
+                .context("removing overlay symlink")?;
+        }
+    }
+    Ok(())
+}
+
+/// Set or clear the ready marker that gates `polis.service` auto-start.
+async fn set_ready_marker(provisioner: &impl ShellExecutor, enabled: bool) -> Result<()> {
+    if enabled {
+        provisioner
+            .exec(&["touch", READY_MARKER_PATH])
+            .await
+            .context("creating ready marker")?;
+    } else {
+        provisioner
+            .exec(&["rm", "-f", READY_MARKER_PATH])
+            .await
+            .context("removing ready marker")?;
+    }
     Ok(())
 }
 

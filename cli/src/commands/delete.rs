@@ -38,16 +38,7 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
 }
 
 fn confirm_delete_all(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
-    if !app.output.quiet {
-        app.output.info("");
-        app.output.info("This will permanently remove:");
-        app.output.info("  • Your workspace");
-        app.output.info("  • Generated certificates");
-        app.output.info("  • Configuration");
-        app.output.info("  • Cached workspace image (~3.5 GB)");
-        app.output.info("");
-    }
-    Ok(args.yes || app.confirm("Continue?", false)?)
+    Ok(args.yes || app.confirm("Remove all data?", false)?)
 }
 
 fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
