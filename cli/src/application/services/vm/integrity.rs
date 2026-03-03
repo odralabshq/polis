@@ -10,8 +10,10 @@ use crate::application::ports::{AssetExtractor, ShellExecutor};
 
 /// Write the config hash to `/opt/polis/.config-hash` inside the VM.
 ///
-/// Uses `exec_with_stdin` (stdin piping) rather than shell interpolation to
-/// avoid injection risks (V-004 / Requirement 15.2).
+/// Uses `printf '%s'` to write the hash as a literal string, avoiding shell
+/// expansion (V-004 / Requirement 15.2). Does NOT use `exec_with_stdin`/`tee`
+/// because Multipass on Windows fails to propagate stdin EOF, causing `tee`
+/// to hang indefinitely.
 ///
 /// This must be called AFTER successful service startup so that a failed
 /// provisioning attempt can be retried (Requirement 15.1, 15.3).
@@ -20,9 +22,16 @@ use crate::application::ports::{AssetExtractor, ShellExecutor};
 ///
 /// Returns an error if the exec command fails.
 pub async fn write_config_hash(mp: &impl ShellExecutor, hash: &str) -> Result<()> {
-    mp.exec_with_stdin(&["tee", "/opt/polis/.config-hash"], hash.as_bytes())
-        .await
-        .context("writing config hash to VM")?;
+    mp.exec(&[
+        "bash",
+        "-c",
+        &format!(
+            "printf '%s' '{}' > /opt/polis/.config-hash",
+            hash.replace('\'', "'\\''")
+        ),
+    ])
+    .await
+    .context("writing config hash to VM")?;
     Ok(())
 }
 
@@ -198,45 +207,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_config_hash_uses_exec_with_stdin() {
+    async fn write_config_hash_uses_exec_with_printf() {
         let mp = WriteHashSpy::new();
         write_config_hash(&mp, "abc123def456")
             .await
             .expect("write_config_hash");
-        let calls = mp.exec_with_stdin_calls.borrow();
-        assert_eq!(calls.len(), 1, "expected exactly 1 exec_with_stdin call");
-        let (args, stdin) = &calls[0];
+        let calls = mp.exec_calls.borrow();
+        assert_eq!(calls.len(), 1, "expected exactly 1 exec call");
+        let args = &calls[0];
+        let cmd_str = args.join(" ");
         assert!(
-            args.contains(&"/opt/polis/.config-hash".to_string()),
-            "must write to /opt/polis/.config-hash: {args:?}"
+            cmd_str.contains(".config-hash"),
+            "must write to .config-hash: {args:?}"
         );
-        assert_eq!(stdin, b"abc123def456", "stdin must be the hash bytes");
+        assert!(
+            cmd_str.contains("abc123def456"),
+            "must contain the hash value: {args:?}"
+        );
     }
 
     #[tokio::test]
-    async fn write_config_hash_uses_tee_command() {
+    async fn write_config_hash_uses_printf_not_tee() {
         let mp = WriteHashSpy::new();
         write_config_hash(&mp, "deadbeef")
             .await
             .expect("write_config_hash");
-        let calls = mp.exec_with_stdin_calls.borrow();
-        let (args, _) = &calls[0];
+        let calls = mp.exec_calls.borrow();
+        let cmd_str = calls[0].join(" ");
         assert!(
-            args.contains(&"tee".to_string()),
-            "must use tee command: {args:?}"
+            cmd_str.contains("printf"),
+            "must use printf command: {cmd_str}"
+        );
+        assert!(
+            !cmd_str.contains("tee"),
+            "must NOT use tee (hangs on Windows): {cmd_str}"
         );
     }
 
     #[tokio::test]
-    async fn write_config_hash_does_not_use_exec() {
+    async fn write_config_hash_does_not_use_exec_with_stdin() {
         let mp = WriteHashSpy::new();
         write_config_hash(&mp, "safehash")
             .await
             .expect("write_config_hash");
-        let exec_calls = mp.exec_calls.borrow();
+        let stdin_calls = mp.exec_with_stdin_calls.borrow();
         assert!(
-            exec_calls.is_empty(),
-            "write_config_hash must not use exec() (shell interpolation risk): {exec_calls:?}"
+            stdin_calls.is_empty(),
+            "write_config_hash must not use exec_with_stdin (hangs on Windows): {stdin_calls:?}"
         );
     }
 

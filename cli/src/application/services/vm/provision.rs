@@ -14,7 +14,7 @@ use crate::application::ports::{FileTransfer, ShellExecutor};
 /// 1. Validate tarball entries on the host for path traversal (V-013)
 /// 2. Transfer the tarball into the VM via `multipass transfer`
 /// 3. Extract to `/opt/polis` with `--no-same-owner` (V-013)
-/// 4. Write `.env` with version values via `exec_with_stdin` (V-004)
+/// 4. Write `.env` with version values via `exec` + `printf '%s'` (V-004)
 /// 5. Fix execute permissions stripped by Windows tar
 ///
 /// # Errors
@@ -64,68 +64,37 @@ pub async fn transfer_config(
     // Clean up the temp tarball inside the VM.
     let _ = mp.exec(&["rm", "-f", "/tmp/polis-setup.config.tar"]).await;
 
-    // 4. Write .env with actual version values using stdin piping (V-004 — no shell interpolation).
+    // 4. Write .env with actual version values (V-004 — no shell interpolation).
+    // Uses printf '%s' which treats the content as a literal string, avoiding
+    // shell expansion. Does NOT use exec_with_stdin/tee because Multipass on
+    // Windows fails to propagate stdin EOF, causing tee to hang indefinitely.
     let env_content = generate_env_content(version);
-    mp.exec_with_stdin(&["tee", "/opt/polis/.env"], env_content.as_bytes())
-        .await
-        .context("writing .env in VM")?;
-
-    // 5. Fix execute permissions stripped by Windows tar (P5).
     mp.exec(&[
-        "find",
-        "/opt/polis",
-        "-type",
-        "f",
-        "-name",
-        "*.sh",
-        "-exec",
-        "chmod",
-        "+x",
-        "{}",
-        "+",
+        "bash",
+        "-c",
+        &format!(
+            "printf '%s' '{}' > /opt/polis/.env",
+            env_content.replace('\'', "'\\''")
+        ),
     ])
     .await
-    .context("fixing script permissions in VM")?;
+    .context("writing .env in VM")?;
 
-    // 6. Strip Windows CRLF line endings from all text config files.
+    // 5+6. Fix execute permissions and strip Windows CRLF line endings in a
+    // single exec to avoid the per-call SSH connection overhead on Windows
+    // (no ControlMaster, Hyper-V latency per round-trip).
     // Windows tar preserves CRLF from the working tree; bash/systemd/docker
     // fail with cryptic errors if not stripped.
     mp.exec(&[
-        "find",
-        "/opt/polis",
-        "-type",
-        "f",
-        "(",
-        "-name",
-        "*.sh",
-        "-o",
-        "-name",
-        "*.yaml",
-        "-o",
-        "-name",
-        "*.yml",
-        "-o",
-        "-name",
-        "*.env",
-        "-o",
-        "-name",
-        "*.service",
-        "-o",
-        "-name",
-        "*.toml",
-        "-o",
-        "-name",
-        "*.conf",
-        ")",
-        "-exec",
-        "sed",
-        "-i",
-        "s/\\r$//",
-        "{}",
-        "+",
+        "bash",
+        "-c",
+        "find /opt/polis -type f -name '*.sh' -exec chmod +x {} + && \
+         find /opt/polis -type f \\( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' \
+           -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \\) \
+           -exec sed -i 's/\\r$//' {} +",
     ])
     .await
-    .context("stripping CRLF from config files in VM")?;
+    .context("fixing script permissions and stripping CRLF in VM")?;
 
     Ok(())
 }
@@ -189,7 +158,9 @@ pub fn generate_env_content(version: &str) -> String {
 
 /// Generate certificates and secrets inside the VM.
 ///
-/// Calls scripts in dependency order:
+/// Batches all 5 scripts into a single `multipass exec` call to avoid the
+/// per-invocation SSH connection overhead, which is significant on Windows
+/// (no `ControlMaster`, Hyper-V latency). Scripts run in dependency order:
 /// 1. scripts/generate-ca.sh — CA key + cert (idempotent skip)
 /// 2. services/state/scripts/generate-certs.sh — Valkey certs (needs CA)
 /// 3. services/state/scripts/generate-secrets.sh — Valkey secrets
@@ -204,69 +175,21 @@ pub async fn generate_certs_and_secrets(mp: &impl ShellExecutor) -> Result<()> {
     // SAFETY: polis_root is a compile-time constant.
     let polis_root = "/opt/polis";
 
-    // Step 1: Generate CA (if not present)
-    mp.exec(&[
-        "sudo",
-        "bash",
-        "-c",
-        &format!("{polis_root}/scripts/generate-ca.sh {polis_root}/certs/ca"),
-    ])
-    .await
-    .context("generating CA certificate")?;
+    // Batch all cert/secret generation into a single exec to avoid the
+    // per-call SSH connection overhead on Windows (no ControlMaster).
+    let script = format!(
+        "set -e\n\
+         {polis_root}/scripts/generate-ca.sh {polis_root}/certs/ca\n\
+         {polis_root}/services/state/scripts/generate-certs.sh {polis_root}/certs/valkey\n\
+         {polis_root}/services/state/scripts/generate-secrets.sh {polis_root}/secrets {polis_root}\n\
+         {polis_root}/services/toolbox/scripts/generate-certs.sh {polis_root}/certs/toolbox {polis_root}/certs/ca\n\
+         {polis_root}/scripts/fix-cert-ownership.sh {polis_root}\n\
+         logger -t polis 'Certificate and secret generation completed' || true\n"
+    );
 
-    // Step 2: Generate Valkey certs (needs CA)
-    mp.exec(&[
-        "sudo",
-        "bash",
-        "-c",
-        &format!("{polis_root}/services/state/scripts/generate-certs.sh {polis_root}/certs/valkey"),
-    ])
-    .await
-    .context("generating Valkey certificates")?;
-
-    // Step 3: Generate Valkey secrets
-    mp.exec(&[
-        "sudo",
-        "bash",
-        "-c",
-        &format!(
-            "{polis_root}/services/state/scripts/generate-secrets.sh {polis_root}/secrets {polis_root}"
-        ),
-    ])
-    .await
-    .context("generating Valkey secrets")?;
-
-    // Step 4: Generate Toolbox certs (needs CA, idempotent skip built-in)
-    mp.exec(&[
-        "sudo",
-        "bash",
-        "-c",
-        &format!(
-            "{polis_root}/services/toolbox/scripts/generate-certs.sh \
-             {polis_root}/certs/toolbox {polis_root}/certs/ca"
-        ),
-    ])
-    .await
-    .context("generating Toolbox certificates")?;
-
-    // Step 5: Fix ownership for container uid 65532
-    mp.exec(&[
-        "sudo",
-        "bash",
-        "-c",
-        &format!("{polis_root}/scripts/fix-cert-ownership.sh {polis_root}"),
-    ])
-    .await
-    .context("fixing certificate ownership")?;
-
-    // Log for support diagnostics (not to stdout)
-    mp.exec(&[
-        "bash",
-        "-c",
-        "logger -t polis 'Certificate and secret generation completed'",
-    ])
-    .await
-    .ok();
+    mp.exec(&["sudo", "bash", "-c", &script])
+        .await
+        .context("generating certificates and secrets")?;
 
     Ok(())
 }
@@ -527,23 +450,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transfer_config_writes_env_via_exec_with_stdin() {
+    async fn transfer_config_writes_env_via_exec() {
         let (dir, _tar_path) = make_safe_tarball();
         let mp = TransferConfigSpy::new();
         transfer_config(&mp, dir.path(), "2.3.4")
             .await
             .expect("transfer_config");
-        let calls = mp.exec_with_stdin_calls.borrow();
-        assert_eq!(calls.len(), 1, "expected exactly 1 exec_with_stdin call");
-        let (args, stdin) = &calls[0];
+        let calls = mp.exec_calls.borrow();
+        let env_call = calls
+            .iter()
+            .find(|args| args.iter().any(|a| a.contains("POLIS_RESOLVER_VERSION")));
         assert!(
-            args.contains(&"/opt/polis/.env".to_string()),
-            "exec_with_stdin should target /opt/polis/.env: {args:?}"
+            env_call.is_some(),
+            "expected an exec call writing .env with version vars"
         );
-        let content = String::from_utf8_lossy(stdin);
+        let env_args = env_call.expect("env call");
         assert!(
-            content.contains("POLIS_RESOLVER_VERSION=v2.3.4"),
-            "env content should contain versioned var: {content}"
+            env_args.iter().any(|a| a.contains("v2.3.4")),
+            "env content should contain versioned var: {env_args:?}"
         );
     }
 
@@ -555,12 +479,12 @@ mod tests {
             .await
             .expect("transfer_config");
         let calls = mp.exec_calls.borrow();
-        let chmod_call = calls
-            .iter()
-            .find(|args| args.contains(&"find".to_string()) && args.contains(&"chmod".to_string()));
+        let combined_call = calls.iter().find(|args| {
+            args.contains(&"bash".to_string()) && args.iter().any(|a| a.contains("chmod"))
+        });
         assert!(
-            chmod_call.is_some(),
-            "expected a find ... chmod +x exec call for Windows tar fix"
+            combined_call.is_some(),
+            "expected a bash -c call containing chmod +x for Windows tar fix"
         );
     }
 

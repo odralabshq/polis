@@ -23,10 +23,10 @@ pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(960);
 fn ensure_multipass_on_path(cmd: &mut tokio::process::Command, program: &str) {
     if program == "multipass" {
         let default_path = "C:\\Program Files\\Multipass\\bin";
-        if let Ok(current_path) = std::env::var("PATH") {
-            if !current_path.contains(default_path) {
-                cmd.env("PATH", format!("{};{}", current_path, default_path));
-            }
+        if let Ok(current_path) = std::env::var("PATH")
+            && !current_path.contains(default_path)
+        {
+            cmd.env("PATH", format!("{current_path};{default_path}"));
         }
     }
 }
