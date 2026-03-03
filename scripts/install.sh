@@ -252,6 +252,13 @@ create_symlink() {
 
 main() {
     print_logo
+
+    echo ""
+    echo "+===============================================================+"
+    echo "|                    Polis Installer                            |"
+    echo "+===============================================================+"
+    echo ""
+
     confirm_installer_proceed
     check_arch >/dev/null
     check_multipass
