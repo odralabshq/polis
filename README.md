@@ -83,6 +83,19 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | `polis config set <key> <value>` | Set a configuration value |
 | `polis version` | Show CLI version |
 
+### Security Management
+
+| Command | Description |
+|---------|-------------|
+| `polis security status` | Show security level and pending blocked requests |
+| `polis security pending` | List all blocked requests awaiting approval |
+| `polis security approve <id>` | Approve a blocked request |
+| `polis security deny <id>` | Deny a blocked request |
+| `polis security log` | Show recent security events |
+| `polis security allow <domain>` | Auto-approve a domain pattern |
+| `polis security allow <domain> --action block` | Block a domain pattern |
+| `polis security level <level>` | Set security level (relaxed, balanced, strict) |
+
 ### Agent Management
 
 | Command | Description |
@@ -167,100 +180,47 @@ polis config set security.level strict
 
 ## 🛡️ DLP & Network Security
 
-Polis routes all workspace traffic through a transparent TLS-intercepting proxy (the "Governance Engine"). This means every HTTP/HTTPS request from inside the workspace is inspected before reaching the internet.
+All workspace traffic is routed through a TLS-intercepting proxy. Every HTTP/HTTPS request is inspected for malware (ClamAV) and secrets (DLP engine) before reaching the internet.
 
 ### How it works
 
-- All outbound traffic goes through g3proxy → ICAP → governance engine
-- Known-safe domains (package managers, GitHub, IDEs, AI tools) are on a built-in bypass list and pass through without inspection
-- LLM provider domains (OpenAI, Anthropic, etc.) get full DLP scanning (secrets + PII detection)
-- Unknown domains get light DLP scanning (secrets only) on `balanced` level, or are blocked outright on `strict`
+1. Known-safe domains (package registries, GitHub, AI tools) pass through on a built-in bypass list
+2. LLM provider domains get full DLP scanning (secrets + PII detection)
+3. Unknown domains are scanned or blocked depending on the security level
 
-### When a request is blocked
+### Handling blocked requests
 
-If you see a `403 Forbidden` or `curl: (22) The requested URL returned error: 403` inside the workspace, the governance engine likely blocked the request. This happens when:
+A `403 Forbidden` inside the workspace means the governance engine blocked the request — typically an unknown domain on `strict` mode, or detected credentials in the request body.
 
-- The domain isn't on the bypass list and the security level is `strict`
-- The request body contains detected secrets or credentials
-- The domain is on the DNS blocklist
-
-### Inspecting blocked requests
-
-From the host (outside the workspace):
+Use `polis security` to manage blocks:
 
 ```bash
-# Check governance logs for a specific domain
-polis exec -- cat /var/log/polis/governance.log | grep "example.com"
-
-# Check the current security level
-polis config show
-
-# View the DNS blocklist
-polis exec -- cat /etc/polis/dns-blocklist.txt
+polis security status              # Current level + pending count
+polis security pending             # List blocked requests
+polis security approve req-abc123  # Approve a specific request
+polis security deny req-abc123     # Deny a specific request
+polis security log                 # Recent security events
 ```
 
-From inside the workspace (via SSH):
+To permanently allow a domain:
 
 ```bash
-# Check if a domain is reachable
-curl -v https://example.com
-
-# Look at proxy logs
-cat /var/log/polis/governance.log | tail -50
+polis security allow cli.example.com           # Auto-approve this domain
+polis security allow "*.example.com"           # Wildcard pattern
+polis security allow untrusted.com --action block  # Explicitly block
 ```
 
-### Adding domain exceptions
-
-If a legitimate domain is being blocked, you can add it to the bypass list via the governance API:
+To change the security level:
 
 ```bash
-# Add a single domain exception
-polis exec -- curl -s -X POST http://localhost:8082/exceptions/domains \
-  -H 'Content-Type: application/json' \
-  -d '{"domain": "example.com"}'
-
-# Verify it was added
-polis exec -- curl -s http://localhost:8082/exceptions/domains
-```
-
-Alternatively, lower the security level:
-
-```bash
-# Switch to relaxed (auto-allows unknown domains, still scans for credentials)
-polis config set security.level relaxed
-
-# Switch back to balanced (default)
-polis config set security.level balanced
+polis security level relaxed    # Auto-allow unknown domains, still scan for credentials
+polis security level balanced   # Default — unknown domains prompt for approval
+polis security level strict     # All domains require explicit approval
 ```
 
 ### Default bypass domains
 
-Polis ships with a comprehensive bypass list covering common development tools. These domains are never blocked regardless of security level:
-
-| Category | Examples |
-|----------|---------|
-| Linux packages | `deb.debian.org`, `archive.ubuntu.com`, `dl-cdn.alpinelinux.org` |
-| Node.js / JS | `registry.npmjs.org`, `registry.yarnpkg.com`, `nodejs.org`, `bun.sh` |
-| Python | `pypi.org`, `files.pythonhosted.org`, `conda.anaconda.org` |
-| Rust | `crates.io`, `sh.rustup.rs`, `static.rust-lang.org` |
-| Go | `proxy.golang.org`, `sum.golang.org` |
-| Ruby / Java / PHP / .NET | `rubygems.org`, `repo1.maven.org`, `packagist.org`, `api.nuget.org` |
-| Container registries | `*.docker.io`, `ghcr.io`, `quay.io`, `mcr.microsoft.com`, `public.ecr.aws` |
-| GitHub | `github.com`, `*.githubusercontent.com` |
-| VS Code | `marketplace.visualstudio.com`, `update.code.visualstudio.com` |
-| Cursor | `api2.cursor.sh` – `api5.cursor.sh`, `*.gcpp.cursor.sh`, `marketplace.cursorapi.com` |
-| Windsurf / Codeium | `server.codeium.com`, `windsurf-stable.codeiumdata.com` |
-| JetBrains | `plugins.jetbrains.com`, `download.jetbrains.com`, `api.jetbrains.ai` |
-| Kiro CLI | `cli.kiro.dev`, `desktop-release.q.us-east-1.amazonaws.com` |
-| Amazon Q | `codewhisperer.us-east-1.amazonaws.com`, `q.us-east-1.amazonaws.com` |
-| GitHub Copilot | `copilot-proxy.githubusercontent.com`, `*.githubcopilot.com` |
-| Claude Code | `claude.ai`, `*.claude.ai` |
-| Sourcegraph Cody | `sourcegraph.com`, `*.sourcegraph.com` |
-| Tabnine | `tabnine.com`, `*.tabnine.com` |
-| Continue.dev | `continue.dev` |
-| Infrastructure | `releases.hashicorp.com`, `registry.terraform.io`, `dl.k8s.io`, `brew.sh` |
-| Certificate authorities | `*.digicert.com`, `*.globalsign.com`, `letsencrypt.org` |
-| CDNs | `*.s3.amazonaws.com`, `*.cloudfront.net` |
+Polis ships with a comprehensive bypass list covering common development tools. These domains pass through regardless of security level. The list includes package registries (npm, PyPI, crates.io, Maven, RubyGems, Go proxy, NuGet), container registries (Docker Hub, ghcr.io, quay.io), AI coding tools (GitHub Copilot, Cursor, Kiro, Windsurf, Codeium), LLM APIs (OpenAI, Anthropic, Google AI, Mistral, Groq), and source hosting (GitHub, GitLab, Bitbucket).
 
 The full list is defined in `services/sentinel/modules/dlp/srv_polis_dlp.c` → `is_new_domain()`.
 

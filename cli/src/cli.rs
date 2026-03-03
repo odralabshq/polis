@@ -79,6 +79,10 @@ pub enum Command {
     #[command(subcommand)]
     Agent(commands::agent::AgentCommand),
 
+    /// Manage security policy, blocked requests, and domain rules
+    #[command(subcommand)]
+    Security(commands::security::SecurityCommand),
+
     /// Show version
     Version,
 
@@ -134,6 +138,9 @@ impl Cli {
             Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,
             Command::Version => commands::version::run(&app)?,
             Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
+            Command::Security(cmd) => {
+                commands::security::run(cmd, &app, &app.provisioner).await?
+            }
 
             // --- Internal commands ---
             #[allow(clippy::large_futures)]

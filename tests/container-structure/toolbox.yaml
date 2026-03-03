@@ -11,3 +11,7 @@ fileExistenceTests:
     path: '/usr/local/bin/polis-mcp-agent'
     shouldExist: true
     permissions: '-rwxr-xr-x'
+  - name: 'polis-approve binary'
+    path: '/usr/local/bin/polis-approve'
+    shouldExist: true
+    permissions: '-rwxr-xr-x'
