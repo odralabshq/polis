@@ -158,6 +158,19 @@ run_init() {
     }
     multipass exec polis -- rm -f /tmp/polis-setup.config.tar
 
+    # Overlay repo's docker-compose.yml (may be newer than tarball)
+    multipass transfer "${REPO_DIR}/docker-compose.yml" polis:/opt/polis/docker-compose.yml || {
+        log_error "Failed to overlay docker-compose.yml"
+        return 1
+    }
+
+    # Overlay repo's agents/ directory (may be newer than tarball)
+    multipass exec polis -- rm -rf /opt/polis/agents
+    multipass transfer --recursive "${REPO_DIR}/agents" polis:/opt/polis/ || {
+        log_error "Failed to overlay agents directory"
+        return 1
+    }
+
     # Write .env with version
     local cli_version
     cli_version=$("${INSTALL_DIR}/bin/polis" --version 2>&1 | awk '{print $2}')
@@ -175,9 +188,10 @@ POLIS_STATE_VERSION=${tag}
 POLIS_TOOLBOX_VERSION=${tag}
 ENVEOF"
 
-    # Fix script permissions and strip Windows CRLF line endings
+    # Fix script permissions and strip Windows CRLF line endings from all text config files
     multipass exec polis -- find /opt/polis -name '*.sh' -exec chmod +x {} +
-    multipass exec polis -- find /opt/polis -name '*.sh' -exec sed -i 's/\r//' {} +
+    multipass exec polis -- find /opt/polis -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' \
+        -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \) -exec sed -i 's/\r$//' {} +
     log_ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
@@ -214,7 +228,11 @@ ENVEOF"
     multipass exec polis -- sudo bash -c '/opt/polis/scripts/fix-cert-ownership.sh /opt/polis'
     log_ok "Certificates and secrets ready"
 
-    # ── Step 5: Start services ────────────────────────────────────────────
+    # ── Step 5: Create .ready marker and start services ─────────────────
+    # The .ready marker gates polis.service (systemd ConditionPathExists).
+    # Without it, `polis stop` + `polis start` would fail to restart via systemd.
+    multipass exec polis -- touch /opt/polis/.ready
+
     log_info "Starting services..."
     multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans' || {
         log_error "Failed to start services"

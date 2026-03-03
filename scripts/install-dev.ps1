@@ -235,7 +235,11 @@ function Invoke-PolisInit {
     & multipass exec polis -- sudo bash -c '/opt/polis/scripts/fix-cert-ownership.sh /opt/polis'
     Write-Ok "Certificates and secrets ready"
 
-    # ── Step 5: Start services ────────────────────────────────────────────
+    # ── Step 5: Create .ready marker and start services ─────────────────
+    # The .ready marker gates polis.service (systemd ConditionPathExists).
+    # Without it, `polis stop` + `polis start` would fail to restart via systemd.
+    & multipass exec polis -- touch /opt/polis/.ready
+
     Write-Info "Starting services..."
     & multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans'
     if ($LASTEXITCODE -ne 0) { Write-Err "Failed to start services"; exit 1 }
