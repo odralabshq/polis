@@ -284,10 +284,12 @@ async fn restart_vm(
     agent: Option<&str>,
     envs: Vec<String>,
 ) -> Result<()> {
-    // vm::restart() calls start_services internally, but .ready was cleared
-    // during stop_workspace(), so systemd's ConditionPathExists fails → no-op.
-    vm::restart(provisioner, reporter, false).await?;
+    // Start the VM (systemd polis.service is gated by .ready which was cleared).
+    reporter.begin_stage("starting workspace...");
+    vm::start(provisioner).await?;
+    reporter.complete_stage();
 
+    // Pull images BEFORE starting services.
     reporter.begin_stage("verifying components...");
     pull_images(provisioner, reporter)
         .await
@@ -304,10 +306,12 @@ async fn restart_vm(
     // Set overlay symlink, then gate-open and start services.
     set_active_overlay(provisioner, overlay.as_deref()).await?;
     set_ready_marker(provisioner, true).await?;
+    reporter.begin_stage("starting services...");
     provisioner
         .exec(&["sudo", "systemctl", "start", "polis"])
         .await
         .context("starting polis service")?;
+    reporter.complete_stage();
 
     let mut state = state_mgr
         .load_async()
