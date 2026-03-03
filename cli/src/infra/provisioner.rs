@@ -85,8 +85,15 @@ impl<R: CommandRunner> InstanceLifecycle for MultipassProvisioner<R> {
             args.push("--cloud-init");
             args.push(path);
         }
+        // Use a Rust-side timeout matching the multipass --timeout flag
+        // (plus a buffer) so the process wrapper doesn't kill multipass early.
+        let timeout_secs: u64 = timeout.parse().unwrap_or(600);
         self.cmd_runner
-            .run("multipass", &args)
+            .run_with_timeout(
+                "multipass",
+                &args,
+                Duration::from_secs(timeout_secs + 60),
+            )
             .await
             .context("failed to run multipass launch")
     }
