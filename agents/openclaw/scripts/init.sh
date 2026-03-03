@@ -436,6 +436,15 @@ EAEOF
         done
         echo "[openclaw-init] Installed polis security CLI wrappers to ${POLIS_BIN_DIR}"
     fi
+
+    # Install openclaw CLI wrapper so `openclaw <cmd>` works from both
+    # `polis exec openclaw <cmd>` and SSH sessions via `polis connect`.
+    cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
+#!/bin/bash
+exec node /app/dist/index.js "$@"
+OCWRAPPER
+    chmod 755 "${POLIS_BIN_DIR}/openclaw"
+    echo "[openclaw-init] Installed openclaw CLI wrapper to ${POLIS_BIN_DIR}/openclaw"
     
 else
     echo "[openclaw-init] Already initialized, checking config..."
@@ -488,6 +497,13 @@ EAEOF
         done
         echo "[openclaw-init] Re-installed polis security CLI wrappers"
     fi
+
+    # Re-install openclaw CLI wrapper (lost on restart if home is tmpfs)
+    cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
+#!/bin/bash
+exec node /app/dist/index.js "$@"
+OCWRAPPER
+    chmod 755 "${POLIS_BIN_DIR}/openclaw"
 
     # Re-inject polis security section into workspace SOUL.md (idempotent)
     inject_polis_soul
