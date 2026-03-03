@@ -30,10 +30,6 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
         return Ok(std::process::ExitCode::FAILURE);
     }
 
-    if !quiet {
-        app.output.info("\nStart fresh: polis start");
-    }
-
     Ok(std::process::ExitCode::SUCCESS)
 }
 
