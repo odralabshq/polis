@@ -265,7 +265,7 @@ function Invoke-PolisInstall {
     if ($vmExists) {
         Write-Warn "Existing polis VM found — deleting..."
         $ErrorActionPreference = "Continue"
-        & $polis delete
+        & multipass delete polis --purge
         $ErrorActionPreference = "Stop"
     }
 
