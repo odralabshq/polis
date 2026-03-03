@@ -17,10 +17,6 @@ on:
         description: 'Version (e.g., v0.3.0)'
         required: true
         type: string
-      push_docker:
-        description: 'Push Docker images to GHCR (for developers)'
-        type: boolean
-        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -45,17 +41,14 @@ jobs:
       version: ${{ steps.validate.outputs.version }}
       tag_name: ${{ steps.validate.outputs.tag_name }}
       is_prerelease: ${{ steps.validate.outputs.is_prerelease }}
-      push_docker: ${{ steps.validate.outputs.push_docker }}
     steps:
       - name: Validate version format
         id: validate
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             VERSION="${{ inputs.version }}"
-            PUSH_DOCKER="${{ inputs.push_docker }}"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
-            PUSH_DOCKER="true"  # Always push on tag
           else
             echo "::error::Could not determine version"
             exit 1
@@ -68,13 +61,12 @@ jobs:
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag_name=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "push_docker=$PUSH_DOCKER" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *"-"* ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "✓ Version $VERSION validated (push_docker=$PUSH_DOCKER)"
+          echo "✓ Version $VERSION validated"
 
   # =========================================================
   # Build Docker images, push to GHCR, sign with cosign,
@@ -108,7 +100,6 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GitHub Container Registry
-        if: needs.validate.outputs.push_docker == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -138,7 +129,6 @@ jobs:
           done
 
       - name: Push images to GHCR
-        if: needs.validate.outputs.push_docker == 'true'
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "polis-.*-oss:${VERSION}$"); do
@@ -149,11 +139,9 @@ jobs:
           done
 
       - name: Install cosign
-        if: needs.validate.outputs.push_docker == 'true'
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
       - name: Sign images and generate digest manifest
-        if: needs.validate.outputs.push_docker == 'true'
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           mkdir -p .build
@@ -183,7 +171,6 @@ jobs:
           cat "${DIGEST_MANIFEST}"
 
       - name: Upload digest manifest artifact
-        if: needs.validate.outputs.push_docker == 'true'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: image-digests
@@ -191,7 +178,6 @@ jobs:
           retention-days: 1
 
       - name: Generate SBOM for resolver image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-resolver-oss:${{ needs.validate.outputs.version }}
@@ -199,7 +185,6 @@ jobs:
           output-file: .build/sbom-resolver.spdx.json
 
       - name: Generate SBOM for certgen image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-certgen-oss:${{ needs.validate.outputs.version }}
@@ -207,7 +192,6 @@ jobs:
           output-file: .build/sbom-certgen.spdx.json
 
       - name: Generate SBOM for gate image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-gate-oss:${{ needs.validate.outputs.version }}
@@ -215,7 +199,6 @@ jobs:
           output-file: .build/sbom-gate.spdx.json
 
       - name: Generate SBOM for sentinel image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-sentinel-oss:${{ needs.validate.outputs.version }}
@@ -223,7 +206,6 @@ jobs:
           output-file: .build/sbom-sentinel.spdx.json
 
       - name: Generate SBOM for scanner image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-scanner-oss:${{ needs.validate.outputs.version }}
@@ -231,7 +213,6 @@ jobs:
           output-file: .build/sbom-scanner.spdx.json
 
       - name: Generate SBOM for workspace image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-workspace-oss:${{ needs.validate.outputs.version }}
@@ -239,7 +220,6 @@ jobs:
           output-file: .build/sbom-workspace.spdx.json
 
       - name: Generate SBOM for init image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-init-oss:${{ needs.validate.outputs.version }}
@@ -247,7 +227,6 @@ jobs:
           output-file: .build/sbom-init.spdx.json
 
       - name: Generate SBOM for state image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-state-oss:${{ needs.validate.outputs.version }}
@@ -255,7 +234,6 @@ jobs:
           output-file: .build/sbom-state.spdx.json
 
       - name: Generate SBOM for toolbox image
-        if: needs.validate.outputs.push_docker == 'true'
         uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-toolbox-oss:${{ needs.validate.outputs.version }}
@@ -278,18 +256,10 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Download image-digests artifact
-        if: needs.validate.outputs.push_docker == 'true'
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: image-digests
           path: .build/
-
-      - name: Create placeholder image-digests (no push)
-        if: needs.validate.outputs.push_docker != 'true'
-        run: |
-          mkdir -p .build
-          echo '{}' > .build/image-digests.json
-          echo "✓ Created placeholder image-digests.json (push_docker=false)"
 
       - name: Generate agent artifacts
         run: |
@@ -500,14 +470,12 @@ jobs:
           merge-multiple: true
 
       - name: Download image-digests artifact
-        if: needs.validate.outputs.push_docker == 'true'
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: image-digests
           path: ./release-assets
 
       - name: Download SBOMs artifacts
-        if: needs.validate.outputs.push_docker == 'true'
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           pattern: sbom-*
