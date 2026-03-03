@@ -66,8 +66,39 @@ pub async fn run(
 }
 
 /// Run polis-approve inside the toolbox container and capture output.
+///
+/// Reads the mcp-admin password from the mounted Docker secret and injects it
+/// as `polis_VALKEY_PASS` so `polis-approve` can authenticate to Valkey.
 async fn toolbox_approve(mp: &impl ShellExecutor, args: &[&str]) -> Result<String> {
-    let mut cmd: Vec<&str> = vec!["docker", "exec", TOOLBOX_CONTAINER, "polis-approve"];
+    // Read the mcp-admin password from the mounted secret
+    let pass_output = mp
+        .exec(&[
+            "docker", "exec", TOOLBOX_CONTAINER,
+            "cat", "/run/secrets/valkey_mcp_admin_password",
+        ])
+        .await
+        .context("failed to read mcp-admin password from toolbox container")?;
+
+    if !pass_output.status.success() {
+        let stderr = String::from_utf8_lossy(&pass_output.stderr);
+        if stderr.contains("No such container") {
+            anyhow::bail!(
+                "Toolbox container is not running. Start the workspace first: polis start"
+            );
+        }
+        anyhow::bail!(
+            "Toolbox container missing Valkey credentials. Try restarting: polis stop && polis start"
+        );
+    }
+
+    let pass = String::from_utf8_lossy(&pass_output.stdout).trim().to_string();
+    let env_arg = format!("polis_VALKEY_PASS={pass}");
+
+    let mut cmd: Vec<&str> = vec![
+        "docker", "exec",
+        "-e", &env_arg,
+        TOOLBOX_CONTAINER, "polis-approve",
+    ];
     cmd.extend_from_slice(args);
 
     let output = mp
@@ -79,16 +110,6 @@ async fn toolbox_approve(mp: &impl ShellExecutor, args: &[&str]) -> Result<Strin
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if !output.status.success() {
-        if stderr.contains("No such container") {
-            anyhow::bail!(
-                "Toolbox container is not running. Start the workspace first: polis start"
-            );
-        }
-        if stderr.contains("polis_VALKEY_PASS") {
-            anyhow::bail!(
-                "Toolbox container missing Valkey credentials. Try restarting: polis stop && polis start"
-            );
-        }
         let msg = if stderr.is_empty() { &stdout } else { &stderr };
         anyhow::bail!("polis-approve failed: {}", msg.trim());
     }
