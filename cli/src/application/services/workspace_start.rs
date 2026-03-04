@@ -30,7 +30,6 @@ use crate::domain::workspace::{ACTIVE_OVERLAY_PATH, READY_MARKER_PATH};
 use crate::domain::workspace::{VM_ROOT, WorkspaceState};
 
 /// Outcome of the `start_workspace` use-case.
-/// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
 pub enum StartOutcome {
     /// Workspace was already running with the same agent config.

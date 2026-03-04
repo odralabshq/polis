@@ -151,17 +151,8 @@ pub async fn create(
 
     // The Multipass daemon (especially snap-confined) runs as a separate user
     // and needs read access to the cloud-init file and its parent directory.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&assets_path, std::fs::Permissions::from_mode(0o755))
-            .context("setting temp dir permissions for multipass")?;
-        std::fs::set_permissions(
-            assets_path.join("cloud-init.yaml"),
-            std::fs::Permissions::from_mode(0o644),
-        )
-        .context("setting cloud-init.yaml permissions for multipass")?;
-    }
+    local_fs.set_permissions(&assets_path, 0o755)?;
+    local_fs.set_permissions(&assets_path.join("cloud-init.yaml"), 0o644)?;
 
     let cloud_init_path = assets_path.join("cloud-init.yaml");
     let cloud_init_str = cloud_init_path

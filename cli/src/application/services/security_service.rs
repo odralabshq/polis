@@ -160,7 +160,7 @@ pub async fn get_log(mp: &impl ShellExecutor) -> Result<Vec<String>> {
             "-c",
             "REDISCLI_AUTH=$(cat /run/secrets/valkey_mcp_admin_password) \
              valkey-cli --tls \
-             --cert /etc/valkey/tls/client.pem \
+             --cert /etc/valkey/tls/client.crt \
              --key /etc/valkey/tls/client.key \
              --cacert /etc/valkey/tls/ca.crt \
              --user mcp-admin --no-auth-warning \

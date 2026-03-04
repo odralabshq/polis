@@ -93,10 +93,10 @@ pub async fn run(
         SecurityCommand::Log => {
             let lines = security_service::get_log(mp).await?;
             if lines.is_empty() {
-                println!("No recent security events");
+                app.output.info("No recent security events");
             } else {
                 for line in &lines {
-                    println!("{line}");
+                    app.output.info(line);
                 }
             }
             Ok(ExitCode::SUCCESS)
