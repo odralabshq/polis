@@ -81,14 +81,6 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
     ctx.kv("Status", "polis status");
 }
 
-fn print_success_message(ctx: &OutputContext) {
-    if ctx.quiet {
-        return;
-    }
-    ctx.blank();
-    ctx.kv("Connect", "polis connect");
-    ctx.kv("Status", "polis status");
-}
 fn render_onboarding_steps(
     ctx: &OutputContext,
     agent_steps: &[polis_common::agent::OnboardingStep],
