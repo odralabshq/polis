@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use crate::app::AppContext;
 use crate::application::services::workspace_start::{self as service, StartOutcome};
 use crate::output::OutputContext;
+use owo_colors::OwoColorize as _;
 
 /// Arguments for the start command.
 #[derive(Args, Default)]
@@ -113,7 +114,8 @@ fn render_onboarding_steps(
     ctx.blank();
     ctx.header("Getting started");
     for (i, step) in default_steps.iter().chain(agent_steps.iter()).enumerate() {
-        ctx.info(&format!("{}. {}  {}", i + 1, step.title, step.command));
+        let cmd = step.command.style(ctx.styles.bold);
+        ctx.info(&format!("{}. {}  {}", i + 1, step.title, cmd));
     }
 }
 
