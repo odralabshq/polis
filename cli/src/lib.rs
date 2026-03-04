@@ -2,9 +2,10 @@
 
 #![cfg_attr(test, allow(clippy::expect_used))]
 
+pub mod app;
+pub mod application;
+pub mod cli;
 pub mod commands;
-pub mod multipass;
+pub mod domain;
+pub mod infra;
 pub mod output;
-pub mod ssh;
-pub mod state;
-pub mod workspace;

@@ -1,5 +1,8 @@
-# Polis Dev Installer for Windows — installs from local build artifacts
+﻿# Polis Dev Installer for Windows — installs from local build artifacts
 # Usage: .\scripts\install-dev.ps1 [-RepoDir C:\path\to\polis]
+#
+# Does NOT use `polis start`. Creates the VM and provisions it directly via
+# multipass commands so the dev flow is fully self-contained and debuggable.
 [CmdletBinding()]
 param(
     [string]$RepoDir = (Split-Path $PSScriptRoot -Parent)
@@ -16,6 +19,62 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Show-WindowsNetworkingNote {
+    Write-Warn "Windows networking note for Multipass:"
+    Write-Host "  - Use a Private network profile on your active adapter."
+    Write-Host "  - Turn off VPN during VM creation/startup if networking is unstable."
+}
+
+function Confirm-DestructiveReinstall {
+    Write-Host ""
+    Write-Host "WARNING: Continuing will delete the existing 'polis' VM and remove previous workspace data." -ForegroundColor Red
+    if ($env:POLIS_INSTALL_ASSUME_Y -eq "1" -or $env:CI -eq "true" -or $env:GITHUB_ACTIONS -eq "true" -or -not [Environment]::UserInteractive) {
+        Write-Host "[INFO] Non-interactive mode detected — proceeding automatically."
+        return
+    }
+    $reply = (Read-Host "Proceed with clean reinstall? (y/n)").Trim().ToLowerInvariant()
+    if ($reply -notin @("y", "yes")) {
+        Write-Warn "Installation cancelled by user."
+        exit 1
+    }
+}
+
+function Write-Logo {
+    $esc = [char]27
+    # Purple → teal gradient, one color per column (matches install-dev.sh)
+    $c = @(
+        "$esc[38;2;107;33;168m",  # cO
+        "$esc[38;2;93;37;163m",   # cD
+        "$esc[38;2;64;47;153m",   # cR
+        "$esc[38;2;46;53;147m",   # cA1
+        "$esc[38;2;37;56;144m",   # cL
+        "$esc[38;2;26;107;160m",  # cA2
+        "$esc[38;2;26;151;179m",  # cB
+        "$esc[38;2;20;184;166m"   # cS
+    )
+    $x = "$esc[0m"
+    $rows = @(
+        @(" ▄████▄ ", "█████▄ ", "█████▄ ", " ▄████▄ ", "  ██      ", " ▄████▄ ", "█████▄ ", " ▄████▄"),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "██     "),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "██     "),
+        @("██    ██", "██   ██", "█████▀ ", "████████", "  ██      ", "████████", "█████▀ ", " ▀████▄"),
+        @("██    ██", "██   ██", "██  ██ ", "██    ██", "  ██      ", "██    ██", "██   ██", "      ██"),
+        @("██    ██", "██   ██", "██   ██", "██    ██", "  ██      ", "██    ██", "██   ██", "      ██"),
+        @(" ▀████▀ ", "█████▀ ", "██   ██", "██    ██", "  ████████", "██    ██", "█████▀ ", " ▀████▀")
+    )
+    Write-Host ""
+    foreach ($row in $rows) {
+        $line = ""
+        for ($i = 0; $i -lt $row.Count; $i++) {
+            $line += "$($c[$i])$($row[$i])$x "
+        }
+        Write-Host $line
+    }
+    Write-Host ""
+}
+
+Write-Logo
+
 # ── Multipass check ───────────────────────────────────────────────────────────
 
 function Assert-Multipass {
@@ -28,8 +87,9 @@ function Assert-Multipass {
     $verLine = (& multipass version 2>$null | Select-Object -First 1) -replace '\s+', ' '
     $verStr  = ($verLine -split ' ')[1]
     if ($verStr) {
+        $verClean = $verStr -replace '\+.*', ''
         try {
-            $installed = [version]$verStr
+            $installed = [version]$verClean
             if ($installed -lt $MultipassMin) {
                 Write-Err "Multipass $verStr is too old (need >= $MultipassMin)."
                 Write-Host "  Update: https://multipass.run/install"
@@ -48,50 +108,13 @@ function Install-Cli {
     $bin = Join-Path $RepoDir "cli\target\release\polis.exe"
     if (-not (Test-Path $bin)) {
         Write-Err "CLI binary not found at $bin"
-        Write-Host "  Build it first: cd $RepoDir\cli; cargo build --release"
+        Write-Host "  Build it first: cd $RepoDir; just build-windows"
         exit 1
     }
     $dest = Join-Path $InstallDir "bin"
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item $bin (Join-Path $dest "polis.exe") -Force
     Write-Ok "Installed CLI from $bin"
-}
-
-# ── Image init ────────────────────────────────────────────────────────────────
-
-function Invoke-PolisInit {
-    $outputDir = Join-Path $RepoDir "packer\output"
-    $image = Get-ChildItem $outputDir -Filter "*.qcow2" -ErrorAction SilentlyContinue |
-             Sort-Object Name | Select-Object -Last 1
-    if (-not $image) {
-        Write-Err "No VM image found in $outputDir"
-        Write-Host "  Build it first: just build-vm"
-        exit 1
-    }
-    $sidecar = $image.FullName + ".sha256"
-    if (-not (Test-Path $sidecar)) {
-        Write-Err "No signed sidecar found at $sidecar"
-        Write-Host "  Run: just build-vm  (signing happens automatically)"
-        exit 1
-    }
-    $pubKey = Join-Path $RepoDir ".secrets\polis-release.pub"
-    if (-not (Test-Path $pubKey)) {
-        Write-Err "Dev public key not found at $pubKey"
-        Write-Host "  Run: just build-vm  (keypair is generated automatically)"
-        exit 1
-    }
-    $keyB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pubKey))
-    $polis  = Join-Path $InstallDir "bin\polis.exe"
-    Write-Info "Running: polis start --image $($image.FullName)"
-    $env:POLIS_VERIFYING_KEY_B64 = $keyB64
-    try {
-        & $polis start --image $image.FullName
-    } catch {
-        Write-Warn "polis start failed. Run manually:"
-        Write-Host "  `$env:POLIS_VERIFYING_KEY_B64='$keyB64'; polis start --image $($image.FullName)"
-    } finally {
-        Remove-Item Env:\POLIS_VERIFYING_KEY_B64 -ErrorAction SilentlyContinue
-    }
 }
 
 # ── PATH ──────────────────────────────────────────────────────────────────────
@@ -106,12 +129,159 @@ function Add-ToUserPath {
     }
 }
 
+# ── VM init + image loading ───────────────────────────────────────────────────
+
+function Invoke-PolisInit {
+    $imagesTar  = Join-Path $RepoDir ".build\polis-images.tar.zst"
+    $configTar  = Join-Path $RepoDir ".build\assets\polis-setup.config.tar"
+    $cloudInit  = Join-Path $RepoDir "cloud-init.yaml"
+    $polis      = Join-Path $InstallDir "bin\polis.exe"
+
+    foreach ($f in @($imagesTar, $configTar, $cloudInit)) {
+        if (-not (Test-Path $f)) {
+            Write-Err "Required file not found: $f"
+            Write-Host "  Build first: cd $RepoDir; just build-windows"
+            exit 1
+        }
+    }
+
+    # ── Step 1: Create VM ─────────────────────────────────────────────────
+    Write-Info "Creating VM with cloud-init..."
+    & multipass launch 24.04 `
+        --name polis `
+        --cpus 4 `
+        --memory 8G `
+        --disk 40G `
+        --cloud-init $cloudInit `
+        --timeout 900
+    if ($LASTEXITCODE -ne 0) { Write-Err "VM creation failed"; exit 1 }
+    Write-Ok "VM created"
+
+    Write-Info "Waiting for cloud-init..."
+    & multipass exec polis -- cloud-init status --wait
+    if ($LASTEXITCODE -ne 0) { Write-Err "cloud-init failed"; exit 1 }
+    Write-Ok "cloud-init complete"
+
+    # ── Step 2: Transfer config ───────────────────────────────────────────
+    Write-Info "Transferring config tarball..."
+    & multipass transfer $configTar polis:/tmp/polis-setup.config.tar
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to transfer config tarball"; exit 1 }
+
+    & multipass exec polis -- tar xf /tmp/polis-setup.config.tar -C /opt/polis --no-same-owner
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to extract config tarball"; exit 1 }
+
+    & multipass exec polis -- rm -f /tmp/polis-setup.config.tar
+
+    # Overlay repo's docker-compose.yml (may be newer than tarball)
+    $composeFile = Join-Path $RepoDir "docker-compose.yml"
+    & multipass transfer $composeFile polis:/opt/polis/docker-compose.yml
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay docker-compose.yml"; exit 1 }
+
+    # Overlay repo's agents/ directory (may be newer than tarball)
+    # This keeps agent scripts/manifests in sync with current branch fixes.
+    $agentsDir = Join-Path $RepoDir "agents"
+    & multipass exec polis -- rm -rf /opt/polis/agents
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to remove stale agents directory"; exit 1 }
+    & multipass transfer --recursive $agentsDir polis:/opt/polis/
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay agents directory"; exit 1 }
+
+    # Overlay repo's scripts/ directory (may be newer than tarball)
+    # Includes polis-query.sh needed by `polis status`.
+    $scriptsDir = Join-Path $RepoDir "scripts"
+    & multipass exec polis -- rm -rf /opt/polis/scripts
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to remove stale scripts directory"; exit 1 }
+    & multipass transfer --recursive $scriptsDir polis:/opt/polis/
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay scripts directory"; exit 1 }
+
+    # Write .env with version
+    $cliVersion = (& $polis --version 2>&1) -replace '^polis\s+', ''
+    $tag = "v$cliVersion"
+    $envLines = @(
+        "# Generated by install-dev.ps1",
+        "POLIS_RESOLVER_VERSION=$tag",
+        "POLIS_CERTGEN_VERSION=$tag",
+        "POLIS_GATE_VERSION=$tag",
+        "POLIS_SENTINEL_VERSION=$tag",
+        "POLIS_SCANNER_VERSION=$tag",
+        "POLIS_WORKSPACE_VERSION=$tag",
+        "POLIS_HOST_INIT_VERSION=$tag",
+        "POLIS_STATE_VERSION=$tag",
+        "POLIS_TOOLBOX_VERSION=$tag"
+    )
+    $envContent = $envLines -join "`n"
+    & multipass exec polis -- bash -c "printf '%s\n' '$envContent' > /opt/polis/.env"
+
+    # Fix script permissions and strip Windows CRLF line endings from all text config files
+    & multipass exec polis -- bash -c "find /opt/polis -type f -name '*.sh' -exec chmod +x '{}' +"
+    & multipass exec polis -- bash -c "find /opt/polis -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \) -exec sed -i 's/\r$//' '{}' +"
+    Write-Ok "Config transferred"
+
+    # ── Step 3: Load Docker images ────────────────────────────────────────
+    Write-Info "Loading Docker images into VM..."
+    & multipass transfer $imagesTar polis:/tmp/polis-images.tar.zst
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to transfer images tarball"; exit 1 }
+
+    & multipass exec polis -- bash -c 'zstd -d /tmp/polis-images.tar.zst --stdout | docker load && rm -f /tmp/polis-images.tar.zst'
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to load Docker images"; exit 1 }
+    Write-Ok "Docker images loaded"
+
+    # Tag images with CLI version
+    Write-Info "Tagging images as $tag..."
+    $tagScript = 'docker images --format ''{{.Repository}}:{{.Tag}}'' | grep '':latest'' | while read -r img; do base=${img%%:*}; docker tag $img ${base}:' + $tag + '; done'
+    & multipass exec polis -- bash -c $tagScript
+
+    # go-httpbin is a test-only image (profiles: ["test"]).
+    # It is included in the tarball when built via `just build`.
+    # Skip pulling it here — it is not needed for normal operation.
+
+    # ── Step 4: Generate certs and secrets ────────────────────────────────
+    Write-Info "Generating certificates and secrets..."
+    & multipass exec polis -- sudo bash -c '/opt/polis/scripts/generate-ca.sh /opt/polis/certs/ca'
+    & multipass exec polis -- sudo bash -c '/opt/polis/services/state/scripts/generate-certs.sh /opt/polis/certs/valkey'
+    & multipass exec polis -- sudo bash -c '/opt/polis/services/state/scripts/generate-secrets.sh /opt/polis/secrets /opt/polis'
+    & multipass exec polis -- sudo bash -c '/opt/polis/services/toolbox/scripts/generate-certs.sh /opt/polis/certs/toolbox /opt/polis/certs/ca'
+    & multipass exec polis -- sudo bash -c '/opt/polis/scripts/fix-cert-ownership.sh /opt/polis'
+    Write-Ok "Certificates and secrets ready"
+
+    # ── Step 5: Create .ready marker and start services ─────────────────
+    # The .ready marker gates polis.service (systemd ConditionPathExists).
+    # Without it, `polis stop` + `polis start` would fail to restart via systemd.
+    & multipass exec polis -- touch /opt/polis/.ready
+
+    Write-Info "Starting services..."
+    & multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans'
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to start services"; exit 1 }
+    Write-Ok "Services started"
+
+    # ── Step 6: Wait for workspace container to become healthy ────────────
+    Write-Info "Waiting for workspace to become healthy (up to 120s)..."
+    $maxAttempts = 60
+    $healthy = $false
+    for ($i = 1; $i -le $maxAttempts; $i++) {
+        $json = & multipass exec polis -- docker compose -f /opt/polis/docker-compose.yml ps --format json workspace 2>$null
+        if ($json) {
+            $firstLine = ($json -split "`n")[0]
+            try {
+                $obj = $firstLine | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($obj.State -eq "running" -and $obj.Health -eq "healthy") {
+                    $healthy = $true
+                    break
+                }
+            } catch {}
+        }
+        Start-Sleep -Seconds 2
+    }
+    if ($healthy) {
+        Write-Ok "Workspace is healthy"
+    } else {
+        Write-Warn "Workspace did not become healthy within 120s — check with: polis status"
+    }
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "╔═══════════════════════════════════════════════════════════════╗"
-Write-Host "║                 Polis Dev Installer                           ║"
-Write-Host "╚═══════════════════════════════════════════════════════════════╝"
+Write-Host "=== Polis Dev Installer ==="
 Write-Host ""
 Write-Info "Repo:        $RepoDir"
 Write-Info "Install dir: $InstallDir"
@@ -120,11 +290,39 @@ Write-Host ""
 Assert-Multipass
 Install-Cli
 Add-ToUserPath
+Show-WindowsNetworkingNote
+
+# Remove existing VM for a clean reinstall
+Write-Info "Checking for existing polis VM..."
+$vmList = $null
+$listJob = Start-Job { & multipass list --format csv 2>$null }
+if (Wait-Job $listJob -Timeout 30) {
+    $vmList = Receive-Job $listJob | Select-String -Pattern '^polis,'
+} else {
+    Stop-Job $listJob
+    Write-Warn "multipass list timed out — assuming no existing VM"
+}
+Remove-Job $listJob -Force
+
+if ($vmList) {
+    Confirm-DestructiveReinstall
+    Write-Info "Existing polis VM found — deleting for clean reinstall..."
+    & multipass delete polis --purge 2>$null
+    Write-Ok "VM deleted"
+}
+Remove-Item (Join-Path $InstallDir "state.json") -ErrorAction SilentlyContinue
+
 Invoke-PolisInit
 
 Write-Host ""
 Write-Ok "Polis (dev build) installed successfully!"
 Write-Host ""
-Write-Host "Get started:"
-Write-Host "  polis run"
+Write-Host "NEXT STEPS:" -ForegroundColor Yellow
+Write-Host "1. Verify status:" -ForegroundColor Gray
+Write-Host "   polis status"
+Write-Host "2. Start an AI agent (pass your provider API key directly):" -ForegroundColor Gray
+Write-Host "   polis start --agent openclaw -e OPENAI_API_KEY=sk-..."
+Write-Host "   Note: agent initialization may take several minutes depending on the selected agent."
+Write-Host "3. Connect to the dashboard:" -ForegroundColor Gray
+Write-Host "   polis connect"
 Write-Host ""

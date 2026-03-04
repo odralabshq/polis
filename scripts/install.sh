@@ -7,12 +7,14 @@
 
 set -euo pipefail
 
-VERSION="${POLIS_VERSION:-0.3.0}"
 INSTALL_DIR="${POLIS_HOME:-$HOME/.polis}"
 REPO_OWNER="OdraLabsHQ"
 REPO_NAME="polis"
 CURL_PROTO="=https"
-CDN_BASE_URL="${POLIS_CDN_URL:-https://d1qggvwquwdnma.cloudfront.net}"
+VERSION=""  # resolved by detect_version
+
+# SHA256 hashes for Multipass downloads — update when bumping MULTIPASS_VERSION
+MULTIPASS_SHA256_MACOS="${MULTIPASS_SHA256_MACOS:-758d10dc1b71872b0ee7a17070b93fc788dba5ba45c36b980e42fd895d273489}"
 
 # Colors
 RED='\033[0;31m'
@@ -50,6 +52,23 @@ log_ok()    { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
+confirm_installer_proceed() {
+    echo ""
+    echo -e "${RED}WARNING: A clean reinstall deletes the existing 'polis' VM and removes previous workspace data.${NC}"
+    if [[ "${POLIS_INSTALL_ASSUME_Y:-}" == "1" || "${CI:-}" == "true" || ! -t 0 ]]; then
+        log_info "Non-interactive mode detected — proceeding automatically."
+        return 0
+    fi
+    read -r -p "Continue with installation? (y/n) " reply
+    case "${reply,,}" in
+        y|yes) ;;
+        *)
+            log_warn "Installation cancelled by user."
+            exit 1
+            ;;
+    esac
+}
+
 check_arch() {
     local arch
     arch=$(uname -m)
@@ -70,8 +89,9 @@ MULTIPASS_VERSION="${MULTIPASS_VERSION:-1.16.1}"
 semver_gte() {
     local version="$1"
     local minimum="$2"
-    printf '%s\n%s\n' "$minimum" "$version" | sort -V -C
-    return 0
+    local rc=0
+    printf '%s\n%s\n' "$minimum" "$version" | sort -V -C || rc=$?
+    return $rc
 }
 
 install_multipass_linux() {
@@ -87,22 +107,31 @@ install_multipass_linux() {
         echo "  Install snapd: https://snapcraft.io/docs/installing-snapd"
         exit 1
     fi
-    local snap_file="/tmp/multipass_${MULTIPASS_VERSION}_amd64.snap"
-    curl -fsSL --proto "${CURL_PROTO}" \
-        "https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass_${MULTIPASS_VERSION}_amd64.snap" \
-        -o "${snap_file}"
-    sudo snap install "${snap_file}" --dangerous
-    rm -f "${snap_file}"
+    log_info "Installing Multipass ${MULTIPASS_VERSION} from Snap Store..."
+    sudo snap install multipass
     return 0
 }
 
 install_multipass_macos() {
-    local pkg_file="/tmp/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg"
+    MACOS_PKG_FILE=$(mktemp /tmp/multipass-XXXXXX.pkg)
+    trap 'rm -f "${MACOS_PKG_FILE}"' EXIT
     curl -fsSL --proto "${CURL_PROTO}" \
         "https://github.com/canonical/multipass/releases/download/v${MULTIPASS_VERSION}/multipass-${MULTIPASS_VERSION}+mac-Darwin.pkg" \
-        -o "${pkg_file}"
-    sudo installer -pkg "${pkg_file}" -target /
-    rm -f "${pkg_file}"
+        -o "${MACOS_PKG_FILE}"
+
+    local pkg_sha256
+    pkg_sha256=$(shasum -a 256 "${MACOS_PKG_FILE}" | cut -d' ' -f1)
+    if [[ "${pkg_sha256}" != "${MULTIPASS_SHA256_MACOS}" ]]; then
+        log_error "Multipass pkg SHA256 mismatch!"
+        echo "  Expected: ${MULTIPASS_SHA256_MACOS}" >&2
+        echo "  Actual:   ${pkg_sha256}" >&2
+        rm -f "${MACOS_PKG_FILE}"
+        exit 1
+    fi
+    log_ok "Multipass pkg SHA256 verified"
+
+    sudo installer -pkg "${MACOS_PKG_FILE}" -target /
+    rm -f "${MACOS_PKG_FILE}"
     return 0
 }
 
@@ -153,22 +182,42 @@ check_multipass() {
     return 0
 }
 
-
+detect_version() {
+    if [[ -n "${POLIS_VERSION:-}" ]]; then
+        VERSION="${POLIS_VERSION#v}"
+        return 0
+    fi
+    log_info "Detecting latest Polis release..."
+    # Use tags API sorted by date — works for pre-releases (unlike /releases/latest)
+    local tag
+    tag=$(curl -fsSL --proto "${CURL_PROTO}" \
+        "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=1" \
+        | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+    if [[ -z "${tag}" ]]; then
+        log_error "Could not detect latest version from GitHub."
+        echo "  Set POLIS_VERSION manually: POLIS_VERSION=0.4.0 bash install.sh"
+        exit 1
+    fi
+    VERSION="${tag#v}"
+    log_ok "Detected version: ${VERSION}"
+    return 0
+}
 
 download_cli() {
-    local arch base_url bin_dir binary_name checksum_file expected actual
+    local arch base_url bin_dir binary_name expected actual
     arch=$(check_arch)
-    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
+    base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v${VERSION}"
     bin_dir="${INSTALL_DIR}/bin"
     binary_name="polis-linux-${arch}"
-    tarball="${binary_name}.tar.gz"
-    checksum_file="/tmp/polis.sha256.$$"
+    local tarball="${binary_name}.tar.gz"
+    CHECKSUM_FILE=$(mktemp)
+    trap 'rm -f "${CHECKSUM_FILE}"' EXIT
 
     mkdir -p "${bin_dir}"
 
     log_info "Downloading CLI (${arch})..."
     curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${tarball}" -o "/tmp/${tarball}"
-    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${checksum_file}"
+    curl -fsSL --proto "${CURL_PROTO}" "${base_url}/${binary_name}.sha256" -o "${CHECKSUM_FILE}"
 
     log_info "Extracting CLI..."
     tar -xzf "/tmp/${tarball}" -C "${bin_dir}" --strip-components=0
@@ -176,9 +225,8 @@ download_cli() {
     rm -f "/tmp/${tarball}"
 
     log_info "Verifying CLI SHA256..."
-    expected=$(cut -d' ' -f1 < "${checksum_file}")
+    expected=$(cut -d' ' -f1 < "${CHECKSUM_FILE}")
     actual=$(sha256sum "${bin_dir}/polis" | cut -d' ' -f1)
-    rm -f "${checksum_file}"
 
     if [[ "${actual}" != "${expected}" ]]; then
         log_error "SHA256 checksum mismatch!"
@@ -202,67 +250,41 @@ create_symlink() {
     return 0
 }
 
-download_image() {
-    local arch gh_base_url image_name dest expected actual
-    arch=$(check_arch)
-    gh_base_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${VERSION}"
-
-    # Construct image filename from version and arch (VM images have v prefix)
-    image_name="polis-v${VERSION}-${arch}.qcow2"
-
-    dest="${INSTALL_DIR}/images/${image_name}"
-    mkdir -p "${INSTALL_DIR}/images"
-
-    log_info "Downloading VM image from CDN..." >&2
-    if ! curl -fL --proto "${CURL_PROTO}" --http2 --retry 3 --retry-delay 2 --progress-bar \
-        "${CDN_BASE_URL}/v${VERSION}/${image_name}" -o "${dest}" >&2; then
-        log_warn "CDN unavailable, falling back to GitHub..." >&2
-        curl -fL --proto "${CURL_PROTO}" --retry 3 --retry-delay 2 --progress-bar \
-            "${gh_base_url}/${image_name}" -o "${dest}" >&2
-    fi
-
-    echo "${dest}"
-    return 0
-}
-
-run_init() {
-    local image_path="$1"
-    local bin="${INSTALL_DIR}/bin/polis"
-
-    log_info "Running: polis start --image ${image_path}"
-    if ! "${bin}" start --image "${image_path}"; then
-        log_error "polis start failed. Run manually:"
-        echo "  polis start --image ${image_path}"
-        return 1
-    fi
-    return 0
-}
-
 main() {
     print_logo
 
+    echo ""
+    echo "+===============================================================+"
+    echo "|                    Polis Installer                            |"
+    echo "+===============================================================+"
+    echo ""
+
+    confirm_installer_proceed
     check_arch >/dev/null
     check_multipass
+    detect_version
     log_info "Installing Polis ${VERSION}"
     download_cli
     create_symlink
 
-    local image_path
-    image_path=$(download_image)
-
+    # Delete existing VM for a clean install
     if multipass info polis &>/dev/null 2>&1; then
-        log_warn "An existing polis VM was found."
-        read -r -p "Remove it and start fresh? [y/N] " confirm
-        if [[ "${confirm,,}" == "y" ]]; then
-            log_info "Removing existing polis VM..."
-            multipass delete polis && multipass purge
-        else
-            log_info "Keeping existing VM. Skipping removal."
+        log_warn "Existing polis VM found — deleting..."
+        multipass stop polis --force 2>/dev/null || true
+        multipass delete polis --purge
+        # Verify deletion succeeded
+        if multipass info polis &>/dev/null 2>&1; then
+            log_error "Failed to delete existing VM. Try manually:"
+            echo "  multipass stop polis && multipass delete polis --purge"
+            exit 1
         fi
+        log_ok "VM deleted"
     fi
+
     rm -f "${INSTALL_DIR}/state.json"
 
-    run_init "${image_path}"
+    # Start (creates VM, generates certs inside VM)
+    "${INSTALL_DIR}/bin/polis" start
 
     echo ""
     log_ok "Polis installed successfully!"

@@ -1,12 +1,13 @@
 //! `polis exec` — run a command inside the workspace container.
 
 use std::io::IsTerminal;
+use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::Args;
 
-use crate::multipass::Multipass;
-use crate::workspace::CONTAINER_NAME;
+use crate::application::ports::ShellExecutor;
+use crate::domain::workspace::CONTAINER_NAME;
 
 /// Arguments for the exec command.
 #[derive(Args)]
@@ -24,15 +25,29 @@ pub struct ExecArgs {
 ///
 /// # Errors
 ///
-/// Returns an error if the command cannot be spawned. Calls
-/// [`std::process::exit`] with the container command's exit code on
-/// completion.
-pub async fn run(args: &ExecArgs, mp: &impl Multipass) -> Result<()> {
+/// Returns an error if the command cannot be spawned.
+pub async fn run(args: &ExecArgs, mp: &impl ShellExecutor) -> Result<ExitCode> {
     let interactive = std::io::stdin().is_terminal();
 
-    let mut docker_args: Vec<&str> = vec!["docker", "exec"];
+    let mut docker_args: Vec<&str> = vec![
+        "docker",
+        "exec",
+        "-u",
+        "polis",
+        "-e",
+        "XDG_RUNTIME_DIR=/run/user/1000",
+        "-e",
+        "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+    ];
+    // On Windows the TTY cannot propagate through the Hyper-V/multipass
+    // transport, so requesting `-t` causes `docker exec` to fail silently
+    // with exit-code 1.  Only allocate a TTY on Unix where the PTY chain
+    // (tokio → multipass → VM → docker) works end-to-end.
     if interactive {
+        #[cfg(unix)]
         docker_args.push("-it");
+        #[cfg(not(unix))]
+        docker_args.push("-i");
     }
     docker_args.push(CONTAINER_NAME);
     docker_args.extend(args.command.iter().map(String::as_str));
@@ -43,8 +58,6 @@ pub async fn run(args: &ExecArgs, mp: &impl Multipass) -> Result<()> {
         .context("failed to exec in workspace")?;
 
     let code = status.code().unwrap_or(1);
-    if code != 0 {
-        std::process::exit(code);
-    }
-    Ok(())
+    #[allow(clippy::cast_possible_truncation)]
+    Ok(ExitCode::from(u8::try_from(code).unwrap_or(255)))
 }

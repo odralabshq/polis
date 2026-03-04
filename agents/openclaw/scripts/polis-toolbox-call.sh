@@ -23,6 +23,11 @@ _curl() {
         "$@" 2>/dev/null
 }
 
+_error_json() {
+    local msg="$1"
+    printf '{"error":"%s","url":"%s"}\n' "$msg" "$MCP_URL"
+}
+
 # Step 1: Initialize — capture session ID (retry up to 3 times for cold starts)
 SID=""
 for _attempt in 1 2 3; do
@@ -30,13 +35,13 @@ for _attempt in 1 2 3; do
         -D "$HDR_FILE" -o /dev/null \
         -d '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"polis-cli","version":"1.0"}}}' \
         || true
-    SID=$(grep -i '^mcp-session-id:' "$HDR_FILE" | tr -d '\r' | awk '{print $2}')
+    SID=$(grep -i '^mcp-session-id:' "$HDR_FILE" 2>/dev/null | tr -d '\r' | awk '{print $2}' || true)
     [[ -n "$SID" ]] && break
     sleep 2
 done
 
 if [[ -z "$SID" ]]; then
-    echo '{"error":"toolbox unreachable or not ready"}' >&2
+    _error_json "toolbox unreachable or not ready"
     exit 1
 fi
 
@@ -47,16 +52,20 @@ _curl -X POST "$MCP_URL" \
     -o /dev/null || true
 
 # Step 3: Call the tool — parse SSE stream for the result line
-RESULT=$(_curl -X POST "$MCP_URL" \
+RAW_RESULT=$(_curl -X POST "$MCP_URL" \
     -H "mcp-session-id: $SID" \
     -d "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":2,\"params\":{\"name\":\"${TOOL_NAME}\",\"arguments\":${TOOL_ARGS}}}" \
+    || true)
+
+RESULT=$(printf '%s\n' "$RAW_RESULT" \
     | grep '^data: ' \
     | sed 's/^data: //' \
     | grep -v '^$' \
-    | tail -1)
+    | tail -1 \
+    || true)
 
 if [[ -z "$RESULT" ]]; then
-    echo '{"error":"no response from toolbox"}' >&2
+    _error_json "no response from toolbox"
     exit 1
 fi
 

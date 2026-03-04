@@ -1,4 +1,4 @@
-FROM dhi.io/golang:1-dev@sha256:d241d31631f6bcfdef4f42f70083bb06d51e6401d9ce172a05b9ba37f27c2940 AS builder
+FROM dhi.io/golang:1-dev@sha256:e1a9feeb3f8633770b25bcb5d0011f66a1837afcd1ec188f062affdc9b312451 AS builder
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG COREDNS_VERSION=1.14.1

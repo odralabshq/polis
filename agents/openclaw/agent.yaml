@@ -33,7 +33,7 @@ spec:
     interval: 30s
     timeout: 10s
     retries: 5
-    startPeriod: 120s
+    startPeriod: 900s
 
   security:
     protectSystem: strict
@@ -72,5 +72,9 @@ spec:
       - /home/polis/.openclaw/workspace
     mcp: true
     dockerInDocker: false
+
+  onboarding:
+    - title: "Run the onboarding wizard"
+      command: "openclaw onboard"
 
   commands: commands.sh

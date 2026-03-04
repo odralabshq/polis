@@ -12,6 +12,12 @@ export MSYS_NO_PATHCONV=1
 # Output directory (default: ./certs/valkey)
 OUTPUT_DIR="${1:-./certs/valkey}"
 
+# Idempotency guard: skip generation if all key files already exist
+if [[ -f "${OUTPUT_DIR}/ca.key" && -f "${OUTPUT_DIR}/server.key" && -f "${OUTPUT_DIR}/client.key" ]]; then
+    echo "Valkey certificates already exist. Skipping."
+    exit 0
+fi
+
 # Certificate parameters
 CA_SUBJECT="/CN=polis-state-CA/O=OdraLabs"
 SERVER_SUBJECT="/CN=state/O=OdraLabs"

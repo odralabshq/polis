@@ -537,19 +537,140 @@ static void refresh_security_level(void)
 static int is_new_domain(const char *host)
 {
     static const char *known_domains[] = {
+        /* ── LLM / AI providers ─────────────────────────────────────── */
         ".api.anthropic.com",
         ".api.openai.com",
+        ".api.mistral.ai",
+        ".api.cohere.ai",
+        ".generativelanguage.googleapis.com",
+        ".aiplatform.googleapis.com",
+
+        /* ── GitHub ─────────────────────────────────────────────────── */
         ".api.github.com",
         ".github.com",
         ".githubusercontent.com",
+        ".lfs.github.com",
+
+        /* ── Cloud providers ────────────────────────────────────────── */
         ".amazonaws.com",
+
+        /* ── Messaging (agent channels) ─────────────────────────────── */
         ".api.telegram.org",
         ".discord.com",
         ".api.slack.com",
+
+        /* ── Linux package managers ─────────────────────────────────── */
         ".deb.debian.org",
+        ".security.debian.org",
+        ".archive.ubuntu.com",
+        ".security.ubuntu.com",
+        ".ppa.launchpad.net",
+        ".dl-cdn.alpinelinux.org",
+        ".packages.microsoft.com",
         ".deb.nodesource.com",
+
+        /* ── Node.js / JavaScript ───────────────────────────────────── */
         ".registry.npmjs.org",
+        ".registry.yarnpkg.com",
+        ".nodejs.org",
+        ".get.pnpm.io",
         ".bun.sh",
+
+        /* ── Python ─────────────────────────────────────────────────── */
+        ".pypi.org",
+        ".files.pythonhosted.org",
+        ".bootstrap.pypa.io",
+        ".conda.anaconda.org",
+        ".repo.anaconda.com",
+
+        /* ── Rust ───────────────────────────────────────────────────── */
+        ".crates.io",
+        ".index.crates.io",
+        ".static.crates.io",
+        ".sh.rustup.rs",
+        ".static.rust-lang.org",
+
+        /* ── Go ─────────────────────────────────────────────────────── */
+        ".proxy.golang.org",
+        ".sum.golang.org",
+        ".go.dev",
+
+        /* ── Ruby / Java / PHP / .NET ───────────────────────────────── */
+        ".rubygems.org",
+        ".repo1.maven.org",
+        ".plugins.gradle.org",
+        ".packagist.org",
+        ".getcomposer.org",
+        ".api.nuget.org",
+
+        /* ── Container registries ───────────────────────────────────── */
+        ".docker.io",
+        ".docker.com",
+        ".production.cloudflare.docker.com",
+        ".ghcr.io",
+        ".quay.io",
+        ".mcr.microsoft.com",
+        ".public.ecr.aws",
+        ".gcr.io",
+
+        /* ── IDE / Editor extensions ────────────────────────────────── */
+        /* VS Code */
+        ".marketplace.visualstudio.com",
+        ".vsassets.io",
+        ".vo.msecnd.net",
+        ".update.code.visualstudio.com",
+        ".vscode.download.prss.microsoft.com",
+        /* Cursor */
+        ".cursor.sh",
+        ".cursorapi.com",
+        ".cursor-cdn.com",
+        ".downloads.cursor.com",
+        /* Windsurf / Codeium */
+        ".codeium.com",
+        ".windsurf.com",
+        ".codeiumdata.com",
+        /* JetBrains */
+        ".jetbrains.com",
+        ".jetbrains.ai",
+
+        /* ── AI coding tools ────────────────────────────────────────── */
+        /* Kiro CLI */
+        ".kiro.dev",
+        ".cli.kiro.dev",
+        /* Amazon Q Developer */
+        ".codewhisperer.us-east-1.amazonaws.com",
+        ".q.us-east-1.amazonaws.com",
+        /* GitHub Copilot */
+        ".githubcopilot.com",
+        ".copilot-proxy.githubusercontent.com",
+        ".copilot-telemetry.githubusercontent.com",
+        ".default.exp-tas.com",
+        /* Claude Code */
+        ".claude.ai",
+        /* Sourcegraph Cody */
+        ".sourcegraph.com",
+        /* Tabnine */
+        ".tabnine.com",
+        /* Continue.dev */
+        ".continue.dev",
+
+        /* ── Infrastructure ─────────────────────────────────────────── */
+        ".dl.cloudsmith.io",
+        ".releases.hashicorp.com",
+        ".registry.terraform.io",
+        ".dl.k8s.io",
+        ".pkgs.k8s.io",
+        ".brew.sh",
+
+        /* ── Certificate authorities (OCSP/CRL) ────────────────────── */
+        ".digicert.com",
+        ".globalsign.com",
+        ".sectigo.com",
+        ".letsencrypt.org",
+
+        /* ── CDNs ───────────────────────────────────────────────────── */
+        ".cloudfront.net",
+
         NULL
     };
     size_t hlen, dlen;
@@ -638,7 +759,7 @@ static int apply_security_policy(const char *host, int has_credential)
 /*
  * dlp_valkey_init - Connect to Valkey as dlp-reader with TLS + ACL.
  *
- * Reads polis_VALKEY_HOST env var (default: "valkey"), port 6379.
+ * Reads polis_VALKEY_HOST env var (default: "state"), port 6379.
  * Creates TLS context with CA, client cert, client key from
  * /etc/valkey/tls/. Reads password from Docker secret file at
  * /run/secrets/valkey_dlp_password, strips trailing newline,

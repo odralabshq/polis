@@ -2,7 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BATS="${SCRIPT_DIR}/bats/bats-core/bin/bats"
+COMPOSE="docker compose -f ${ROOT_DIR}/docker-compose.yml -f ${ROOT_DIR}/docker-compose.test.yml"
 
 usage() {
     cat <<EOF
@@ -12,9 +14,8 @@ Tiers:
   unit           Run unit tests (~30s, no Docker)
   integration    Run integration tests (~3min, needs containers)
   e2e            Run E2E tests (~10min, needs containers + network)
-  packer         Run Packer unit tests (~10s, no Docker)
   docker         Run Docker/Compose linting (~10s, no containers)
-  all            Run all tiers (excludes packer, docker)
+  all            Run all tiers (excludes docker)
 
 Options:
   --ci           CI mode (auto-start httpbin, reset test state)
@@ -57,18 +58,17 @@ fi
 case "$TIER" in
     unit)        run_tier "unit" ;;
     integration) run_tier "integration" ;;
-    packer)      run_tier "unit/packer" ;;
     docker)      run_tier "unit/docker" ;;
     e2e)
-        docker compose --profile test pull httpbin 2>/dev/null || true
-        docker compose --profile test up -d httpbin
-        [[ "$CI_MODE" != "true" ]] && trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
+        $COMPOSE pull httpbin 2>/dev/null || true
+        $COMPOSE up -d httpbin
+        [[ "$CI_MODE" != "true" ]] && trap '$COMPOSE rm -sf httpbin 2>/dev/null || true' EXIT
         run_tier "e2e"
         ;;
     all)
-        docker compose --profile test pull httpbin 2>/dev/null || true
-        docker compose --profile test up -d httpbin
-        [[ "$CI_MODE" != "true" ]] && trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
+        $COMPOSE pull httpbin 2>/dev/null || true
+        $COMPOSE up -d httpbin
+        [[ "$CI_MODE" != "true" ]] && trap '$COMPOSE rm -sf httpbin 2>/dev/null || true' EXIT
         run_tier "unit"
         run_tier "integration"
         run_tier "e2e"

@@ -43,3 +43,7 @@ spec:
   resources:
     memoryLimit: 2G
     memoryReservation: 512M
+
+  # onboarding:
+  #   - title: "Run the setup wizard"
+  #     command: "my-agent setup"

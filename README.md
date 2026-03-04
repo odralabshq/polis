@@ -1,7 +1,7 @@
 # Polis — Secure Workspace for AI Coding Agents
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.0--preview-orange.svg)](https://github.com/OdraLabsHQ/polis/releases)
+[![Version](https://img.shields.io/badge/version-0.4.0-orange.svg)](https://github.com/OdraLabsHQ/polis/releases)
 
 > **⚠️ Experimental Preview** — Polis is under active development This platform in not yet recommended for production use.
 
@@ -20,7 +20,7 @@ Polis solves this by routing all agent traffic through a TLS-intercepting proxy 
 | OS | Architecture | Status |
 |----|-------------|--------|
 | Linux | amd64 | ✅ Supported |
-| Windows | amd64 | 🔜 Coming soon |
+| Windows | amd64 | ✅ Supported |
 | macOS | arm64 | 🔜 Coming soon |
 
 ### Linux (amd64)
@@ -29,9 +29,13 @@ Polis solves this by routing all agent traffic through a TLS-intercepting proxy 
 curl -fsSL https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.sh | bash
 ```
 
-### Windows (PowerShell) — Coming soon
+### Windows (PowerShell)
 
-🔜 Windows amd64 support is on the roadmap.
+Works on PowerShell 5.1 and newer:
+
+```powershell
+irm https://raw.githubusercontent.com/OdraLabsHQ/polis/main/scripts/install.ps1 | iex
+```
 
 ### macOS — Coming soon
 
@@ -50,6 +54,12 @@ polis start --agent=openclaw   # Start Polis with pre-configured openclaw agent
 ```
 
 To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
+
+### Windows Networking Notes
+
+- Set your active network adapter to a **Private** network profile. Multipass VMs may not get an IP on Public networks.
+- Turn off VPN during VM creation and startup if you experience networking issues.
+- Applications running at `localhost` inside the workspace container are accessible through the VM IP. Find it with `multipass list`.
 
 ---
 
@@ -72,6 +82,19 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | `polis config show` | Show current configuration |
 | `polis config set <key> <value>` | Set a configuration value |
 | `polis version` | Show CLI version |
+
+### Security Management
+
+| Command | Description |
+|---------|-------------|
+| `polis security status` | Show security level and pending blocked requests |
+| `polis security pending` | List all blocked requests awaiting approval |
+| `polis security approve <id>` | Approve a blocked request |
+| `polis security deny <id>` | Deny a blocked request |
+| `polis security log` | Show recent security events |
+| `polis security allow <domain>` | Auto-approve a domain pattern |
+| `polis security allow <domain> --action block` | Block a domain pattern |
+| `polis security level <level>` | Set security level (relaxed, balanced, strict) |
 
 ### Agent Management
 
@@ -155,6 +178,54 @@ polis config set security.level strict
 
 ---
 
+## 🛡️ DLP & Network Security
+
+All workspace traffic is routed through a TLS-intercepting proxy. Every HTTP/HTTPS request is inspected for malware (ClamAV) and secrets (DLP engine) before reaching the internet.
+
+### How it works
+
+1. Known-safe domains (package registries, GitHub, AI tools) pass through on a built-in bypass list
+2. LLM provider domains get full DLP scanning (secrets + PII detection)
+3. Unknown domains are scanned or blocked depending on the security level
+
+### Handling blocked requests
+
+A `403 Forbidden` inside the workspace means the governance engine blocked the request — typically an unknown domain on `strict` mode, or detected credentials in the request body.
+
+Use `polis security` to manage blocks:
+
+```bash
+polis security status              # Current level + pending count
+polis security pending             # List blocked requests
+polis security approve req-abc123  # Approve a specific request
+polis security deny req-abc123     # Deny a specific request
+polis security log                 # Recent security events
+```
+
+To permanently allow a domain:
+
+```bash
+polis security allow cli.example.com           # Auto-approve this domain
+polis security allow "*.example.com"           # Wildcard pattern
+polis security allow untrusted.com --action block  # Explicitly block
+```
+
+To change the security level:
+
+```bash
+polis security level relaxed    # Auto-allow unknown domains, still scan for credentials
+polis security level balanced   # Default — unknown domains prompt for approval
+polis security level strict     # All domains require explicit approval
+```
+
+### Default bypass domains
+
+Polis ships with a comprehensive bypass list covering common development tools. These domains pass through regardless of security level. The list includes package registries (npm, PyPI, crates.io, Maven, RubyGems, Go proxy, NuGet), container registries (Docker Hub, ghcr.io, quay.io), AI coding tools (GitHub Copilot, Cursor, Kiro, Windsurf, Codeium), LLM APIs (OpenAI, Anthropic, Google AI, Mistral, Groq), and source hosting (GitHub, GitLab, Bitbucket).
+
+The full list is defined in `services/sentinel/modules/dlp/srv_polis_dlp.c` → `is_new_domain()`.
+
+---
+
 ## 🏗️ Architecture
 
 Polis routes all workspace traffic through a TLS-intercepting proxy with ICAP-based content inspection:
@@ -233,17 +304,39 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 | Platform | Status | Notes |
 |----------|--------|-------|
 | **Linux** (amd64) | ✅ Supported | Recommended |
-| **Windows** (amd64) | 🔜 Coming soon | On the roadmap |
+| **Windows** (amd64) | ✅ Supported | Requires Hyper-V or VirtualBox |
 | **macOS** (arm64) | 🔜 Coming soon | On the roadmap |
 
 ---
 
 ## 🔧 Troubleshooting
 
-**Multipass not found:**
+**Multipass not found (Linux):**
 
 ```bash
 sudo snap install multipass
+```
+
+**Multipass not found (Windows):**
+
+The installer handles this automatically. If you need to install manually, enable Hyper-V or install VirtualBox first, then download from [multipass.run](https://multipass.run/install).
+
+**Windows VM has no network / can't reach internet:**
+
+```powershell
+# Switch your network adapter to Private profile
+Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
+# Disconnect VPN, then restart the VM
+multipass restart polis
+```
+
+**Accessing agent UI on Windows:**
+
+The agent UI runs on `localhost` inside the VM. Use the VM IP instead:
+
+```powershell
+multipass list   # Find the polis VM IP
+# Open http://<vm-ip>:18789 in your browser
 ```
 
 **Workspace won't start:**
@@ -260,8 +353,6 @@ polis start          # Try again
 polis delete --all   # Remove everything
 polis start          # Fresh install
 ```
-
----
 
 ---
 

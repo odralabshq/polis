@@ -35,7 +35,7 @@ setup() {
 @test "toolbox: VALKEY_URL env set" {
     run docker exec "$CTR_TOOLBOX" printenv polis_AGENT_VALKEY_URL
     assert_success
-    assert_output --partial "rediss://state:6379"
+    assert_output --partial "rediss://valkey:6379"
 }
 
 @test "toolbox: VALKEY_USER env set" {

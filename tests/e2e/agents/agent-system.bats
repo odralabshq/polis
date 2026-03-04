@@ -66,7 +66,7 @@ setup() {
 @test "e2e: workspace can access HTTP via TPROXY" {
     run_with_network_skip "example.com" \
         docker exec "$CTR_WORKSPACE" \
-        curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 15 \
+        curl -sf -o /dev/null -w "%{http_code}" --max-time 30 --connect-timeout 15 \
         http://example.com
     assert_success
     assert_output "200"

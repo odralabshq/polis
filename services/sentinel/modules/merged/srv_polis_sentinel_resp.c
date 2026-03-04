@@ -1091,17 +1091,38 @@ static void clamd_cb_record_failure(void)
 static int is_known_package_registry(const char *host)
 {
     static const char *registries[] = {
+        /* Node.js / JavaScript */
         ".registry.npmjs.org",
-        ".deb.nodesource.com",
-        ".deb.debian.org",
+        ".registry.yarnpkg.com",
+        ".nodejs.org",
         ".bun.sh",
+        /* Linux packages */
+        ".deb.debian.org",
+        ".deb.nodesource.com",
+        ".archive.ubuntu.com",
+        ".dl-cdn.alpinelinux.org",
+        /* GitHub */
         ".github.com",
         ".githubusercontent.com",
+        /* Python */
         ".pypi.org",
         ".files.pythonhosted.org",
+        /* Rust */
         ".crates.io",
         ".static.crates.io",
+        /* Ruby */
         ".rubygems.org",
+        /* Go */
+        ".proxy.golang.org",
+        /* Java */
+        ".repo1.maven.org",
+        /* Container registries */
+        ".docker.io",
+        ".docker.com",
+        ".production.cloudflare.docker.com",
+        ".ghcr.io",
+        ".quay.io",
+        ".mcr.microsoft.com",
         NULL
     };
     size_t hlen;

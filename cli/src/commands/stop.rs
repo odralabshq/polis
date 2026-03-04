@@ -1,48 +1,35 @@
 //! `polis stop` — stop workspace, preserving all data.
 
 use anyhow::Result;
+use std::process::ExitCode;
 
-use crate::multipass::Multipass;
-use crate::workspace::vm;
+use crate::app::AppContext;
+use crate::application::services::workspace_stop::{StopOutcome, stop_workspace};
 
 /// Run `polis stop`.
 ///
 /// # Errors
 ///
 /// Returns an error if the workspace cannot be stopped.
-pub async fn run(mp: &impl Multipass, quiet: bool) -> Result<()> {
-    let state = vm::state(mp).await?;
+pub async fn run(app: &AppContext) -> Result<ExitCode> {
+    let ctx = &app.output;
+    let reporter = app.terminal_reporter();
 
-    match state {
-        vm::VmState::NotFound => {
-            if !quiet {
-                println!();
-                println!("No workspace to stop.");
-                println!();
-                println!("Create one: polis start");
-            }
+    match stop_workspace(&app.provisioner, &reporter).await {
+        Ok(StopOutcome::NotFound) => {
+            ctx.info("No workspace to stop.");
+            ctx.info("Create one: polis start");
         }
-        vm::VmState::Stopped => {
-            if !quiet {
-                println!();
-                println!("Workspace is already stopped.");
-                println!();
-                println!("Resume: polis start");
-            }
+        Ok(StopOutcome::AlreadyStopped) => {
+            ctx.info("Workspace is already stopped.");
+            ctx.info("Resume: polis start");
         }
-        vm::VmState::Running | vm::VmState::Starting => {
-            if !quiet {
-                println!("Stopping workspace...");
-            }
-            vm::stop(mp).await?;
-            if !quiet {
-                println!();
-                println!("Workspace stopped. Your data is preserved.");
-                println!();
-                println!("Resume: polis start");
-            }
+        Ok(StopOutcome::Stopped) => {
+            ctx.info("Your data is preserved.");
+            ctx.info("Resume: polis start");
         }
+        Err(e) => return Err(e),
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
