@@ -39,8 +39,15 @@ pub async fn run(args: &ExecArgs, mp: &impl ShellExecutor) -> Result<ExitCode> {
         "-e",
         "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
     ];
+    // On Windows the TTY cannot propagate through the Hyper-V/multipass
+    // transport, so requesting `-t` causes `docker exec` to fail silently
+    // with exit-code 1.  Only allocate a TTY on Unix where the PTY chain
+    // (tokio → multipass → VM → docker) works end-to-end.
     if interactive {
+        #[cfg(unix)]
         docker_args.push("-it");
+        #[cfg(not(unix))]
+        docker_args.push("-i");
     }
     docker_args.push(CONTAINER_NAME);
     docker_args.extend(args.command.iter().map(String::as_str));

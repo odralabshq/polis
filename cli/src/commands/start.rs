@@ -54,10 +54,13 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     .await?;
 
     match outcome {
-        StartOutcome::AlreadyRunning { agent } => {
+        StartOutcome::AlreadyRunning { agent, .. } => {
             print_already_running_message(agent.as_deref(), &app.output);
         }
-        StartOutcome::Created { .. } | StartOutcome::Restarted { .. } => {
+        StartOutcome::Created { onboarding, .. } => {
+            render_onboarding_steps(&app.output, &onboarding);
+        }
+        StartOutcome::Restarted { .. } => {
             print_success_message(&app.output);
         }
     }
@@ -87,6 +90,31 @@ fn print_success_message(ctx: &OutputContext) {
     ctx.blank();
     ctx.kv("Connect", "polis connect");
     ctx.kv("Status", "polis status");
+}
+fn render_onboarding_steps(
+    ctx: &OutputContext,
+    agent_steps: &[polis_common::agent::OnboardingStep],
+) {
+    if ctx.quiet {
+        return;
+    }
+
+    let default_steps = [
+        polis_common::agent::OnboardingStep {
+            title: "Set up SSH keys".into(),
+            command: "polis connect".into(),
+        },
+        polis_common::agent::OnboardingStep {
+            title: "Connect to workspace".into(),
+            command: "ssh workspace".into(),
+        },
+    ];
+
+    ctx.blank();
+    ctx.header("Getting started");
+    for (i, step) in default_steps.iter().chain(agent_steps.iter()).enumerate() {
+        ctx.info(&format!("{}. {}  {}", i + 1, step.title, step.command));
+    }
 }
 
 #[cfg(test)]

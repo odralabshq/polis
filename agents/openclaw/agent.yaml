@@ -73,4 +73,8 @@ spec:
     mcp: true
     dockerInDocker: false
 
+  onboarding:
+    - title: "Run the onboarding wizard"
+      command: "openclaw onboard"
+
   commands: commands.sh

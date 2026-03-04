@@ -61,6 +61,13 @@ impl AgentMetadata {
     }
 }
 
+/// A single getting-started instruction declared by an agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OnboardingStep {
+    pub title: String,
+    pub command: String,
+}
+
 /// Spec section of an agent manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSpec {
@@ -85,6 +92,8 @@ pub struct AgentSpec {
     pub capabilities: Option<AgentCapabilities>,
     #[serde(default)]
     pub commands: Option<String>,
+    #[serde(default)]
+    pub onboarding: Vec<OnboardingStep>,
 }
 
 /// Runtime configuration for an agent.
@@ -305,6 +314,15 @@ spec:
         assert!(manifest.metadata.capabilities.is_empty());
     }
 
+    #[test]
+    fn test_agent_spec_onboarding_absent_defaults_to_empty_vec() {
+        let manifest: AgentManifest = serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
+        assert!(
+            manifest.spec.onboarding.is_empty(),
+            "onboarding should default to empty vec when absent from YAML"
+        );
+    }
+
     // ── Parsing: error paths ─────────────────────────────────────────────────
 
     #[test]
@@ -477,6 +495,50 @@ spec:
             .metadata
             .effective_provider(manifest.spec.requirements.as_ref());
         assert_eq!(provider, "CustomCorp");
+    }
+
+    // ── Agent YAML file tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_openclaw_agent_yaml_has_onboarding_step() {
+        let yaml_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../agents/openclaw/agent.yaml");
+        let yaml = std::fs::read_to_string(&yaml_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", yaml_path.display()));
+        let manifest: AgentManifest =
+            serde_yaml::from_str(&yaml).expect("openclaw agent.yaml should parse");
+
+        assert_eq!(
+            manifest.spec.onboarding.len(),
+            1,
+            "openclaw should have exactly one onboarding step"
+        );
+        assert_eq!(
+            manifest.spec.onboarding[0].title,
+            "Run the onboarding wizard"
+        );
+        assert_eq!(manifest.spec.onboarding[0].command, "openclaw onboard");
+    }
+
+    #[test]
+    fn test_template_agent_yaml_contains_commented_out_onboarding() {
+        let yaml_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../agents/_template/agent.yaml");
+        let content = std::fs::read_to_string(&yaml_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", yaml_path.display()));
+
+        assert!(
+            content.contains("# onboarding:"),
+            "template agent.yaml should contain commented-out onboarding section"
+        );
+        assert!(
+            content.contains("#   - title:"),
+            "template agent.yaml should contain commented-out onboarding title"
+        );
+        assert!(
+            content.contains("#     command:"),
+            "template agent.yaml should contain commented-out onboarding command"
+        );
     }
 
     // ── Property tests ───────────────────────────────────────────────────────
