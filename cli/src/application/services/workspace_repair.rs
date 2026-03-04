@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 
 use crate::application::ports::{FileTransfer, InstanceInspector, ProgressReporter, ShellExecutor};
 use crate::application::services::vm::provision::{generate_certs_and_secrets, transfer_config};
+use crate::domain::workspace::COMPOSE_PATH;
 
 /// Repair the workspace.
 ///
@@ -187,15 +188,21 @@ async fn restart_compose_services(
 ) -> Result<()> {
     if certs_regenerated {
         reporter.step("Stopping services for clean restart...");
-        mp.exec(&["bash", "-c", "cd /opt/polis && docker compose down"])
+        mp.exec(&["docker", "compose", "-f", COMPOSE_PATH, "down"])
             .await
             .context("stopping services before restart")?;
     }
     reporter.step("Restarting services...");
     mp.exec(&[
-        "bash",
-        "-c",
-        "cd /opt/polis && docker compose --env-file .env up -d --remove-orphans",
+        "docker",
+        "compose",
+        "-f",
+        COMPOSE_PATH,
+        "--env-file",
+        "/opt/polis/.env",
+        "up",
+        "-d",
+        "--remove-orphans",
     ])
     .await
     .context("restarting compose services")?;

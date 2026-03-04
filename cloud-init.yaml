@@ -57,6 +57,7 @@ packages:
   - openssl
   - apparmor
   - apparmor-utils
+  - haveged
 
 # ── Config files (written before runcmd) ─────────────────────────────────────
 write_files:
@@ -106,12 +107,13 @@ write_files:
       After=network-online.target docker.service
       Wants=network-online.target
       Requires=docker.service
+      ConditionPathExists=/opt/polis/.ready
 
       [Service]
       Type=oneshot
       RemainAfterExit=yes
-      ExecStart=docker compose -f /opt/polis/docker-compose.yml up -d
-      ExecStop=docker compose -f /opt/polis/docker-compose.yml down
+      ExecStart=/bin/bash -c 'cd /opt/polis && if [ -f compose.active.yaml ]; then docker compose -f docker-compose.yml -f compose.active.yaml up -d --remove-orphans; else docker compose -f docker-compose.yml up -d --remove-orphans; fi'
+      ExecStop=/bin/bash -c 'cd /opt/polis && if [ -f compose.active.yaml ]; then docker compose -f docker-compose.yml -f compose.active.yaml down; else docker compose -f docker-compose.yml down; fi'
       Restart=on-failure
       User=ubuntu
       WorkingDirectory=/opt/polis

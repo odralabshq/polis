@@ -56,6 +56,51 @@ else
     echo "[openclaw-init] WebSocket auth patch already applied or gateway JS not found"
 fi
 
+# =============================================================================
+# Set up XDG_RUNTIME_DIR and DBUS session bus for polis user
+# =============================================================================
+# OpenClaw's doctor/gateway-restart commands use `systemctl --user` which needs
+# a D-Bus user session bus and XDG_RUNTIME_DIR. Without these, commands like
+# `openclaw gateway restart` fail with "DBUS_SESSION_BUS_ADDRESS not defined".
+POLIS_UID=$(id -u polis 2>/dev/null || echo 1000)
+RUNTIME_DIR="/run/user/${POLIS_UID}"
+mkdir -p "$RUNTIME_DIR"
+chown polis:polis "$RUNTIME_DIR"
+chmod 700 "$RUNTIME_DIR"
+
+# Install dbus if missing (needed for systemctl --user and openclaw doctor)
+if ! command -v dbus-daemon &>/dev/null; then
+    echo "[openclaw-init] Installing dbus for user session support..."
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y -qq dbus >/dev/null 2>&1 || true
+fi
+
+# Start a session bus for polis user if not already running
+if command -v dbus-daemon &>/dev/null && [[ ! -S "${RUNTIME_DIR}/bus" ]]; then
+    dbus-daemon --session \
+        --address="unix:path=${RUNTIME_DIR}/bus" \
+        --nofork --nopidfile \
+        --syslog 2>/dev/null &
+    disown
+    # Give it a moment to create the socket
+    sleep 0.5
+    chown polis:polis "${RUNTIME_DIR}/bus" 2>/dev/null || true
+    echo "[openclaw-init] Started D-Bus session bus at ${RUNTIME_DIR}/bus"
+fi
+
+# Allow polis user to manage the openclaw system service via sudo
+if command -v sudo &>/dev/null; then
+    mkdir -p /etc/sudoers.d 2>/dev/null || true
+    SUDOERS_FILE="/etc/sudoers.d/polis-openclaw"
+    if [[ ! -f "$SUDOERS_FILE" ]] && [[ -d /etc/sudoers.d ]]; then
+        cat > "$SUDOERS_FILE" << 'SUDOEOF'
+polis ALL=(root) NOPASSWD: /usr/bin/systemctl restart openclaw, /usr/bin/systemctl stop openclaw, /usr/bin/systemctl start openclaw, /usr/bin/systemctl status openclaw
+SUDOEOF
+        chmod 440 "$SUDOERS_FILE"
+        echo "[openclaw-init] Added sudoers rule for polis to manage openclaw service"
+    fi
+fi
+
 # Ensure directories exist with correct permissions
 mkdir -p "${CONFIG_DIR}/workspace" \
          "${CONFIG_DIR}/agents" \
@@ -106,19 +151,40 @@ get_container_env_early() {
 inject_polis_soul() {
     local ws_soul="${CONFIG_DIR}/workspace/SOUL.md"
     local marker="## Polis Security Workspace"
+    local bundled_soul="/usr/local/share/openclaw/SOUL.md"
     
     mkdir -p "${CONFIG_DIR}/workspace"
-    
-    # Skip if already injected with current shell-only section
-    if [[ -f "$ws_soul" ]] && grep -qF "## Security Tools" "$ws_soul" 2>/dev/null; then
-        echo "[openclaw-init] Polis security section already in workspace SOUL.md"
-        return 0
+
+    # Preserve baseline OpenClaw instructions.
+    # If SOUL.md is missing, seed it from the bundled file before appending Polis notes.
+    if [[ ! -f "$ws_soul" ]]; then
+        if [[ -f "$bundled_soul" ]]; then
+            cp "$bundled_soul" "$ws_soul"
+            chmod 644 "$ws_soul"
+            echo "[openclaw-init] Seeded workspace SOUL.md from bundled instructions"
+        else
+            cat > "$ws_soul" << 'SOULEOF'
+# OpenClaw Agent
+SOULEOF
+            chmod 644 "$ws_soul"
+            echo "[openclaw-init] Created workspace SOUL.md baseline"
+        fi
     fi
-    
-    # Remove old section (MCP or shell-only) if present — upgrade path
+
+    # Upgrade path: older versions could leave workspace SOUL with only the
+    # appended Polis section and no baseline instructions.
+    if [[ -f "$ws_soul" ]] && grep -qF "$marker" "$ws_soul" 2>/dev/null && grep -qE '^[[:space:]]*---[[:space:]]*$' "$ws_soul"; then
+        if [[ -f "$bundled_soul" ]] && ! grep -qF "# Polis Security Agent" "$ws_soul" 2>/dev/null; then
+            cp "$bundled_soul" "$ws_soul"
+            chmod 644 "$ws_soul"
+            echo "[openclaw-init] Restored workspace SOUL.md baseline (upgrade path)"
+        fi
+    fi
+
+    # Skip if already injected.
     if [[ -f "$ws_soul" ]] && grep -qF "$marker" "$ws_soul" 2>/dev/null; then
-        sed -i "/^---$/,\${ /^## Polis Security Workspace$/,\$d; /^---$/d }" "$ws_soul"
-        echo "[openclaw-init] Removed old security section, will re-inject"
+        echo "[openclaw-init] Polis security section already present in workspace SOUL.md"
+        return 0
     fi
     
     # Append polis security section (works whether file exists or not)
@@ -189,6 +255,12 @@ All commands output JSON. They communicate with the polis-toolbox service over H
 
 Periodically run `polis-list-pending` or `polis-security-status` to check for blocked requests you haven't handled yet.
 
+### Telegram and channel connectivity
+
+If a user asks to connect Telegram (or another channel), do not answer with "I can't connect to Telegram".
+You can manage channels from this workspace using OpenClaw CLI channel commands.
+Check channel status first, then provide or execute the exact setup command needed.
+
 **You cannot approve requests yourself.** Only a human can complete the approval by typing the OTT code back.
 POLIS_SOUL
     
@@ -215,6 +287,7 @@ IDEOF
 - **Role**: Workspace operator
 - **Environment**: Polis secure workspace (Linux container)
 - **Preferences**: Direct answers, run tools without asking permission for read-only operations
+- **Capabilities**: You can manage OpenClaw channels (including Telegram) via CLI commands available in this workspace
 USEREOF
     chmod 644 "${CONFIG_DIR}/workspace/USER.md"
 }
@@ -307,6 +380,7 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
     "dmScope": "per-peer"
   },
   "tools": {
+    "profile": "coding",
     "web": {
       "search": {}
     },
@@ -362,17 +436,31 @@ EAEOF
         done
         echo "[openclaw-init] Installed polis security CLI wrappers to ${POLIS_BIN_DIR}"
     fi
+
+    # Install openclaw CLI wrapper so `openclaw <cmd>` works from both
+    # `polis exec openclaw <cmd>` and SSH sessions via `polis connect`.
+    cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
+#!/bin/bash
+exec node /app/dist/index.js "$@"
+OCWRAPPER
+    chmod 755 "${POLIS_BIN_DIR}/openclaw"
+    echo "[openclaw-init] Installed openclaw CLI wrapper to ${POLIS_BIN_DIR}/openclaw"
     
 else
     echo "[openclaw-init] Already initialized, checking config..."
 
-    # Always ensure controlUi has dangerouslyAllowHostHeaderOriginFallback (needed for non-loopback bind).
+    # Always ensure controlUi settings for HTTP token access on non-loopback bind.
     # The gateway may rewrite config on startup, so unconditionally re-apply.
     if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
-        jq '.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
+        jq '.gateway.controlUi.enabled = true
+            | .gateway.controlUi.allowInsecureAuth = true
+            | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
+            | .gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true
+            | .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + ["http://localhost:18789", "http://127.0.0.1:18789"] | unique)
+            | .tools = ((.tools // {}) + {"profile":"coding"})' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
             && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
-        echo "[openclaw-init] Ensured controlUi: dangerouslyAllowHostHeaderOriginFallback=true"
+        echo "[openclaw-init] Ensured controlUi HTTP token settings, origin policy, and coding tool profile"
     fi
 
     # Ensure exec approvals stay at security=full (gateway may regenerate the file)
@@ -409,6 +497,13 @@ EAEOF
         done
         echo "[openclaw-init] Re-installed polis security CLI wrappers"
     fi
+
+    # Re-install openclaw CLI wrapper (lost on restart if home is tmpfs)
+    cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
+#!/bin/bash
+exec node /app/dist/index.js "$@"
+OCWRAPPER
+    chmod 755 "${POLIS_BIN_DIR}/openclaw"
 
     # Re-inject polis security section into workspace SOUL.md (idempotent)
     inject_polis_soul
@@ -498,6 +593,8 @@ OPENROUTER_API_KEY=${OPENROUTER_KEY}
 BRAVE_SEARCH_API_KEY=${BRAVE_KEY}
 HOME=/home/polis
 NODE_ENV=production
+XDG_RUNTIME_DIR=${RUNTIME_DIR}
+DBUS_SESSION_BUS_ADDRESS=unix:path=${RUNTIME_DIR}/bus
 ENVEOF
 chmod 600 "$ENV_FILE"
 
@@ -505,14 +602,17 @@ chmod 600 "$ENV_FILE"
 # OpenClaw stores API keys separately from environment variables
 AUTH_PROFILES_DIR="${CONFIG_DIR}/agents/default/agent"
 mkdir -p "$AUTH_PROFILES_DIR"
+DEFAULT_AUTH_FILE="${AUTH_PROFILES_DIR}/auth-profiles.json"
 
 # Build auth profiles JSON based on available keys
 AUTH_JSON="{"
 FIRST_KEY=true
+HAS_ENV_KEYS=false
 
 if [[ -n "$ANTHROPIC_KEY" ]]; then
     AUTH_JSON="${AUTH_JSON}\"anthropic\":{\"apiKey\":\"${ANTHROPIC_KEY}\"}"
     FIRST_KEY=false
+    HAS_ENV_KEYS=true
     echo "[openclaw-init] Added Anthropic API key to auth-profiles.json"
 fi
 
@@ -522,6 +622,7 @@ if [[ -n "$OPENAI_KEY" ]]; then
     fi
     AUTH_JSON="${AUTH_JSON}\"openai\":{\"apiKey\":\"${OPENAI_KEY}\"}"
     FIRST_KEY=false
+    HAS_ENV_KEYS=true
     echo "[openclaw-init] Added OpenAI API key to auth-profiles.json"
 fi
 
@@ -530,23 +631,28 @@ if [[ -n "$OPENROUTER_KEY" ]]; then
         AUTH_JSON="${AUTH_JSON},"
     fi
     AUTH_JSON="${AUTH_JSON}\"openrouter\":{\"apiKey\":\"${OPENROUTER_KEY}\"}"
+    HAS_ENV_KEYS=true
     echo "[openclaw-init] Added OpenRouter API key to auth-profiles.json"
 fi
 
 AUTH_JSON="${AUTH_JSON}}"
 
-echo "[openclaw-init] Writing auth-profiles.json: $AUTH_JSON"
-echo "$AUTH_JSON" > "${AUTH_PROFILES_DIR}/auth-profiles.json"
-chmod 600 "${AUTH_PROFILES_DIR}/auth-profiles.json"
-echo "[openclaw-init] auth-profiles.json written to ${AUTH_PROFILES_DIR}/auth-profiles.json"
-
-# Also create for main agent directory if it exists
-MAIN_AUTH_DIR="${CONFIG_DIR}/agents/main/agent"
-if [[ -d "${CONFIG_DIR}/agents/main" ]]; then
-    mkdir -p "$MAIN_AUTH_DIR"
-    echo "$AUTH_JSON" > "${MAIN_AUTH_DIR}/auth-profiles.json"
-    chmod 600 "${MAIN_AUTH_DIR}/auth-profiles.json"
+if [[ "$HAS_ENV_KEYS" == "true" || ! -f "$DEFAULT_AUTH_FILE" ]]; then
+    echo "[openclaw-init] Writing auth-profiles.json from environment"
+    echo "$AUTH_JSON" > "$DEFAULT_AUTH_FILE"
+    chmod 600 "$DEFAULT_AUTH_FILE"
+    echo "[openclaw-init] auth-profiles.json written to ${DEFAULT_AUTH_FILE}"
+else
+    echo "[openclaw-init] Keeping existing auth-profiles.json (no API keys in env)"
 fi
+
+# Keep main/default auth stores in sync.
+# Onboarding may write one side; this link ensures one API key entry is enough.
+MAIN_AUTH_DIR="${CONFIG_DIR}/agents/main/agent"
+mkdir -p "$MAIN_AUTH_DIR"
+MAIN_AUTH_FILE="${MAIN_AUTH_DIR}/auth-profiles.json"
+ln -sfn "$DEFAULT_AUTH_FILE" "$MAIN_AUTH_FILE"
+echo "[openclaw-init] auth-profiles.json linked: ${MAIN_AUTH_FILE} -> ${DEFAULT_AUTH_FILE}"
 
 # Normalize ownership/permissions.
 # This self-heals cases where root-owned files are left behind by prior admin commands.

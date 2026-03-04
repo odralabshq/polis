@@ -258,7 +258,9 @@ services:
       - /run/clamav:size=10M,mode=755,uid=65532,gid=65532
       - /var/lock:size=10M,mode=1777,uid=65532,gid=65532
     networks:
-      gateway-bridge: {}
+      gateway-bridge:
+        aliases:
+          - valkey
       internet: {}
     volumes:
       - scanner-db:/var/lib/clamav
@@ -321,7 +323,8 @@ services:
     networks:
       internal-bridge: {}
     env_file:
-      - .env
+      - path: .env
+        required: false
     tmpfs:
       - /run
       - /run/lock
@@ -472,7 +475,9 @@ services:
     entrypoint: []
     command: ["valkey-server", "/etc/valkey/valkey.conf"]
     networks:
-      gateway-bridge: {}
+      gateway-bridge:
+        aliases:
+          - valkey
     depends_on:
       state-init:
         condition: service_completed_successfully
@@ -547,13 +552,14 @@ services:
     environment:
       - RUST_LOG=info
       - polis_AGENT_LISTEN_ADDR=0.0.0.0:8080
-      - polis_AGENT_VALKEY_URL=rediss://state:6379
+      - polis_AGENT_VALKEY_URL=rediss://valkey:6379
       - polis_AGENT_VALKEY_USER=mcp-agent
       - polis_AGENT_VALKEY_PASS_FILE=/run/secrets/valkey_mcp_agent_password
       - polis_AGENT_TLS_CERT=/etc/toolbox/tls/toolbox.pem
       - polis_AGENT_TLS_KEY=/etc/toolbox/tls/toolbox.key
     secrets:
       - valkey_mcp_agent_password
+      - valkey_mcp_admin_password
     volumes:
       - ./certs/valkey:/etc/valkey/tls:ro
       - ./certs/toolbox:/etc/toolbox/tls:ro
@@ -582,26 +588,7 @@ services:
     labels:
       service: "polis-toolbox"
 
-  # =========================================================
-  # HTTPBIN (Test Profile — local HTTP target)
-  # =========================================================
-  httpbin:
-    image: mccutchen/go-httpbin
-    container_name: polis-httpbin
-    profiles: ["test"]
-    networks:
-      external-bridge:
-        ipv4_address: 10.20.1.100
-    read_only: true
-    cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-          cpus: "0.5"
-    restart: "no"
+
 
 networks:
   internal-bridge:

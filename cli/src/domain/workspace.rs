@@ -57,6 +57,14 @@ pub const CONTAINER_NAME: &str = "polis-workspace";
 /// Path to the polis project root inside the VM.
 pub const VM_ROOT: &str = "/opt/polis";
 
+/// Path to active compose overlay symlink inside VM.
+pub const ACTIVE_OVERLAY_PATH: &str = "/opt/polis/compose.active.yaml";
+
+/// Path to ready marker file inside VM.
+/// When present, `polis.service` is allowed to auto-start.
+/// CLI removes this before controlled restarts.
+pub const READY_MARKER_PATH: &str = "/opt/polis/.ready";
+
 /// Path to the guest query script inside the VM.
 /// Used by status and doctor services to gather system info via a single exec call,
 /// avoiding Multipass Windows pipe/buffer issues with piped commands.

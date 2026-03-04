@@ -6,14 +6,13 @@ use clap::Subcommand;
 use crate::app::AppContext;
 use crate::application::services::agent_crud;
 
-use super::DeleteArgs;
-
 /// Agent subcommands.
 #[derive(Subcommand)]
 pub enum AgentCommand {
     /// List available agents
     List,
     /// Create a new agent from an image
+    #[clap(hide = true)]
     Create {
         /// Agent name
         name: String,
@@ -21,7 +20,10 @@ pub enum AgentCommand {
         image: String,
     },
     /// Remove an agent
-    Delete(DeleteArgs),
+    Delete {
+        /// Name of the agent to remove
+        name: String,
+    },
 }
 
 /// Run an agent command.
@@ -33,7 +35,7 @@ pub async fn run(cmd: AgentCommand, app: &AppContext) -> Result<std::process::Ex
     match cmd {
         AgentCommand::List => list_agents(app).await,
         AgentCommand::Create { name, image } => create_agent(app, &name, &image),
-        AgentCommand::Delete(args) => Ok(delete_agent(app, &args)),
+        AgentCommand::Delete { name } => delete_agent(app, &name).await,
     }
 }
 
@@ -58,12 +60,17 @@ fn create_agent(app: &AppContext, name: &str, image: &str) -> Result<std::proces
 /// # Errors
 ///
 /// This function will return an error if the underlying operations fail.
-fn delete_agent(app: &AppContext, _args: &DeleteArgs) -> std::process::ExitCode {
-    let name = "todo"; // Implementation placeholder
+async fn delete_agent(app: &AppContext, name: &str) -> Result<std::process::ExitCode> {
     app.output.info(&format!("Deleting agent {name}..."));
-    // agent_crud::delete_agent(&app.provisioner, name).await?;
+    agent_crud::remove_agent(
+        &app.provisioner,
+        &app.state_mgr,
+        &app.terminal_reporter(),
+        name,
+    )
+    .await?;
     app.output.success(&format!("Agent {name} deleted"));
-    std::process::ExitCode::SUCCESS
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

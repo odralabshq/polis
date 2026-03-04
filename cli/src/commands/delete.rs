@@ -12,8 +12,6 @@ use crate::commands::DeleteArgs;
 ///
 /// This function will return an error if the underlying operations fail.
 pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::ExitCode> {
-    let quiet = app.output.quiet;
-
     let confirmed = if args.all {
         confirm_delete_all(args, app)?
     } else {
@@ -30,24 +28,11 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
         return Ok(std::process::ExitCode::FAILURE);
     }
 
-    if !quiet {
-        app.output.info("\nStart fresh: polis start");
-    }
-
     Ok(std::process::ExitCode::SUCCESS)
 }
 
 fn confirm_delete_all(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
-    if !app.output.quiet {
-        app.output.info("");
-        app.output.info("This will permanently remove:");
-        app.output.info("  • Your workspace");
-        app.output.info("  • Generated certificates");
-        app.output.info("  • Configuration");
-        app.output.info("  • Cached workspace image (~3.5 GB)");
-        app.output.info("");
-    }
-    Ok(args.yes || app.confirm("Continue?", false)?)
+    Ok(args.yes || app.confirm("Remove all data?", false)?)
 }
 
 fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool> {

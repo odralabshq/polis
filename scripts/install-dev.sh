@@ -49,6 +49,23 @@ log_ok()   { echo -e "${GREEN}[OK]${NC} $*"; return 0; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
 log_error(){ echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
+confirm_destructive_reinstall() {
+    echo ""
+    echo -e "${RED}WARNING: Continuing will delete the existing 'polis' VM and remove previous workspace data.${NC}"
+    if [[ "${POLIS_INSTALL_ASSUME_Y:-}" == "1" || "${CI:-}" == "true" || ! -t 0 ]]; then
+        log_info "Non-interactive mode detected — proceeding automatically."
+        return 0
+    fi
+    read -r -p "Proceed with clean reinstall? (y/n) " reply
+    case "${reply,,}" in
+        y|yes) ;;
+        *)
+            log_warn "Installation cancelled by user."
+            exit 1
+            ;;
+    esac
+}
+
 check_multipass() {
     if ! command -v multipass &>/dev/null; then
         log_error "Multipass is required but not installed."
@@ -112,7 +129,7 @@ run_init() {
     log_info "Creating VM with cloud-init..."
     multipass launch 24.04 \
         --name polis \
-        --cpus 2 \
+        --cpus 4 \
         --memory 8G \
         --disk 40G \
         --cloud-init "${cloud_init}" \
@@ -141,6 +158,27 @@ run_init() {
     }
     multipass exec polis -- rm -f /tmp/polis-setup.config.tar
 
+    # Overlay repo's docker-compose.yml (may be newer than tarball)
+    multipass transfer "${REPO_DIR}/docker-compose.yml" polis:/opt/polis/docker-compose.yml || {
+        log_error "Failed to overlay docker-compose.yml"
+        return 1
+    }
+
+    # Overlay repo's agents/ directory (may be newer than tarball)
+    multipass exec polis -- rm -rf /opt/polis/agents
+    multipass transfer --recursive "${REPO_DIR}/agents" polis:/opt/polis/ || {
+        log_error "Failed to overlay agents directory"
+        return 1
+    }
+
+    # Overlay repo's scripts/ directory (may be newer than tarball)
+    # Includes polis-query.sh needed by `polis status`.
+    multipass exec polis -- rm -rf /opt/polis/scripts
+    multipass transfer --recursive "${REPO_DIR}/scripts" polis:/opt/polis/ || {
+        log_error "Failed to overlay scripts directory"
+        return 1
+    }
+
     # Write .env with version
     local cli_version
     cli_version=$("${INSTALL_DIR}/bin/polis" --version 2>&1 | awk '{print $2}')
@@ -158,9 +196,10 @@ POLIS_STATE_VERSION=${tag}
 POLIS_TOOLBOX_VERSION=${tag}
 ENVEOF"
 
-    # Fix script permissions and strip Windows CRLF line endings
+    # Fix script permissions and strip Windows CRLF line endings from all text config files
     multipass exec polis -- find /opt/polis -name '*.sh' -exec chmod +x {} +
-    multipass exec polis -- find /opt/polis -name '*.sh' -exec sed -i 's/\r//' {} +
+    multipass exec polis -- find /opt/polis -type f \( -name '*.sh' -o -name '*.yaml' -o -name '*.yml' \
+        -o -name '*.env' -o -name '*.service' -o -name '*.toml' -o -name '*.conf' \) -exec sed -i 's/\r$//' {} +
     log_ok "Config transferred"
 
     # ── Step 3: Load Docker images ────────────────────────────────────────
@@ -197,7 +236,11 @@ ENVEOF"
     multipass exec polis -- sudo bash -c '/opt/polis/scripts/fix-cert-ownership.sh /opt/polis'
     log_ok "Certificates and secrets ready"
 
-    # ── Step 5: Start services ────────────────────────────────────────────
+    # ── Step 5: Create .ready marker and start services ─────────────────
+    # The .ready marker gates polis.service (systemd ConditionPathExists).
+    # Without it, `polis stop` + `polis start` would fail to restart via systemd.
+    multipass exec polis -- touch /opt/polis/.ready
+
     log_info "Starting services..."
     multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans' || {
         log_error "Failed to start services"
@@ -257,6 +300,7 @@ if timeout 30 multipass list --format csv 2>/dev/null | grep -q '^polis,'; then
 fi
 
 if ${vm_found}; then
+    confirm_destructive_reinstall
     log_info "Existing polis VM found — deleting for clean reinstall..."
     multipass delete polis --purge 2>/dev/null
     log_ok "VM deleted"
@@ -271,8 +315,9 @@ echo ""
 echo "NEXT STEPS:"
 echo "1. Verify status:"
 echo "   polis status"
-echo "2. Start an AI agent (e.g., OpenClaw):"
-echo "   polis start --agent openclaw -e ANTHROPIC_API_KEY=<your_key>"
+echo "2. Start an AI agent (pass your provider API key directly):"
+echo "   polis start --agent openclaw -e OPENAI_API_KEY=sk-..."
+echo "   Note: agent initialization may take several minutes depending on the selected agent."
 echo "3. Connect to the dashboard:"
 echo "   polis connect"
 echo ""

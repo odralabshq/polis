@@ -4,6 +4,12 @@ use polis_common::{AutoApproveAction, SecurityLevel};
 use redis::AsyncCommands;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Default paths for Valkey TLS certificates inside the toolbox container.
+/// These match the volume mount `./certs/valkey:/etc/valkey/tls:ro` in docker-compose.yml.
+const DEFAULT_TLS_CA: &str = "/etc/valkey/tls/ca.crt";
+const DEFAULT_TLS_CERT: &str = "/etc/valkey/tls/client.crt";
+const DEFAULT_TLS_KEY: &str = "/etc/valkey/tls/client.key";
+
 /// polis HITL approval CLI tool.
 ///
 /// Manages blocked-request approvals, security levels, and auto-approve
@@ -12,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[command(name = "polis-approve", version, about)]
 struct Cli {
     /// Valkey URL (must use rediss:// for TLS)
-    #[arg(long, default_value = "rediss://state:6379")]
+    #[arg(long, default_value = "rediss://valkey:6379")]
     valkey_url: String,
 
     /// Valkey ACL username
@@ -23,6 +29,18 @@ struct Cli {
     /// Never passed as a CLI argument.
     #[arg(skip)]
     valkey_pass: String,
+
+    /// Path to the CA certificate (PEM) for Valkey TLS verification
+    #[arg(long, default_value = DEFAULT_TLS_CA)]
+    tls_ca: String,
+
+    /// Path to the client certificate (PEM) for Valkey mTLS
+    #[arg(long, default_value = DEFAULT_TLS_CERT)]
+    tls_cert: String,
+
+    /// Path to the client private key (PEM) for Valkey mTLS
+    #[arg(long, default_value = DEFAULT_TLS_KEY)]
+    tls_key: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -210,8 +228,11 @@ async fn main() -> Result<()> {
     // Uses rediss:// (TLS) per requirement 5.6.
     let conn_url = build_connection_url(&cli.valkey_url, &cli.valkey_user, &cli.valkey_pass)?;
 
-    let client =
-        redis::Client::open(conn_url.as_str()).context("failed to create Valkey client")?;
+    // Load TLS certificates for mTLS authentication with Valkey.
+    let tls_certs = load_tls_certificates(&cli.tls_ca, &cli.tls_cert, &cli.tls_key)?;
+
+    let client = redis::Client::build_with_tls(conn_url.as_str(), tls_certs)
+        .context("failed to create Valkey client with mTLS")?;
 
     let mut con = client
         .get_multiplexed_async_connection()
@@ -247,6 +268,32 @@ async fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Load TLS certificates for mTLS authentication with Valkey.
+///
+/// Reads the CA certificate, client certificate, and client private key from
+/// PEM files and returns a [`redis::TlsCertificates`] suitable for
+/// [`redis::Client::build_with_tls`].
+fn load_tls_certificates(
+    ca_path: &str,
+    cert_path: &str,
+    key_path: &str,
+) -> Result<redis::TlsCertificates> {
+    let root_cert =
+        std::fs::read(ca_path).with_context(|| format!("failed to read CA cert: {ca_path}"))?;
+    let client_cert = std::fs::read(cert_path)
+        .with_context(|| format!("failed to read client cert: {cert_path}"))?;
+    let client_key = std::fs::read(key_path)
+        .with_context(|| format!("failed to read client key: {key_path}"))?;
+
+    Ok(redis::TlsCertificates {
+        client_tls: Some(redis::ClientTlsConfig {
+            client_cert,
+            client_key,
+        }),
+        root_cert: Some(root_cert),
+    })
 }
 
 /// Build a Valkey connection URL with ACL credentials embedded.

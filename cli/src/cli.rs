@@ -14,7 +14,8 @@ use crate::commands;
     version,
     propagate_version = true,
     subcommand_required = true,
-    arg_required_else_help = true
+    arg_required_else_help = true,
+    disable_help_subcommand = true
 )]
 #[allow(clippy::struct_excessive_bools)] // Clap CLI struct — bools map to flags, not state
 pub struct Cli {
@@ -79,6 +80,10 @@ pub enum Command {
     #[command(subcommand)]
     Agent(commands::agent::AgentCommand),
 
+    /// Manage security policy, blocked requests, and domain rules
+    #[command(subcommand)]
+    Security(commands::security::SecurityCommand),
+
     /// Show version
     Version,
 
@@ -134,6 +139,7 @@ impl Cli {
             Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,
             Command::Version => commands::version::run(&app)?,
             Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
+            Command::Security(cmd) => commands::security::run(cmd, &app, &app.provisioner).await?,
 
             // --- Internal commands ---
             #[allow(clippy::large_futures)]

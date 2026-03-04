@@ -343,7 +343,20 @@ pub trait ConfigStore {
     fn path(&self) -> Result<std::path::PathBuf>;
 }
 
-// ── SSH Configuration Port ────────────────────────────────────────────────────
+// ── Host Key Extraction Port ──────────────────────────────────────────────────
+
+/// Abstracts extraction of the workspace SSH host key.
+///
+/// Decouples the application layer from the concrete subprocess invocation
+/// (`polis _extract-host-key`) used in production.
+#[allow(async_fn_in_trait)]
+pub trait HostKeyExtractor {
+    /// Extract the workspace SSH host key.
+    ///
+    /// Returns the host key string on success, or `None` if extraction fails
+    /// (best-effort — callers should not treat failure as fatal).
+    async fn extract_host_key(&self) -> Option<String>;
+}
 
 /// Abstracts SSH environment management for VM access.
 #[allow(async_fn_in_trait)]

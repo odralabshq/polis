@@ -44,7 +44,9 @@ $tarDest = ".build\assets\polis-setup.config.tar"
 # Collect paths to include (only those that exist)
 $includes = @(
     "docker-compose.yml",
-    "scripts",
+    "scripts/generate-ca.sh",
+    "scripts/fix-cert-ownership.sh",
+    "scripts/polis-query.sh",
     "agents"
 )
 

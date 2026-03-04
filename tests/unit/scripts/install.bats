@@ -24,11 +24,10 @@ _run_script() {
     bash -c '
         INSTALL_SH="$1"; shift
         source <(sed "\$d" "$INSTALL_SH")
+        confirm_installer_proceed() { :; }
         check_multipass()     { log_ok "Multipass stub OK"; }
-        resolve_version()     { log_info "Installing Polis ${VERSION}"; }
+        detect_version()      { VERSION="${POLIS_VERSION#v}"; }
         download_cli()        { mkdir -p "${INSTALL_DIR}/bin"; printf "#!/bin/bash\necho \"polis \$*\"\n" > "${INSTALL_DIR}/bin/polis"; chmod +x "${INSTALL_DIR}/bin/polis"; }
-        download_image()      { echo "/tmp/fake.qcow2"; }
-        verify_attestation()  { :; }
         create_symlink()      { :; }
         multipass()           { return 1; }  # stub: no existing VM
         main

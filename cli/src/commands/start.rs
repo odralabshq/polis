@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use crate::app::AppContext;
 use crate::application::services::workspace_start::{self as service, StartOutcome};
 use crate::output::OutputContext;
+use owo_colors::OwoColorize as _;
 
 /// Arguments for the start command.
 #[derive(Args, Default)]
@@ -28,6 +29,12 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     let (assets_dir, _assets_guard) = app.assets_dir().context("extracting assets")?;
     let version = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
+    if args.agent.is_some() {
+        app.output
+            .info("Starting workspace. Agent initialization may take several minutes depending on the selected agent.");
+    } else {
+        app.output.info("Starting workspace.");
+    }
 
     let opts = crate::application::services::workspace_start::StartOptions {
         reporter: &reporter,
@@ -48,11 +55,11 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     .await?;
 
     match outcome {
-        StartOutcome::AlreadyRunning { agent } => {
+        StartOutcome::AlreadyRunning { agent, .. } => {
             print_already_running_message(agent.as_deref(), &app.output);
         }
-        StartOutcome::Created { .. } | StartOutcome::Restarted { .. } => {
-            print_success_message(&app.output);
+        StartOutcome::Created { onboarding, .. } | StartOutcome::Restarted { onboarding, .. } => {
+            render_onboarding_steps(&app.output, &onboarding);
         }
     }
 
@@ -74,13 +81,31 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
     ctx.kv("Status", "polis status");
 }
 
-fn print_success_message(ctx: &OutputContext) {
+fn render_onboarding_steps(
+    ctx: &OutputContext,
+    agent_steps: &[polis_common::agent::OnboardingStep],
+) {
     if ctx.quiet {
         return;
     }
+
+    let default_steps = [
+        polis_common::agent::OnboardingStep {
+            title: "Set up SSH keys".into(),
+            command: "polis connect".into(),
+        },
+        polis_common::agent::OnboardingStep {
+            title: "Connect to workspace".into(),
+            command: "ssh workspace".into(),
+        },
+    ];
+
     ctx.blank();
-    ctx.kv("Connect", "polis connect");
-    ctx.kv("Status", "polis status");
+    ctx.header("Getting started");
+    for (i, step) in default_steps.iter().chain(agent_steps.iter()).enumerate() {
+        let cmd = step.command.style(ctx.styles.bold);
+        ctx.info(&format!("{}. {}  {}", i + 1, step.title, cmd));
+    }
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ use crate::application::ports::CommandRunner;
 pub const DEFAULT_CMD_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default timeout for `multipass exec` commands (runs inside VM, may be slower).
-pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(960);
 
 /// On Windows, ensure the Multipass default install directory is on PATH
 /// so the CLI can find it even before the user adds it to their system PATH.
@@ -23,10 +23,10 @@ pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 fn ensure_multipass_on_path(cmd: &mut tokio::process::Command, program: &str) {
     if program == "multipass" {
         let default_path = "C:\\Program Files\\Multipass\\bin";
-        if let Ok(current_path) = std::env::var("PATH") {
-            if !current_path.contains(default_path) {
-                cmd.env("PATH", format!("{};{}", current_path, default_path));
-            }
+        if let Ok(current_path) = std::env::var("PATH")
+            && !current_path.contains(default_path)
+        {
+            cmd.env("PATH", format!("{current_path};{default_path}"));
         }
     }
 }
@@ -99,6 +99,7 @@ impl CommandRunner for TokioCommandRunner {
     ) -> Result<Output> {
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -183,9 +184,16 @@ impl CommandRunner for TokioCommandRunner {
     ///
     /// This function will return an error if the underlying operations fail.
     async fn run_status(&self, program: &str, args: &[&str]) -> Result<std::process::ExitStatus> {
-        let mut child = tokio::process::Command::new(program)
-            .args(args)
-            .kill_on_drop(true)
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(args)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true);
+
+        #[cfg(windows)]
+        ensure_multipass_on_path(&mut cmd, program);
+
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("failed to spawn {program}"))?;
 

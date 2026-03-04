@@ -198,6 +198,11 @@ pub async fn remove_agent(
             "Failed to stop stack: {}",
             String::from_utf8_lossy(&down.stderr)
         );
+
+        // Clear overlay symlink so systemd doesn't reference a removed agent.
+        let _ = provisioner
+            .exec(&["rm", "-f", crate::domain::workspace::ACTIVE_OVERLAY_PATH])
+            .await;
     }
 
     reporter.step(&format!("removing '{agent_name}'..."));

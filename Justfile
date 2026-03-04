@@ -77,8 +77,8 @@ lint-rust:
 	cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
 lint-c:
-	find services/sentinel/modules -name '*.c' -print0 | \
-	  xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
+	cppcheck --enable=warning,performance --error-exitcode=1 \
+	  --file-filter='*.c' services/sentinel/modules
 
 lint-shell:
 	shellcheck tools/dev-vm.sh tools/blocked.sh scripts/install.sh
@@ -148,7 +148,9 @@ prepare-config:
 	# Build config tarball (sudo needed to read keys owned by container uid 65532)
 	sudo tar cf .build/assets/polis-setup.config.tar \
 		docker-compose.yml \
-		scripts/ \
+		scripts/generate-ca.sh \
+		scripts/fix-cert-ownership.sh \
+		scripts/polis-query.sh \
 		agents/ \
 		services/*/config/ \
 		services/*/scripts/ \

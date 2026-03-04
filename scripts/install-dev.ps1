@@ -19,6 +19,26 @@ function Write-Ok   { param($msg) Write-Host "[OK]    $msg" -ForegroundColor Gre
 function Write-Warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
+function Show-WindowsNetworkingNote {
+    Write-Warn "Windows networking note for Multipass:"
+    Write-Host "  - Use a Private network profile on your active adapter."
+    Write-Host "  - Turn off VPN during VM creation/startup if networking is unstable."
+}
+
+function Confirm-DestructiveReinstall {
+    Write-Host ""
+    Write-Host "WARNING: Continuing will delete the existing 'polis' VM and remove previous workspace data." -ForegroundColor Red
+    if ($env:POLIS_INSTALL_ASSUME_Y -eq "1" -or $env:CI -eq "true" -or $env:GITHUB_ACTIONS -eq "true" -or -not [Environment]::UserInteractive) {
+        Write-Host "[INFO] Non-interactive mode detected — proceeding automatically."
+        return
+    }
+    $reply = (Read-Host "Proceed with clean reinstall? (y/n)").Trim().ToLowerInvariant()
+    if ($reply -notin @("y", "yes")) {
+        Write-Warn "Installation cancelled by user."
+        exit 1
+    }
+}
+
 function Write-Logo {
     $esc = [char]27
     # Purple → teal gradient, one color per column (matches install-dev.sh)
@@ -129,7 +149,7 @@ function Invoke-PolisInit {
     Write-Info "Creating VM with cloud-init..."
     & multipass launch 24.04 `
         --name polis `
-        --cpus 2 `
+        --cpus 4 `
         --memory 8G `
         --disk 40G `
         --cloud-init $cloudInit `
@@ -164,6 +184,14 @@ function Invoke-PolisInit {
     if ($LASTEXITCODE -ne 0) { Write-Err "Failed to remove stale agents directory"; exit 1 }
     & multipass transfer --recursive $agentsDir polis:/opt/polis/
     if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay agents directory"; exit 1 }
+
+    # Overlay repo's scripts/ directory (may be newer than tarball)
+    # Includes polis-query.sh needed by `polis status`.
+    $scriptsDir = Join-Path $RepoDir "scripts"
+    & multipass exec polis -- rm -rf /opt/polis/scripts
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to remove stale scripts directory"; exit 1 }
+    & multipass transfer --recursive $scriptsDir polis:/opt/polis/
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to overlay scripts directory"; exit 1 }
 
     # Write .env with version
     $cliVersion = (& $polis --version 2>&1) -replace '^polis\s+', ''
@@ -215,7 +243,11 @@ function Invoke-PolisInit {
     & multipass exec polis -- sudo bash -c '/opt/polis/scripts/fix-cert-ownership.sh /opt/polis'
     Write-Ok "Certificates and secrets ready"
 
-    # ── Step 5: Start services ────────────────────────────────────────────
+    # ── Step 5: Create .ready marker and start services ─────────────────
+    # The .ready marker gates polis.service (systemd ConditionPathExists).
+    # Without it, `polis stop` + `polis start` would fail to restart via systemd.
+    & multipass exec polis -- touch /opt/polis/.ready
+
     Write-Info "Starting services..."
     & multipass exec polis -- bash -c 'cd /opt/polis && docker compose --env-file .env up -d --remove-orphans'
     if ($LASTEXITCODE -ne 0) { Write-Err "Failed to start services"; exit 1 }
@@ -258,6 +290,7 @@ Write-Host ""
 Assert-Multipass
 Install-Cli
 Add-ToUserPath
+Show-WindowsNetworkingNote
 
 # Remove existing VM for a clean reinstall
 Write-Info "Checking for existing polis VM..."
@@ -272,6 +305,7 @@ if (Wait-Job $listJob -Timeout 30) {
 Remove-Job $listJob -Force
 
 if ($vmList) {
+    Confirm-DestructiveReinstall
     Write-Info "Existing polis VM found — deleting for clean reinstall..."
     & multipass delete polis --purge 2>$null
     Write-Ok "VM deleted"
@@ -286,8 +320,9 @@ Write-Host ""
 Write-Host "NEXT STEPS:" -ForegroundColor Yellow
 Write-Host "1. Verify status:" -ForegroundColor Gray
 Write-Host "   polis status"
-Write-Host "2. Start an AI agent (e.g., OpenClaw):" -ForegroundColor Gray
-Write-Host "   polis start --agent openclaw -e ANTHROPIC_API_KEY=<your_key>"
+Write-Host "2. Start an AI agent (pass your provider API key directly):" -ForegroundColor Gray
+Write-Host "   polis start --agent openclaw -e OPENAI_API_KEY=sk-..."
+Write-Host "   Note: agent initialization may take several minutes depending on the selected agent."
 Write-Host "3. Connect to the dashboard:" -ForegroundColor Gray
 Write-Host "   polis connect"
 Write-Host ""

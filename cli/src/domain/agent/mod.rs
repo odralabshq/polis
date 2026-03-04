@@ -21,3 +21,12 @@ pub struct AgentInfo {
     pub description: Option<String>,
     pub active: bool,
 }
+
+/// Returns the path to an agent's compose overlay file inside the VM.
+#[must_use]
+pub fn overlay_path(agent_name: &str) -> String {
+    format!(
+        "{}/agents/{agent_name}/.generated/compose.agent.yaml",
+        super::workspace::VM_ROOT
+    )
+}

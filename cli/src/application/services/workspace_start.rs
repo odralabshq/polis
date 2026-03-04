@@ -16,8 +16,8 @@ pub struct StartOptions<'a, R: crate::application::ports::ProgressReporter> {
 use chrono::Utc;
 
 use crate::application::ports::{
-    AssetExtractor, FileHasher, LocalFs, ProgressReporter, SshConfigurator, VmProvisioner,
-    WorkspaceStateStore,
+    AssetExtractor, FileHasher, HostKeyExtractor, LocalFs, ProgressReporter, ShellExecutor,
+    SshConfigurator, VmProvisioner, WorkspaceStateStore,
 };
 use crate::application::services::vm::{
     health::wait_ready,
@@ -26,18 +26,27 @@ use crate::application::services::vm::{
     provision::{generate_certs_and_secrets, transfer_config},
     services::pull_images,
 };
+use crate::domain::workspace::{ACTIVE_OVERLAY_PATH, READY_MARKER_PATH};
 use crate::domain::workspace::{VM_ROOT, WorkspaceState};
 
 /// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
-#[allow(dead_code)] // Public API — not yet called from commands/start.rs
 pub enum StartOutcome {
     /// Workspace was already running with the same agent config.
-    AlreadyRunning { agent: Option<String> },
+    AlreadyRunning {
+        agent: Option<String>,
+        onboarding: Vec<polis_common::agent::OnboardingStep>,
+    },
     /// Workspace was freshly created and started.
-    Created { agent: Option<String> },
+    Created {
+        agent: Option<String>,
+        onboarding: Vec<polis_common::agent::OnboardingStep>,
+    },
     /// A stopped workspace was restarted.
-    Restarted { agent: Option<String> },
+    Restarted {
+        agent: Option<String>,
+        onboarding: Vec<polis_common::agent::OnboardingStep>,
+    },
 }
 
 /// Start the workspace, creating it if needed.
@@ -53,7 +62,7 @@ pub async fn start_workspace(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
     assets: &impl AssetExtractor,
-    ssh: &impl SshConfigurator,
+    ssh: &(impl SshConfigurator + HostKeyExtractor),
     hasher: &impl FileHasher,
     local_fs: &impl LocalFs,
     opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
@@ -75,7 +84,7 @@ pub async fn start_workspace(
             handle_running_vm(provisioner, state_mgr, local_fs, reporter, agent, envs).await
         }
         VmState::NotFound => {
-            create_and_start_vm(
+            let onboarding = create_and_start_vm(
                 provisioner,
                 state_mgr,
                 assets,
@@ -93,10 +102,11 @@ pub async fn start_workspace(
             .await?;
             Ok(StartOutcome::Created {
                 agent: agent.map(str::to_owned),
+                onboarding,
             })
         }
         _ => {
-            restart_vm(
+            let onboarding = restart_vm(
                 provisioner,
                 state_mgr,
                 assets,
@@ -114,6 +124,7 @@ pub async fn start_workspace(
             wait_ready(provisioner, reporter, false, &msg).await?;
             Ok(StartOutcome::Restarted {
                 agent: agent.map(str::to_owned),
+                onboarding,
             })
         }
     }
@@ -136,6 +147,7 @@ async fn handle_running_vm(
     if current_agent.as_deref() == agent {
         return Ok(StartOutcome::AlreadyRunning {
             agent: agent.map(str::to_owned),
+            onboarding: vec![],
         });
     }
 
@@ -144,7 +156,11 @@ async fn handle_running_vm(
         && let Some(name) = agent
     {
         reporter.begin_stage(&format!("installing agent '{name}'..."));
-        setup_agent(provisioner, local_fs, name, &envs).await?;
+        let onboarding = setup_agent(provisioner, local_fs, name, &envs).await?;
+
+        // Update symlink for future reboots, then start via compose directly.
+        let overlay = crate::domain::agent::overlay_path(name);
+        set_active_overlay(provisioner, Some(&overlay)).await?;
         start_compose(provisioner, Some(name)).await?;
 
         // Persist state before health wait so the CLI tracks the agent
@@ -166,6 +182,7 @@ async fn handle_running_vm(
 
         return Ok(StartOutcome::Restarted {
             agent: Some(name.to_owned()),
+            onboarding,
         });
     }
 
@@ -183,11 +200,11 @@ async fn create_and_start_vm(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
     assets: &impl AssetExtractor,
-    ssh: &impl SshConfigurator,
+    ssh: &(impl SshConfigurator + HostKeyExtractor),
     hasher: &impl FileHasher,
     local_fs: &impl LocalFs,
     opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
-) -> Result<()> {
+) -> Result<Vec<polis_common::agent::OnboardingStep>> {
     let reporter = opts.reporter;
     let StartOptions {
         agent,
@@ -205,7 +222,7 @@ async fn create_and_start_vm(
     reporter.begin_stage("preparing workspace...");
 
     // Step 2: Launch VM with cloud-init.
-    vm::create(provisioner, assets, ssh, reporter, true).await?;
+    vm::create(provisioner, assets, ssh, local_fs, ssh, reporter, true).await?;
 
     // Step 3: Transfer config tarball.
     reporter.begin_stage("securing workspace...");
@@ -230,13 +247,21 @@ async fn create_and_start_vm(
         .context("verifying image digests")?;
 
     // Step 7: Set up agent if requested.
-    if let Some(name) = agent {
+    let (overlay, onboarding) = if let Some(name) = agent {
         reporter.begin_stage(&format!("installing agent '{name}'..."));
-        setup_agent(provisioner, local_fs, name, &envs).await?;
-    }
+        let steps = setup_agent(provisioner, local_fs, name, &envs).await?;
+        (Some(crate::domain::agent::overlay_path(name)), steps)
+    } else {
+        (None, vec![])
+    };
 
-    // Step 8: Start docker compose.
-    start_compose(provisioner, agent).await?;
+    // Step 8: Set active overlay symlink and start via systemd.
+    set_active_overlay(provisioner, overlay.as_deref()).await?;
+    set_ready_marker(provisioner, true).await?;
+    provisioner
+        .exec(&["sudo", "systemctl", "start", "polis"])
+        .await
+        .context("starting polis service")?;
 
     // Step 9: Wait for health.
     let msg = agent.map_or_else(
@@ -257,7 +282,9 @@ async fn create_and_start_vm(
         image_source: None,
         active_agent: agent.map(str::to_owned),
     };
-    state_mgr.save_async(&state).await
+    state_mgr.save_async(&state).await?;
+
+    Ok(onboarding)
 }
 
 /// Restart a stopped VM.
@@ -271,14 +298,35 @@ async fn restart_vm(
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     envs: Vec<String>,
-) -> Result<()> {
-    vm::restart(provisioner, reporter, false).await?;
+) -> Result<Vec<polis_common::agent::OnboardingStep>> {
+    // Start the VM (systemd polis.service is gated by .ready which was cleared).
+    reporter.begin_stage("starting workspace...");
+    vm::start(provisioner).await?;
+    reporter.complete_stage();
 
-    if let Some(name) = agent {
+    // Pull images BEFORE starting services.
+    reporter.begin_stage("verifying components...");
+    pull_images(provisioner, reporter)
+        .await
+        .context("pulling Docker images")?;
+
+    let (overlay, onboarding) = if let Some(name) = agent {
         reporter.begin_stage(&format!("installing agent '{name}'..."));
-        setup_agent(provisioner, local_fs, name, &envs).await?;
-        start_compose(provisioner, agent).await?;
-    }
+        let steps = setup_agent(provisioner, local_fs, name, &envs).await?;
+        (Some(crate::domain::agent::overlay_path(name)), steps)
+    } else {
+        (None, vec![])
+    };
+
+    // Set overlay symlink, then gate-open and start services.
+    set_active_overlay(provisioner, overlay.as_deref()).await?;
+    set_ready_marker(provisioner, true).await?;
+    reporter.begin_stage("starting services...");
+    provisioner
+        .exec(&["sudo", "systemctl", "start", "polis"])
+        .await
+        .context("starting polis service")?;
+    reporter.complete_stage();
 
     let mut state = state_mgr
         .load_async()
@@ -290,7 +338,9 @@ async fn restart_vm(
             active_agent: None,
         });
     state.active_agent = agent.map(str::to_owned);
-    state_mgr.save_async(&state).await
+    state_mgr.save_async(&state).await?;
+
+    Ok(onboarding)
 }
 
 /// Validate and generate artifacts for an agent.
@@ -303,7 +353,7 @@ async fn setup_agent<P: VmProvisioner>(
     local_fs: &impl LocalFs,
     agent_name: &str,
     envs: &[String],
-) -> Result<()> {
+) -> Result<Vec<polis_common::agent::OnboardingStep>> {
     // Verify agent manifest exists in the VM.
     let manifest_path = format!("{VM_ROOT}/agents/{agent_name}/agent.yaml");
     let check = provisioner
@@ -347,6 +397,8 @@ async fn setup_agent<P: VmProvisioner>(
         serde_yaml::from_slice(&stdout_bytes).context("parsing agent.yaml from VM")?;
     crate::domain::agent::validate::validate_full_manifest(&manifest)?;
 
+    let onboarding = manifest.spec.onboarding.clone();
+
     let generated_dir = tmp_path.join("agents").join(&name).join(".generated");
 
     // Write environment variables to the agent's .env file, forcing LF line endings.
@@ -388,13 +440,58 @@ async fn setup_agent<P: VmProvisioner>(
         String::from_utf8_lossy(&transfer_out.stderr)
     );
 
+    Ok(onboarding)
+}
+
+/// Set or remove the active compose overlay symlink.
+async fn set_active_overlay(
+    provisioner: &impl ShellExecutor,
+    overlay_path: Option<&str>,
+) -> Result<()> {
+    match overlay_path {
+        Some(path) => {
+            provisioner
+                .exec(&["ln", "-sf", path, ACTIVE_OVERLAY_PATH])
+                .await
+                .context("creating overlay symlink")?;
+        }
+        None => {
+            provisioner
+                .exec(&["rm", "-f", ACTIVE_OVERLAY_PATH])
+                .await
+                .context("removing overlay symlink")?;
+        }
+    }
+    Ok(())
+}
+
+/// Set or clear the ready marker that gates `polis.service` auto-start.
+async fn set_ready_marker(provisioner: &impl ShellExecutor, enabled: bool) -> Result<()> {
+    if enabled {
+        provisioner
+            .exec(&["touch", READY_MARKER_PATH])
+            .await
+            .context("creating ready marker")?;
+    } else {
+        provisioner
+            .exec(&["rm", "-f", READY_MARKER_PATH])
+            .await
+            .context("removing ready marker")?;
+    }
     Ok(())
 }
 
 /// Start docker compose with optional agent overlay.
 async fn start_compose<P: VmProvisioner>(provisioner: &P, agent_name: Option<&str>) -> Result<()> {
     let base = format!("{VM_ROOT}/docker-compose.yml");
-    let mut args: Vec<String> = vec!["docker".into(), "compose".into(), "-f".into(), base];
+    let mut args: Vec<String> = vec![
+        "timeout".into(),
+        "120".into(),
+        "docker".into(),
+        "compose".into(),
+        "-f".into(),
+        base,
+    ];
     if let Some(name) = agent_name {
         let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
         args.push("-f".into());
@@ -408,6 +505,12 @@ async fn start_compose<P: VmProvisioner>(provisioner: &P, agent_name: Option<&st
         .await
         .context("starting platform")?;
     if !output.status.success() {
+        if output.status.code() == Some(124) {
+            anyhow::bail!(
+                "docker compose up timed out after 2 minutes.\n\
+                 Diagnose: polis doctor"
+            );
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("failed to start platform.\n{stderr}");
     }

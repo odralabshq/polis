@@ -19,14 +19,17 @@ pub async fn delete_workspace(
     // 1. Check if VM exists (fail-fast: prerequisite check)
     let state = vm::state(mp).await?;
     if state == vm::VmState::NotFound {
+        reporter.success("workspace not found (already deleted)");
         return Ok(());
     }
 
     // 2. Stop and delete VM (fail-fast: prerequisite step)
-    reporter.step("Stopping and removing workspace VM...");
+    reporter.begin_stage("removing workspace...");
     vm::delete(mp).await;
+    reporter.complete_stage();
 
     // 3. Accumulate errors for cleanup steps
+    reporter.begin_stage("cleaning up...");
     let mut errors: Vec<String> = Vec::new();
 
     if let Err(e) = state_mgr.clear_async().await {
@@ -34,8 +37,11 @@ pub async fn delete_workspace(
     }
 
     if errors.is_empty() {
+        reporter.complete_stage();
+        reporter.success("workspace removed");
         Ok(())
     } else {
+        reporter.fail_stage();
         Err(anyhow::anyhow!(
             "Cleanup completed with errors:\n{}",
             errors.join("\n")
@@ -59,10 +65,13 @@ pub async fn delete_all(
     // 1. Delete VM (fail-fast: prerequisite check)
     let state = vm::state(mp).await?;
     if state != vm::VmState::NotFound {
+        reporter.begin_stage("removing workspace...");
         vm::delete(mp).await;
+        reporter.complete_stage();
     }
 
     // Accumulate errors for all cleanup steps
+    reporter.begin_stage("cleaning up...");
     let mut errors: Vec<String> = Vec::new();
 
     // 2. Clear workspace state
@@ -122,9 +131,11 @@ pub async fn delete_all(
     remove_if_exists(local_fs, &paths.images_dir(), "images dir", &mut errors);
 
     if errors.is_empty() {
-        reporter.success("all workspace data removed.");
+        reporter.complete_stage();
+        reporter.success("all workspace data removed");
         Ok(())
     } else {
+        reporter.fail_stage();
         Err(anyhow::anyhow!(
             "Cleanup completed with errors:\n{}",
             errors.join("\n")

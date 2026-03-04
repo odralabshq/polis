@@ -2,7 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BATS="${SCRIPT_DIR}/bats/bats-core/bin/bats"
+COMPOSE="docker compose -f ${ROOT_DIR}/docker-compose.yml -f ${ROOT_DIR}/docker-compose.test.yml"
 
 usage() {
     cat <<EOF
@@ -58,15 +60,15 @@ case "$TIER" in
     integration) run_tier "integration" ;;
     docker)      run_tier "unit/docker" ;;
     e2e)
-        docker compose --profile test pull httpbin 2>/dev/null || true
-        docker compose --profile test up -d httpbin
-        [[ "$CI_MODE" != "true" ]] && trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
+        $COMPOSE pull httpbin 2>/dev/null || true
+        $COMPOSE up -d httpbin
+        [[ "$CI_MODE" != "true" ]] && trap '$COMPOSE rm -sf httpbin 2>/dev/null || true' EXIT
         run_tier "e2e"
         ;;
     all)
-        docker compose --profile test pull httpbin 2>/dev/null || true
-        docker compose --profile test up -d httpbin
-        [[ "$CI_MODE" != "true" ]] && trap 'docker compose --profile test rm -sf httpbin 2>/dev/null || true' EXIT
+        $COMPOSE pull httpbin 2>/dev/null || true
+        $COMPOSE up -d httpbin
+        [[ "$CI_MODE" != "true" ]] && trap '$COMPOSE rm -sf httpbin 2>/dev/null || true' EXIT
         run_tier "unit"
         run_tier "integration"
         run_tier "e2e"

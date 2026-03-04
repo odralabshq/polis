@@ -7,6 +7,7 @@ pub mod delete;
 pub mod doctor;
 pub mod exec;
 pub mod internal;
+pub mod security;
 pub mod start;
 pub mod status;
 pub mod stop;
