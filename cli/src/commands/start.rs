@@ -58,11 +58,8 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
         StartOutcome::AlreadyRunning { agent, .. } => {
             print_already_running_message(agent.as_deref(), &app.output);
         }
-        StartOutcome::Created { onboarding, .. } => {
+        StartOutcome::Created { onboarding, .. } | StartOutcome::Restarted { onboarding, .. } => {
             render_onboarding_steps(&app.output, &onboarding);
-        }
-        StartOutcome::Restarted { .. } => {
-            print_success_message(&app.output);
         }
     }
 
