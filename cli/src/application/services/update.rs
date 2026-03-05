@@ -104,6 +104,7 @@ pub async fn update_vm_config(
     // Hashes differ — perform full config update cycle
 
     // Stop services
+    reporter.begin_stage("stopping services...");
     mp.exec(&[
         "docker",
         "compose",
@@ -113,23 +114,60 @@ pub async fn update_vm_config(
     ])
     .await
     .context("stopping services")?;
+    reporter.complete_stage();
 
+    // From here on, if anything fails we attempt a best-effort restart so the
+    // VM is not left with services down.
+    match apply_config_update(mp, assets, hasher, reporter, assets_dir, version, &new_hash).await {
+        Ok(()) => Ok(UpdateVmConfigOutcome::Updated),
+        Err(e) => {
+            // Best-effort: try to bring services back up with whatever config is present.
+            let _ = mp
+                .exec(&[
+                    "docker",
+                    "compose",
+                    "-f",
+                    "/opt/polis/docker-compose.yml",
+                    "up",
+                    "-d",
+                ])
+                .await;
+            Err(e.context("config update failed; services restarted with previous config"))
+        }
+    }
+}
+
+/// Inner helper that performs the config transfer → pull → verify → restart
+/// cycle. Separated so the caller can wrap it with rollback logic.
+async fn apply_config_update(
+    mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
+    assets: &impl AssetExtractor,
+    _hasher: &(impl FileHasher + ?Sized),
+    reporter: &impl ProgressReporter,
+    assets_dir: &std::path::Path,
+    version: &str,
+    new_hash: &str,
+) -> Result<()> {
     // Transfer new config
+    reporter.begin_stage("transferring config...");
     transfer_config(mp, assets_dir, version)
         .await
         .context("transferring new config")?;
 
     // Pull new images
+    reporter.begin_stage("pulling images...");
     pull_images(mp, reporter)
         .await
         .context("pulling Docker images")?;
 
     // Verify image digests
+    reporter.begin_stage("verifying images...");
     verify_image_digests(mp, assets, reporter)
         .await
         .context("verifying image digests")?;
 
     // Restart services
+    reporter.begin_stage("starting services...");
     mp.exec(&[
         "docker",
         "compose",
@@ -140,13 +178,14 @@ pub async fn update_vm_config(
     ])
     .await
     .context("restarting services")?;
+    reporter.complete_stage();
 
     // Write new hash AFTER successful restart
-    write_config_hash(mp, &new_hash)
+    write_config_hash(mp, new_hash)
         .await
         .context("writing new config hash")?;
 
-    Ok(UpdateVmConfigOutcome::Updated)
+    Ok(())
 }
 
 /// Outcome of the VM config update service.
