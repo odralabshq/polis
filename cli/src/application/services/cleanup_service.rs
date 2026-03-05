@@ -88,16 +88,26 @@ echo "BACKUP_OK"
         )
         .await;
 
-    match transfer_result {
-        Ok(ref o) if o.status.success() => {
-            reporter.complete_stage();
-            Ok(Some(local_path))
+    // Multipass transfer on Windows returns exit-code 1 with
+    // "cannot set permissions for local file" even when the file is
+    // transferred successfully.  Fall back to checking whether the
+    // destination file actually landed on disk.
+    let transferred = match transfer_result {
+        Ok(ref o) if o.status.success() => true,
+        Ok(_) => {
+            // Non-zero exit — check if the file arrived anyway (Windows quirk).
+            local_fs.exists(&local_path)
         }
-        _ => {
-            reporter.fail_stage();
-            reporter.warn("failed to transfer backup from VM — proceeding without backup");
-            Ok(None)
-        }
+        Err(_) => false,
+    };
+
+    if transferred {
+        reporter.complete_stage();
+        Ok(Some(local_path))
+    } else {
+        reporter.fail_stage();
+        reporter.warn("failed to transfer backup from VM — proceeding without backup");
+        Ok(None)
     }
 }
 

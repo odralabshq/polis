@@ -118,8 +118,8 @@ fn render_onboarding_steps(
         // When displayed on the host CLI, prefix with `polis exec <agent>`
         // so the user can run them directly.
         let cmd_str = if i >= default_steps.len() {
-            if let Some(name) = agent {
-                format!("polis exec {name} {}", step.command)
+            if agent.is_some() {
+                format!("polis exec {}", step.command)
             } else {
                 step.command.clone()
             }

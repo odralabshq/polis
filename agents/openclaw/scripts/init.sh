@@ -439,6 +439,9 @@ EAEOF
 
     # Install openclaw CLI wrapper so `openclaw <cmd>` works from both
     # `polis exec openclaw <cmd>` and SSH sessions via `polis connect`.
+    # We write to both ~/.local/bin (for login shells) and /usr/local/bin
+    # (overwriting the stock wrapper) so `docker exec` finds it without
+    # needing ~/.local/bin in PATH.
     cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
 #!/bin/bash
 # Intercept dashboard command to replace localhost with VM IP
@@ -452,7 +455,11 @@ fi
 exec node /app/dist/index.js "$@"
 OCWRAPPER
     chmod 755 "${POLIS_BIN_DIR}/openclaw"
-    echo "[openclaw-init] Installed openclaw CLI wrapper to ${POLIS_BIN_DIR}/openclaw"
+    # Overwrite the stock wrapper so docker exec (which lacks ~/.local/bin in
+    # PATH) picks up the IP-aware version.
+    cp "${POLIS_BIN_DIR}/openclaw" /usr/local/bin/openclaw
+    chmod 755 /usr/local/bin/openclaw
+    echo "[openclaw-init] Installed openclaw CLI wrapper to ${POLIS_BIN_DIR}/openclaw and /usr/local/bin/openclaw"
     
 else
     echo "[openclaw-init] Already initialized, checking config..."
@@ -527,6 +534,8 @@ fi
 exec node /app/dist/index.js "$@"
 OCWRAPPER
     chmod 755 "${POLIS_BIN_DIR}/openclaw"
+    cp "${POLIS_BIN_DIR}/openclaw" /usr/local/bin/openclaw
+    chmod 755 /usr/local/bin/openclaw
 
     # Re-inject polis security section into workspace SOUL.md (idempotent)
     inject_polis_soul
