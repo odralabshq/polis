@@ -90,7 +90,11 @@ mod tests {
 
         let args = UpdateArgs { check: true };
         let app = crate::app::AppContext::new(&crate::app::AppFlags {
-            output: crate::app::OutputFlags { no_color: true, quiet: true, json: false },
+            output: crate::app::OutputFlags {
+                no_color: true,
+                quiet: true,
+                json: false,
+            },
             behaviour: crate::app::BehaviourFlags { yes: true },
         })
         .expect("AppContext");
@@ -119,7 +123,11 @@ mod tests {
 
         let args = UpdateArgs { check: false };
         let app = crate::app::AppContext::new(&crate::app::AppFlags {
-            output: crate::app::OutputFlags { no_color: true, quiet: true, json: false },
+            output: crate::app::OutputFlags {
+                no_color: true,
+                quiet: true,
+                json: false,
+            },
             behaviour: crate::app::BehaviourFlags { yes: true },
         })
         .expect("AppContext");
@@ -129,7 +137,9 @@ mod tests {
     }
 
     #[test]
-    fn test_hex_encode_empty_returns_empty() { assert_eq!(hex_encode(&[]), ""); }
+    fn test_hex_encode_empty_returns_empty() {
+        assert_eq!(hex_encode(&[]), "");
+    }
 
     #[test]
     fn test_hex_encode_single_byte() {

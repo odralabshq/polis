@@ -80,7 +80,6 @@ pub fn apply_cli_update(
     Ok(false)
 }
 
-
 /// Spawn the newly-installed `polis` binary with the hidden `_post-update`
 /// command so the VM config update uses the NEW binary's embedded assets.
 ///
