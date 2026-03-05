@@ -271,7 +271,8 @@ mod tests {
         let path = std::path::Path::new(&name);
         if is_windows_platform() {
             assert!(
-                path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("zip")),
+                path.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("zip")),
                 "Windows asset name should be a .zip: {name}"
             );
         } else {
