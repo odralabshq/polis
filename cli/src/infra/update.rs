@@ -268,9 +268,10 @@ mod tests {
     #[test]
     fn test_get_asset_name_current_platform_returns_archive() {
         let name = get_asset_name().expect("current platform should be supported");
+        let path = std::path::Path::new(&name);
         if is_windows_platform() {
             assert!(
-                name.ends_with(".zip"),
+                path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("zip")),
                 "Windows asset name should be a .zip: {name}"
             );
         } else {
