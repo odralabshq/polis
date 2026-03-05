@@ -60,8 +60,13 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
         StartOutcome::AlreadyRunning { agent, .. } => {
             print_already_running_message(agent.as_deref(), &app.output);
         }
-        StartOutcome::Created { onboarding, .. } | StartOutcome::Restarted { onboarding, .. } => {
-            render_onboarding_steps(&app.output, &onboarding);
+        StartOutcome::Created {
+            agent, onboarding, ..
+        }
+        | StartOutcome::Restarted {
+            agent, onboarding, ..
+        } => {
+            render_onboarding_steps(&app.output, agent.as_deref(), &onboarding);
         }
     }
 
@@ -88,6 +93,7 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
 
 fn render_onboarding_steps(
     ctx: &OutputContext,
+    agent: Option<&str>,
     agent_steps: &[polis_common::agent::OnboardingStep],
 ) {
     if ctx.quiet {
@@ -108,7 +114,19 @@ fn render_onboarding_steps(
     ctx.blank();
     ctx.header("Getting started");
     for (i, step) in default_steps.iter().chain(agent_steps.iter()).enumerate() {
-        let cmd = step.command.style(ctx.styles.bold);
+        // Agent-specific commands are written for use inside the workspace.
+        // When displayed on the host CLI, prefix with `polis exec <agent>`
+        // so the user can run them directly.
+        let cmd_str = if i >= default_steps.len() {
+            if let Some(name) = agent {
+                format!("polis exec {name} {}", step.command)
+            } else {
+                step.command.clone()
+            }
+        } else {
+            step.command.clone()
+        };
+        let cmd = cmd_str.style(ctx.styles.bold);
         ctx.info(&format!("{}. {}  {}", i + 1, step.title, cmd));
     }
 }

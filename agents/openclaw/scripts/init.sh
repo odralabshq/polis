@@ -441,6 +441,14 @@ EAEOF
     # `polis exec openclaw <cmd>` and SSH sessions via `polis connect`.
     cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
 #!/bin/bash
+# Intercept dashboard command to replace localhost with VM IP
+if [[ "${1:-}" == "dashboard" ]]; then
+    VM_IP="${POLIS_VM_IP:-$(cat /opt/polis/.vm-ip 2>/dev/null || echo "")}"
+    if [[ -n "$VM_IP" ]]; then
+        node /app/dist/index.js "$@" 2>&1 | sed "s|127\.0\.0\.1|${VM_IP}|g"
+        exit "${PIPESTATUS[0]}"
+    fi
+fi
 exec node /app/dist/index.js "$@"
 OCWRAPPER
     chmod 755 "${POLIS_BIN_DIR}/openclaw"
@@ -508,6 +516,14 @@ EAEOF
     # Re-install openclaw CLI wrapper (lost on restart if home is tmpfs)
     cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
 #!/bin/bash
+# Intercept dashboard command to replace localhost with VM IP
+if [[ "${1:-}" == "dashboard" ]]; then
+    VM_IP="${POLIS_VM_IP:-$(cat /opt/polis/.vm-ip 2>/dev/null || echo "")}"
+    if [[ -n "$VM_IP" ]]; then
+        node /app/dist/index.js "$@" 2>&1 | sed "s|127\.0\.0\.1|${VM_IP}|g"
+        exit "${PIPESTATUS[0]}"
+    fi
+fi
 exec node /app/dist/index.js "$@"
 OCWRAPPER
     chmod 755 "${POLIS_BIN_DIR}/openclaw"

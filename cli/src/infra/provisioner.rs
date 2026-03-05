@@ -15,6 +15,9 @@ use crate::application::ports::{
 };
 use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, DEFAULT_EXEC_TIMEOUT, TokioCommandRunner};
 
+/// Timeout for VM→host file transfers (backups can be large).
+const TRANSFER_FROM_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Infrastructure adapter that routes all multipass CLI calls through a `CommandRunner`.
 ///
 /// Generic over `R: CommandRunner` so that tests can inject a mock runner
@@ -192,7 +195,11 @@ impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
     async fn transfer_from(&self, remote: &str, local: &str) -> Result<Output> {
         let src = format!("{POLIS_INSTANCE}:{remote}");
         self.cmd_runner
-            .run("multipass", &["transfer", &src, local])
+            .run_with_timeout(
+                "multipass",
+                &["transfer", &src, local],
+                TRANSFER_FROM_TIMEOUT,
+            )
             .await
             .context("failed to run multipass transfer (VM→host)")
     }
