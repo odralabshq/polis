@@ -23,7 +23,7 @@ pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::Ex
         return Ok(std::process::ExitCode::SUCCESS);
     }
 
-    if let Err(e) = execute_delete(args.all, app).await {
+    if let Err(e) = execute_delete(args.all, args.no_backup, app).await {
         app.output.error(&e.to_string());
         return Ok(std::process::ExitCode::FAILURE);
     }
@@ -38,7 +38,13 @@ fn confirm_delete_all(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
 fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
     if !app.output.quiet {
         app.output.info("");
-        app.output.info("This will remove your workspace.");
+        if args.no_backup {
+            app.output
+                .warn("Backup is disabled — workspace data will be permanently lost.");
+        } else {
+            app.output
+                .info("Workspace data will be backed up to ~/.polis/backups/ before removal.");
+        }
         app.output
             .info("Configuration, certificates, and cached downloads will be preserved.");
         app.output.info("");
@@ -46,7 +52,7 @@ fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool>
     Ok(args.yes || app.confirm("Continue?", false)?)
 }
 
-async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
+async fn execute_delete(all: bool, no_backup: bool, app: &AppContext) -> Result<()> {
     let reporter = app.terminal_reporter();
     if all {
         cleanup_service::delete_all(
@@ -56,9 +62,17 @@ async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
             &app.local_fs,
             &app.ssh,
             &reporter,
+            no_backup,
         )
         .await
     } else {
-        cleanup_service::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await
+        cleanup_service::delete_workspace(
+            &app.provisioner,
+            &app.state_mgr,
+            &app.local_fs,
+            &reporter,
+            no_backup,
+        )
+        .await
     }
 }

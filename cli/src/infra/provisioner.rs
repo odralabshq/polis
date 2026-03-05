@@ -185,6 +185,17 @@ impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
             .await
             .context("failed to run multipass transfer")
     }
+
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
+    async fn transfer_from(&self, remote: &str, local: &str) -> Result<Output> {
+        let src = format!("{POLIS_INSTANCE}:{remote}");
+        self.cmd_runner
+            .run("multipass", &["transfer", &src, local])
+            .await
+            .context("failed to run multipass transfer (VM→host)")
+    }
 }
 
 impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {

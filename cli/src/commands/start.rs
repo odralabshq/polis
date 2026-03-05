@@ -5,6 +5,8 @@ use clap::Args;
 use std::process::ExitCode;
 
 use crate::app::AppContext;
+use crate::application::ports::InstanceInspector;
+use crate::application::services::vm::lifecycle as vm;
 use crate::application::services::workspace_start::{self as service, StartOutcome};
 use crate::output::OutputContext;
 use owo_colors::OwoColorize as _;
@@ -63,6 +65,9 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
         }
     }
 
+    // Show dashboard URL if an agent is active
+    show_dashboard_url(&app.output, &app.provisioner).await;
+
     Ok(ExitCode::SUCCESS)
 }
 
@@ -105,6 +110,17 @@ fn render_onboarding_steps(
     for (i, step) in default_steps.iter().chain(agent_steps.iter()).enumerate() {
         let cmd = step.command.style(ctx.styles.bold);
         ctx.info(&format!("{}. {}  {}", i + 1, step.title, cmd));
+    }
+}
+
+/// Resolve the VM IP and show the dashboard URL (best-effort, no error on failure).
+async fn show_dashboard_url(ctx: &OutputContext, mp: &impl InstanceInspector) {
+    if ctx.quiet {
+        return;
+    }
+    if let Ok(ip) = vm::resolve_vm_ip(mp).await {
+        ctx.blank();
+        ctx.kv("Control UI", &format!("http://{ip}:18789/overview"));
     }
 }
 

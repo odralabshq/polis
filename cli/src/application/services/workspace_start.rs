@@ -29,6 +29,26 @@ use crate::application::services::vm::{
 use crate::domain::workspace::{ACTIVE_OVERLAY_PATH, READY_MARKER_PATH};
 use crate::domain::workspace::{VM_ROOT, WorkspaceState};
 
+/// Write the VM's external IP to `/opt/polis/.vm-ip` and append it to `.env`
+/// so containers can reference it via `$POLIS_VM_IP`.
+async fn persist_vm_ip(
+    mp: &(impl crate::application::ports::InstanceInspector + ShellExecutor),
+) -> Result<()> {
+    let ip = vm::resolve_vm_ip(mp).await?;
+    // Write standalone file for scripts
+    mp.exec(&["bash", "-c", &format!("echo '{ip}' > /opt/polis/.vm-ip")])
+        .await
+        .context("writing .vm-ip")?;
+    // Ensure POLIS_VM_IP is in .env (replace if exists, append if not)
+    let script = format!(
+        "sed -i '/^POLIS_VM_IP=/d' /opt/polis/.env 2>/dev/null; echo 'POLIS_VM_IP={ip}' >> /opt/polis/.env"
+    );
+    mp.exec(&["bash", "-c", &script])
+        .await
+        .context("writing POLIS_VM_IP to .env")?;
+    Ok(())
+}
+
 /// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
 pub enum StartOutcome {
@@ -158,6 +178,9 @@ async fn handle_running_vm(
         reporter.begin_stage(&format!("installing agent '{name}'..."));
         let onboarding = setup_agent(provisioner, local_fs, name, &envs).await?;
 
+        // Persist VM IP for container access.
+        persist_vm_ip(provisioner).await.ok(); // best-effort
+
         // Update symlink for future reboots, then start via compose directly.
         let overlay = crate::domain::agent::overlay_path(name);
         set_active_overlay(provisioner, Some(&overlay)).await?;
@@ -229,6 +252,9 @@ async fn create_and_start_vm(
     transfer_config(provisioner, assets_dir, version)
         .await
         .context("transferring config to VM")?;
+
+    // Step 3b: Persist VM IP for container access.
+    persist_vm_ip(provisioner).await.ok(); // best-effort
 
     // Step 4: Generate certificates and secrets.
     generate_certs_and_secrets(provisioner)
@@ -303,6 +329,9 @@ async fn restart_vm(
     reporter.begin_stage("starting workspace...");
     vm::start(provisioner).await?;
     reporter.complete_stage();
+
+    // Persist VM IP for container access.
+    persist_vm_ip(provisioner).await.ok(); // best-effort
 
     // Pull images BEFORE starting services.
     reporter.begin_stage("verifying components...");

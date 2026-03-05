@@ -98,6 +98,10 @@ pub trait FileTransfer {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     async fn transfer_recursive(&self, local: &str, remote: &str) -> Result<Output>;
+    /// Transfer a single file from VM to host.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn transfer_from(&self, remote: &str, local: &str) -> Result<Output>;
 }
 
 /// Command execution inside the VM.

@@ -28,7 +28,9 @@ case "$SUBCMD" in
         echo ""
         echo "Token: $token"
         echo ""
-        echo "Control UI: http://localhost:18789/overview"
+        # Use VM IP if available (set by polis CLI during start)
+        vm_ip=$(docker exec "$CONTAINER" printenv POLIS_VM_IP 2>/dev/null || cat /opt/polis/.vm-ip 2>/dev/null || echo "localhost")
+        echo "Control UI: http://${vm_ip}:18789/overview"
         ;;
     devices)
         action="${1:-list}"

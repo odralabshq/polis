@@ -452,12 +452,19 @@ else
     # Always ensure controlUi settings for HTTP token access on non-loopback bind.
     # The gateway may rewrite config on startup, so unconditionally re-apply.
     if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
-        jq '.gateway.controlUi.enabled = true
+        # Build VM IP origin if available (set by polis CLI during start)
+        VM_IP="${POLIS_VM_IP:-}"
+        VM_ORIGIN_EXPR=""
+        if [[ -n "$VM_IP" ]]; then
+            VM_ORIGIN_EXPR="| .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + [\"http://${VM_IP}:18789\"] | unique)"
+        fi
+        jq ".gateway.controlUi.enabled = true
             | .gateway.controlUi.allowInsecureAuth = true
             | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
             | .gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true
-            | .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + ["http://localhost:18789", "http://127.0.0.1:18789"] | unique)
-            | .tools = ((.tools // {}) + {"profile":"coding"})' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
+            | .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + [\"http://localhost:18789\", \"http://127.0.0.1:18789\"] | unique)
+            ${VM_ORIGIN_EXPR}
+            | .tools = ((.tools // {}) + {\"profile\":\"coding\"})" "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
             && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
         echo "[openclaw-init] Ensured controlUi HTTP token settings, origin policy, and coding tool profile"
