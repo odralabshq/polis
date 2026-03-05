@@ -70,6 +70,7 @@ async fn execute_delete(all: bool, no_backup: bool, app: &AppContext) -> Result<
             &app.provisioner,
             &app.state_mgr,
             &app.local_fs,
+            &app.local_fs,
             &reporter,
             no_backup,
         )
