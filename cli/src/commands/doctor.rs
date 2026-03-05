@@ -21,6 +21,7 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode>
     let reporter = app.terminal_reporter();
 
     // 1. Diagnose
+    let polis_image_override = std::env::var("POLIS_IMAGE").ok();
     let checks = workspace_doctor::run_doctor(
         mp,
         &reporter,
@@ -28,6 +29,7 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode>
         &app.network_probe,
         &app.local_fs,
         &app.local_fs,
+        polis_image_override.clone(),
     )
     .await?;
 
@@ -54,6 +56,7 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode>
             &app.network_probe,
             &app.local_fs,
             &app.local_fs,
+            polis_image_override,
         )
         .await?;
         let issues_after = crate::domain::health::collect_issues(&checks_after);

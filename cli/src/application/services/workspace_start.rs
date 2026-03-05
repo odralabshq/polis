@@ -1,518 +1,598 @@
 //! Application service — workspace start use-case.
 //!
+//! Handles only workspace lifecycle concerns (no agent activation, no SSH).
 //! Imports only from `crate::domain` and `crate::application::ports`.
-//! All I/O is routed through injected port traits.
+//!
+//! # Requirements
+//! 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 9.1, 9.3, 9.4, 9.5, 9.6, 9.7, 13.7
+
+use std::future::Future;
+use std::pin::Pin;
 
 use anyhow::{Context, Result};
-
-pub struct StartOptions<'a, R: crate::application::ports::ProgressReporter> {
-    pub reporter: &'a R,
-    pub agent: Option<&'a str>,
-    pub envs: Vec<String>,
-    pub assets_dir: &'a std::path::Path,
-    pub version: &'a str,
-}
-
 use chrono::Utc;
 
 use crate::application::ports::{
-    AssetExtractor, FileHasher, HostKeyExtractor, LocalFs, ProgressReporter, ShellExecutor,
-    SshConfigurator, VmProvisioner, WorkspaceStateStore,
+    AssetExtractor, FileHasher, ProgressReporter, VmProvisioner, WorkspaceStateStore,
+};
+use crate::application::services::provisioning::{
+    ProvisioningContext, ProvisioningRunner, ProvisioningStep,
 };
 use crate::application::services::vm::{
+    compose::{set_active_overlay, set_ready_marker},
     health::wait_ready,
     integrity::{verify_image_digests, write_config_hash},
     lifecycle::{self as vm, VmState},
     provision::{generate_certs_and_secrets, transfer_config},
     services::pull_images,
 };
-use crate::domain::workspace::{ACTIVE_OVERLAY_PATH, READY_MARKER_PATH};
-use crate::domain::workspace::{VM_ROOT, WorkspaceState};
+use crate::domain::error::WorkspaceError;
+use crate::domain::workspace::{resolve_action, StartAction, WorkspaceState};
+
+// ── StartOptions ──────────────────────────────────────────────────────────────
+
+/// Options for the `start_workspace` use-case.
+///
+/// No `agent` field — agent activation is handled by `agent_activate.rs`.
+/// No `ssh` or `local_fs` — SSH provisioning is handled by `ssh_provision.rs`.
+pub struct StartOptions<'a, R: ProgressReporter> {
+    pub reporter: &'a R,
+    pub assets_dir: &'a std::path::Path,
+    pub version: &'a str,
+    pub start_timeout: std::time::Duration,
+}
+
+// ── StartOutcome ──────────────────────────────────────────────────────────────
 
 /// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
 pub enum StartOutcome {
-    /// Workspace was already running with the same agent config.
-    AlreadyRunning {
-        agent: Option<String>,
-        onboarding: Vec<polis_common::agent::OnboardingStep>,
-    },
+    /// Workspace was already running with no incomplete provisioning.
+    AlreadyRunning { active_agent: Option<String> },
     /// Workspace was freshly created and started.
-    Created {
-        agent: Option<String>,
-        onboarding: Vec<polis_common::agent::OnboardingStep>,
-    },
+    Created { active_agent: Option<String> },
     /// A stopped workspace was restarted.
-    Restarted {
-        agent: Option<String>,
-        onboarding: Vec<polis_common::agent::OnboardingStep>,
-    },
+    Restarted { active_agent: Option<String> },
 }
+
+// ── Public entry point ────────────────────────────────────────────────────────
 
 /// Start the workspace, creating it if needed.
 ///
-/// Accepts port trait bounds so the caller can inject real or mock
-/// implementations. The service never touches `OutputContext` or any
-/// presentation type.
+/// Uses `resolve_action` for the domain decision, then dispatches to the
+/// appropriate path. No agent logic, no SSH logic.
 ///
 /// # Errors
 ///
-/// Returns an error if any step of the provisioning workflow fails.
-pub async fn start_workspace(
-    provisioner: &impl VmProvisioner,
-    state_mgr: &impl WorkspaceStateStore,
-    assets: &impl AssetExtractor,
-    ssh: &(impl SshConfigurator + HostKeyExtractor),
-    hasher: &impl FileHasher,
-    local_fs: &impl LocalFs,
-    opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
-) -> Result<StartOutcome> {
-    let reporter = opts.reporter;
-    let StartOptions {
-        agent,
-        envs,
-        assets_dir,
-        version,
-        ..
-    } = opts;
+/// Returns an error if any step of the provisioning workflow fails, or if the
+/// VM remains in `Starting` state after `opts.start_timeout`.
+pub async fn start_workspace<P, S, A, H, R>(
+    provisioner: &P,
+    state_mgr: &S,
+    assets: &A,
+    hasher: &H,
+    opts: StartOptions<'_, R>,
+) -> Result<StartOutcome>
+where
+    P: VmProvisioner,
+    S: WorkspaceStateStore,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
     crate::domain::workspace::check_architecture()?;
 
     let vm_state = vm::state(provisioner).await?;
+    let persisted = state_mgr.load_async().await?;
+    let has_incomplete = persisted
+        .as_ref()
+        .and_then(|s| s.provisioning.as_ref())
+        .is_some();
 
-    match vm_state {
-        VmState::Running => {
-            handle_running_vm(provisioner, state_mgr, local_fs, reporter, agent, envs).await
+    let action = resolve_action(vm_state, has_incomplete);
+
+    match action {
+        StartAction::Create | StartAction::ResumeProvisioning => {
+            run_provisioning(provisioner, state_mgr, assets, hasher, &opts).await?;
+            Ok(StartOutcome::Created { active_agent: None })
         }
-        VmState::NotFound => {
-            let onboarding = create_and_start_vm(
-                provisioner,
-                state_mgr,
-                assets,
-                ssh,
-                hasher,
-                local_fs,
-                StartOptions {
-                    reporter,
-                    agent,
-                    envs,
-                    assets_dir,
-                    version,
-                },
-            )
-            .await?;
-            Ok(StartOutcome::Created {
-                agent: agent.map(str::to_owned),
-                onboarding,
-            })
+
+        StartAction::Restart => {
+            restart_workspace(provisioner, state_mgr, assets, &opts, persisted).await
         }
-        _ => {
-            let onboarding = restart_vm(
-                provisioner,
-                state_mgr,
-                assets,
-                ssh,
-                local_fs,
-                reporter,
-                agent,
-                envs,
-            )
-            .await?;
-            let msg = agent.map_or_else(
-                || "workspace ready".to_string(),
-                |n| format!("workspace ready with agent: {n}"),
-            );
-            wait_ready(provisioner, reporter, false, &msg).await?;
-            Ok(StartOutcome::Restarted {
-                agent: agent.map(str::to_owned),
-                onboarding,
-            })
+
+        StartAction::WaitThenResolve => {
+            wait_then_resolve(provisioner, state_mgr, assets, hasher, opts, has_incomplete).await
+        }
+
+        StartAction::AlreadyRunning => {
+            let active_agent = persisted.and_then(|s| s.active_agent);
+            Ok(StartOutcome::AlreadyRunning { active_agent })
         }
     }
 }
 
-/// Handle the case where the VM is already running.
-///
-/// When no agent is currently active and one is requested, set it up
-/// in-place without stopping the VM. This avoids a stop/start cycle
-/// which triggers the Hyper-V Default Switch DHCP bug on Windows.
-async fn handle_running_vm(
-    provisioner: &impl VmProvisioner,
+// ── Create / ResumeProvisioning path ─────────────────────────────────────────
+
+/// Run the full provisioning workflow (or resume from checkpoint).
+async fn run_provisioning<P, A, H, R>(
+    provisioner: &P,
     state_mgr: &impl WorkspaceStateStore,
-    local_fs: &impl LocalFs,
-    reporter: &impl ProgressReporter,
-    agent: Option<&str>,
-    envs: Vec<String>,
-) -> Result<StartOutcome> {
-    let current_agent = state_mgr.load_async().await?.and_then(|s| s.active_agent);
-    if current_agent.as_deref() == agent {
-        return Ok(StartOutcome::AlreadyRunning {
-            agent: agent.map(str::to_owned),
-            onboarding: vec![],
-        });
-    }
-
-    // Allow adding an agent to a running workspace that has no agent.
-    if current_agent.is_none()
-        && let Some(name) = agent
-    {
-        reporter.begin_stage(&format!("installing agent '{name}'..."));
-        let onboarding = setup_agent(provisioner, local_fs, name, &envs).await?;
-
-        // Update symlink for future reboots, then start via compose directly.
-        let overlay = crate::domain::agent::overlay_path(name);
-        set_active_overlay(provisioner, Some(&overlay)).await?;
-        start_compose(provisioner, Some(name)).await?;
-
-        // Persist state before health wait so the CLI tracks the agent
-        // even if health polling times out (e.g. first-time install).
-        let mut state = state_mgr
-            .load_async()
-            .await?
-            .unwrap_or_else(|| WorkspaceState {
-                created_at: Utc::now(),
-                image_sha256: None,
-                image_source: None,
-                active_agent: None,
-            });
-        state.active_agent = Some(name.to_owned());
-        state_mgr.save_async(&state).await?;
-
-        let msg = format!("workspace ready with agent: {name}");
-        wait_ready(provisioner, reporter, false, &msg).await?;
-
-        return Ok(StartOutcome::Restarted {
-            agent: Some(name.to_owned()),
-            onboarding,
-        });
-    }
-
-    let current_desc = current_agent
-        .as_deref()
-        .map_or_else(|| "no agent".to_string(), |n| format!("agent '{n}'"));
-    let requested_desc = agent.map_or_else(|| "no agent".to_string(), |n| format!("--agent {n}"));
-    anyhow::bail!(
-        "Workspace is running with {current_desc}. Stop first:\n  polis stop\n  polis start {requested_desc}"
-    );
-}
-
-/// Full provisioning flow for a new VM.
-async fn create_and_start_vm(
-    provisioner: &impl VmProvisioner,
-    state_mgr: &impl WorkspaceStateStore,
-    assets: &impl AssetExtractor,
-    ssh: &(impl SshConfigurator + HostKeyExtractor),
-    hasher: &impl FileHasher,
-    local_fs: &impl LocalFs,
-    opts: StartOptions<'_, impl crate::application::ports::ProgressReporter>,
-) -> Result<Vec<polis_common::agent::OnboardingStep>> {
-    let reporter = opts.reporter;
-    let StartOptions {
-        agent,
-        envs,
-        assets_dir,
-        version,
-        ..
-    } = opts;
-    // Step 1: Compute config hash before transfer.
-    let tar_path = assets_dir.join("polis-setup.config.tar");
+    assets: &A,
+    hasher: &H,
+    opts: &StartOptions<'_, R>,
+) -> Result<()>
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    // Pre-compute config hash before any I/O (needed by WriteConfigHash step).
+    let tar_path = opts.assets_dir.join("polis-setup.config.tar");
     let config_hash = hasher
         .sha256_file(&tar_path)
         .context("computing config tarball SHA256")?;
 
-    reporter.begin_stage("preparing workspace...");
+    let runner = ProvisioningRunner::new("create-v1", state_mgr);
+    let ctx = ProvisioningContext {
+        provisioner,
+        assets,
+        hasher,
+    };
 
-    // Step 2: Launch VM with cloud-init.
-    vm::create(provisioner, assets, ssh, local_fs, ssh, reporter, true).await?;
+    let launch_vm = LaunchVm;
+    let transfer_config_step = TransferConfigStep {
+        assets_dir: opts.assets_dir,
+        version: opts.version,
+    };
+    let generate_certs = GenerateCerts;
+    let pull_images_step = PullImages;
+    let verify_digests = VerifyDigests;
+    let set_base_overlay = SetBaseOverlay;
+    let set_ready = SetReadyMarker;
+    let start_services = StartServices;
+    let wait_health = WaitHealth;
+    let write_hash = WriteConfigHash {
+        hash: config_hash,
+    };
+    let persist = FinalizeProvisioning;
 
-    // Step 3: Transfer config tarball.
-    reporter.begin_stage("securing workspace...");
-    transfer_config(provisioner, assets_dir, version)
-        .await
-        .context("transferring config to VM")?;
+    let steps: &[&dyn ProvisioningStep<P, A, H, R>] = &[
+        &launch_vm,
+        &transfer_config_step,
+        &generate_certs,
+        &pull_images_step,
+        &verify_digests,
+        &set_base_overlay,
+        &set_ready,
+        &start_services,
+        &wait_health,
+        &write_hash,
+        &persist,
+    ];
 
-    // Step 4: Generate certificates and secrets.
-    generate_certs_and_secrets(provisioner)
-        .await
-        .context("generating certificates and secrets")?;
+    runner.run(steps, &ctx, opts.reporter).await
+}
 
-    // Step 5: Pull Docker images.
-    reporter.begin_stage("verifying components...");
-    pull_images(provisioner, reporter)
+// ── Provisioning step structs ─────────────────────────────────────────────────
+
+struct LaunchVm;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for LaunchVm
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "launch-vm"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            vm::create(ctx.provisioner, ctx.assets, reporter).await
+        })
+    }
+}
+
+struct TransferConfigStep<'b> {
+    assets_dir: &'b std::path::Path,
+    version: &'b str,
+}
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for TransferConfigStep<'_>
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "transfer-config"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        let assets_dir = self.assets_dir;
+        let version = self.version;
+        Box::pin(async move {
+            reporter.begin_stage("securing workspace...");
+            transfer_config(ctx.provisioner, assets_dir, version)
+                .await
+                .context("transferring config to VM")
+        })
+    }
+}
+
+struct GenerateCerts;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for GenerateCerts
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "generate-certs"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        _reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            generate_certs_and_secrets(ctx.provisioner)
+                .await
+                .context("generating certificates and secrets")
+        })
+    }
+}
+
+struct PullImages;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for PullImages
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "pull-images"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            reporter.begin_stage("verifying components...");
+            pull_images(ctx.provisioner, reporter)
+                .await
+                .context("pulling Docker images")
+        })
+    }
+}
+
+struct VerifyDigests;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for VerifyDigests
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "verify-digests"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            verify_image_digests(ctx.provisioner, ctx.assets, reporter)
+                .await
+                .context("verifying image digests")
+        })
+    }
+}
+
+struct SetBaseOverlay;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for SetBaseOverlay
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "set-base-overlay"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        _reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move { set_active_overlay(ctx.provisioner, None).await })
+    }
+}
+
+struct SetReadyMarker;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for SetReadyMarker
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "set-ready-marker"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        _reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move { set_ready_marker(ctx.provisioner, true).await })
+    }
+}
+
+struct StartServices;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for StartServices
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "start-services"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        _reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            ctx.provisioner
+                .exec(&["sudo", "systemctl", "start", "polis"])
+                .await
+                .context("starting polis service")?;
+            Ok(())
+        })
+    }
+}
+
+struct WaitHealth;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for WaitHealth
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "wait-health"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            wait_ready(ctx.provisioner, reporter, false, "workspace ready").await
+        })
+    }
+}
+
+struct WriteConfigHash {
+    hash: String,
+}
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for WriteConfigHash
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "write-config-hash"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        _reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        let hash = self.hash.clone();
+        Box::pin(async move {
+            write_config_hash(ctx.provisioner, &hash)
+                .await
+                .context("writing config hash")
+        })
+    }
+}
+
+/// Sentinel step that causes the `ProvisioningRunner` to clear the checkpoint
+/// only after `wait-health` has succeeded.
+///
+/// The runner persists the checkpoint after each step and clears it
+/// (`provisioning = None`) when all steps complete. By placing this step last,
+/// we guarantee the checkpoint is cleared — and state is considered fully
+/// provisioned — only after health has been confirmed (BUG-3 fix, Req 5.8, 9.3).
+struct FinalizeProvisioning;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for FinalizeProvisioning
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "finalize-provisioning"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        _ctx: &'a ProvisioningContext<'a, P, A, H>,
+        _reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        // No-op: the runner clears the checkpoint after this step completes,
+        // which is the desired side-effect. All real work is done by prior steps.
+        Box::pin(async move { Ok(()) })
+    }
+}
+
+// ── Restart path ──────────────────────────────────────────────────────────────
+
+/// Restart a stopped workspace.
+///
+/// Does NOT use `ProvisioningRunner` — the restart sequence is short (5 steps),
+/// every step is idempotent, and re-running from the top is cheap.
+/// State is persisted AFTER `wait_ready` succeeds (Req 5.8).
+async fn restart_workspace<P, A, R>(
+    provisioner: &P,
+    state_mgr: &impl WorkspaceStateStore,
+    assets: &A,
+    opts: &StartOptions<'_, R>,
+    persisted: Option<WorkspaceState>,
+) -> Result<StartOutcome>
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    R: ProgressReporter,
+{
+    opts.reporter.begin_stage("starting workspace...");
+    vm::start(provisioner).await?;
+    opts.reporter.complete_stage();
+
+    opts.reporter.begin_stage("verifying components...");
+    pull_images(provisioner, opts.reporter)
         .await
         .context("pulling Docker images")?;
 
-    // Step 6: Verify image digests.
-    verify_image_digests(provisioner, assets, reporter)
+    // BUG-6 fix: verify image digests on restart path (Req 5.10, 9.4, 9.7)
+    verify_image_digests(provisioner, assets, opts.reporter)
         .await
         .context("verifying image digests")?;
 
-    // Step 7: Set up agent if requested.
-    let (overlay, onboarding) = if let Some(name) = agent {
-        reporter.begin_stage(&format!("installing agent '{name}'..."));
-        let steps = setup_agent(provisioner, local_fs, name, &envs).await?;
-        (Some(crate::domain::agent::overlay_path(name)), steps)
-    } else {
-        (None, vec![])
-    };
-
-    // Step 8: Set active overlay symlink and start via systemd.
-    set_active_overlay(provisioner, overlay.as_deref()).await?;
     set_ready_marker(provisioner, true).await?;
+
+    opts.reporter.begin_stage("starting services...");
     provisioner
         .exec(&["sudo", "systemctl", "start", "polis"])
         .await
         .context("starting polis service")?;
+    opts.reporter.complete_stage();
 
-    // Step 9: Wait for health.
-    let msg = agent.map_or_else(
-        || "workspace ready".to_string(),
-        |n| format!("workspace ready with agent: {n}"),
-    );
-    wait_ready(provisioner, reporter, false, &msg).await?;
+    wait_ready(provisioner, opts.reporter, false, "workspace ready").await?;
 
-    // Step 10: Write config hash after successful startup.
-    write_config_hash(provisioner, &config_hash)
-        .await
-        .context("writing config hash")?;
-
-    // Step 11: Persist state.
-    let state = WorkspaceState {
+    // Persist state AFTER wait_ready succeeds (Req 5.8)
+    let active_agent = persisted.as_ref().and_then(|s| s.active_agent.clone());
+    let state = persisted.unwrap_or_else(|| WorkspaceState {
         created_at: Utc::now(),
         image_sha256: None,
         image_source: None,
-        active_agent: agent.map(str::to_owned),
-    };
+        active_agent: None,
+        provisioning: None,
+    });
     state_mgr.save_async(&state).await?;
 
-    Ok(onboarding)
+    Ok(StartOutcome::Restarted { active_agent })
 }
 
-/// Restart a stopped VM.
-#[allow(clippy::too_many_arguments)]
-async fn restart_vm(
-    provisioner: &impl VmProvisioner,
-    state_mgr: &impl WorkspaceStateStore,
-    _assets: &impl AssetExtractor,
-    _ssh: &impl SshConfigurator,
-    local_fs: &impl LocalFs,
-    reporter: &impl ProgressReporter,
-    agent: Option<&str>,
-    envs: Vec<String>,
-) -> Result<Vec<polis_common::agent::OnboardingStep>> {
-    // Start the VM (systemd polis.service is gated by .ready which was cleared).
-    reporter.begin_stage("starting workspace...");
-    vm::start(provisioner).await?;
-    reporter.complete_stage();
+// ── WaitThenResolve path ──────────────────────────────────────────────────────
 
-    // Pull images BEFORE starting services.
-    reporter.begin_stage("verifying components...");
-    pull_images(provisioner, reporter)
-        .await
-        .context("pulling Docker images")?;
-
-    let (overlay, onboarding) = if let Some(name) = agent {
-        reporter.begin_stage(&format!("installing agent '{name}'..."));
-        let steps = setup_agent(provisioner, local_fs, name, &envs).await?;
-        (Some(crate::domain::agent::overlay_path(name)), steps)
-    } else {
-        (None, vec![])
-    };
-
-    // Set overlay symlink, then gate-open and start services.
-    set_active_overlay(provisioner, overlay.as_deref()).await?;
-    set_ready_marker(provisioner, true).await?;
-    reporter.begin_stage("starting services...");
-    provisioner
-        .exec(&["sudo", "systemctl", "start", "polis"])
-        .await
-        .context("starting polis service")?;
-    reporter.complete_stage();
-
-    let mut state = state_mgr
-        .load_async()
-        .await?
-        .unwrap_or_else(|| WorkspaceState {
-            created_at: Utc::now(),
-            image_sha256: None,
-            image_source: None,
-            active_agent: None,
-        });
-    state.active_agent = agent.map(str::to_owned);
-    state_mgr.save_async(&state).await?;
-
-    Ok(onboarding)
-}
-
-/// Validate and generate artifacts for an agent.
-///
-/// Reads the manifest from the VM, generates artifacts using the Rust domain
-/// functions, and transfers the `.generated/` folder back into the VM.
-/// This replaces the old `generate-agent.sh` shell script invocation.
-async fn setup_agent<P: VmProvisioner>(
+/// Poll VM state until it leaves `Starting`, then re-evaluate once.
+async fn wait_then_resolve<P, A, H, R>(
     provisioner: &P,
-    local_fs: &impl LocalFs,
-    agent_name: &str,
-    envs: &[String],
-) -> Result<Vec<polis_common::agent::OnboardingStep>> {
-    // Verify agent manifest exists in the VM.
-    let manifest_path = format!("{VM_ROOT}/agents/{agent_name}/agent.yaml");
-    let check = provisioner
-        .exec(&["test", "-f", &manifest_path])
-        .await
-        .context("checking agent manifest")?;
-    if !check.status.success() {
-        anyhow::bail!("unknown agent '{agent_name}'");
+    state_mgr: &impl WorkspaceStateStore,
+    assets: &A,
+    hasher: &H,
+    opts: StartOptions<'_, R>,
+    has_incomplete: bool,
+) -> Result<StartOutcome>
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    let timeout = opts.start_timeout;
+    let final_state = wait_for_vm_running(provisioner, timeout).await;
+
+    if final_state == VmState::Starting {
+        return Err(WorkspaceError::StartTimeout(timeout.as_secs()).into());
     }
 
-    // Read manifest from VM.
-    let cat_out = provisioner
-        .exec(&["cat", &manifest_path])
-        .await
-        .context("reading agent manifest from VM")?;
-    anyhow::ensure!(
-        cat_out.status.success(),
-        "failed to read agent manifest from VM: {}",
-        String::from_utf8_lossy(&cat_out.stderr)
-    );
+    // Re-evaluate once — final_state is not Starting, so resolve_action
+    // cannot return WaitThenResolve again (bounded re-evaluation, Req 5.5, 5.6).
+    let new_action = resolve_action(final_state, has_incomplete);
 
-    // Generate artifacts in a temp dir using pure Rust domain functions.
-    let name = agent_name.to_owned();
-    let stdout_bytes = cat_out.stdout.clone();
-    // Generate artifacts in a temp dir under ~/polis/tmp so the Multipass
-    // snap daemon (AppArmor-confined) can read it for transfer.
-    let base = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
-        .join("polis")
-        .join("tmp");
-    local_fs
-        .create_dir_all(&base)
-        .context("creating ~/polis/tmp")?;
-    let tmp = tempfile::Builder::new()
-        .prefix("polis-agent-")
-        .tempdir_in(&base)
-        .context("creating temp dir for agent artifacts")?;
-    let tmp_path = tmp.path().to_path_buf();
-
-    let manifest: polis_common::agent::AgentManifest =
-        serde_yaml::from_slice(&stdout_bytes).context("parsing agent.yaml from VM")?;
-    crate::domain::agent::validate::validate_full_manifest(&manifest)?;
-
-    let onboarding = manifest.spec.onboarding.clone();
-
-    let generated_dir = tmp_path.join("agents").join(&name).join(".generated");
-
-    // Write environment variables to the agent's .env file, forcing LF line endings.
-    let env_content = if envs.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", envs.join("\n")).replace("\r\n", "\n")
-    };
-
-    crate::application::services::agent_crud::write_artifacts_to_dir(
-        local_fs,
-        &generated_dir,
-        &name,
-        &manifest,
-        env_content,
-    )?;
-
-    // Transfer the generated artifacts back into the VM.
-    // Remove existing .generated to avoid nested directories from
-    // `multipass transfer --recursive` (which nests src inside dest if dest exists).
-    let generated_src = tmp
-        .path()
-        .join("agents")
-        .join(agent_name)
-        .join(".generated");
-    let generated_src_str = generated_src.to_string_lossy().to_string();
-    let generated_dest = format!("{VM_ROOT}/agents/{agent_name}/.generated");
-    provisioner
-        .exec(&["rm", "-rf", &generated_dest])
-        .await
-        .context("removing old generated artifacts")?;
-    let transfer_out = provisioner
-        .transfer_recursive(&generated_src_str, &generated_dest)
-        .await
-        .context("transferring generated artifacts to VM")?;
-    anyhow::ensure!(
-        transfer_out.status.success(),
-        "failed to transfer generated artifacts: {}",
-        String::from_utf8_lossy(&transfer_out.stderr)
-    );
-
-    Ok(onboarding)
-}
-
-/// Set or remove the active compose overlay symlink.
-async fn set_active_overlay(
-    provisioner: &impl ShellExecutor,
-    overlay_path: Option<&str>,
-) -> Result<()> {
-    match overlay_path {
-        Some(path) => {
-            provisioner
-                .exec(&["ln", "-sf", path, ACTIVE_OVERLAY_PATH])
-                .await
-                .context("creating overlay symlink")?;
+    match new_action {
+        StartAction::Create | StartAction::ResumeProvisioning => {
+            run_provisioning(provisioner, state_mgr, assets, hasher, &opts).await?;
+            Ok(StartOutcome::Created { active_agent: None })
         }
-        None => {
-            provisioner
-                .exec(&["rm", "-f", ACTIVE_OVERLAY_PATH])
-                .await
-                .context("removing overlay symlink")?;
+        StartAction::Restart => {
+            let persisted = state_mgr.load_async().await?;
+            restart_workspace(provisioner, state_mgr, assets, &opts, persisted).await
+        }
+        StartAction::AlreadyRunning => {
+            let persisted = state_mgr.load_async().await?;
+            let active_agent = persisted.and_then(|s| s.active_agent);
+            Ok(StartOutcome::AlreadyRunning { active_agent })
+        }
+        // Cannot happen: final_state is not Starting, so resolve_action
+        // cannot return WaitThenResolve again.
+        StartAction::WaitThenResolve => {
+            Err(WorkspaceError::StartTimeout(timeout.as_secs()).into())
         }
     }
-    Ok(())
 }
 
-/// Set or clear the ready marker that gates `polis.service` auto-start.
-async fn set_ready_marker(provisioner: &impl ShellExecutor, enabled: bool) -> Result<()> {
-    if enabled {
-        provisioner
-            .exec(&["touch", READY_MARKER_PATH])
-            .await
-            .context("creating ready marker")?;
-    } else {
-        provisioner
-            .exec(&["rm", "-f", READY_MARKER_PATH])
-            .await
-            .context("removing ready marker")?;
-    }
-    Ok(())
-}
-
-/// Start docker compose with optional agent overlay.
-async fn start_compose<P: VmProvisioner>(provisioner: &P, agent_name: Option<&str>) -> Result<()> {
-    let base = format!("{VM_ROOT}/docker-compose.yml");
-    let mut args: Vec<String> = vec![
-        "timeout".into(),
-        "120".into(),
-        "docker".into(),
-        "compose".into(),
-        "-f".into(),
-        base,
-    ];
-    if let Some(name) = agent_name {
-        let overlay = format!("{VM_ROOT}/agents/{name}/.generated/compose.agent.yaml");
-        args.push("-f".into());
-        args.push(overlay);
-    }
-    args.extend(["up".into(), "-d".into(), "--remove-orphans".into()]);
-
-    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = provisioner
-        .exec(&arg_refs)
-        .await
-        .context("starting platform")?;
-    if !output.status.success() {
-        if output.status.code() == Some(124) {
-            anyhow::bail!(
-                "docker compose up timed out after 2 minutes.\n\
-                 Diagnose: polis doctor"
-            );
+/// Poll `vm::state` every 5 s until the VM leaves `Starting`, or timeout.
+///
+/// Returns the final `VmState`. If the timeout expires while still `Starting`,
+/// returns `VmState::Starting` — the caller converts this to `StartTimeout`.
+async fn wait_for_vm_running(
+    provisioner: &impl crate::application::ports::InstanceInspector,
+    timeout: std::time::Duration,
+) -> VmState {
+    let start = std::time::Instant::now();
+    loop {
+        if start.elapsed() >= timeout {
+            return VmState::Starting; // timeout — caller converts to StartTimeout
         }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("failed to start platform.\n{stderr}");
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        match vm::state(provisioner).await {
+            Ok(s) if s != VmState::Starting => return s,
+            _ => {}
+        }
     }
-    Ok(())
 }

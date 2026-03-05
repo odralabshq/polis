@@ -8,6 +8,8 @@ pub mod agent;
 pub mod config;
 pub mod error;
 pub mod health;
+pub mod ssh;
+pub mod util;
 pub mod workspace;
 
 #[allow(unused_imports)]
@@ -21,4 +23,3 @@ pub use health::{
 };
 #[allow(unused_imports)]
 pub use workspace::{WorkspaceState, check_architecture};
-pub mod ssh;

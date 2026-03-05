@@ -964,3 +964,176 @@ fn application_has_no_infra_or_output_imports() {
         violations.join("\n")
     );
 }
+
+// ── Req 14.1: workspace_start has no agent imports ────────────────────────────
+
+/// `workspace_start.rs` must not import agent-related symbols.
+///
+/// The workspace lifecycle service must be decoupled from agent activation.
+#[test]
+fn workspace_start_has_no_agent_imports() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("application")
+        .join("services")
+        .join("workspace_start.rs");
+
+    let forbidden = [
+        "agent_activate",
+        "setup_agent",
+        "resolve_agent_action",
+        "AgentAction",
+    ];
+
+    let lines = read_non_comment_lines(&file);
+    let mut violations: Vec<String> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        for pattern in &forbidden {
+            if line.contains(pattern) {
+                violations.push(format!(
+                    "workspace_start.rs:{}: forbidden agent symbol `{pattern}`: {line}",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "workspace_start.rs must not reference agent symbols (Req 14.1):\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Req 14.2: agent_activate has no workspace lifecycle imports ───────────────
+
+/// `agent_activate.rs` must not import workspace lifecycle symbols.
+///
+/// Agent activation must be decoupled from workspace creation/restart.
+#[test]
+fn agent_activate_has_no_workspace_lifecycle_imports() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("application")
+        .join("services")
+        .join("agent_activate.rs");
+
+    let forbidden = [
+        "create_and_start_vm",
+        "restart_vm",
+        "resolve_action",
+        "StartAction",
+    ];
+
+    let lines = read_non_comment_lines(&file);
+    let mut violations: Vec<String> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        for pattern in &forbidden {
+            if line.contains(pattern) {
+                violations.push(format!(
+                    "agent_activate.rs:{}: forbidden lifecycle symbol `{pattern}`: {line}",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "agent_activate.rs must not reference workspace lifecycle symbols (Req 14.2):\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Req 14.3: ssh_provision has no presentation concerns ─────────────────────
+
+/// `ssh_provision.rs` must not use dialoguer, non_interactive, or Confirm.
+///
+/// SSH provisioning is an application service — consent is passed in as a
+/// boolean from the presentation layer, never prompted for internally.
+#[test]
+fn ssh_provision_has_no_presentation_concerns() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("application")
+        .join("services")
+        .join("ssh_provision.rs");
+
+    let forbidden = [
+        "dialoguer",
+        "non_interactive",
+        "Confirm::new",
+        "app.confirm",
+    ];
+
+    let lines = read_non_comment_lines(&file);
+    let mut violations: Vec<String> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        for pattern in &forbidden {
+            if line.contains(pattern) {
+                violations.push(format!(
+                    "ssh_provision.rs:{}: forbidden presentation symbol `{pattern}`: {line}",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "ssh_provision.rs must not contain presentation concerns (Req 14.3):\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Req 14.4 / 10.5: no application service reads env vars ───────────────────
+
+/// No file in `application/services/` may call `std::env::var(`.
+///
+/// Env var reads belong in the presentation layer (commands/). Application
+/// services receive typed values via their options structs.
+#[test]
+fn no_application_service_reads_env_vars() {
+    let services_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("application")
+        .join("services");
+
+    let mut violations: Vec<String> = Vec::new();
+
+    for file in collect_rs_files(&services_dir) {
+        let rel = file
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+
+        let Ok(content) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+
+        let mut cfg_test_tracker = CfgTestTracker::new();
+        for (i, line) in content.lines().enumerate() {
+            let in_test = cfg_test_tracker.process_line(line);
+            let trimmed = line.trim();
+            if in_test || trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("std::env::var(") || line.contains("env::var(") {
+                violations.push(format!(
+                    "{rel}:{}: env var read in application service — move to presentation layer: {line}",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Application services must not read env vars (Req 14.4, 10.5):\n{}",
+        violations.join("\n")
+    );
+}

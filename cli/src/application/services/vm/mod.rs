@@ -4,6 +4,7 @@
 //! application services. Each module imports only from `crate::domain` and
 //! `crate::application::ports`.
 
+pub mod compose;
 pub mod health;
 pub mod integrity;
 pub mod lifecycle;

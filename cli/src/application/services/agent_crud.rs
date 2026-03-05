@@ -254,11 +254,11 @@ pub async fn update_agent(
         .load_async()
         .await?
         .and_then(|s| s.active_agent)
-        .ok_or_else(|| anyhow::anyhow!("no active agent. Start one: polis start --agent <name>"))?;
+        .ok_or_else(|| anyhow::anyhow!("no active agent. Start one: polis agent start <name>"))?;
 
     anyhow::ensure!(
         vm::state(provisioner).await? == VmState::Running,
-        "Workspace is not running. Start it first: polis start --agent <name>"
+        "Workspace is not running. Start it first: polis agent start <name>"
     );
 
     reporter.step(&format!("regenerating artifacts for '{name}'..."));

@@ -76,7 +76,7 @@ impl UpdateChecker for GithubUpdateChecker {
             .context("failed to read release asset")?;
 
         let hash = Sha256::digest(&data);
-        let actual_sha256 = crate::domain::workspace::hex_encode(&hash);
+        let actual_sha256 = crate::domain::util::hex_encode(&hash);
 
         let checksum_url = format!("{download_url}.sha256");
         let checksum_response = ureq::get(&checksum_url)
@@ -193,7 +193,6 @@ pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>> {
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::wildcard_imports)]
 mod tests {
     use super::*;
-    use crate::domain::workspace::hex_encode;
 
     // -----------------------------------------------------------------------
     // parse_release_notes — unit
@@ -264,24 +263,4 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // hex_encode — unit
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_hex_encode_empty_returns_empty() {
-        assert_eq!(hex_encode(&[]), "");
-    }
-
-    #[test]
-    fn test_hex_encode_single_byte() {
-        assert_eq!(hex_encode(&[0x00]), "00");
-        assert_eq!(hex_encode(&[0xff]), "ff");
-        assert_eq!(hex_encode(&[0xab]), "ab");
-    }
-
-    #[test]
-    fn test_hex_encode_multiple_bytes() {
-        assert_eq!(hex_encode(&[0xde, 0xad, 0xbe, 0xef]), "deadbeef");
-    }
 }

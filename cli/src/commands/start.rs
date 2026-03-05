@@ -3,63 +3,75 @@
 use anyhow::{Context, Result};
 use clap::Args;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use crate::app::AppContext;
+use crate::application::services::ssh_provision::{self, SshProvisionOptions};
 use crate::application::services::workspace_start::{self as service, StartOutcome};
 use crate::output::OutputContext;
 use owo_colors::OwoColorize as _;
-
 /// Arguments for the start command.
 #[derive(Args, Default)]
-pub struct StartArgs {
-    /// Agent to activate (must match agents/<name>/ directory inside the VM)
-    #[arg(long)]
-    pub agent: Option<String>,
-
-    /// Environment variables to pass to the agent (e.g. -e KEY=VAL)
-    #[arg(short = 'e', long = "env")]
-    pub envs: Vec<String>,
-}
+pub struct StartArgs {}
 
 /// # Errors
 ///
 /// This function will return an error if the underlying operations fail.
 /// Run `polis start`.
-pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
+pub async fn run(_args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     let (assets_dir, _assets_guard) = app.assets_dir().context("extracting assets")?;
     let version = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
-    if args.agent.is_some() {
-        app.output
-            .info("Starting workspace. Agent initialization may take several minutes depending on the selected agent.");
-    } else {
-        app.output.info("Starting workspace.");
-    }
+    app.output.info("Starting workspace.");
 
-    let opts = crate::application::services::workspace_start::StartOptions {
+    // Read start timeout from env var in the presentation layer (Req 8.6, 10.5).
+    let start_timeout = Duration::from_secs(
+        std::env::var("POLIS_VM_START_TIMEOUT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(180u64),
+    );
+
+    // Phase 1: Workspace lifecycle (Req 8.1).
+    let opts = service::StartOptions {
         reporter: &reporter,
-        agent: args.agent.as_deref(),
-        envs: args.envs.clone(),
         assets_dir: &assets_dir,
         version,
+        start_timeout,
     };
     let outcome = service::start_workspace(
         &app.provisioner,
         &app.state_mgr,
         &app.assets,
-        &app.ssh,
-        &app.local_fs,
+        // LocalFs implements both LocalFs and FileHasher — passed as `hasher`
+        // because start_workspace only needs SHA256 file hashing from it.
         &app.local_fs,
         opts,
     )
     .await?;
 
-    match outcome {
-        StartOutcome::AlreadyRunning { agent, .. } => {
-            print_already_running_message(agent.as_deref(), &app.output);
+    // Phase 2: SSH provisioning — consent decided here in presentation layer (Req 8.7, 10.4).
+    let ssh_configured = app.ssh.is_configured()?;
+    let consent = if ssh_configured {
+        true
+    } else {
+        app.confirm("Add SSH configuration to ~/.ssh/config?", true)?
+    };
+    ssh_provision::provision_ssh(
+        &app.provisioner,
+        &app.ssh,
+        SshProvisionOptions { consent_given: consent },
+        &reporter,
+    )
+    .await?;
+
+    // Phase 3: Render outcome.
+    match &outcome {
+        StartOutcome::AlreadyRunning { active_agent } => {
+            print_already_running_message(active_agent.as_deref(), &app.output);
         }
-        StartOutcome::Created { onboarding, .. } | StartOutcome::Restarted { onboarding, .. } => {
-            render_onboarding_steps(&app.output, &onboarding);
+        StartOutcome::Created { .. } | StartOutcome::Restarted { .. } => {
+            render_onboarding_steps(&app.output, &[]);
         }
     }
 

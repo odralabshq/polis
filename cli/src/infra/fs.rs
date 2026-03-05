@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use crate::application::ports::LocalArtifactWriter;
-use crate::domain::workspace::hex_encode;
+use crate::domain::util::hex_encode;
 
 /// Writes agent artifact files to the local filesystem under `.generated/`.
 /// Production filesystem implementation of `LocalArtifactWriter`.

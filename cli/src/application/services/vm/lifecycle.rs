@@ -5,22 +5,18 @@
 use anyhow::{Context, Result};
 
 use crate::application::ports::{
-    AssetExtractor, FileTransfer, HostKeyExtractor, InstanceInspector, InstanceLifecycle,
-    InstanceSpec, LocalFs, ProgressReporter, ShellExecutor, SshConfigurator, VmProvisioner,
+    AssetExtractor, InstanceInspector, InstanceLifecycle,
+    InstanceSpec, ProgressReporter, ShellExecutor, VmProvisioner,
 };
+
+/// Re-export `VmState` from the domain layer so existing application-layer
+/// imports (`use crate::application::services::vm::lifecycle::VmState`) continue
+/// to compile without modification.
+pub use crate::domain::workspace::VmState;
 
 const VM_CPUS: &str = "4";
 const VM_MEMORY: &str = "8G";
 const VM_DISK: &str = "40G";
-
-/// VM state as observed from the provisioner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VmState {
-    NotFound,
-    Stopped,
-    Starting,
-    Running,
-}
 
 /// Check if VM exists.
 pub async fn exists(mp: &impl InstanceInspector) -> bool {
@@ -135,11 +131,7 @@ pub async fn verify_cloud_init(mp: &impl ShellExecutor) -> Result<()> {
 pub async fn create(
     mp: &impl VmProvisioner,
     assets: &impl AssetExtractor,
-    ssh: &impl SshConfigurator,
-    local_fs: &impl LocalFs,
-    host_key_extractor: &impl HostKeyExtractor,
     reporter: &impl ProgressReporter,
-    quiet: bool,
 ) -> Result<()> {
     check_prerequisites(mp).await?;
 
@@ -151,8 +143,15 @@ pub async fn create(
 
     // The Multipass daemon (especially snap-confined) runs as a separate user
     // and needs read access to the cloud-init file and its parent directory.
-    local_fs.set_permissions(&assets_path, 0o755)?;
-    local_fs.set_permissions(&assets_path.join("cloud-init.yaml"), 0o644)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&assets_path, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::set_permissions(
+            assets_path.join("cloud-init.yaml"),
+            std::fs::Permissions::from_mode(0o644),
+        );
+    }
 
     let cloud_init_path = assets_path.join("cloud-init.yaml");
     let cloud_init_str = cloud_init_path
@@ -160,9 +159,7 @@ pub async fn create(
         .context("cloud-init path is not valid UTF-8")?
         .to_string();
 
-    if !quiet {
-        reporter.begin_stage("preparing workspace...");
-    }
+    reporter.begin_stage("preparing workspace...");
     let output = mp
         .launch(&InstanceSpec {
             image: "24.04",
@@ -174,7 +171,7 @@ pub async fn create(
         })
         .await
         .context("launching workspace")?;
-    if !quiet && output.status.success() {
+    if output.status.success() {
         reporter.complete_stage();
     }
 
@@ -183,12 +180,9 @@ pub async fn create(
         anyhow::bail!("failed to create workspace.\n\nRun 'polis doctor' to diagnose.\n{stderr}");
     }
 
-    // Verify cloud-init completed successfully before proceeding to Phase 2.
+    // Verify cloud-init completed successfully before proceeding.
     verify_cloud_init(mp).await?;
 
-    configure_credentials(mp, local_fs).await;
-    super::services::start_services_with_progress(mp, reporter, quiet).await;
-    pin_host_key(ssh, host_key_extractor).await;
     Ok(())
 }
 
@@ -282,19 +276,6 @@ async fn check_prerequisites(mp: &impl InstanceInspector) -> Result<()> {
         anyhow::bail!("workspace runtime needs update.\n\nRun 'polis doctor' to diagnose and fix.");
     }
     Ok(())
-}
-
-async fn configure_credentials(mp: &impl FileTransfer, local_fs: &impl LocalFs) {
-    let ca_cert = std::path::PathBuf::from("certs/ca/ca.pem");
-    if local_fs.exists(&ca_cert) {
-        let _ = mp.transfer(&ca_cert.to_string_lossy(), "/tmp/ca.pem").await;
-    }
-}
-
-async fn pin_host_key(ssh: &impl SshConfigurator, extractor: &impl HostKeyExtractor) {
-    if let Some(host_key) = extractor.extract_host_key().await {
-        let _ = ssh.update_host_key(&host_key).await;
-    }
 }
 
 #[cfg(test)]

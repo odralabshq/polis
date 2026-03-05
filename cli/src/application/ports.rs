@@ -35,18 +35,6 @@ pub struct InstanceSpec<'a> {
     pub timeout: Option<&'a str>,
 }
 
-/// VM instance state — preserved exactly from `provisioner.rs` (move-only).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Reserved for future use — VmState in lifecycle.rs is the active enum
-pub enum InstanceState {
-    Running,
-    Stopped,
-    Starting,
-    Stopping,
-    NotFound,
-    Error,
-}
-
 // ── VM Port Traits ────────────────────────────────────────────────────────────
 
 /// VM lifecycle operations: create, start, stop, destroy.

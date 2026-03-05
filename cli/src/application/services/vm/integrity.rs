@@ -299,6 +299,8 @@ mod tests {
         let mp = DigestMock::new(vec![(image, &repo_digest)]);
 
         let manifest_json = format!("{{\"{image}\":\"{digest}\"}}");
+        // Intentional leak: AssetExtractor::get_asset returns &'static [u8], so tests
+        // must produce a 'static reference. Leaked memory is reclaimed on process exit.
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
@@ -315,6 +317,7 @@ mod tests {
         let mp = DigestMock::new(vec![(image, &repo_digest)]);
 
         let manifest_json = format!("{{\"{image}\":\"{expected}\"}}");
+        // See above: intentional leak for &'static [u8].
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
@@ -347,6 +350,7 @@ mod tests {
         let mp = DigestMock::new(vec![(image, &repo_digest)]);
 
         let manifest_json = format!("{{\"{image}\":\"{expected}\"}}");
+        // See above: intentional leak for &'static [u8].
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
@@ -377,6 +381,7 @@ mod tests {
         }
 
         let manifest_json = format!("{{\"{image}\":\"sha256:abc\"}}");
+        // See above: intentional leak for &'static [u8].
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
@@ -409,6 +414,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(",");
         let manifest_json = format!("{{{manifest_json}}}");
+        // See above: intentional leak for &'static [u8].
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 

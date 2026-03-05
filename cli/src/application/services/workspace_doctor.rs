@@ -18,6 +18,9 @@ use crate::domain::workspace::QUERY_SCRIPT;
 /// implementations. The service never touches `OutputContext` or any
 /// presentation type — rendering is the caller's responsibility.
 ///
+/// `polis_image_override` is the value of the `POLIS_IMAGE` env var, read by
+/// the presentation layer and passed in here (Req 10.5, 14.4).
+///
 /// # Errors
 ///
 /// Returns an error if any health probe fails to execute.
@@ -29,12 +32,13 @@ pub async fn run_doctor(
     network_probe: &impl NetworkProbe,
     paths: &impl LocalPaths,
     fs: &impl crate::application::ports::LocalFs,
+    polis_image_override: Option<String>,
 ) -> Result<DoctorChecks> {
     reporter.step("checking prerequisites...");
     let prerequisites = probe_prerequisites(cmd_runner).await?;
 
     reporter.step("checking workspace...");
-    let workspace = probe_workspace(provisioner, cmd_runner, paths, fs).await?;
+    let workspace = probe_workspace(provisioner, cmd_runner, paths, fs, polis_image_override).await?;
 
     reporter.step("checking network...");
     let network = probe_network(network_probe).await?;
@@ -96,9 +100,10 @@ async fn probe_workspace(
     cmd_runner: &impl CommandRunner,
     paths: &impl LocalPaths,
     fs: &impl crate::application::ports::LocalFs,
+    polis_image_override: Option<String>,
 ) -> Result<crate::domain::health::WorkspaceChecks> {
     let disk_space_gb = probe_disk_space_gb(cmd_runner).await?;
-    let image = probe_image_cache(paths, fs);
+    let image = probe_image_cache(paths, fs, polis_image_override);
 
     // Check VM readiness via provisioner
     let ready = crate::application::services::vm::lifecycle::state(provisioner)
@@ -214,12 +219,13 @@ async fn probe_disk_space_gb(cmd_runner: &impl CommandRunner) -> Result<u64> {
 fn probe_image_cache(
     paths: &impl LocalPaths,
     fs: &impl crate::application::ports::LocalFs,
+    polis_image_override: Option<String>,
 ) -> crate::domain::health::ImageCheckResult {
     let images_dir = paths.images_dir();
     let cached = fs.exists(&images_dir.join("polis.qcow2"));
     crate::domain::health::ImageCheckResult {
         cached,
-        polis_image_override: std::env::var("POLIS_IMAGE").ok(),
+        polis_image_override,
     }
 }
 

@@ -22,8 +22,14 @@ pub enum WorkspaceError {
     #[error("Workspace is already running.")]
     AlreadyRunning,
 
-    #[error("Agent mismatch: workspace has '{active}' but '{requested}' was requested.")]
+    #[error("Workspace is running with agent '{active}'. Remove it first:\n  polis agent delete {active}\n  polis agent start {requested}")]
     AgentMismatch { active: String, requested: String },
+
+    #[error("Workspace is not running. Start it first:\n  polis start")]
+    NotRunning,
+
+    #[error("VM still starting after {0}s. Diagnose:\n  polis doctor")]
+    StartTimeout(u64),
 }
 
 // ── Agent errors ──────────────────────────────────────────────────────────────

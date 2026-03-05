@@ -172,7 +172,6 @@ fn apply_cli_update(
 mod tests {
     use super::*;
     use crate::application::services::update::SignatureInfo;
-    use crate::domain::workspace::hex_encode;
 
     // -----------------------------------------------------------------------
     // run() via UpdateChecker trait mock — unit
@@ -254,26 +253,5 @@ mod tests {
             result.unwrap_err().to_string().contains("checksum"),
             "error should mention checksum"
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // hex_encode — unit
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_hex_encode_empty_returns_empty() {
-        assert_eq!(hex_encode(&[]), "");
-    }
-
-    #[test]
-    fn test_hex_encode_single_byte() {
-        assert_eq!(hex_encode(&[0x00]), "00");
-        assert_eq!(hex_encode(&[0xff]), "ff");
-        assert_eq!(hex_encode(&[0xab]), "ab");
-    }
-
-    #[test]
-    fn test_hex_encode_multiple_bytes() {
-        assert_eq!(hex_encode(&[0xde, 0xad, 0xbe, 0xef]), "deadbeef");
     }
 }
