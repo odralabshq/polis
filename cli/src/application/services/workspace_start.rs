@@ -27,7 +27,7 @@ use crate::application::services::vm::{
     services::pull_images,
 };
 use crate::domain::error::WorkspaceError;
-use crate::domain::workspace::{resolve_action, StartAction, WorkspaceState};
+use crate::domain::workspace::{StartAction, WorkspaceState, resolve_action};
 
 // ── StartOptions ──────────────────────────────────────────────────────────────
 
@@ -153,9 +153,7 @@ where
     let set_ready = SetReadyMarker;
     let start_services = StartServices;
     let wait_health = WaitHealth;
-    let write_hash = WriteConfigHash {
-        hash: config_hash,
-    };
+    let write_hash = WriteConfigHash { hash: config_hash };
     let persist = FinalizeProvisioning;
 
     let steps: &[&dyn ProvisioningStep<P, A, H, R>] = &[
@@ -195,9 +193,7 @@ where
         ctx: &'a ProvisioningContext<'a, P, A, H>,
         reporter: &'a R,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move {
-            vm::create(ctx.provisioner, ctx.assets, reporter).await
-        })
+        Box::pin(async move { vm::create(ctx.provisioner, ctx.assets, reporter).await })
     }
 }
 
@@ -402,9 +398,9 @@ where
         ctx: &'a ProvisioningContext<'a, P, A, H>,
         reporter: &'a R,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move {
-            wait_ready(ctx.provisioner, reporter, false, "workspace ready").await
-        })
+        Box::pin(
+            async move { wait_ready(ctx.provisioner, reporter, false, "workspace ready").await },
+        )
     }
 }
 
@@ -570,9 +566,7 @@ where
         }
         // Cannot happen: final_state is not Starting, so resolve_action
         // cannot return WaitThenResolve again.
-        StartAction::WaitThenResolve => {
-            Err(WorkspaceError::StartTimeout(timeout.as_secs()).into())
-        }
+        StartAction::WaitThenResolve => Err(WorkspaceError::StartTimeout(timeout.as_secs()).into()),
     }
 }
 

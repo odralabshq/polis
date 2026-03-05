@@ -262,5 +262,4 @@ mod tests {
             assert_eq!(name, "polis-linux-amd64.tar.gz");
         }
     }
-
 }

@@ -73,22 +73,55 @@ impl<'a> HumanRenderer<'a> {
 
     /// Render the list of installed agents.
     pub fn render_agent_list(&self, agents: &[crate::domain::agent::AgentInfo]) {
+        use owo_colors::OwoColorize;
+
         if agents.is_empty() {
             if !self.ctx.quiet {
-                println!("No agents installed. Install one: polis agent add --path <folder>");
+                println!("No agents installed. Install one: polis agent install --path <folder>");
             }
             return;
         }
 
-        println!("Available agents:\n");
+        println!("Installed agents:\n");
         for agent in agents {
             let name = &agent.name;
             let version = agent.version.as_deref().unwrap_or("");
             let desc = agent.description.as_deref().unwrap_or("");
             let marker = if agent.active { "  [active]" } else { "" };
             println!("  {name:<16} {version:<10} {desc}{marker}");
+
+            // Display warning if present (e.g., malformed manifest)
+            if let Some(warning) = &agent.warning {
+                println!("    {} {warning}", "!".style(self.ctx.styles.warning));
+            }
         }
-        println!("\nStart an agent: polis start --agent <name>");
+        println!("\nActivate an agent: polis agent activate <name>");
+    }
+
+    /// Render agent activation outcome with optional onboarding steps.
+    pub fn render_agent_activated(&self, agent: &str, already_active: bool) {
+        if already_active {
+            self.ctx.info(&format!("Agent '{agent}' is already active"));
+        } else {
+            self.ctx.success(&format!("Agent '{agent}' activated"));
+        }
+    }
+
+    /// Render onboarding steps for an activated agent.
+    pub fn render_onboarding(&self, steps: &[polis_common::agent::OnboardingStep]) {
+        if steps.is_empty() || self.ctx.quiet {
+            return;
+        }
+        self.ctx.blank();
+        self.ctx.header("Getting started");
+        for (i, step) in steps.iter().enumerate() {
+            self.ctx.info(&format!(
+                "{}. {}  {}",
+                i + 1,
+                step.title,
+                step.command.style(self.ctx.styles.bold)
+            ));
+        }
     }
 
     /// Render the current polis configuration.

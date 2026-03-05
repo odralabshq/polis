@@ -5,8 +5,8 @@
 use anyhow::{Context, Result};
 
 use crate::application::ports::{
-    AssetExtractor, InstanceInspector, InstanceLifecycle,
-    InstanceSpec, ProgressReporter, ShellExecutor, VmProvisioner,
+    AssetExtractor, InstanceInspector, InstanceLifecycle, InstanceSpec, ProgressReporter,
+    ShellExecutor, VmProvisioner,
 };
 
 /// Re-export `VmState` from the domain layer so existing application-layer

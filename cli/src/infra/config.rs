@@ -20,7 +20,8 @@ impl ConfigStore for YamlConfigStore {
         }
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("cannot read {}", path.display()))?;
-        serde_yaml::from_str(&content).with_context(|| format!("cannot parse {}", path.display()))
+        serde_yaml_ng::from_str(&content)
+            .with_context(|| format!("cannot parse {}", path.display()))
     }
 
     /// # Errors
@@ -32,7 +33,7 @@ impl ConfigStore for YamlConfigStore {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("cannot create {}", parent.display()))?;
         }
-        let content = serde_yaml::to_string(config).context("cannot serialize config")?;
+        let content = serde_yaml_ng::to_string(config).context("cannot serialize config")?;
         std::fs::write(&path, content)
             .with_context(|| format!("cannot write {}", path.display()))?;
 

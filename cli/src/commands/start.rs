@@ -60,7 +60,9 @@ pub async fn run(_args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
     ssh_provision::provision_ssh(
         &app.provisioner,
         &app.ssh,
-        SshProvisionOptions { consent_given: consent },
+        SshProvisionOptions {
+            consent_given: consent,
+        },
         &reporter,
     )
     .await?;

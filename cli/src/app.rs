@@ -7,6 +7,10 @@
 
 use anyhow::Result;
 
+use crate::application::ports::{
+    FileTransfer, InstanceInspector, InstanceLifecycle, LocalFs as LocalFsTrait, ShellExecutor,
+    WorkspaceStateStore,
+};
 use crate::infra::assets::EmbeddedAssets;
 use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, TokioCommandRunner};
 use crate::infra::config::YamlConfigStore;
@@ -151,7 +155,6 @@ impl AppContext {
 
     /// Returns a `TerminalReporter` bound to this context's output.
     #[must_use]
-    #[allow(dead_code)] // Not yet called from command handlers
     pub fn terminal_reporter(&self) -> crate::output::reporter::TerminalReporter<'_> {
         crate::output::reporter::TerminalReporter::new(&self.output)
     }
@@ -168,5 +171,28 @@ impl AppContext {
     pub fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
         let (path, guard) = crate::infra::assets::extract_assets()?;
         Ok((path, guard))
+    }
+
+    /// Returns a reference to the VM provisioner (opaque type).
+    ///
+    /// This accessor provides source-level decoupling — the commands layer
+    /// cannot name or depend on the concrete type.
+    #[must_use]
+    pub fn provisioner(
+        &self,
+    ) -> &(impl ShellExecutor + FileTransfer + InstanceInspector + InstanceLifecycle) {
+        &self.provisioner
+    }
+
+    /// Returns a reference to the workspace state store.
+    #[must_use]
+    pub fn state_store(&self) -> &impl WorkspaceStateStore {
+        &self.state_mgr
+    }
+
+    /// Returns a reference to the local filesystem.
+    #[must_use]
+    pub fn local_fs(&self) -> &impl LocalFsTrait {
+        &self.local_fs
     }
 }

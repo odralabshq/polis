@@ -38,7 +38,8 @@ pub async fn run_doctor(
     let prerequisites = probe_prerequisites(cmd_runner).await?;
 
     reporter.step("checking workspace...");
-    let workspace = probe_workspace(provisioner, cmd_runner, paths, fs, polis_image_override).await?;
+    let workspace =
+        probe_workspace(provisioner, cmd_runner, paths, fs, polis_image_override).await?;
 
     reporter.step("checking network...");
     let network = probe_network(network_probe).await?;

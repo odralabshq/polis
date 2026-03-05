@@ -214,7 +214,7 @@ mod tests {
     fn workspace_state_with_provisioning_round_trips() {
         let state = WorkspaceState {
             created_at: chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
-                .unwrap()
+                .expect("valid RFC3339 timestamp")
                 .with_timezone(&Utc),
             image_sha256: None,
             image_source: None,
@@ -237,7 +237,7 @@ mod tests {
     fn provisioning_checkpoint_not_serialized_when_none() {
         let state = WorkspaceState {
             created_at: chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
-                .unwrap()
+                .expect("valid RFC3339 timestamp")
                 .with_timezone(&Utc),
             image_sha256: None,
             image_source: None,
@@ -245,7 +245,10 @@ mod tests {
             provisioning: None,
         };
         let json = serde_json::to_string(&state).expect("serialize");
-        assert!(!json.contains("provisioning"), "field should be omitted: {json}");
+        assert!(
+            !json.contains("provisioning"),
+            "field should be omitted: {json}"
+        );
     }
 
     // -----------------------------------------------------------------------

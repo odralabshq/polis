@@ -1008,7 +1008,7 @@ fn workspace_start_has_no_agent_imports() {
 
 // ── Req 14.2: agent_activate has no workspace lifecycle imports ───────────────
 
-/// `agent_activate.rs` must not import workspace lifecycle symbols.
+/// `agent/activate.rs` must not import workspace lifecycle symbols.
 ///
 /// Agent activation must be decoupled from workspace creation/restart.
 #[test]
@@ -1017,7 +1017,8 @@ fn agent_activate_has_no_workspace_lifecycle_imports() {
         .join("src")
         .join("application")
         .join("services")
-        .join("agent_activate.rs");
+        .join("agent")
+        .join("activate.rs");
 
     let forbidden = [
         "create_and_start_vm",
@@ -1033,7 +1034,7 @@ fn agent_activate_has_no_workspace_lifecycle_imports() {
         for pattern in &forbidden {
             if line.contains(pattern) {
                 violations.push(format!(
-                    "agent_activate.rs:{}: forbidden lifecycle symbol `{pattern}`: {line}",
+                    "agent/activate.rs:{}: forbidden lifecycle symbol `{pattern}`: {line}",
                     i + 1
                 ));
             }
@@ -1042,14 +1043,14 @@ fn agent_activate_has_no_workspace_lifecycle_imports() {
 
     assert!(
         violations.is_empty(),
-        "agent_activate.rs must not reference workspace lifecycle symbols (Req 14.2):\n{}",
+        "agent/activate.rs must not reference workspace lifecycle symbols (Req 14.2):\n{}",
         violations.join("\n")
     );
 }
 
 // ── Req 14.3: ssh_provision has no presentation concerns ─────────────────────
 
-/// `ssh_provision.rs` must not use dialoguer, non_interactive, or Confirm.
+/// `ssh_provision.rs` must not use dialoguer, `non_interactive`, or Confirm.
 ///
 /// SSH provisioning is an application service — consent is passed in as a
 /// boolean from the presentation layer, never prompted for internally.
@@ -1134,6 +1135,235 @@ fn no_application_service_reads_env_vars() {
     assert!(
         violations.is_empty(),
         "Application services must not read env vars (Req 14.4, 10.5):\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Property 2: Commands layer uses trait accessors, not concrete fields ──────
+
+/// `commands/agent.rs` must not reference concrete infra types.
+///
+/// The commands layer should use trait accessors from `AppContext`, not
+/// concrete types like `MultipassProvisioner`, `TokioCommandRunner`, or `StateManager`.
+#[test]
+fn commands_agent_uses_trait_accessors_not_concrete_types() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("commands")
+        .join("agent.rs");
+
+    let concrete_types = ["MultipassProvisioner", "TokioCommandRunner", "StateManager"];
+
+    let lines = read_non_comment_lines(&file);
+    let mut violations: Vec<String> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        for concrete in &concrete_types {
+            if line.contains(concrete) {
+                violations.push(format!(
+                    "commands/agent.rs:{}: concrete type `{concrete}` found — use trait accessors: {line}",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "commands/agent.rs must use trait accessors, not concrete types (Req 4.2, 9.1):\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Property 15: No horizontal service-to-service imports ─────────────────────
+
+/// No `services/agent/*.rs` module may import from another `agent/*` module
+/// except `artifacts` (shared artifact-writing utilities).
+///
+/// This prevents horizontal coupling between service modules.
+#[test]
+fn no_horizontal_agent_service_imports() {
+    let agent_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("application")
+        .join("services")
+        .join("agent");
+
+    // Modules that exist in services/agent/
+    let agent_modules = ["list", "install", "remove", "activate"];
+
+    let mut violations: Vec<String> = Vec::new();
+
+    for file in collect_rs_files(&agent_dir) {
+        let rel = file
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        let rel_normalized = rel.replace('\\', "/");
+
+        // Skip mod.rs — it's allowed to re-export
+        if rel_normalized.ends_with("mod.rs") {
+            continue;
+        }
+
+        let lines = read_non_comment_lines(&file);
+        for (i, line) in lines.iter().enumerate() {
+            // Check for imports from sibling modules (except artifacts)
+            for module in &agent_modules {
+                // Pattern: `super::list`, `super::install`, etc.
+                let pattern = format!("super::{module}");
+                if line.contains(&pattern) {
+                    violations.push(format!(
+                        "{rel}:{}: horizontal import `{pattern}` — services should not import from siblings: {line}",
+                        i + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "No horizontal service-to-service imports allowed (Req 3.6, 9.2):\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Property 3: AppContext accessors return trait references ──────────────────
+
+/// `app.rs` accessor method signatures must not contain concrete type names.
+///
+/// The accessors should return `&impl Trait` or `&dyn Trait`, not concrete types.
+#[test]
+fn app_context_accessors_return_trait_references() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("app.rs");
+
+    let concrete_types = [
+        "MultipassProvisioner",
+        "TokioCommandRunner",
+        "StateManager",
+        "TokioFs",
+    ];
+
+    let Ok(content) = std::fs::read_to_string(&file) else {
+        panic!("Could not read app.rs");
+    };
+
+    let mut violations: Vec<String> = Vec::new();
+    let mut in_accessor = false;
+
+    for (i, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+
+        // Detect accessor method signatures
+        if trimmed.starts_with("pub fn provisioner(")
+            || trimmed.starts_with("pub fn state_store(")
+            || trimmed.starts_with("pub fn local_fs(")
+        {
+            in_accessor = true;
+        }
+
+        if in_accessor {
+            for concrete in &concrete_types {
+                if line.contains(concrete) {
+                    violations.push(format!(
+                        "app.rs:{}: concrete type `{concrete}` in accessor signature: {line}",
+                        i + 1
+                    ));
+                }
+            }
+            // End of signature detection (simplified: look for opening brace)
+            if line.contains('{') {
+                in_accessor = false;
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "AppContext accessors must return trait references, not concrete types (Req 9.3):\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Property 1: Naming consistency across layers ──────────────────────────────
+
+/// No agent-related string literals should contain "delete" — use "remove" instead.
+///
+/// Exception: "delete" referring to VM deletion is allowed.
+#[test]
+fn naming_consistency_remove_not_delete() {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    // Files to check for agent-related "delete" usage
+    let files_to_check = [
+        src_dir.join("domain").join("error.rs"),
+        src_dir.join("commands").join("agent.rs"),
+        src_dir
+            .join("application")
+            .join("services")
+            .join("agent")
+            .join("list.rs"),
+        src_dir
+            .join("application")
+            .join("services")
+            .join("agent")
+            .join("install.rs"),
+        src_dir
+            .join("application")
+            .join("services")
+            .join("agent")
+            .join("remove.rs"),
+        src_dir
+            .join("application")
+            .join("services")
+            .join("agent")
+            .join("activate.rs"),
+    ];
+
+    let mut violations: Vec<String> = Vec::new();
+
+    for file in &files_to_check {
+        if !file.exists() {
+            continue;
+        }
+
+        let rel = file
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(file)
+            .display()
+            .to_string();
+
+        let lines = read_non_comment_lines(file);
+        for (i, line) in lines.iter().enumerate() {
+            let lower = line.to_lowercase();
+            // Check for "delete" in agent-related contexts
+            if lower.contains("delete") && lower.contains("agent") {
+                // Exception: VM deletion references are allowed
+                if lower.contains("vm") || lower.contains("workspace") {
+                    continue;
+                }
+                violations.push(format!(
+                    "{rel}:{}: found 'delete' in agent context — use 'remove': {line}",
+                    i + 1
+                ));
+            }
+            // Also check for "polis agent delete" command references
+            if line.contains("polis agent delete") {
+                violations.push(format!(
+                    "{rel}:{}: found 'polis agent delete' — use 'polis agent remove': {line}",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Naming consistency: use 'remove' not 'delete' for agent operations (Req 2.4, 2.5):\n{}",
         violations.join("\n")
     );
 }

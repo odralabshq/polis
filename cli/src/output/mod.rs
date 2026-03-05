@@ -76,6 +76,22 @@ impl Renderer<'_> {
         }
     }
 
+    /// Render agent activation result message.
+    pub fn render_agent_activated(&self, agent: &str, already_active: bool) {
+        match self {
+            Renderer::Human(r) => r.render_agent_activated(agent, already_active),
+            Renderer::Json(_) => {} // JSON output handled separately
+        }
+    }
+
+    /// Render onboarding steps for an activated agent.
+    pub fn render_onboarding(&self, steps: &[polis_common::agent::OnboardingStep]) {
+        match self {
+            Renderer::Human(r) => r.render_onboarding(steps),
+            Renderer::Json(_) => {} // JSON output handled separately
+        }
+    }
+
     /// Render the current polis configuration.
     ///
     /// # Errors

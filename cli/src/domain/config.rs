@@ -96,13 +96,13 @@ mod tests {
     #[test]
     fn test_polis_config_deserialize_full_yaml() {
         let yaml = "security:\n  level: strict\n";
-        let cfg: PolisConfig = serde_yaml::from_str(yaml).expect("valid yaml");
+        let cfg: PolisConfig = serde_yaml_ng::from_str(yaml).expect("valid yaml");
         assert_eq!(cfg.security.level, "strict");
     }
 
     #[test]
     fn test_polis_config_deserialize_empty_yaml_uses_defaults() {
-        let cfg: PolisConfig = serde_yaml::from_str("{}").expect("empty yaml");
+        let cfg: PolisConfig = serde_yaml_ng::from_str("{}").expect("empty yaml");
         assert_eq!(cfg.security.level, "balanced");
     }
 
@@ -110,7 +110,7 @@ mod tests {
     fn test_polis_config_deserialize_ignores_unknown_fields() {
         // Old config files may have defaults.agent - should be silently ignored
         let yaml = "security:\n  level: strict\ndefaults:\n  agent: claude-dev\n";
-        let cfg: PolisConfig = serde_yaml::from_str(yaml).expect("valid yaml");
+        let cfg: PolisConfig = serde_yaml_ng::from_str(yaml).expect("valid yaml");
         assert_eq!(cfg.security.level, "strict");
     }
 
@@ -119,8 +119,8 @@ mod tests {
         let mut cfg = PolisConfig::default();
         cfg.security.level = "strict".to_string();
 
-        let yaml = serde_yaml::to_string(&cfg).expect("serialize");
-        let back: PolisConfig = serde_yaml::from_str(&yaml).expect("deserialize");
+        let yaml = serde_yaml_ng::to_string(&cfg).expect("serialize");
+        let back: PolisConfig = serde_yaml_ng::from_str(&yaml).expect("deserialize");
 
         assert_eq!(back.security.level, "strict");
     }

@@ -22,16 +22,29 @@ pub struct AgentInfo {
     pub version: Option<String>,
     pub description: Option<String>,
     pub active: bool,
+    /// Warning message if the agent's manifest was malformed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+/// Entry in the agents.json registry file on the VM.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct AgentRegistryEntry {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Domain decision for agent activation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentAction {
-    /// Agent is not installed — proceed with installation.
-    Install { agent: String },
+    /// Agent is not active — proceed with activation.
+    Activate { agent: String },
     /// Agent is already active — no action needed.
-    AlreadyInstalled { agent: String },
-    /// A different agent is active — cannot install without removing it first.
+    AlreadyActive { agent: String },
+    /// A different agent is active — cannot activate without removing it first.
     Mismatch { active: String, requested: String },
 }
 
@@ -41,10 +54,10 @@ pub enum AgentAction {
 #[must_use]
 pub fn resolve_agent_action(requested: &str, persisted: Option<&WorkspaceState>) -> AgentAction {
     match persisted.and_then(|s| s.active_agent.as_deref()) {
-        None => AgentAction::Install {
+        None => AgentAction::Activate {
             agent: requested.to_string(),
         },
-        Some(active) if active == requested => AgentAction::AlreadyInstalled {
+        Some(active) if active == requested => AgentAction::AlreadyActive {
             agent: requested.to_string(),
         },
         Some(active) => AgentAction::Mismatch {
@@ -80,35 +93,35 @@ mod tests {
     }
 
     #[test]
-    fn resolve_agent_action_no_state_returns_install() {
+    fn resolve_agent_action_no_state_returns_activate() {
         let action = resolve_agent_action("openclaw", None);
         assert_eq!(
             action,
-            AgentAction::Install {
+            AgentAction::Activate {
                 agent: "openclaw".to_string()
             }
         );
     }
 
     #[test]
-    fn resolve_agent_action_no_active_agent_returns_install() {
+    fn resolve_agent_action_no_active_agent_returns_activate() {
         let state = state_with_agent(None);
         let action = resolve_agent_action("openclaw", Some(&state));
         assert_eq!(
             action,
-            AgentAction::Install {
+            AgentAction::Activate {
                 agent: "openclaw".to_string()
             }
         );
     }
 
     #[test]
-    fn resolve_agent_action_same_agent_returns_already_installed() {
+    fn resolve_agent_action_same_agent_returns_already_active() {
         let state = state_with_agent(Some("openclaw"));
         let action = resolve_agent_action("openclaw", Some(&state));
         assert_eq!(
             action,
-            AgentAction::AlreadyInstalled {
+            AgentAction::AlreadyActive {
                 agent: "openclaw".to_string()
             }
         );
@@ -125,5 +138,60 @@ mod tests {
                 requested: "other".to_string(),
             }
         );
+    }
+
+    // Swap case tests (Req 14.1, 14.3, 14.4)
+
+    #[test]
+    fn resolve_agent_action_swap_from_openclaw_to_coder() {
+        let state = state_with_agent(Some("openclaw"));
+        let action = resolve_agent_action("coder", Some(&state));
+        assert_eq!(
+            action,
+            AgentAction::Mismatch {
+                active: "openclaw".to_string(),
+                requested: "coder".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_agent_action_swap_from_coder_to_openclaw() {
+        let state = state_with_agent(Some("coder"));
+        let action = resolve_agent_action("openclaw", Some(&state));
+        assert_eq!(
+            action,
+            AgentAction::Mismatch {
+                active: "coder".to_string(),
+                requested: "openclaw".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_agent_action_swap_preserves_agent_names_exactly() {
+        // Ensure agent names are preserved exactly as provided
+        let state = state_with_agent(Some("my-custom-agent"));
+        let action = resolve_agent_action("another-agent", Some(&state));
+        match action {
+            AgentAction::Mismatch { active, requested } => {
+                assert_eq!(active, "my-custom-agent");
+                assert_eq!(requested, "another-agent");
+            }
+            _ => panic!("Expected Mismatch variant"),
+        }
+    }
+
+    #[test]
+    fn resolve_agent_action_mismatch_is_symmetric_in_detection() {
+        // Swapping A→B and B→A both return Mismatch (though with different active/requested)
+        let state_a = state_with_agent(Some("agent-a"));
+        let state_b = state_with_agent(Some("agent-b"));
+
+        let action_a_to_b = resolve_agent_action("agent-b", Some(&state_a));
+        let action_b_to_a = resolve_agent_action("agent-a", Some(&state_b));
+
+        assert!(matches!(action_a_to_b, AgentAction::Mismatch { .. }));
+        assert!(matches!(action_b_to_a, AgentAction::Mismatch { .. }));
     }
 }
