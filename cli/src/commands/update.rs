@@ -1,13 +1,12 @@
 //! `polis update` — self-update with checksum and signature verification.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Args;
 
 use crate::app::AppContext;
-use crate::application::services::update::{
-    UpdateChecker, UpdateInfo, UpdateVmConfigOutcome, update_vm_config,
-};
+use crate::application::services::update::{UpdateChecker, UpdateInfo};
 use crate::application::services::workspace_stop::is_vm_running;
+use crate::commands::update_helpers;
 
 /// Arguments for the update command.
 #[derive(Args)]
@@ -17,22 +16,11 @@ pub struct UpdateArgs {
     pub check: bool,
 }
 
-// Embedded ed25519 public key (base64) for verifying signed CLI release archives.
-// The corresponding private key is stored as `POLIS_SIGNING_KEY` in GitHub
-// Actions secrets and used by the release workflow to sign `.tar.gz` / `.zip`
-// archives via `zipsign`.
-
-// Production implementation using GitHub releases.
-// ── Entry point ───────────────────────────────────────────────────────────────
-
 /// Run `polis update [--check]`.
-/// Checks GitHub for a newer release, verifies its signature, prompts the user,
-/// then downloads and replaces the current binary. If the VM is running, also
-/// updates the VM config.
 /// # Errors
 /// Returns an error if the version check, signature verification, download, or
 /// user prompt fails.
-#[allow(clippy::unused_async)] // async contract: will gain awaits when download is made async
+#[allow(clippy::unused_async)]
 pub async fn run(
     args: &UpdateArgs,
     app: &AppContext,
@@ -47,122 +35,33 @@ pub async fn run(
     }
 
     let cli_update = checker.check(current)?;
-
-    match &cli_update {
-        UpdateInfo::UpToDate => {
-            ctx.success(&format!("CLI v{current} (latest)"));
-        }
-        UpdateInfo::Available {
-            version,
-            release_notes,
-            ..
-        } => {
-            ctx.info(&format!("CLI v{current} → v{version} available"));
-            if !release_notes.is_empty() && !ctx.quiet {
-                println!("  Changes in v{version}:");
-                for note in release_notes {
-                    println!("    • {note}");
-                }
-            }
-        }
-    }
+    update_helpers::print_update_info(ctx, current, &cli_update);
 
     if args.check {
-        ctx.info("Run 'polis update' to apply the update.");
+        if matches!(cli_update, UpdateInfo::Available { .. }) {
+            ctx.info("Run 'polis update' to apply the update.");
+        }
         return Ok(std::process::ExitCode::SUCCESS);
     }
 
-    if matches!(cli_update, UpdateInfo::Available { .. }) {
-        apply_cli_update(app, checker, cli_update)?;
-    }
+    let did_update = update_helpers::apply_cli_update(app, checker, cli_update)?;
 
-    // After CLI self-update, update VM config if the VM is running
-    if is_vm_running(mp).await? {
-        if !ctx.quiet {
-            ctx.info("Updating VM config...");
-        }
-        update_config(app).await?;
+    // After CLI self-update, delegate VM config update to the NEW binary so
+    // its embedded assets are used instead of the stale ones from the old binary.
+    if did_update && is_vm_running(mp).await? {
+        update_helpers::spawn_post_update(ctx)?;
+    } else if !did_update && is_vm_running(mp).await? {
+        update_helpers::run_vm_config_update(app).await?;
     }
 
     Ok(std::process::ExitCode::SUCCESS)
 }
 
-/// Update the VM config when the CLI has been updated to a new version.
-/// Extracts embedded assets, computes the SHA256 of the new config tarball,
-/// and compares it against the hash stored in the VM. If they differ, stops
-/// services, transfers the new config, pulls images, verifies digests,
-/// restarts services, and writes the new hash.
+/// Run the VM config update cycle (used by `_post-update` hidden command).
 /// # Errors
 /// Returns an error if any step of the update cycle fails.
-pub async fn update_config(app: &AppContext) -> Result<()> {
-    let ctx = &app.output;
-    let (assets_dir, _guard) = app.assets_dir().context("extracting embedded assets")?;
-
-    let version = env!("CARGO_PKG_VERSION");
-    let reporter = app.terminal_reporter();
-    let hasher = &crate::infra::fs::LocalFs;
-
-    match update_vm_config(
-        &app.provisioner,
-        &app.assets,
-        hasher,
-        &reporter,
-        &assets_dir,
-        version,
-    )
-    .await?
-    {
-        UpdateVmConfigOutcome::UpToDate => {
-            ctx.success("Config is up to date");
-        }
-        UpdateVmConfigOutcome::Updated => {
-            ctx.success("Config updated successfully");
-        }
-    }
-
-    Ok(())
-}
-
-/// # Errors
-/// This function will return an error if the underlying operations fail.
-fn apply_cli_update(
-    app: &AppContext,
-    checker: &impl UpdateChecker,
-    cli_update: UpdateInfo,
-) -> Result<()> {
-    let ctx = &app.output;
-    let UpdateInfo::Available {
-        version,
-        download_url,
-        ..
-    } = cli_update
-    else {
-        return Ok(());
-    };
-
-    if !ctx.quiet {
-        ctx.info("Verifying checksum...");
-    }
-    let sig = checker
-        .verify_signature(&download_url)
-        .context("checksum verification failed")?;
-
-    let sha_preview = sig.sha256.get(..12).unwrap_or(&sig.sha256);
-    ctx.success(&format!("SHA-256: {sha_preview}..."));
-
-    let confirmed = app
-        .confirm("Update CLI now?", true)
-        .context("reading confirmation")?;
-
-    if confirmed {
-        if !ctx.quiet {
-            ctx.info("Downloading...");
-        }
-        checker.perform_update(&version).context("update failed")?;
-        ctx.success(&format!("CLI updated to v{version}"));
-        ctx.info("Restart your terminal or run: exec polis");
-    }
-    Ok(())
+pub async fn post_update(app: &AppContext) -> Result<()> {
+    update_helpers::run_vm_config_update(app).await
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -174,38 +73,24 @@ mod tests {
     use crate::application::services::update::SignatureInfo;
     use crate::domain::workspace::hex_encode;
 
-    // -----------------------------------------------------------------------
-    // run() via UpdateChecker trait mock — unit
-    // -----------------------------------------------------------------------
-
     #[tokio::test]
     async fn test_run_up_to_date_returns_ok() {
         struct AlwaysUpToDate;
         impl UpdateChecker for AlwaysUpToDate {
-            /// # Errors
-            /// This function will return an error if the underlying operations fail.
             fn check(&self, _current: &str) -> anyhow::Result<UpdateInfo> {
                 Ok(UpdateInfo::UpToDate)
             }
-            /// # Errors
-            /// This function will return an error if the underlying operations fail.
             fn verify_signature(&self, _url: &str) -> anyhow::Result<SignatureInfo> {
-                anyhow::bail!("not expected: should not verify when up to date")
+                anyhow::bail!("not expected")
             }
-            /// # Errors
-            /// This function will return an error if the underlying operations fail.
             fn perform_update(&self, _version: &str) -> anyhow::Result<()> {
-                anyhow::bail!("not expected: should not update when up to date")
+                anyhow::bail!("not expected")
             }
         }
 
         let args = UpdateArgs { check: true };
         let app = crate::app::AppContext::new(&crate::app::AppFlags {
-            output: crate::app::OutputFlags {
-                no_color: true,
-                quiet: true,
-                json: false,
-            },
+            output: crate::app::OutputFlags { no_color: true, quiet: true, json: false },
             behaviour: crate::app::BehaviourFlags { yes: true },
         })
         .expect("AppContext");
@@ -217,8 +102,6 @@ mod tests {
     async fn test_run_invalid_signature_returns_err() {
         struct BadSignature;
         impl UpdateChecker for BadSignature {
-            /// # Errors
-            /// This function will return an error if the underlying operations fail.
             fn check(&self, _current: &str) -> anyhow::Result<UpdateInfo> {
                 Ok(UpdateInfo::Available {
                     version: "9.9.9".to_string(),
@@ -226,44 +109,27 @@ mod tests {
                     download_url: "https://example.com/polis.tar.gz".to_string(),
                 })
             }
-            /// # Errors
-            /// This function will return an error if the underlying operations fail.
             fn verify_signature(&self, _url: &str) -> anyhow::Result<SignatureInfo> {
                 Err(anyhow::anyhow!("checksum verification failed"))
             }
-            /// # Errors
-            /// This function will return an error if the underlying operations fail.
             fn perform_update(&self, _version: &str) -> anyhow::Result<()> {
-                anyhow::bail!("not expected: should not update when checksum is invalid")
+                anyhow::bail!("not expected")
             }
         }
 
         let args = UpdateArgs { check: false };
         let app = crate::app::AppContext::new(&crate::app::AppFlags {
-            output: crate::app::OutputFlags {
-                no_color: true,
-                quiet: true,
-                json: false,
-            },
+            output: crate::app::OutputFlags { no_color: true, quiet: true, json: false },
             behaviour: crate::app::BehaviourFlags { yes: true },
         })
         .expect("AppContext");
         let result = run(&args, &app, &BadSignature).await;
         assert!(result.is_err());
-        assert!(
-            result.unwrap_err().to_string().contains("checksum"),
-            "error should mention checksum"
-        );
+        assert!(result.unwrap_err().to_string().contains("checksum"));
     }
-
-    // -----------------------------------------------------------------------
-    // hex_encode — unit
-    // -----------------------------------------------------------------------
 
     #[test]
-    fn test_hex_encode_empty_returns_empty() {
-        assert_eq!(hex_encode(&[]), "");
-    }
+    fn test_hex_encode_empty_returns_empty() { assert_eq!(hex_encode(&[]), ""); }
 
     #[test]
     fn test_hex_encode_single_byte() {

@@ -96,6 +96,9 @@ pub enum Command {
 
     #[command(hide = true, name = "_extract-host-key")]
     ExtractHostKey,
+
+    #[command(hide = true, name = "_post-update")]
+    PostUpdate,
 }
 
 impl Cli {
@@ -149,6 +152,10 @@ impl Cli {
             }
             Command::Provision => {
                 anyhow::bail!("Provision command is internal only")
+            }
+            Command::PostUpdate => {
+                commands::update::post_update(&app).await?;
+                ExitCode::SUCCESS
             }
         };
 

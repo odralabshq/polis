@@ -114,6 +114,38 @@ pub async fn update_vm_config(
     .await
     .context("stopping services")?;
 
+    // From here on, if anything fails we attempt a best-effort restart so the
+    // VM is not left with services down.
+    match apply_config_update(mp, assets, hasher, reporter, assets_dir, version, &new_hash).await {
+        Ok(()) => Ok(UpdateVmConfigOutcome::Updated),
+        Err(e) => {
+            // Best-effort: try to bring services back up with whatever config is present.
+            let _ = mp
+                .exec(&[
+                    "docker",
+                    "compose",
+                    "-f",
+                    "/opt/polis/docker-compose.yml",
+                    "up",
+                    "-d",
+                ])
+                .await;
+            Err(e.context("config update failed; services restarted with previous config"))
+        }
+    }
+}
+
+/// Inner helper that performs the config transfer → pull → verify → restart
+/// cycle. Separated so the caller can wrap it with rollback logic.
+async fn apply_config_update(
+    mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
+    assets: &impl AssetExtractor,
+    _hasher: &(impl FileHasher + ?Sized),
+    reporter: &impl ProgressReporter,
+    assets_dir: &std::path::Path,
+    version: &str,
+    new_hash: &str,
+) -> Result<()> {
     // Transfer new config
     transfer_config(mp, assets_dir, version)
         .await
@@ -142,11 +174,11 @@ pub async fn update_vm_config(
     .context("restarting services")?;
 
     // Write new hash AFTER successful restart
-    write_config_hash(mp, &new_hash)
+    write_config_hash(mp, new_hash)
         .await
         .context("writing new config hash")?;
 
-    Ok(UpdateVmConfigOutcome::Updated)
+    Ok(())
 }
 
 /// Outcome of the VM config update service.
