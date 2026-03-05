@@ -104,6 +104,7 @@ pub async fn update_vm_config(
     // Hashes differ — perform full config update cycle
 
     // Stop services
+    reporter.begin_stage("stopping services...");
     mp.exec(&[
         "docker",
         "compose",
@@ -113,6 +114,7 @@ pub async fn update_vm_config(
     ])
     .await
     .context("stopping services")?;
+    reporter.complete_stage();
 
     // From here on, if anything fails we attempt a best-effort restart so the
     // VM is not left with services down.
@@ -147,21 +149,25 @@ async fn apply_config_update(
     new_hash: &str,
 ) -> Result<()> {
     // Transfer new config
+    reporter.begin_stage("transferring config...");
     transfer_config(mp, assets_dir, version)
         .await
         .context("transferring new config")?;
 
     // Pull new images
+    reporter.begin_stage("pulling images...");
     pull_images(mp, reporter)
         .await
         .context("pulling Docker images")?;
 
     // Verify image digests
+    reporter.begin_stage("verifying images...");
     verify_image_digests(mp, assets, reporter)
         .await
         .context("verifying image digests")?;
 
     // Restart services
+    reporter.begin_stage("starting services...");
     mp.exec(&[
         "docker",
         "compose",
@@ -172,6 +178,7 @@ async fn apply_config_update(
     ])
     .await
     .context("restarting services")?;
+    reporter.complete_stage();
 
     // Write new hash AFTER successful restart
     write_config_hash(mp, new_hash)

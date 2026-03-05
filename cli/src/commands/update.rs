@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::Args;
 
 use crate::app::AppContext;
+use crate::application::ports::ProgressReporter;
 use crate::application::services::update::{UpdateChecker, UpdateInfo};
 use crate::application::services::workspace_stop::is_vm_running;
 use crate::commands::update_helpers;
@@ -29,12 +30,11 @@ pub async fn run(
     let ctx = &app.output;
     let mp = &app.provisioner;
     let current = env!("CARGO_PKG_VERSION");
+    let reporter = app.terminal_reporter();
 
-    if !ctx.quiet {
-        ctx.info("Checking for updates...");
-    }
-
+    reporter.begin_stage("checking for updates...");
     let cli_update = checker.check(current)?;
+    reporter.complete_stage();
     update_helpers::print_update_info(ctx, current, &cli_update);
 
     if args.check {

@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 
 use crate::app::AppContext;
+use crate::application::ports::ProgressReporter;
 use crate::application::services::update::{
     UpdateChecker, UpdateInfo, UpdateVmConfigOutcome, update_vm_config,
 };
@@ -41,6 +42,7 @@ pub fn apply_cli_update(
     cli_update: UpdateInfo,
 ) -> Result<bool> {
     let ctx = &app.output;
+    let reporter = app.terminal_reporter();
     let UpdateInfo::Available {
         version,
         download_url,
@@ -50,12 +52,11 @@ pub fn apply_cli_update(
         return Ok(false);
     };
 
-    if !ctx.quiet {
-        ctx.info("Verifying checksum...");
-    }
+    reporter.begin_stage("verifying checksum...");
     let sig = checker
         .verify_signature(&download_url)
         .context("checksum verification failed")?;
+    reporter.complete_stage();
 
     let sha_preview = sig.sha256.get(..12).unwrap_or(&sig.sha256);
     ctx.success(&format!("SHA-256: {sha_preview}..."));
@@ -65,10 +66,9 @@ pub fn apply_cli_update(
         .context("reading confirmation")?;
 
     if confirmed {
-        if !ctx.quiet {
-            ctx.info("Downloading...");
-        }
+        reporter.begin_stage("downloading update...");
         checker.perform_update(&version).context("update failed")?;
+        reporter.complete_stage();
         ctx.success(&format!("CLI updated to v{version}"));
         if cfg!(windows) {
             ctx.info("Restart your terminal to use the new version.");
@@ -79,6 +79,7 @@ pub fn apply_cli_update(
     }
     Ok(false)
 }
+
 
 /// Spawn the newly-installed `polis` binary with the hidden `_post-update`
 /// command so the VM config update uses the NEW binary's embedded assets.
