@@ -53,13 +53,15 @@ sha2 = "0.10"
 include_dir = "0.7"
 tempfile = "3.25"
 ureq = "2.12"
+base64 = "0.22"
+self-replace = "1.5"
+zip = "2.1"
 
 [dev-dependencies]
 assert_cmd = "2.1"
 predicates = "3.1"
 serde_json = "1.0"
 ed25519-dalek = "2.2"
-base64 = "0.22"   # test helpers: encode verifying key as b64
 mockall = "0.13"
 proptest = "1.5"  # property-based testing for ID generation and validation
 serial_test = "3"  # serialize tests that mutate shared env vars

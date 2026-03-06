@@ -10,7 +10,6 @@ use crate::application::ports::{
 };
 use crate::application::services::vm::{
     integrity::{verify_image_digests, write_config_hash},
-    lifecycle::{self as vm, VmState},
     provision::transfer_config,
     services::pull_images,
 };
@@ -18,6 +17,7 @@ use crate::application::services::vm::{
 // ── Public types ──────────────────────────────────────────────────────────────
 
 /// Information about an available update.
+#[derive(Debug)]
 pub enum UpdateInfo {
     /// A newer version is available.
     Available {
@@ -32,7 +32,27 @@ pub enum UpdateInfo {
     UpToDate,
 }
 
+impl std::fmt::Display for UpdateInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UpToDate => write!(f, "up to date"),
+            Self::Available { version, .. } => write!(f, "v{version} available"),
+        }
+    }
+}
+
+/// A downloaded and verified release asset.
+/// The binary has been checksum-verified and signature-verified.
+#[derive(Debug)]
+pub struct VerifiedAsset {
+    /// Path to the temporary file containing the verified binary.
+    pub temp_path: std::path::PathBuf,
+    /// Hex-encoded SHA-256 of the binary.
+    pub sha256: String,
+}
+
 /// Checksum verification result.
+#[derive(Debug)]
 pub struct SignatureInfo {
     /// Hex-encoded SHA-256 of the downloaded asset.
     pub sha256: String,
@@ -47,19 +67,23 @@ pub trait UpdateChecker {
     /// Returns an error if the release list cannot be fetched or parsed.
     fn check(&self, current: &str) -> Result<UpdateInfo>;
 
-    /// Verify the cryptographic signature of the release asset.
+    /// Download and verify the release asset.
+    /// Returns a [`VerifiedAsset`] containing the path to the verified binary.
+    /// The binary is downloaded once and stored in a temp file.
     ///
     /// # Errors
     ///
-    /// Returns an error if the signature is missing or invalid.
-    fn verify_signature(&self, download_url: &str) -> Result<SignatureInfo>;
+    /// Returns an error if the download, checksum verification, or signature
+    /// verification fails.
+    fn download_and_verify(&self, download_url: &str) -> Result<VerifiedAsset>;
 
-    /// Download and replace the current binary.
+    /// Install the verified binary using atomic replacement.
+    /// Consumes the [`VerifiedAsset`] to ensure the same bytes are installed.
     ///
     /// # Errors
     ///
-    /// Returns an error if the download or binary replacement fails.
-    fn perform_update(&self, version: &str) -> Result<()>;
+    /// Returns an error if the binary replacement fails.
+    fn install(&self, asset: VerifiedAsset) -> Result<()>;
 }
 
 // ── VM config update service ──────────────────────────────────────────────────
@@ -118,7 +142,7 @@ pub async fn update_vm_config(
 
     // From here on, if anything fails we attempt a best-effort restart so the
     // VM is not left with services down.
-    match apply_config_update(mp, assets, hasher, reporter, assets_dir, version, &new_hash).await {
+    match apply_config_update(mp, assets, reporter, assets_dir, version, &new_hash).await {
         Ok(()) => Ok(UpdateVmConfigOutcome::Updated),
         Err(e) => {
             // Best-effort: try to bring services back up with whatever config is present.
@@ -142,7 +166,6 @@ pub async fn update_vm_config(
 async fn apply_config_update(
     mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
     assets: &impl AssetExtractor,
-    _hasher: &(impl FileHasher + ?Sized),
     reporter: &impl ProgressReporter,
     assets_dir: &std::path::Path,
     version: &str,
@@ -153,18 +176,21 @@ async fn apply_config_update(
     transfer_config(mp, assets_dir, version)
         .await
         .context("transferring new config")?;
+    reporter.complete_stage();
 
     // Pull new images
     reporter.begin_stage("pulling images...");
     pull_images(mp, reporter)
         .await
         .context("pulling Docker images")?;
+    reporter.complete_stage();
 
     // Verify image digests
     reporter.begin_stage("verifying images...");
     verify_image_digests(mp, assets, reporter)
         .await
         .context("verifying image digests")?;
+    reporter.complete_stage();
 
     // Restart services
     reporter.begin_stage("starting services...");
@@ -189,6 +215,7 @@ async fn apply_config_update(
 }
 
 /// Outcome of the VM config update service.
+#[derive(Debug)]
 pub enum UpdateVmConfigOutcome {
     /// Config was already up to date — no changes made.
     UpToDate,
@@ -196,14 +223,25 @@ pub enum UpdateVmConfigOutcome {
     Updated,
 }
 
-/// Check whether the VM needs a config update (VM must be running).
-///
-/// Returns `true` if the VM is running and a config update should be performed.
-///
-/// # Errors
-///
-/// Returns an error if the VM state cannot be determined.
-#[allow(dead_code)] // Not yet called from command handlers
-pub async fn should_update_vm_config(mp: &impl InstanceInspector) -> Result<bool> {
-    Ok(vm::state(mp).await? == VmState::Running)
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_update_info_display_up_to_date() {
+        let info = UpdateInfo::UpToDate;
+        assert_eq!(info.to_string(), "up to date");
+    }
+
+    #[test]
+    fn test_update_info_display_available() {
+        let info = UpdateInfo::Available {
+            version: "1.2.3".to_string(),
+            release_notes: vec!["Fix bug".to_string()],
+            download_url: "https://example.com/release.tar.gz".to_string(),
+        };
+        assert_eq!(info.to_string(), "v1.2.3 available");
+    }
 }

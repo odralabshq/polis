@@ -130,7 +130,7 @@ impl Cli {
             Command::Status => commands::status::run(&app, &app.provisioner).await?,
             Command::Connect(args) => commands::connect::run(&app, args).await?,
             Command::Update(args) => {
-                commands::update::run(&args, &app, &crate::infra::update::GithubUpdateChecker)
+                commands::update::run(&args, &app, crate::infra::update::GithubUpdateChecker)
                     .await?
             }
             Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await?,
