@@ -102,8 +102,7 @@ echo "BACKUP_OK"
         Ok(ref o) if is_windows_transfer_permission_warning(o) && local_fs.exists(&local_path) => {
             true
         }
-        Err(_) => false,
-        Ok(_) => false,
+        Err(_) | Ok(_) => false,
     };
 
     if transferred {
