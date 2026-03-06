@@ -8,6 +8,8 @@ use anyhow::{Context, Result};
 
 // ── Backup ────────────────────────────────────────────────────────────────────
 
+const WINDOWS_TRANSFER_PERMISSION_WARNING: &str = "cannot set permissions for local file";
+
 /// Back up workspace data (Docker volumes + config) before deletion.
 ///
 /// Creates a timestamped `.tar.gz` archive in `~/.polis/backups/`.
@@ -76,6 +78,9 @@ echo "BACKUP_OK"
     local_fs
         .create_dir_all(&backup_dir)
         .context("creating backup directory")?;
+    local_fs
+        .set_permissions(&backup_dir, 0o700)
+        .context("securing backup directory")?;
 
     let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let filename = format!("workspace-{timestamp}.tar.gz");
@@ -94,14 +99,17 @@ echo "BACKUP_OK"
     // destination file actually landed on disk.
     let transferred = match transfer_result {
         Ok(ref o) if o.status.success() => true,
-        Ok(_) => {
-            // Non-zero exit — check if the file arrived anyway (Windows quirk).
-            local_fs.exists(&local_path)
+        Ok(ref o) if is_windows_transfer_permission_warning(o) && local_fs.exists(&local_path) => {
+            true
         }
         Err(_) => false,
+        Ok(_) => false,
     };
 
     if transferred {
+        local_fs
+            .set_permissions(&local_path, 0o600)
+            .context("securing backup archive")?;
         reporter.complete_stage();
         Ok(Some(local_path))
     } else {
@@ -109,6 +117,10 @@ echo "BACKUP_OK"
         reporter.warn("failed to transfer backup from VM — proceeding without backup");
         Ok(None)
     }
+}
+
+fn is_windows_transfer_permission_warning(output: &std::process::Output) -> bool {
+    String::from_utf8_lossy(&output.stderr).contains(WINDOWS_TRANSFER_PERMISSION_WARNING)
 }
 /// Attempt a best-effort backup, logging the outcome.
 ///
@@ -310,14 +322,14 @@ fn remove_if_exists(
 mod tests {
     use std::process::Output;
 
-    use anyhow::Result;
+    use anyhow::{Context, Result};
 
     use crate::application::ports::{
         FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, LocalFs, LocalPaths,
         ProgressReporter, ShellExecutor,
     };
     use crate::application::services::vm::test_support::{
-        fail_output, impl_shell_executor_stubs, ok_output,
+        exit_status, fail_output, impl_shell_executor_stubs, ok_output,
     };
 
     // ── Mocks ─────────────────────────────────────────────────────────────
@@ -353,6 +365,7 @@ mod tests {
         info_output: Output,
         exec_output: Output,
         transfer_from_output: std::cell::RefCell<Result<Output>>,
+        write_backup_file: bool,
     }
     impl BackupMock {
         fn running_ok() -> Self {
@@ -360,6 +373,7 @@ mod tests {
                 info_output: ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#),
                 exec_output: ok_output(b"BACKUP_OK\n"),
                 transfer_from_output: std::cell::RefCell::new(Ok(ok_output(b""))),
+                write_backup_file: true,
             }
         }
         fn stopped() -> Self {
@@ -367,6 +381,7 @@ mod tests {
                 info_output: ok_output(br#"{"info":{"polis":{"state":"Stopped"}}}"#),
                 exec_output: ok_output(b""),
                 transfer_from_output: std::cell::RefCell::new(Ok(ok_output(b""))),
+                write_backup_file: false,
             }
         }
         fn script_fails() -> Self {
@@ -374,6 +389,7 @@ mod tests {
                 info_output: ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#),
                 exec_output: fail_output(),
                 transfer_from_output: std::cell::RefCell::new(Ok(ok_output(b""))),
+                write_backup_file: false,
             }
         }
         fn transfer_fails() -> Self {
@@ -381,6 +397,31 @@ mod tests {
                 info_output: ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#),
                 exec_output: ok_output(b"BACKUP_OK\n"),
                 transfer_from_output: std::cell::RefCell::new(Ok(fail_output())),
+                write_backup_file: false,
+            }
+        }
+        fn windows_permission_warning() -> Self {
+            Self {
+                info_output: ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#),
+                exec_output: ok_output(b"BACKUP_OK\n"),
+                transfer_from_output: std::cell::RefCell::new(Ok(Output {
+                    status: exit_status(1),
+                    stdout: Vec::new(),
+                    stderr: b"cannot set permissions for local file".to_vec(),
+                })),
+                write_backup_file: true,
+            }
+        }
+        fn other_transfer_warning() -> Self {
+            Self {
+                info_output: ok_output(br#"{"info":{"polis":{"state":"Running"}}}"#),
+                exec_output: ok_output(b"BACKUP_OK\n"),
+                transfer_from_output: std::cell::RefCell::new(Ok(Output {
+                    status: exit_status(1),
+                    stdout: Vec::new(),
+                    stderr: b"some other transfer failure".to_vec(),
+                })),
+                write_backup_file: true,
             }
         }
     }
@@ -420,7 +461,10 @@ mod tests {
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
             anyhow::bail!("not expected")
         }
-        async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> {
+        async fn transfer_from(&self, _: &str, dst: &str) -> Result<Output> {
+            if self.write_backup_file {
+                std::fs::write(dst, b"backup-data").context("writing mock backup file")?;
+            }
             // Take the value and replace with a bail so double-calls are caught.
             self.transfer_from_output
                 .replace(Err(anyhow::anyhow!("already consumed")))
@@ -440,12 +484,17 @@ mod tests {
     /// Mock filesystem that creates real temp dirs.
     struct TestFs {
         base: tempfile::TempDir,
+        permission_calls: std::cell::RefCell<Vec<(std::path::PathBuf, u32)>>,
     }
     impl TestFs {
         fn new() -> Self {
             Self {
                 base: tempfile::tempdir().expect("tempdir"),
+                permission_calls: std::cell::RefCell::new(Vec::new()),
             }
+        }
+        fn permission_calls(&self) -> Vec<(std::path::PathBuf, u32)> {
+            self.permission_calls.borrow().clone()
         }
     }
     impl LocalFs for TestFs {
@@ -468,7 +517,10 @@ mod tests {
         fn read_to_string(&self, _: &std::path::Path) -> Result<String> {
             Ok(String::new())
         }
-        fn set_permissions(&self, _: &std::path::Path, _: u32) -> Result<()> {
+        fn set_permissions(&self, path: &std::path::Path, mode: u32) -> Result<()> {
+            self.permission_calls
+                .borrow_mut()
+                .push((path.to_path_buf(), mode));
             Ok(())
         }
     }
@@ -565,6 +617,19 @@ mod tests {
             "path should end with .tar.gz: {}",
             path.display()
         );
+        let permission_calls = fs.permission_calls();
+        assert!(
+            permission_calls
+                .iter()
+                .any(|(p, mode)| p == &fs.base.path().join("backups") && *mode == 0o700),
+            "backup dir should be secured"
+        );
+        assert!(
+            permission_calls
+                .iter()
+                .any(|(p, mode)| p == &path && *mode == 0o600),
+            "backup archive should be secured"
+        );
     }
 
     #[tokio::test]
@@ -577,6 +642,34 @@ mod tests {
         assert!(
             backup_dir.exists(),
             "backup directory should be created at {backup_dir:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn backup_accepts_windows_permission_warning_when_file_arrives() {
+        let mp = BackupMock::windows_permission_warning();
+        let fs = TestFs::new();
+        let reporter = TestReporter::new();
+        let result = super::backup_workspace(&mp, &fs, &fs, &reporter)
+            .await
+            .expect("should not error");
+        assert!(
+            result.is_some(),
+            "should treat Windows permission warning as success when file exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn backup_rejects_other_transfer_errors_even_if_file_arrives() {
+        let mp = BackupMock::other_transfer_warning();
+        let fs = TestFs::new();
+        let reporter = TestReporter::new();
+        let result = super::backup_workspace(&mp, &fs, &fs, &reporter)
+            .await
+            .expect("should not error");
+        assert!(
+            result.is_none(),
+            "unexpected transfer errors should not be treated as success"
         );
     }
 }

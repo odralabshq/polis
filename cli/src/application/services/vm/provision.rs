@@ -238,7 +238,7 @@ mod tests {
             anyhow::bail!("not expected")
         }
         async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> {
-            anyhow::bail!("not expected")
+            Ok(ok_output(b""))
         }
     }
     impl ShellExecutor for TransferConfigSpy {

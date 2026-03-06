@@ -36,12 +36,16 @@ async fn persist_vm_ip(
 ) -> Result<()> {
     let ip = vm::resolve_vm_ip(mp).await?;
     // Write standalone file for scripts
-    mp.exec(&["bash", "-c", &format!("echo '{ip}' > /opt/polis/.vm-ip")])
-        .await
-        .context("writing .vm-ip")?;
+    mp.exec(&[
+        "bash",
+        "-c",
+        &format!("printf '%s\\n' '{ip}' > /opt/polis/.vm-ip"),
+    ])
+    .await
+    .context("writing .vm-ip")?;
     // Ensure POLIS_VM_IP is in .env (replace if exists, append if not)
     let script = format!(
-        "sed -i '/^POLIS_VM_IP=/d' /opt/polis/.env 2>/dev/null; echo 'POLIS_VM_IP={ip}' >> /opt/polis/.env"
+        "sed -i '/^POLIS_VM_IP=/d' /opt/polis/.env 2>/dev/null; printf '%s\\n' 'POLIS_VM_IP={ip}' >> /opt/polis/.env"
     );
     mp.exec(&["bash", "-c", &script])
         .await

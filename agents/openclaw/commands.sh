@@ -16,6 +16,17 @@ NC='\033[0m'
 log_info() { echo -e "${CYAN}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $*"; }
+is_ipv4() {
+    local candidate="${1:-}"
+    local o1 o2 o3 o4
+    local IFS=.
+
+    [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    read -r o1 o2 o3 o4 <<< "$candidate"
+    for octet in "$o1" "$o2" "$o3" "$o4"; do
+        (( octet >= 0 && octet <= 255 )) || return 1
+    done
+}
 
 case "$SUBCMD" in
     token)
@@ -29,7 +40,10 @@ case "$SUBCMD" in
         echo "Token: $token"
         echo ""
         # Use VM IP if available (set by polis CLI during start)
-        vm_ip=$(docker exec "$CONTAINER" printenv POLIS_VM_IP 2>/dev/null || cat /opt/polis/.vm-ip 2>/dev/null || echo "localhost")
+        vm_ip=$(docker exec "$CONTAINER" printenv POLIS_VM_IP 2>/dev/null || head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "localhost")
+        if ! is_ipv4 "$vm_ip"; then
+            vm_ip="localhost"
+        fi
         echo "Control UI: http://${vm_ip}:18789/overview"
         ;;
     devices)

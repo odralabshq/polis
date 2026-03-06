@@ -20,6 +20,18 @@ FIRST_RUN_MARKER="${CONFIG_DIR}/.initialized"
 
 echo "[openclaw-init] Starting initialization..."
 
+is_ipv4() {
+    local candidate="${1:-}"
+    local o1 o2 o3 o4
+    local IFS=.
+
+    [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    read -r o1 o2 o3 o4 <<< "$candidate"
+    for octet in "$o1" "$o2" "$o3" "$o4"; do
+        (( octet >= 0 && octet <= 255 )) || return 1
+    done
+}
+
 # =============================================================================
 # Install openclaw CLI wrapper (shared by first-run and restart paths)
 # =============================================================================
@@ -28,11 +40,24 @@ install_openclaw_wrapper() {
     cat > "${bin_dir}/openclaw" << 'OCWRAPPER'
 #!/bin/bash
 # Intercept dashboard command to replace localhost with VM IP
+is_ipv4() {
+    local candidate="${1:-}"
+    local o1 o2 o3 o4
+    local IFS=.
+
+    [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    read -r o1 o2 o3 o4 <<< "$candidate"
+    for octet in "$o1" "$o2" "$o3" "$o4"; do
+        (( octet >= 0 && octet <= 255 )) || return 1
+    done
+}
+
 if [[ "${1:-}" == "dashboard" ]]; then
-    VM_IP="${POLIS_VM_IP:-$(cat /opt/polis/.vm-ip 2>/dev/null || echo "")}"
-    if [[ -n "$VM_IP" ]]; then
+    VM_IP="${POLIS_VM_IP:-$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "")}"
+    if is_ipv4 "$VM_IP"; then
         node /app/dist/index.js "$@" 2>&1 | sed "s|127\.0\.0\.1|${VM_IP}|g"
-        exit "${PIPESTATUS[0]}"
+        exit_code=${PIPESTATUS[0]}
+        exit "$exit_code"
     fi
 fi
 exec node /app/dist/index.js "$@"
@@ -484,18 +509,23 @@ else
     # The gateway may rewrite config on startup, so unconditionally re-apply.
     if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
         # Build VM IP origin if available (set by polis CLI during start)
-        VM_IP="${POLIS_VM_IP:-}"
-        VM_ORIGIN_EXPR=""
-        if [[ -n "$VM_IP" ]]; then
-            VM_ORIGIN_EXPR="| .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + [\"http://${VM_IP}:18789\"] | unique)"
+        VM_IP="${POLIS_VM_IP:-$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "")}"
+        if ! is_ipv4 "$VM_IP"; then
+            VM_IP=""
         fi
-        jq ".gateway.controlUi.enabled = true
+        jq --arg vm_ip "$VM_IP" '
+            .gateway.controlUi.enabled = true
             | .gateway.controlUi.allowInsecureAuth = true
             | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
             | .gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true
-            | .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + [\"http://localhost:18789\", \"http://127.0.0.1:18789\"] | unique)
-            ${VM_ORIGIN_EXPR}
-            | .tools = ((.tools // {}) + {\"profile\":\"coding\"})" "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
+            | .gateway.controlUi.allowedOrigins = (
+                (.gateway.controlUi.allowedOrigins // [])
+                + ["http://localhost:18789", "http://127.0.0.1:18789"]
+                + (if $vm_ip == "" then [] else ["http://\($vm_ip):18789"] end)
+                | unique
+            )
+            | .tools = ((.tools // {}) + {"profile":"coding"})
+        ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
             && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
         echo "[openclaw-init] Ensured controlUi HTTP token settings, origin policy, and coding tool profile"
