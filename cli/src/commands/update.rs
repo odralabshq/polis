@@ -1,13 +1,18 @@
 //! `polis update` — self-update with checksum and signature verification.
 
+use std::process::ExitCode;
+
 use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::app::AppContext;
 use crate::application::ports::ProgressReporter;
-use crate::application::services::update::{UpdateChecker, UpdateInfo};
+use crate::application::services::update::{
+    PostUpdateOutcome, UpdateChecker, UpdateInfo, UpdateVmConfigOutcome,
+    download_and_verify_cli_update, install_cli_update, run_post_update,
+    run_vm_config_update_service,
+};
 use crate::application::services::workspace_stop::is_vm_running;
-use crate::commands::update_helpers;
 
 /// Arguments for the update command.
 #[derive(Args)]
@@ -21,16 +26,11 @@ pub struct UpdateArgs {
 /// # Errors
 /// Returns an error if the version check, signature verification, download, or
 /// user prompt fails.
-pub async fn run<C>(
-    args: &UpdateArgs,
-    app: &AppContext,
-    checker: C,
-) -> Result<std::process::ExitCode>
+pub async fn run<C>(app: &AppContext, args: &UpdateArgs, checker: C) -> Result<ExitCode>
 where
     C: UpdateChecker + Clone + Send + 'static,
 {
     let ctx = &app.output;
-    let mp = &app.provisioner;
     let current = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
 
@@ -41,36 +41,98 @@ where
         .await
         .context("spawn_blocking panicked")??;
     reporter.complete_stage();
-    update_helpers::print_update_info(ctx, current, &cli_update);
+    app.renderer().render_update_info(current, &cli_update)?;
 
     if args.check {
         if matches!(cli_update, UpdateInfo::Available { .. }) {
             ctx.info("Run 'polis update' to apply the update.");
         }
-        return Ok(std::process::ExitCode::SUCCESS);
+        return Ok(ExitCode::SUCCESS);
     }
 
-    let did_update = update_helpers::apply_cli_update(app, checker, cli_update).await?;
+    let did_update = apply_cli_update(app, checker, cli_update).await?;
+    let vm_running = is_vm_running(&app.provisioner).await?;
 
-    // Cache VM state once to avoid duplicate queries
-    let vm_running = is_vm_running(mp).await?;
-
-    // After CLI self-update, delegate VM config update to the NEW binary so
-    // its embedded assets are used instead of the stale ones from the old binary.
+    // After CLI self-update, delegate VM config update to the NEW binary
     if did_update && vm_running {
-        update_helpers::run_post_update(ctx).await?;
+        match run_post_update().await? {
+            PostUpdateOutcome::Success => ctx.success("VM config updated via new binary"),
+            PostUpdateOutcome::NonZeroExit => {
+                ctx.warn("VM config update returned non-zero — check with: polis status");
+            }
+        }
     } else if !did_update && vm_running {
-        update_helpers::run_vm_config_update(app).await?;
+        run_vm_config_update_with_output(app).await?;
     }
 
-    Ok(std::process::ExitCode::SUCCESS)
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Verify, confirm, and perform the CLI binary update. Returns `true` if updated.
+async fn apply_cli_update<C>(app: &AppContext, checker: C, cli_update: UpdateInfo) -> Result<bool>
+where
+    C: UpdateChecker + Clone + Send + 'static,
+{
+    let ctx = &app.output;
+    let reporter = app.terminal_reporter();
+    let UpdateInfo::Available {
+        version,
+        download_url,
+        ..
+    } = cli_update
+    else {
+        return Ok(false);
+    };
+
+    let asset = download_and_verify_cli_update(&checker, &download_url, &reporter).await?;
+    let sha_preview = asset.sha256.get(..12).unwrap_or(&asset.sha256);
+    ctx.success(&format!("SHA-256: {sha_preview}..."));
+
+    let confirmed = app
+        .confirm("Update CLI now?", true)
+        .context("reading confirmation")?;
+    if confirmed {
+        install_cli_update(checker, asset, &reporter).await?;
+        ctx.success(&format!("CLI updated to v{version}"));
+        ctx.info(if cfg!(windows) {
+            "Restart your terminal to use the new version."
+        } else {
+            "Restart your terminal or run: exec polis"
+        });
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Run the VM config update cycle with output rendering.
+async fn run_vm_config_update_with_output(app: &AppContext) -> Result<()> {
+    let (assets_dir, _guard) = app.assets_dir().context("extracting embedded assets")?;
+    let reporter = app.terminal_reporter();
+    let hasher = &crate::infra::fs::OsFs;
+
+    match run_vm_config_update_service(
+        &app.provisioner,
+        &app.assets,
+        hasher,
+        &reporter,
+        &assets_dir,
+        env!("CARGO_PKG_VERSION"),
+    )
+    .await?
+    {
+        UpdateVmConfigOutcome::UpToDate => app.output.success("Config is up to date"),
+        UpdateVmConfigOutcome::Updated => app.output.success("Config updated successfully"),
+    }
+    Ok(())
 }
 
 /// Run the VM config update cycle (used by `_post-update` hidden command).
+///
 /// # Errors
-/// Returns an error if any step of the update cycle fails.
+///
+/// Returns an error if the VM config update fails.
 pub async fn post_update(app: &AppContext) -> Result<()> {
-    update_helpers::run_vm_config_update(app).await
+    run_vm_config_update_with_output(app).await
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -107,7 +169,7 @@ mod tests {
             behaviour: crate::app::BehaviourFlags { yes: true },
         })
         .expect("AppContext");
-        let result = run(&args, &app, AlwaysUpToDate).await;
+        let result = run(&app, &args, AlwaysUpToDate).await;
         assert!(result.is_ok());
     }
 
@@ -141,7 +203,7 @@ mod tests {
             behaviour: crate::app::BehaviourFlags { yes: true },
         })
         .expect("AppContext");
-        let result = run(&args, &app, BadSignature).await;
+        let result = run(&app, &args, BadSignature).await;
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(

@@ -1,9 +1,23 @@
+//! `polis doctor` — diagnose and repair workspace issues.
+
 use anyhow::{Context, Result};
+use clap::Args;
 use std::process::ExitCode;
 
 use crate::app::AppContext;
 use crate::application::services::workspace_doctor;
 use crate::application::services::workspace_repair;
+
+/// Arguments for the doctor command.
+#[derive(Args)]
+pub struct DoctorArgs {
+    /// Show remediation details for each issue
+    #[arg(long)]
+    pub verbose: bool,
+    /// Attempt to automatically repair detected issues
+    #[arg(long)]
+    pub fix: bool,
+}
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -15,7 +29,7 @@ use crate::application::services::workspace_repair;
 /// # Errors
 ///
 /// Returns an error if health checks or repair steps fail fatally.
-pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode> {
+pub async fn run(app: &AppContext, args: &DoctorArgs) -> Result<ExitCode> {
     let ctx = &app.output;
     let mp = &app.provisioner;
     let reporter = app.terminal_reporter();
@@ -37,10 +51,10 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode>
 
     // 2. Render report
     app.renderer()
-        .render_diagnostics(&checks, &issues, verbose)?;
+        .render_diagnostics(&checks, &issues, args.verbose)?;
 
     // 3. Optional Repair
-    if fix && !issues.is_empty() {
+    if args.fix && !issues.is_empty() {
         let (assets_dir, _guard) = app.assets_dir().context("extracting embedded assets")?;
         let version = env!("CARGO_PKG_VERSION");
 
@@ -62,7 +76,7 @@ pub async fn run(app: &AppContext, verbose: bool, fix: bool) -> Result<ExitCode>
         .await?;
         let issues_after = crate::domain::health::collect_issues(&checks_after);
         app.renderer()
-            .render_diagnostics(&checks_after, &issues_after, verbose)?;
+            .render_diagnostics(&checks_after, &issues_after, args.verbose)?;
 
         // Return success only if no issues remain after repair
         if issues_after.is_empty() {

@@ -42,7 +42,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Start workspace
-    Start(commands::start::StartArgs),
+    Start,
 
     /// Stop workspace
     Stop,
@@ -57,14 +57,7 @@ pub enum Command {
     Connect(commands::connect::ConnectArgs),
 
     /// Diagnose issues
-    Doctor {
-        /// Show remediation details for each issue
-        #[arg(long)]
-        verbose: bool,
-        /// Attempt to automatically repair detected issues
-        #[arg(long)]
-        fix: bool,
-    },
+    Doctor(commands::doctor::DoctorArgs),
 
     /// Run a command in the workspace
     Exec(commands::exec::ExecArgs),
@@ -86,9 +79,6 @@ pub enum Command {
     // --- Internal ---
     #[command(hide = true, name = "_ssh-proxy")]
     SshProxy,
-
-    #[command(hide = true, name = "_provision")]
-    Provision,
 
     #[command(hide = true, name = "_extract-host-key")]
     ExtractHostKey,
@@ -124,17 +114,17 @@ impl Cli {
         })?;
 
         let exit_code = match command {
-            Command::Start(args) => commands::start::run(&args, &app).await?,
+            Command::Start => commands::start::run(&app).await?,
             Command::Stop => commands::stop::run(&app).await?,
-            Command::Delete(args) => commands::delete::run(&args, &app).await?,
-            Command::Status => commands::status::run(&app, &app.provisioner).await?,
-            Command::Connect(args) => commands::connect::run(&app, args).await?,
+            Command::Delete(args) => commands::delete::run(&app, &args).await?,
+            Command::Status => commands::status::run(&app).await?,
+            Command::Connect(args) => commands::connect::run(&app, &args).await?,
             Command::Update(args) => {
-                commands::update::run(&args, &app, crate::infra::update::GithubUpdateChecker)
+                commands::update::run(&app, &args, crate::infra::update::GithubUpdateChecker)
                     .await?
             }
-            Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await?,
-            Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,
+            Command::Doctor(args) => commands::doctor::run(&app, &args).await?,
+            Command::Exec(args) => commands::exec::run(&app, &args).await?,
             Command::Version => commands::version::run(&app)?,
             Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
             Command::Security(cmd) => {
@@ -148,9 +138,6 @@ impl Cli {
             Command::SshProxy => commands::internal::ssh_proxy(&app.provisioner).await?,
             Command::ExtractHostKey => {
                 commands::internal::extract_host_key(&app.provisioner).await?
-            }
-            Command::Provision => {
-                anyhow::bail!("Provision command is internal only")
             }
             Command::PostUpdate => {
                 commands::update::post_update(&app).await?;

@@ -4,6 +4,7 @@
 
 pub mod human;
 pub mod json;
+pub mod models;
 pub mod progress;
 pub mod reporter;
 pub mod styles;
@@ -15,9 +16,15 @@ use owo_colors::OwoColorize as _;
 pub use styles::Styles;
 
 use anyhow::Result;
+use polis_common::agent::OnboardingStep;
 use polis_common::types::StatusOutput;
 
+use crate::application::services::update::UpdateInfo;
+use crate::application::services::workspace_delete::DeleteOutcome;
+use crate::application::services::workspace_start::StartOutcome;
+use crate::application::services::workspace_stop::StopOutcome;
 use crate::domain::health::DiagnosticReport;
+use crate::output::models::{ConnectionInfo, LogEntry, PendingRequest, SecurityStatus};
 
 /// Enum-dispatched output renderer.
 ///
@@ -128,6 +135,145 @@ impl Renderer<'_> {
                 Ok(())
             }
             Renderer::Json(_) => JsonRenderer::render_diagnostics(checks, issues),
+        }
+    }
+
+    /// Render connection info (SSH, VS Code, Cursor).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_connection_info(&self, info: &ConnectionInfo) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_connection_info(info);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_connection_info(info),
+        }
+    }
+
+    /// Render stop command outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_stop_outcome(&self, outcome: &StopOutcome) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_stop_outcome(outcome);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_stop_outcome(outcome),
+        }
+    }
+
+    /// Render delete command outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_delete_outcome(&self, outcome: &DeleteOutcome, all: bool) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_delete_outcome(outcome, all);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_delete_outcome(outcome, all),
+        }
+    }
+
+    /// Render start command outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_start_outcome(
+        &self,
+        outcome: &StartOutcome,
+        onboarding: &[OnboardingStep],
+    ) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_start_outcome(outcome, onboarding);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_start_outcome(outcome, onboarding),
+        }
+    }
+
+    /// Render update info (version comparison).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_update_info(&self, current: &str, info: &UpdateInfo) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_update_info(current, info);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_update_info(current, info),
+        }
+    }
+
+    /// Render security status.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_status(&self, status: &SecurityStatus) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_security_status(status);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_security_status(status),
+        }
+    }
+
+    /// Render security pending requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_pending(&self, requests: &[PendingRequest]) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_security_pending(requests);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_security_pending(requests),
+        }
+    }
+
+    /// Render security log entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_log(&self, entries: &[LogEntry]) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_security_log(entries);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_security_log(entries),
+        }
+    }
+
+    /// Render security action result (approve/deny/rule/level).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_action(&self, message: &str) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_security_action(message);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_security_action(message),
         }
     }
 }

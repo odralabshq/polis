@@ -1,14 +1,17 @@
 //! `polis connect` — open an SSH session to the workspace with self-healing.
 
+use std::process::ExitCode;
+
 use anyhow::{Context, Result};
 use clap::Args;
-use std::process::ExitCode;
+use std::process::Stdio;
 
 use crate::app::AppContext;
 use crate::application::services::ssh_provision::{self, SshProvisionOptions};
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
 use crate::domain::error::WorkspaceError;
 use crate::domain::process::exit_code_from_status;
+use crate::output::models::ConnectionInfo;
 
 /// Arguments for the connect command.
 #[derive(Args)]
@@ -28,7 +31,7 @@ pub struct ConnectArgs {
 ///
 /// Returns an error if the VM is not running, SSH provisioning fails, or the
 /// SSH process cannot be spawned.
-pub async fn run(app: &AppContext, args: ConnectArgs) -> Result<ExitCode> {
+pub async fn run(app: &AppContext, args: &ConnectArgs) -> Result<ExitCode> {
     // Req 8.5 — return WorkspaceError::NotRunning when VM is not Running.
     let vm_state = vm::state(&app.provisioner).await?;
     if vm_state != VmState::Running {
@@ -37,7 +40,8 @@ pub async fn run(app: &AppContext, args: ConnectArgs) -> Result<ExitCode> {
 
     // Req 8.3 — --info flag: display connection strings and return.
     if args.info {
-        show_connection_info(&app.output);
+        app.renderer()
+            .render_connection_info(&ConnectionInfo::default())?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -54,10 +58,10 @@ pub async fn run(app: &AppContext, args: ConnectArgs) -> Result<ExitCode> {
     .await?;
 
     // Open interactive SSH session.
-    open_ssh_session()
+    open_ssh_session().await
 }
 
-/// Open an interactive SSH session to the workspace.
+/// Open an interactive SSH session to the workspace (async).
 ///
 /// Uses `ssh workspace` which resolves via the `~/.ssh/config` entry written
 /// by `provision_ssh`. Inherits stdin/stdout/stderr for a fully interactive
@@ -66,25 +70,15 @@ pub async fn run(app: &AppContext, args: ConnectArgs) -> Result<ExitCode> {
 /// # Errors
 ///
 /// Returns an error if the `ssh` process cannot be spawned.
-fn open_ssh_session() -> Result<ExitCode> {
-    let status = std::process::Command::new("ssh")
+async fn open_ssh_session() -> Result<ExitCode> {
+    let status = tokio::process::Command::new("ssh")
         .arg("workspace")
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .status()
+        .await
         .context("failed to spawn ssh")?;
 
     Ok(exit_code_from_status(status))
-}
-
-/// Print IDE connection strings.
-fn show_connection_info(ctx: &crate::output::OutputContext) {
-    ctx.blank();
-    ctx.kv("SSH     ", "ssh workspace");
-    ctx.kv("VS Code ", "code --remote ssh-remote+workspace /workspace");
-    ctx.kv(
-        "Cursor  ",
-        "cursor --remote ssh-remote+workspace /workspace",
-    );
 }

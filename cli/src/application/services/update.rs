@@ -223,6 +223,134 @@ pub enum UpdateVmConfigOutcome {
     Updated,
 }
 
+// ── CLI Update Application Service ────────────────────────────────────────────
+
+/// Outcome of the CLI update application service.
+#[derive(Debug)]
+pub enum ApplyCliUpdateOutcome {
+    /// No update was available.
+    NoUpdate,
+    /// User declined the update.
+    Declined,
+    /// Update was successfully applied.
+    Applied {
+        /// The new version that was installed.
+        version: String,
+        /// SHA-256 hash preview (first 12 chars).
+        sha_preview: String,
+    },
+}
+
+/// Download, verify, and install a CLI update.
+///
+/// This is the application-layer orchestration for CLI self-update. It:
+/// 1. Downloads and verifies the release asset
+/// 2. Returns the verification result for user confirmation (handled by caller)
+/// 3. Installs the update if confirmed
+///
+/// The caller (command handler) is responsible for:
+/// - User confirmation prompts
+/// - Output rendering
+///
+/// # Errors
+///
+/// Returns an error if download, verification, or installation fails.
+pub async fn download_and_verify_cli_update<C>(
+    checker: &C,
+    download_url: &str,
+    reporter: &impl ProgressReporter,
+) -> Result<VerifiedAsset>
+where
+    C: UpdateChecker + Clone + Send + 'static,
+{
+    reporter.begin_stage("downloading and verifying...");
+    let checker_clone = checker.clone();
+    let url = download_url.to_string();
+    let asset = tokio::task::spawn_blocking(move || checker_clone.download_and_verify(&url))
+        .await
+        .context("spawn_blocking panicked")?
+        .context("download and verification failed")?;
+    reporter.complete_stage();
+    Ok(asset)
+}
+
+/// Install a verified CLI update.
+///
+/// # Errors
+///
+/// Returns an error if installation fails.
+pub async fn install_cli_update<C>(
+    checker: C,
+    asset: VerifiedAsset,
+    reporter: &impl ProgressReporter,
+) -> Result<()>
+where
+    C: UpdateChecker + Send + 'static,
+{
+    reporter.begin_stage("installing update...");
+    tokio::task::spawn_blocking(move || checker.install(asset))
+        .await
+        .context("spawn_blocking panicked")?
+        .context("update failed")?;
+    reporter.complete_stage();
+    Ok(())
+}
+
+// ── Post-Update Service ───────────────────────────────────────────────────────
+
+/// Outcome of running the post-update command.
+#[derive(Debug)]
+pub enum PostUpdateOutcome {
+    /// Post-update completed successfully.
+    Success,
+    /// Post-update returned non-zero exit code.
+    NonZeroExit,
+}
+
+/// Run the newly-installed CLI binary with the hidden `_post-update` command.
+///
+/// This delegates VM config update to the NEW binary so its embedded assets
+/// are used instead of the stale ones from the old binary.
+///
+/// # Errors
+///
+/// Returns an error if the new binary cannot be executed.
+pub async fn run_post_update() -> Result<PostUpdateOutcome> {
+    let exe = std::env::current_exe().context("resolving current executable path")?;
+    let status = tokio::process::Command::new(&exe)
+        .arg("_post-update")
+        .status()
+        .await
+        .context("failed to run post-update process")?;
+
+    if status.success() {
+        Ok(PostUpdateOutcome::Success)
+    } else {
+        Ok(PostUpdateOutcome::NonZeroExit)
+    }
+}
+
+// ── VM Config Update Orchestration ────────────────────────────────────────────
+
+/// Run the VM config update cycle.
+///
+/// This is a thin wrapper around `update_vm_config` that handles the
+/// orchestration. The caller provides the extracted assets directory.
+///
+/// # Errors
+///
+/// Returns an error if any step of the update cycle fails.
+pub async fn run_vm_config_update_service(
+    mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
+    assets: &impl AssetExtractor,
+    hasher: &(impl FileHasher + ?Sized),
+    reporter: &impl ProgressReporter,
+    assets_dir: &std::path::Path,
+    version: &str,
+) -> Result<UpdateVmConfigOutcome> {
+    update_vm_config(mp, assets, hasher, reporter, assets_dir, version).await
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

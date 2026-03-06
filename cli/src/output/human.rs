@@ -1,11 +1,17 @@
 //! Human-readable terminal renderer.
 
 use owo_colors::OwoColorize as _;
+use polis_common::agent::OnboardingStep;
 use polis_common::types::StatusOutput;
 use polis_common::types::{AgentHealth, WorkspaceState};
 
+use crate::application::services::update::UpdateInfo;
+use crate::application::services::workspace_delete::DeleteOutcome;
+use crate::application::services::workspace_start::StartOutcome;
+use crate::application::services::workspace_stop::StopOutcome;
 use crate::domain::health::DiagnosticReport;
 use crate::output::OutputContext;
+use crate::output::models::{ConnectionInfo, LogEntry, PendingRequest, SecurityStatus};
 
 /// Renders domain types as human-readable terminal output using `OutputContext`.
 pub struct HumanRenderer<'a> {
@@ -288,6 +294,156 @@ impl<'a> HumanRenderer<'a> {
         } else {
             println!("    {} {msg}", "\u{2717}".style(self.ctx.styles.error));
         }
+    }
+
+    /// Render connection info (SSH, VS Code, Cursor).
+    pub fn render_connection_info(&self, info: &ConnectionInfo) {
+        self.ctx.blank();
+        self.ctx.kv("SSH     ", &info.ssh);
+        self.ctx.kv("VS Code ", &info.vscode);
+        self.ctx.kv("Cursor  ", &info.cursor);
+    }
+
+    /// Render stop command outcome.
+    pub fn render_stop_outcome(&self, outcome: &StopOutcome) {
+        match outcome {
+            StopOutcome::NotFound => {
+                self.ctx.info("No workspace to stop.");
+                self.ctx.info("Create one: polis start");
+            }
+            StopOutcome::AlreadyStopped => {
+                self.ctx.info("Workspace is already stopped.");
+                self.ctx.info("Resume: polis start");
+            }
+            StopOutcome::Stopped => {
+                self.ctx.info("Your data is preserved.");
+                self.ctx.info("Resume: polis start");
+            }
+        }
+    }
+
+    /// Render delete command outcome.
+    pub fn render_delete_outcome(&self, outcome: &DeleteOutcome, all: bool) {
+        match outcome {
+            DeleteOutcome::NotFound => {
+                self.ctx.success("no workspace to delete");
+            }
+            DeleteOutcome::Deleted => {
+                if all {
+                    self.ctx.success("all data removed");
+                } else {
+                    self.ctx.success("workspace removed");
+                }
+            }
+        }
+    }
+
+    /// Render start command outcome.
+    pub fn render_start_outcome(&self, outcome: &StartOutcome, onboarding: &[OnboardingStep]) {
+        match outcome {
+            StartOutcome::AlreadyRunning { active_agent } => {
+                let label = active_agent.as_ref().map_or_else(
+                    || "workspace running".to_string(),
+                    |n| format!("workspace running with agent: {n}"),
+                );
+                self.ctx.success(&label);
+                self.ctx.blank();
+                self.ctx.kv("Connect", "polis connect");
+                self.ctx.kv("Status", "polis status");
+            }
+            StartOutcome::Created { .. } | StartOutcome::Restarted { .. } => {
+                self.ctx.blank();
+                self.ctx.header("Getting started");
+                let default_steps = [
+                    OnboardingStep {
+                        title: "Set up SSH keys".into(),
+                        command: "polis connect".into(),
+                    },
+                    OnboardingStep {
+                        title: "Connect to workspace".into(),
+                        command: "ssh workspace".into(),
+                    },
+                ];
+                for (i, step) in default_steps.iter().chain(onboarding.iter()).enumerate() {
+                    self.ctx
+                        .info(&format!("{}. {}  {}", i + 1, step.title, step.command));
+                }
+            }
+        }
+    }
+
+    /// Render update info (version comparison).
+    pub fn render_update_info(&self, current: &str, info: &UpdateInfo) {
+        match info {
+            UpdateInfo::UpToDate => {
+                self.ctx.success(&format!("CLI v{current} (up to date)"));
+            }
+            UpdateInfo::Available {
+                version,
+                release_notes,
+                ..
+            } => {
+                self.ctx
+                    .info(&format!("CLI v{current} → v{version} available"));
+                if !release_notes.is_empty() && !self.ctx.quiet {
+                    self.ctx.info(&format!("  Changes in v{version}:"));
+                    for note in release_notes {
+                        self.ctx.info(&format!("    • {note}"));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Render security status.
+    pub fn render_security_status(&self, status: &SecurityStatus) {
+        self.ctx.info(&format!("Security level: {}", status.level));
+        if let Some(err) = &status.pending_error {
+            self.ctx
+                .warn(&format!("Could not query pending requests: {err}"));
+        } else if status.pending_count == 0 {
+            self.ctx.success("No pending blocked requests");
+        } else {
+            self.ctx.warn(&format!(
+                "{} pending blocked request(s)",
+                status.pending_count
+            ));
+        }
+    }
+
+    /// Render security pending requests.
+    pub fn render_security_pending(&self, requests: &[PendingRequest]) {
+        if requests.is_empty() {
+            self.ctx.info("No pending requests.");
+            return;
+        }
+        self.ctx.header("Pending Requests:");
+        for req in requests {
+            self.ctx.info(&format!(
+                "  {} - {} ({})",
+                req.id, req.domain, req.timestamp
+            ));
+        }
+    }
+
+    /// Render security log entries.
+    pub fn render_security_log(&self, entries: &[LogEntry]) {
+        if entries.is_empty() {
+            self.ctx.info("No log entries.");
+            return;
+        }
+        self.ctx.header("Security Log:");
+        for entry in entries {
+            self.ctx.info(&format!(
+                "  [{}] {} - {}",
+                entry.timestamp, entry.action, entry.details
+            ));
+        }
+    }
+
+    /// Render security action result (approve/deny/rule/level).
+    pub fn render_security_action(&self, message: &str) {
+        self.ctx.success(message);
     }
 }
 

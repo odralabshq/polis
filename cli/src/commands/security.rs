@@ -7,8 +7,8 @@ use std::process::ExitCode;
 use crate::app::AppContext;
 use crate::application::ports::SecurityGateway;
 use crate::application::services::security;
-use crate::application::services::security::PendingResult;
 use crate::domain::security::{AllowAction, SecurityLevel};
+use crate::output::models::{LogEntry, PendingRequest, SecurityStatus};
 
 /// Security subcommands.
 #[derive(Subcommand)]
@@ -58,56 +58,34 @@ pub async fn run(
     match cmd {
         SecurityCommand::Status => {
             let s = security::get_status(&app.config_store, gateway).await?;
-            app.output.info(&format!("Security level: {}", s.level));
-            match s.pending {
-                PendingResult::Err(err) => {
-                    app.output
-                        .warn(&format!("Could not query pending requests: {err}"));
-                }
-                PendingResult::Ok(requests) if requests.is_empty() => {
-                    app.output.success("No pending blocked requests");
-                }
-                PendingResult::Ok(requests) => {
-                    app.output
-                        .warn(&format!("{} pending blocked request(s)", requests.len()));
-                }
-            }
+            let status = SecurityStatus::from_service(&s);
+            app.renderer().render_security_status(&status)?;
         }
         SecurityCommand::Pending => {
             let lines = security::list_pending(gateway).await?;
-            if lines.is_empty() {
-                app.output.success("No pending blocked requests");
-            } else {
-                for line in &lines {
-                    app.output.info(line);
-                }
-            }
+            let requests = PendingRequest::parse_lines(&lines);
+            app.renderer().render_security_pending(&requests)?;
         }
         SecurityCommand::Approve { request_id } => {
             let msg = security::approve(gateway, &request_id).await?;
-            app.output.success(&msg);
+            app.renderer().render_security_action(&msg)?;
         }
         SecurityCommand::Deny { request_id } => {
             let msg = security::deny(gateway, &request_id).await?;
-            app.output.success(&msg);
+            app.renderer().render_security_action(&msg)?;
         }
         SecurityCommand::Log => {
             let lines = security::get_log(gateway).await?;
-            if lines.is_empty() {
-                app.output.info("No recent security events");
-            } else {
-                for line in &lines {
-                    app.output.info(line);
-                }
-            }
+            let entries = LogEntry::parse_lines(&lines);
+            app.renderer().render_security_log(&entries)?;
         }
         SecurityCommand::Rule { pattern, action } => {
             let msg = security::add_domain_rule(gateway, &pattern, action).await?;
-            app.output.success(&msg);
+            app.renderer().render_security_action(&msg)?;
         }
         SecurityCommand::Level { level } => {
             let msg = security::set_level(&app.config_store, gateway, level).await?;
-            app.output.success(&msg);
+            app.renderer().render_security_action(&msg)?;
         }
     }
     Ok(ExitCode::SUCCESS)

@@ -1,9 +1,15 @@
 //! JSON output helpers.
 
 use anyhow::{Context, Result};
+use polis_common::agent::OnboardingStep;
 use polis_common::types::StatusOutput;
 
+use crate::application::services::update::UpdateInfo;
+use crate::application::services::workspace_delete::DeleteOutcome;
+use crate::application::services::workspace_start::StartOutcome;
+use crate::application::services::workspace_stop::StopOutcome;
 use crate::domain::health::DiagnosticReport;
+use crate::output::models::{ConnectionInfo, LogEntry, PendingRequest, SecurityStatus};
 
 /// Renders domain types as machine-readable JSON output.
 pub struct JsonRenderer;
@@ -93,6 +99,186 @@ impl JsonRenderer {
         println!(
             "{}",
             serde_json::to_string_pretty(&out).context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render connection info as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_connection_info(info: &ConnectionInfo) -> Result<()> {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(info).context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render stop command outcome as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_stop_outcome(outcome: &StopOutcome) -> Result<()> {
+        let status = match outcome {
+            StopOutcome::NotFound => "not_found",
+            StopOutcome::AlreadyStopped => "already_stopped",
+            StopOutcome::Stopped => "stopped",
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": status
+            }))
+            .context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render delete command outcome as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_delete_outcome(outcome: &DeleteOutcome, all: bool) -> Result<()> {
+        let status = match outcome {
+            DeleteOutcome::NotFound => "not_found",
+            DeleteOutcome::Deleted => "deleted",
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": status,
+                "scope": if all { "all" } else { "workspace" }
+            }))
+            .context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render start command outcome as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_start_outcome(
+        outcome: &StartOutcome,
+        onboarding: &[OnboardingStep],
+    ) -> Result<()> {
+        let (status, agent) = match outcome {
+            StartOutcome::AlreadyRunning { active_agent } => {
+                ("already_running", active_agent.clone())
+            }
+            StartOutcome::Created { .. } => ("created", None),
+            StartOutcome::Restarted { .. } => ("restarted", None),
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": status,
+                "active_agent": agent,
+                "onboarding": onboarding
+            }))
+            .context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render update info as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_update_info(current: &str, info: &UpdateInfo) -> Result<()> {
+        let output = match info {
+            UpdateInfo::UpToDate => serde_json::json!({
+                "current_version": current,
+                "status": "up_to_date"
+            }),
+            UpdateInfo::Available {
+                version,
+                release_notes,
+                download_url,
+            } => serde_json::json!({
+                "current_version": current,
+                "status": "update_available",
+                "new_version": version,
+                "release_notes": release_notes,
+                "download_url": download_url
+            }),
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render security status as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_status(status: &SecurityStatus) -> Result<()> {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "level": status.level,
+                "pending_count": status.pending_count,
+                "pending_error": status.pending_error
+            }))
+            .context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render security pending requests as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_pending(requests: &[PendingRequest]) -> Result<()> {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "pending_requests": requests
+            }))
+            .context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render security log entries as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_log(entries: &[LogEntry]) -> Result<()> {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "log_entries": entries
+            }))
+            .context("JSON serialization")?
+        );
+        Ok(())
+    }
+
+    /// Render security action result as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_action(message: &str) -> Result<()> {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "success": true,
+                "message": message
+            }))
+            .context("JSON serialization")?
         );
         Ok(())
     }

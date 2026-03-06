@@ -1,5 +1,7 @@
 //! `polis agent` — manage AI agents.
 
+use std::process::ExitCode;
+
 use anyhow::Result;
 use clap::Subcommand;
 
@@ -33,7 +35,7 @@ pub enum AgentCommand {
 /// # Errors
 ///
 /// Returns an error if the agent operation fails.
-pub async fn run(cmd: AgentCommand, app: &AppContext) -> Result<std::process::ExitCode> {
+pub async fn run(cmd: AgentCommand, app: &AppContext) -> Result<ExitCode> {
     match cmd {
         AgentCommand::List => {
             let agents = agent::list_agents(app.provisioner(), app.state_store()).await?;
@@ -62,14 +64,10 @@ pub async fn run(cmd: AgentCommand, app: &AppContext) -> Result<std::process::Ex
         }
         AgentCommand::Activate { name, envs } => return activate_agent(app, &name, envs).await,
     }
-    Ok(std::process::ExitCode::SUCCESS)
+    Ok(ExitCode::SUCCESS)
 }
 
-async fn activate_agent(
-    app: &AppContext,
-    name: &str,
-    envs: Vec<String>,
-) -> Result<std::process::ExitCode> {
+async fn activate_agent(app: &AppContext, name: &str, envs: Vec<String>) -> Result<ExitCode> {
     let reporter = app.terminal_reporter();
     let opts = AgentActivateOptions {
         reporter: &reporter,
@@ -83,7 +81,7 @@ async fn activate_agent(
         let prompt = format!("Agent '{active}' is active. Swap to '{requested}'?");
         if !app.confirm(&prompt, true)? {
             app.output.info("Swap cancelled.");
-            return Ok(std::process::ExitCode::SUCCESS);
+            return Ok(ExitCode::SUCCESS);
         }
         let swap_opts = AgentSwapOptions {
             reporter: &reporter,
@@ -102,7 +100,7 @@ async fn activate_agent(
     } else {
         render_outcome(outcome, app);
     }
-    Ok(std::process::ExitCode::SUCCESS)
+    Ok(ExitCode::SUCCESS)
 }
 
 fn render_outcome(outcome: ActivateOutcome, app: &AppContext) {
@@ -127,6 +125,3 @@ fn render_outcome(outcome: ActivateOutcome, app: &AppContext) {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {}
