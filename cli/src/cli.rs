@@ -56,10 +56,6 @@ pub enum Command {
     /// Show connection options
     Connect(commands::connect::ConnectArgs),
 
-    /// Manage configuration
-    #[command(subcommand)]
-    Config(commands::config::ConfigCommand),
-
     /// Diagnose issues
     Doctor {
         /// Show remediation details for each issue
@@ -133,7 +129,6 @@ impl Cli {
             Command::Delete(args) => commands::delete::run(&args, &app).await?,
             Command::Status => commands::status::run(&app, &app.provisioner).await?,
             Command::Connect(args) => commands::connect::run(&app, args).await?,
-            Command::Config(cmd) => commands::config::run(&app, cmd, &app.provisioner).await?,
             Command::Update(args) => {
                 commands::update::run(&args, &app, &crate::infra::update::GithubUpdateChecker)
                     .await?
@@ -142,7 +137,10 @@ impl Cli {
             Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,
             Command::Version => commands::version::run(&app)?,
             Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
-            Command::Security(cmd) => commands::security::run(cmd, &app, &app.provisioner).await?,
+            Command::Security(cmd) => {
+                let gw = crate::infra::security_gateway::ToolboxSecurityGateway::new(&app.provisioner);
+                commands::security::run(cmd, &app, &gw).await?
+            }
 
             // --- Internal commands ---
             #[allow(clippy::large_futures)]

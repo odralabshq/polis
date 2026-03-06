@@ -3,7 +3,7 @@
 use anyhow::Result;
 
 use crate::app::AppContext;
-use crate::application::services::cleanup_service;
+use crate::application::services::cleanup;
 use crate::commands::DeleteArgs;
 
 /// Run `polis delete [--all]`.
@@ -49,7 +49,7 @@ fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool>
 async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
     let reporter = app.terminal_reporter();
     if all {
-        cleanup_service::delete_all(
+        cleanup::delete_all(
             &app.provisioner,
             &app.state_mgr,
             &app.local_fs,
@@ -59,6 +59,6 @@ async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
         )
         .await
     } else {
-        cleanup_service::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await
+        cleanup::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await
     }
 }

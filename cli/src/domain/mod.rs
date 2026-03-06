@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod config;
+pub mod security;
 pub mod error;
 pub mod health;
 pub mod ssh;
@@ -13,7 +14,7 @@ pub mod util;
 pub mod workspace;
 
 #[allow(unused_imports)]
-pub use config::{PolisConfig, SecurityConfig, validate_config_key, validate_config_value};
+pub use config::{PolisConfig, SecurityConfig, validate_config_key};
 #[allow(unused_imports)]
 pub use error::{AgentError, ConfigError, WorkspaceError};
 #[allow(unused_imports)]

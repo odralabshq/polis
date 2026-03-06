@@ -16,4 +16,5 @@ pub mod provisioner;
 pub mod ssh;
 pub mod state;
 
+pub mod security_gateway;
 pub mod update;

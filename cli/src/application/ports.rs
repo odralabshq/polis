@@ -9,6 +9,7 @@ use std::process::Output;
 
 use anyhow::Result;
 
+use crate::domain::security::{AllowAction, SecurityLevel};
 use crate::domain::{DoctorChecks, WorkspaceState};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -386,4 +387,47 @@ pub trait SshConfigurator {
     /// # Errors
     /// This function will return an error if the user SSH config cannot be read or written.
     async fn remove_include_directive(&self) -> Result<()>;
+}
+
+// ── Security Gateway Port ─────────────────────────────────────────────────────
+
+/// Abstracts security operations against the toolbox container.
+/// Enables testing without Docker infrastructure.
+#[allow(async_fn_in_trait)]
+pub trait SecurityGateway {
+    /// List pending blocked requests awaiting approval.
+    /// Returns empty vec if no pending requests.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn list_pending(&self) -> Result<Vec<String>>;
+
+    /// Approve a blocked request by ID.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn approve(&self, request_id: &str) -> Result<String>;
+
+    /// Deny a blocked request by ID.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn deny(&self, request_id: &str) -> Result<String>;
+
+    /// Set the security level in Valkey.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn set_level(&self, level: SecurityLevel) -> Result<String>;
+
+    /// Add a domain rule for auto-approve/prompt/block behavior.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn add_domain_rule(&self, pattern: &str, action: AllowAction) -> Result<String>;
+
+    /// Get recent security events from the event log.
+    /// Returns empty vec if no events.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn get_log(&self) -> Result<Vec<String>>;
 }

@@ -1462,6 +1462,7 @@ name = "polis-common"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap",
  "serde",
  "thiserror 1.0.69",
 ]

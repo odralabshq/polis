@@ -6,10 +6,9 @@
 //! or `crate::output`.
 
 pub mod agent;
-pub mod cleanup_service;
-pub mod config_service;
+pub mod cleanup;
 pub mod provisioning;
-pub mod security_service;
+pub mod security;
 pub mod ssh_provision;
 pub mod update;
 pub mod vm;

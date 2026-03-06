@@ -5,8 +5,10 @@ use clap::Subcommand;
 use std::process::ExitCode;
 
 use crate::app::AppContext;
-use crate::application::ports::ShellExecutor;
-use crate::application::services::security_service;
+use crate::application::ports::SecurityGateway;
+use crate::application::services::security;
+use crate::application::services::security::PendingResult;
+use crate::domain::security::{AllowAction, SecurityLevel};
 
 /// Security subcommands.
 #[derive(Subcommand)]
@@ -27,18 +29,19 @@ pub enum SecurityCommand {
     },
     /// Show recent security events
     Log,
-    /// Auto-approve a domain pattern
-    Allow {
-        /// Domain pattern to allow (e.g. "cli.kiro.dev" or "*.example.com")
+    /// Add a domain rule for auto-approve/prompt/block behavior
+    Rule {
+        /// Domain pattern (e.g. "cli.kiro.dev" or "*.example.com")
         pattern: String,
         /// Action: allow (default), prompt, or block
-        #[arg(long, default_value = "allow")]
-        action: String,
+        #[arg(long, default_value_t = AllowAction::Allow, value_enum)]
+        action: AllowAction,
     },
     /// Set the security level
     Level {
         /// Security level: relaxed, balanced, or strict
-        level: String,
+        #[arg(value_enum)]
+        level: SecurityLevel,
     },
 }
 
@@ -50,27 +53,30 @@ pub enum SecurityCommand {
 pub async fn run(
     cmd: SecurityCommand,
     app: &AppContext,
-    mp: &impl ShellExecutor,
+    gateway: &impl SecurityGateway,
 ) -> Result<ExitCode> {
     match cmd {
         SecurityCommand::Status => {
-            let s = security_service::get_status(&app.config_store, mp).await?;
+            let s = security::get_status(&app.config_store, gateway).await?;
             app.output.info(&format!("Security level: {}", s.level));
-            if let Some(err) = s.pending_error {
-                app.output
-                    .warn(&format!("Could not query pending requests: {err}"));
-            } else if s.pending_lines.is_empty() {
-                app.output.success("No pending blocked requests");
-            } else {
-                app.output.warn(&format!(
-                    "{} pending blocked request(s)",
-                    s.pending_lines.len()
-                ));
+            match s.pending {
+                PendingResult::Err(err) => {
+                    app.output
+                        .warn(&format!("Could not query pending requests: {err}"));
+                }
+                PendingResult::Ok(requests) if requests.is_empty() => {
+                    app.output.success("No pending blocked requests");
+                }
+                PendingResult::Ok(requests) => {
+                    app.output.warn(&format!(
+                        "{} pending blocked request(s)",
+                        requests.len()
+                    ));
+                }
             }
-            Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Pending => {
-            let lines = security_service::list_pending(mp).await?;
+            let lines = security::list_pending(gateway).await?;
             if lines.is_empty() {
                 app.output.success("No pending blocked requests");
             } else {
@@ -78,20 +84,17 @@ pub async fn run(
                     app.output.info(line);
                 }
             }
-            Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Approve { request_id } => {
-            let msg = security_service::approve(mp, &request_id).await?;
+            let msg = security::approve(gateway, &request_id).await?;
             app.output.success(&msg);
-            Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Deny { request_id } => {
-            let msg = security_service::deny(mp, &request_id).await?;
+            let msg = security::deny(gateway, &request_id).await?;
             app.output.success(&msg);
-            Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Log => {
-            let lines = security_service::get_log(mp).await?;
+            let lines = security::get_log(gateway).await?;
             if lines.is_empty() {
                 app.output.info("No recent security events");
             } else {
@@ -99,17 +102,15 @@ pub async fn run(
                     app.output.info(line);
                 }
             }
-            Ok(ExitCode::SUCCESS)
         }
-        SecurityCommand::Allow { pattern, action } => {
-            let msg = security_service::auto_allow(mp, &pattern, &action).await?;
+        SecurityCommand::Rule { pattern, action } => {
+            let msg = security::add_domain_rule(gateway, &pattern, action).await?;
             app.output.success(&msg);
-            Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Level { level } => {
-            let msg = security_service::set_level(&app.config_store, mp, &level).await?;
+            let msg = security::set_level(&app.config_store, gateway, level).await?;
             app.output.success(&msg);
-            Ok(ExitCode::SUCCESS)
         }
     }
+    Ok(ExitCode::SUCCESS)
 }

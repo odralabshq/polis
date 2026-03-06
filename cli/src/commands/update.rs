@@ -71,7 +71,7 @@ pub async fn post_update(app: &AppContext) -> Result<()> {
 mod tests {
     use super::*;
     use crate::application::services::update::SignatureInfo;
-    use crate::domain::workspace::hex_encode;
+    use crate::domain::util::hex_encode;
 
     #[tokio::test]
     async fn test_run_up_to_date_returns_ok() {

@@ -21,12 +21,23 @@ pub enum BlockReason {
 /// Credentials are always prompted regardless of level.
 /// Malware is always blocked regardless of level.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[serde(rename_all = "lowercase")]
 pub enum SecurityLevel {
     Relaxed,
     #[default]
     Balanced,
     Strict,
+}
+
+impl std::fmt::Display for SecurityLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Relaxed => write!(f, "relaxed"),
+            Self::Balanced => write!(f, "balanced"),
+            Self::Strict => write!(f, "strict"),
+        }
+    }
 }
 
 impl SecurityLevel {
