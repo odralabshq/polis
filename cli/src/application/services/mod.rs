@@ -6,7 +6,7 @@
 //! or `crate::output`.
 
 pub mod agent;
-pub mod cleanup;
+pub mod workspace_delete;
 pub mod provisioning;
 pub mod security;
 pub mod ssh_provision;

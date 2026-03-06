@@ -110,7 +110,7 @@ pub async fn run_vm_config_update(app: &AppContext) -> Result<()> {
 
     let version = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
-    let hasher = &crate::infra::fs::LocalFs;
+    let hasher = &crate::infra::fs::OsFs;
 
     match update_vm_config(
         &app.provisioner,

@@ -3,6 +3,7 @@
 //! Imports only from `crate::domain` and `crate::application::ports`.
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
 
 use crate::application::ports::{
     AssetExtractor, InstanceInspector, InstanceLifecycle, InstanceSpec, ProgressReporter,
@@ -14,13 +15,32 @@ use crate::application::ports::{
 /// to compile without modification.
 pub use crate::domain::workspace::VmState;
 
+// ── Typed deserialization structs for multipass VM info JSON ─────────────────
+
+#[derive(Debug, Deserialize)]
+struct VmInfo {
+    info: VmInfoInner,
+}
+
+#[derive(Debug, Deserialize)]
+struct VmInfoInner {
+    polis: VmInfoPolis,
+}
+
+#[derive(Debug, Deserialize)]
+struct VmInfoPolis {
+    state: String,
+    #[serde(default)]
+    ipv4: Vec<String>,
+}
+
 const VM_CPUS: &str = "4";
 const VM_MEMORY: &str = "8G";
 const VM_DISK: &str = "40G";
 
 /// Check if VM exists.
-pub async fn exists(mp: &impl InstanceInspector) -> bool {
-    mp.info().await.map(|o| o.status.success()).unwrap_or(false)
+pub async fn exists(provisioner: &impl InstanceInspector) -> bool {
+    provisioner.info().await.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Get current VM state.
@@ -28,20 +48,14 @@ pub async fn exists(mp: &impl InstanceInspector) -> bool {
 /// # Errors
 ///
 /// Returns an error if the multipass output cannot be parsed.
-pub async fn state(mp: &impl InstanceInspector) -> Result<VmState> {
-    let output = match mp.info().await {
+pub async fn state(provisioner: &impl InstanceInspector) -> Result<VmState> {
+    let output = match provisioner.info().await {
         Ok(o) if o.status.success() => o,
         _ => return Ok(VmState::NotFound),
     };
-    let info: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("parsing multipass info")?;
-    let state_str = info
-        .get("info")
-        .and_then(|i| i.get("polis"))
-        .and_then(|p| p.get("state"))
-        .and_then(|s| s.as_str())
-        .unwrap_or("Unknown");
-    Ok(match state_str {
+    let vm_info: VmInfo =
+        serde_json::from_slice(&output.stdout).context("parsing VM info JSON")?;
+    Ok(match vm_info.info.polis.state.as_str() {
         "Running" => VmState::Running,
         "Starting" => VmState::Starting,
         _ => VmState::Stopped,
@@ -56,20 +70,17 @@ pub async fn state(mp: &impl InstanceInspector) -> Result<VmState> {
 /// # Errors
 ///
 /// Returns an error if `info()` fails or no IPv4 address is found.
-pub async fn resolve_vm_ip(mp: &impl InstanceInspector) -> Result<String> {
-    let output = mp.info().await.context("failed to query VM info")?;
+pub async fn resolve_vm_ip(provisioner: &impl InstanceInspector) -> Result<String> {
+    let output = provisioner.info().await.context("failed to query VM info")?;
     anyhow::ensure!(output.status.success(), "multipass info failed");
-
-    let info: serde_json::Value =
+    let vm_info: VmInfo =
         serde_json::from_slice(&output.stdout).context("invalid JSON from multipass info")?;
-
-    info.get("info")
-        .and_then(|i| i.get("polis"))
-        .and_then(|p| p.get("ipv4"))
-        .and_then(|arr| arr.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|v| v.as_str())
-        .map(String::from)
+    vm_info
+        .info
+        .polis
+        .ipv4
+        .first()
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("no IPv4 address found for polis VM"))
 }
 
@@ -84,11 +95,11 @@ pub async fn resolve_vm_ip(mp: &impl InstanceInspector) -> Result<String> {
 ///
 /// Returns an error if cloud-init reported a failure (exit code 1 or 2), or
 /// if the command could not be executed.
-pub async fn verify_cloud_init(mp: &impl ShellExecutor) -> Result<()> {
+pub async fn verify_cloud_init(provisioner: &impl ShellExecutor) -> Result<()> {
     const LOG: &str = "/var/log/cloud-init-output.log";
     const RECOVERY: &str = "polis delete && polis start";
 
-    let status = mp
+    let status = provisioner
         .exec_status(&["cloud-init", "status", "--wait"])
         .await
         .context("running cloud-init status")?;
@@ -129,11 +140,11 @@ pub async fn verify_cloud_init(mp: &impl ShellExecutor) -> Result<()> {
 /// Returns an error if prerequisites are not met, asset extraction fails,
 /// the multipass launch fails, or cloud-init reports a failure.
 pub async fn create(
-    mp: &impl VmProvisioner,
+    provisioner: &impl VmProvisioner,
     assets: &impl AssetExtractor,
     reporter: &impl ProgressReporter,
 ) -> Result<()> {
-    check_prerequisites(mp).await?;
+    check_prerequisites(provisioner).await?;
 
     // Extract embedded assets (cloud-init.yaml, etc.) to a temp dir.
     let (assets_path, _assets_guard) = assets
@@ -160,7 +171,7 @@ pub async fn create(
         .to_string();
 
     reporter.begin_stage("preparing workspace...");
-    let output = mp
+    let output = provisioner
         .launch(&InstanceSpec {
             image: "24.04",
             cpus: VM_CPUS,
@@ -181,7 +192,7 @@ pub async fn create(
     }
 
     // Verify cloud-init completed successfully before proceeding.
-    verify_cloud_init(mp).await?;
+    verify_cloud_init(provisioner).await?;
 
     Ok(())
 }
@@ -191,8 +202,8 @@ pub async fn create(
 /// # Errors
 ///
 /// Returns an error if the multipass start command fails.
-pub async fn start(mp: &impl InstanceLifecycle) -> Result<()> {
-    let output = mp.start().await.context("starting workspace")?;
+pub async fn start(provisioner: &impl InstanceLifecycle) -> Result<()> {
+    let output = provisioner.start().await.context("starting workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("failed to start workspace: {stderr}");
@@ -205,18 +216,18 @@ pub async fn start(mp: &impl InstanceLifecycle) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the multipass stop command fails.
-pub async fn stop(mp: &(impl InstanceLifecycle + ShellExecutor)) -> Result<()> {
+pub async fn stop(provisioner: &(impl InstanceLifecycle + ShellExecutor)) -> Result<()> {
     // Stop all polis- containers (including agent sidecars not in the base
     // compose file). Using `docker stop` with a filter is more reliable than
     // `docker compose stop` which only knows about services in its file.
-    let _ = mp
+    let _ = provisioner
         .exec(&[
             "bash",
             "-c",
             "docker ps -q --filter name=polis- | xargs -r docker stop",
         ])
         .await;
-    let output = mp.stop().await.context("stopping workspace")?;
+    let output = provisioner.stop().await.context("stopping workspace")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("failed to stop workspace: {stderr}");
@@ -225,9 +236,14 @@ pub async fn stop(mp: &(impl InstanceLifecycle + ShellExecutor)) -> Result<()> {
 }
 
 /// Delete VM.
-pub async fn delete(mp: &impl InstanceLifecycle) {
-    let _ = mp.delete().await;
-    let _ = mp.purge().await;
+///
+/// # Errors
+///
+/// Returns an error if the delete or purge operation fails.
+pub async fn delete(provisioner: &impl InstanceLifecycle) -> Result<()> {
+    provisioner.delete().await.context("deleting VM instance")?;
+    provisioner.purge().await.context("purging deleted instances")?;
+    Ok(())
 }
 
 /// Restart a stopped VM.
@@ -236,19 +252,19 @@ pub async fn delete(mp: &impl InstanceLifecycle) {
 ///
 /// Returns an error if the multipass start command fails.
 pub async fn restart(
-    mp: &(impl InstanceLifecycle + ShellExecutor),
+    provisioner: &(impl InstanceLifecycle + ShellExecutor),
     reporter: &impl ProgressReporter,
     quiet: bool,
 ) -> Result<()> {
     if !quiet {
         reporter.begin_stage("starting workspace...");
     }
-    start(mp).await?;
+    start(provisioner).await?;
     if !quiet {
         reporter.complete_stage();
     }
 
-    super::services::start_services_with_progress(mp, reporter, quiet).await;
+    super::services::start_services_with_progress(provisioner, reporter, quiet).await;
     Ok(())
 }
 
@@ -259,8 +275,8 @@ const MULTIPASS_MIN_VERSION: semver::Version = semver::Version::new(1, 16, 0);
 /// # Errors
 ///
 /// This function will return an error if the underlying operations fail.
-async fn check_prerequisites(mp: &impl InstanceInspector) -> Result<()> {
-    let output = mp.version().await.map_err(|_| {
+async fn check_prerequisites(provisioner: &impl InstanceInspector) -> Result<()> {
+    let output = provisioner.version().await.map_err(|_| {
         anyhow::anyhow!(
             "Workspace runtime not available.\n\nRun 'polis doctor' to diagnose and fix."
         )
@@ -328,13 +344,13 @@ mod tests {
 
     #[tokio::test]
     async fn state_running() {
-        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Running"}}}"#));
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#));
         assert_eq!(state(&mp).await.expect("state"), VmState::Running);
     }
 
     #[tokio::test]
     async fn state_stopped() {
-        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Stopped"}}}"#));
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Stopped","ipv4":[]}}}"#));
         assert_eq!(state(&mp).await.expect("state"), VmState::Stopped);
     }
 
@@ -472,5 +488,57 @@ mod tests {
             msg.contains("polis delete && polis start"),
             "expected recovery command in: {msg}"
         );
+    }
+
+    // ── delete error propagation tests ──────────────────────────────────────
+
+    struct DeleteStub {
+        delete_fails: bool,
+        purge_fails: bool,
+    }
+    impl InstanceLifecycle for DeleteStub {
+        async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
+        async fn start(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
+        async fn stop(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
+        async fn delete(&self) -> Result<Output> {
+            if self.delete_fails {
+                anyhow::bail!("delete failed")
+            }
+            Ok(ok(b""))
+        }
+        async fn purge(&self) -> Result<Output> {
+            if self.purge_fails {
+                anyhow::bail!("purge failed")
+            }
+            Ok(ok(b""))
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_propagates_delete_error() {
+        let stub = DeleteStub { delete_fails: true, purge_fails: false };
+        let err = delete(&stub).await.expect_err("expected Err");
+        let chain = format!("{err:#}");
+        assert!(chain.contains("delete failed"), "unexpected error chain: {chain}");
+    }
+
+    #[tokio::test]
+    async fn delete_propagates_purge_error() {
+        let stub = DeleteStub { delete_fails: false, purge_fails: true };
+        let err = delete(&stub).await.expect_err("expected Err");
+        let chain = format!("{err:#}");
+        assert!(chain.contains("purge failed"), "unexpected error chain: {chain}");
+    }
+
+    #[tokio::test]
+    async fn delete_success() {
+        let stub = DeleteStub { delete_fails: false, purge_fails: false };
+        assert!(delete(&stub).await.is_ok());
     }
 }

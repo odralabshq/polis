@@ -13,9 +13,9 @@ use crate::domain::util::hex_encode;
 /// Writes agent artifact files to the local filesystem under `.generated/`.
 /// Production filesystem implementation of `LocalArtifactWriter`.
 #[allow(dead_code)] // Not yet wired from command handlers
-pub struct LocalFs;
+pub struct OsFs;
 
-impl LocalArtifactWriter for LocalFs {
+impl LocalArtifactWriter for OsFs {
     /// # Errors
     ///
     /// This function will return an error if the underlying operations fail.
@@ -42,7 +42,7 @@ impl LocalArtifactWriter for LocalFs {
     }
 }
 
-impl crate::application::ports::FileHasher for LocalFs {
+impl crate::application::ports::FileHasher for OsFs {
     /// # Errors
     ///
     /// This function will return an error if the underlying operations fail.
@@ -51,7 +51,7 @@ impl crate::application::ports::FileHasher for LocalFs {
     }
 }
 
-impl crate::application::ports::LocalPaths for LocalFs {
+impl crate::application::ports::LocalPaths for OsFs {
     fn images_dir(&self) -> PathBuf {
         images_dir().unwrap_or_else(|_| PathBuf::from("images"))
     }
@@ -66,7 +66,7 @@ impl crate::application::ports::LocalPaths for LocalFs {
     }
 }
 
-impl crate::application::ports::LocalFs for LocalFs {
+impl crate::application::ports::LocalFs for OsFs {
     fn exists(&self, path: &Path) -> bool {
         path.exists()
     }
@@ -106,6 +106,10 @@ impl crate::application::ports::LocalFs for LocalFs {
     /// This function will return an error if the underlying operations fail.
     fn read_to_string(&self, path: &Path) -> Result<String> {
         std::fs::read_to_string(path).with_context(|| format!("reading file {}", path.display()))
+    }
+
+    fn is_dir(&self, path: &Path) -> bool {
+        path.is_dir()
     }
 
     /// # Errors

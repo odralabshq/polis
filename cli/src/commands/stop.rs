@@ -28,7 +28,10 @@ pub async fn run(app: &AppContext) -> Result<ExitCode> {
             ctx.info("Your data is preserved.");
             ctx.info("Resume: polis start");
         }
-        Err(e) => return Err(e),
+        Err(e) => {
+            app.output.error(&e.to_string());
+            return Ok(ExitCode::FAILURE);
+        }
     }
 
     Ok(ExitCode::SUCCESS)

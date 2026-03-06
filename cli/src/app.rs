@@ -8,13 +8,13 @@
 use anyhow::Result;
 
 use crate::application::ports::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, LocalFs as LocalFsTrait, ShellExecutor,
+    FileTransfer, InstanceInspector, InstanceLifecycle, LocalFs, ShellExecutor,
     WorkspaceStateStore,
 };
 use crate::infra::assets::EmbeddedAssets;
 use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, TokioCommandRunner};
 use crate::infra::config::YamlConfigStore;
-use crate::infra::fs::LocalFs;
+use crate::infra::fs::OsFs;
 use crate::infra::network::TokioNetworkProbe;
 use crate::infra::provisioner::MultipassProvisioner;
 use crate::infra::ssh::SshConfigManager;
@@ -82,7 +82,7 @@ pub struct AppContext {
     /// Network probe for connectivity checks.
     pub network_probe: TokioNetworkProbe,
     /// Local filesystem operations.
-    pub local_fs: LocalFs,
+    pub local_fs: OsFs,
     /// Configuration store.
     pub config_store: YamlConfigStore,
 }
@@ -113,7 +113,7 @@ impl AppContext {
             non_interactive,
             cmd_runner: TokioCommandRunner::new(DEFAULT_CMD_TIMEOUT),
             network_probe: TokioNetworkProbe,
-            local_fs: LocalFs,
+            local_fs: OsFs,
             config_store: YamlConfigStore,
         })
     }
@@ -191,7 +191,7 @@ impl AppContext {
 
     /// Returns a reference to the local filesystem.
     #[must_use]
-    pub fn local_fs(&self) -> &impl LocalFsTrait {
+    pub fn local_fs(&self) -> &impl LocalFs {
         &self.local_fs
     }
 }

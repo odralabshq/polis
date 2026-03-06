@@ -3,7 +3,8 @@
 use anyhow::Result;
 
 use crate::app::AppContext;
-use crate::application::services::cleanup;
+use crate::application::ports::ProgressReporter as _;
+use crate::application::services::workspace_delete::{self, DeleteOutcome};
 use crate::commands::DeleteArgs;
 
 /// Run `polis delete [--all]`.
@@ -49,16 +50,24 @@ fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool>
 async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
     let reporter = app.terminal_reporter();
     if all {
-        cleanup::delete_all(
-            &app.provisioner,
-            &app.state_mgr,
-            &app.local_fs,
-            &app.local_fs,
-            &app.ssh,
-            &reporter,
-        )
-        .await
+        let ctx = workspace_delete::CleanupContext {
+            provisioner: &app.provisioner,
+            state_store: &app.state_mgr,
+            local_fs: &app.local_fs,
+            paths: &app.local_fs,
+            ssh: &app.ssh,
+            reporter: &reporter,
+        };
+        workspace_delete::delete_all(&ctx).await
     } else {
-        cleanup::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await
+        match workspace_delete::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await? {
+            DeleteOutcome::NotFound => {
+                reporter.success("no workspace to delete");
+            }
+            DeleteOutcome::Deleted => {
+                reporter.success("workspace removed");
+            }
+        }
+        Ok(())
     }
 }

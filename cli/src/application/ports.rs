@@ -314,6 +314,8 @@ pub trait LocalFs {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     fn set_permissions(&self, path: &std::path::Path, mode: u32) -> Result<()>;
+    /// Check if a path is a directory.
+    fn is_dir(&self, path: &std::path::Path) -> bool;
 }
 
 /// Abstracts configuration persistence.
