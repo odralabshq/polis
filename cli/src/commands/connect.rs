@@ -8,6 +8,7 @@ use crate::app::AppContext;
 use crate::application::services::ssh_provision::{self, SshProvisionOptions};
 use crate::application::services::vm::lifecycle::{self as vm, VmState};
 use crate::domain::error::WorkspaceError;
+use crate::domain::process::exit_code_from_status;
 
 /// Arguments for the connect command.
 #[derive(Args)]
@@ -74,9 +75,7 @@ fn open_ssh_session() -> Result<ExitCode> {
         .status()
         .context("failed to spawn ssh")?;
 
-    let code = status.code().unwrap_or(255);
-    #[allow(clippy::cast_possible_truncation)]
-    Ok(ExitCode::from(u8::try_from(code).unwrap_or(255)))
+    Ok(exit_code_from_status(status))
 }
 
 /// Print IDE connection strings.

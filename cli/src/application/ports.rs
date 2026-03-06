@@ -89,6 +89,37 @@ pub trait FileTransfer {
     async fn transfer_recursive(&self, local: &str, remote: &str) -> Result<Output>;
 }
 
+/// Command execution inside the workspace container.
+///
+/// Encapsulates docker exec command construction including:
+/// - User identity (`-u polis`)
+/// - Environment variables (`XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`)
+/// - TTY allocation (platform-specific: `-it` on Unix, `-i` on Windows)
+///
+/// This trait abstracts the docker command construction so that the command
+/// layer doesn't need to know about container internals.
+#[allow(async_fn_in_trait)]
+pub trait ContainerExecutor {
+    /// Execute a command inside the workspace container with inherited stdio.
+    ///
+    /// Returns the process exit status. The caller is responsible for
+    /// converting this to an `ExitCode` using `exit_code_from_status`.
+    ///
+    /// # Arguments
+    ///
+    /// * `args` - Command and arguments to run inside the container
+    /// * `interactive` - Whether stdin is a terminal (controls TTY allocation)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the docker exec command cannot be spawned.
+    async fn container_exec_status(
+        &self,
+        args: &[&str],
+        interactive: bool,
+    ) -> anyhow::Result<std::process::ExitStatus>;
+}
+
 /// Command execution inside the VM.
 #[allow(async_fn_in_trait)]
 pub trait ShellExecutor {

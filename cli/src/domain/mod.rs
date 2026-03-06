@@ -8,6 +8,7 @@ pub mod agent;
 pub mod config;
 pub mod error;
 pub mod health;
+pub mod process;
 pub mod security;
 pub mod ssh;
 pub mod util;

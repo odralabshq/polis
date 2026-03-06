@@ -153,6 +153,14 @@ pub const READY_MARKER_PATH: &str = "/opt/polis/.ready";
 /// avoiding Multipass Windows pipe/buffer issues with piped commands.
 pub const QUERY_SCRIPT: &str = "/opt/polis/scripts/polis-query.sh";
 
+/// User name inside the workspace container.
+/// MAINT-003: Centralized constant for container user identity.
+pub const CONTAINER_USER: &str = "polis";
+
+/// UID of the container user (matches /etc/passwd in container image).
+/// MAINT-004: Centralized constant for container user UID.
+pub const CONTAINER_USER_UID: u32 = 1000;
+
 #[cfg(test)]
 mod tests {
     use super::*;
