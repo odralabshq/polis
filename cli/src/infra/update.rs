@@ -106,8 +106,13 @@ impl UpdateChecker for GithubUpdateChecker {
             .map_err(|e| anyhow::anyhow!("invalid public key: {e}"))?;
 
         let mut cursor = Cursor::new(&data);
-        zipsign_api::verify::verify_tar(&mut cursor, &keys, Some(b""))
-            .map_err(|e| anyhow::anyhow!("signature verification failed: {e}"))?;
+        if is_windows_platform() {
+            zipsign_api::verify::verify_zip(&mut cursor, &keys, Some(b""))
+                .map_err(|e| anyhow::anyhow!("signature verification failed: {e}"))?;
+        } else {
+            zipsign_api::verify::verify_tar(&mut cursor, &keys, Some(b""))
+                .map_err(|e| anyhow::anyhow!("signature verification failed: {e}"))?;
+        }
 
         Ok(SignatureInfo {
             sha256: actual_sha256,
@@ -118,13 +123,21 @@ impl UpdateChecker for GithubUpdateChecker {
     ///
     /// This function will return an error if the underlying operations fail.
     fn perform_update(&self, version: &str) -> Result<()> {
-        let status = self_update::backends::github::Update::configure()
+        let mut builder = self_update::backends::github::Update::configure();
+        builder
             .repo_owner("OdraLabsHQ")
             .repo_name("polis")
             .bin_name("polis")
             .show_download_progress(true)
             .current_version(env!("CARGO_PKG_VERSION"))
-            .target_version_tag(&format!("v{version}"))
+            .target_version_tag(&format!("v{version}"));
+
+        // On Windows the release asset is a .zip; on Unix it is a .tar.gz.
+        if is_windows_platform() {
+            builder.bin_path_in_archive("polis.exe");
+        }
+
+        let status = builder
             .build()
             .context("failed to configure update")?
             .update()
@@ -143,10 +156,15 @@ pub(crate) fn get_asset_name() -> Result<String> {
         ("linux", "aarch64") => "polis-linux-arm64.tar.gz",
         ("macos", "x86_64") => "polis-darwin-amd64.tar.gz",
         ("macos", "aarch64") => "polis-darwin-arm64.tar.gz",
-        ("windows", "x86_64") => "polis-windows-amd64.tar.gz",
+        ("windows", "x86_64") => "polis-windows-amd64.zip",
         _ => anyhow::bail!("unsupported platform: {os}-{arch}"),
     };
     Ok(name.to_string())
+}
+
+/// Returns `true` when running on Windows.
+pub(crate) fn is_windows_platform() -> bool {
+    std::env::consts::OS == "windows"
 }
 
 pub(crate) fn parse_release_notes(body: &str) -> Vec<String> {
@@ -247,12 +265,21 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn test_get_asset_name_current_platform_returns_tar_gz() {
+    fn test_get_asset_name_current_platform_returns_archive() {
         let name = get_asset_name().expect("current platform should be supported");
-        assert!(
-            name.ends_with(".tar.gz"),
-            "asset name should be a .tar.gz: {name}"
-        );
+        let path = std::path::Path::new(&name);
+        if is_windows_platform() {
+            assert!(
+                path.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("zip")),
+                "Windows asset name should be a .zip: {name}"
+            );
+        } else {
+            assert!(
+                name.ends_with(".tar.gz"),
+                "Unix asset name should be a .tar.gz: {name}"
+            );
+        }
     }
 
     #[test]

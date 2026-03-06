@@ -167,7 +167,6 @@ impl AppContext {
     /// # Errors
     ///
     /// Returns an error if asset extraction fails.
-    #[allow(dead_code)] // Not yet called from command handlers
     pub fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
         let (path, guard) = crate::infra::assets::extract_assets()?;
         Ok((path, guard))
