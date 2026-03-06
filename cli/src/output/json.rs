@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use polis_common::types::StatusOutput;
 
-use crate::domain::health::DoctorChecks;
+use crate::domain::health::DiagnosticReport;
 
 /// Renders domain types as machine-readable JSON output.
 pub struct JsonRenderer;
@@ -78,39 +78,16 @@ impl JsonRenderer {
     /// # Errors
     ///
     /// This function will return an error if the underlying operations fail.
-    pub fn render_doctor(checks: &DoctorChecks, issues: &[String]) -> Result<()> {
+    pub fn render_diagnostics(checks: &DiagnosticReport, issues: &[String]) -> Result<()> {
         let status = if issues.is_empty() {
             "healthy"
         } else {
             "unhealthy"
         };
+        let checks_value = serde_json::to_value(checks).context("serializing diagnostic report")?;
         let out = serde_json::json!({
             "status": status,
-            "checks": {
-                "prerequisites": {
-                    "multipass_found": checks.prerequisites.multipass_found,
-                    "multipass_version": checks.prerequisites.multipass_version,
-                    "multipass_version_ok": checks.prerequisites.multipass_version_ok,
-                },
-                "workspace": {
-                    "ready": checks.workspace.ready,
-                    "disk_space_gb": checks.workspace.disk_space_gb,
-                    "disk_space_ok": checks.workspace.disk_space_ok,
-                    "image": checks.workspace.image,
-                },
-                "network": {
-                    "internet": checks.network.internet,
-                    "dns": checks.network.dns,
-                },
-                "security": {
-                    "process_isolation": checks.security.process_isolation,
-                    "traffic_inspection": checks.security.traffic_inspection,
-                    "malware_db_current": checks.security.malware_db_current,
-                    "malware_db_age_hours": checks.security.malware_db_age_hours,
-                    "certificates_valid": checks.security.certificates_valid,
-                    "certificates_expire_days": checks.security.certificates_expire_days,
-                },
-            },
+            "checks": checks_value,
             "issues": issues,
         });
         println!(

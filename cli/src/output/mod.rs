@@ -17,7 +17,7 @@ pub use styles::Styles;
 use anyhow::Result;
 use polis_common::types::StatusOutput;
 
-use crate::domain::health::DoctorChecks;
+use crate::domain::health::DiagnosticReport;
 
 /// Enum-dispatched output renderer.
 ///
@@ -111,23 +111,23 @@ impl Renderer<'_> {
         }
     }
 
-    /// Render doctor health check results.
+    /// Render diagnostic health check results.
     ///
     /// # Errors
     ///
     /// Returns an error if JSON serialization fails.
-    pub fn render_doctor(
+    pub fn render_diagnostics(
         &self,
-        checks: &DoctorChecks,
+        checks: &DiagnosticReport,
         issues: &[String],
         verbose: bool,
     ) -> Result<()> {
         match self {
             Renderer::Human(r) => {
-                r.render_doctor(checks, issues, verbose);
+                r.render_diagnostics(checks, issues, verbose);
                 Ok(())
             }
-            Renderer::Json(_) => JsonRenderer::render_doctor(checks, issues),
+            Renderer::Json(_) => JsonRenderer::render_diagnostics(checks, issues),
         }
     }
 }

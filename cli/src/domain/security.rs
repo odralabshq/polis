@@ -5,10 +5,10 @@
 
 pub use polis_common::types::SecurityLevel;
 
-use clap::ValueEnum;
-use std::sync::LazyLock;
-use regex::Regex;
 use anyhow::Result;
+use clap::ValueEnum;
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Action to take for domain rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -32,11 +32,9 @@ impl std::fmt::Display for AllowAction {
     }
 }
 
-static REQUEST_ID_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| {
-        Regex::new(r"^req-[a-f0-9]{8}$")
-            .unwrap_or_else(|e| panic!("REQUEST_ID_REGEX is invalid: {e}"))
-    });
+static REQUEST_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^req-[a-f0-9]{8}$").unwrap_or_else(|e| panic!("REQUEST_ID_REGEX is invalid: {e}"))
+});
 
 /// Validates a request ID matches the expected format.
 ///
@@ -44,9 +42,7 @@ static REQUEST_ID_REGEX: LazyLock<Regex> =
 /// Returns an error if the ID does not match pattern `req-[a-f0-9]{8}`.
 pub fn validate_request_id(id: &str) -> Result<()> {
     if !REQUEST_ID_REGEX.is_match(id) {
-        anyhow::bail!(
-            "Invalid request ID '{id}': expected format req-[a-f0-9]{{8}}"
-        );
+        anyhow::bail!("Invalid request ID '{id}': expected format req-[a-f0-9]{{8}}");
     }
     Ok(())
 }

@@ -7,7 +7,7 @@
 use anyhow::Result;
 
 use crate::application::ports::{ConfigStore, SecurityGateway};
-use crate::domain::security::{validate_request_id, AllowAction, SecurityLevel};
+use crate::domain::security::{AllowAction, SecurityLevel, validate_request_id};
 
 /// Result of querying pending blocked requests.
 /// Eliminates impossible state where both error and requests are populated.

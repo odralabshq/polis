@@ -40,7 +40,11 @@ const VM_DISK: &str = "40G";
 
 /// Check if VM exists.
 pub async fn exists(provisioner: &impl InstanceInspector) -> bool {
-    provisioner.info().await.map(|o| o.status.success()).unwrap_or(false)
+    provisioner
+        .info()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Get current VM state.
@@ -53,8 +57,7 @@ pub async fn state(provisioner: &impl InstanceInspector) -> Result<VmState> {
         Ok(o) if o.status.success() => o,
         _ => return Ok(VmState::NotFound),
     };
-    let vm_info: VmInfo =
-        serde_json::from_slice(&output.stdout).context("parsing VM info JSON")?;
+    let vm_info: VmInfo = serde_json::from_slice(&output.stdout).context("parsing VM info JSON")?;
     Ok(match vm_info.info.polis.state.as_str() {
         "Running" => VmState::Running,
         "Starting" => VmState::Starting,
@@ -71,7 +74,10 @@ pub async fn state(provisioner: &impl InstanceInspector) -> Result<VmState> {
 ///
 /// Returns an error if `info()` fails or no IPv4 address is found.
 pub async fn resolve_vm_ip(provisioner: &impl InstanceInspector) -> Result<String> {
-    let output = provisioner.info().await.context("failed to query VM info")?;
+    let output = provisioner
+        .info()
+        .await
+        .context("failed to query VM info")?;
     anyhow::ensure!(output.status.success(), "multipass info failed");
     let vm_info: VmInfo =
         serde_json::from_slice(&output.stdout).context("invalid JSON from multipass info")?;
@@ -242,7 +248,10 @@ pub async fn stop(provisioner: &(impl InstanceLifecycle + ShellExecutor)) -> Res
 /// Returns an error if the delete or purge operation fails.
 pub async fn delete(provisioner: &impl InstanceLifecycle) -> Result<()> {
     provisioner.delete().await.context("deleting VM instance")?;
-    provisioner.purge().await.context("purging deleted instances")?;
+    provisioner
+        .purge()
+        .await
+        .context("purging deleted instances")?;
     Ok(())
 }
 
@@ -522,23 +531,38 @@ mod tests {
 
     #[tokio::test]
     async fn delete_propagates_delete_error() {
-        let stub = DeleteStub { delete_fails: true, purge_fails: false };
+        let stub = DeleteStub {
+            delete_fails: true,
+            purge_fails: false,
+        };
         let err = delete(&stub).await.expect_err("expected Err");
         let chain = format!("{err:#}");
-        assert!(chain.contains("delete failed"), "unexpected error chain: {chain}");
+        assert!(
+            chain.contains("delete failed"),
+            "unexpected error chain: {chain}"
+        );
     }
 
     #[tokio::test]
     async fn delete_propagates_purge_error() {
-        let stub = DeleteStub { delete_fails: false, purge_fails: true };
+        let stub = DeleteStub {
+            delete_fails: false,
+            purge_fails: true,
+        };
         let err = delete(&stub).await.expect_err("expected Err");
         let chain = format!("{err:#}");
-        assert!(chain.contains("purge failed"), "unexpected error chain: {chain}");
+        assert!(
+            chain.contains("purge failed"),
+            "unexpected error chain: {chain}"
+        );
     }
 
     #[tokio::test]
     async fn delete_success() {
-        let stub = DeleteStub { delete_fails: false, purge_fails: false };
+        let stub = DeleteStub {
+            delete_fails: false,
+            purge_fails: false,
+        };
         assert!(delete(&stub).await.is_ok());
     }
 }

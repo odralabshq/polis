@@ -138,7 +138,8 @@ impl Cli {
             Command::Version => commands::version::run(&app)?,
             Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
             Command::Security(cmd) => {
-                let gw = crate::infra::security_gateway::ToolboxSecurityGateway::new(&app.provisioner);
+                let gw =
+                    crate::infra::security_gateway::ToolboxSecurityGateway::new(&app.provisioner);
                 commands::security::run(cmd, &app, &gw).await?
             }
 

@@ -8,7 +8,7 @@ pub mod services;
 
 #[allow(unused_imports)]
 pub use ports::{
-    CommandRunner, FileTransfer, HealthProbe, InstanceInspector, InstanceLifecycle, InstanceSpec,
+    CommandRunner, FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec,
     LocalArtifactWriter, POLIS_INSTANCE, ProgressReporter, ShellExecutor, VmProvisioner,
     WorkspaceStateStore,
 };

@@ -68,10 +68,8 @@ pub async fn run(
                     app.output.success("No pending blocked requests");
                 }
                 PendingResult::Ok(requests) => {
-                    app.output.warn(&format!(
-                        "{} pending blocked request(s)",
-                        requests.len()
-                    ));
+                    app.output
+                        .warn(&format!("{} pending blocked request(s)", requests.len()));
                 }
             }
         }

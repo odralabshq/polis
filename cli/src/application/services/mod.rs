@@ -6,12 +6,12 @@
 //! or `crate::output`.
 
 pub mod agent;
-pub mod workspace_delete;
 pub mod provisioning;
 pub mod security;
 pub mod ssh_provision;
 pub mod update;
 pub mod vm;
+pub mod workspace_delete;
 pub mod workspace_doctor;
 pub mod workspace_repair;
 pub mod workspace_start;

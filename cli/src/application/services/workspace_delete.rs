@@ -176,7 +176,12 @@ where
     }
 
     // 8. Remove cached images directory
-    remove_if_exists(ctx.local_fs, &ctx.paths.images_dir(), "images dir", &mut errors);
+    remove_if_exists(
+        ctx.local_fs,
+        &ctx.paths.images_dir(),
+        "images dir",
+        &mut errors,
+    );
 
     if errors.is_empty() {
         ctx.reporter.complete_stage();
@@ -221,8 +226,12 @@ mod tests {
     use anyhow::Result;
 
     use super::*;
-    use crate::application::ports::{InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor, WorkspaceStateStore};
-    use crate::application::services::vm::test_support::{fail_output, impl_shell_executor_stubs, ok_output};
+    use crate::application::ports::{
+        InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor, WorkspaceStateStore,
+    };
+    use crate::application::services::vm::test_support::{
+        fail_output, impl_shell_executor_stubs, ok_output,
+    };
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -262,7 +271,10 @@ mod tests {
 
     impl LifecycleStub {
         fn new(delete_fails: bool) -> Self {
-            Self { delete_fails, delete_called: Cell::new(false) }
+            Self {
+                delete_fails,
+                delete_called: Cell::new(false),
+            }
         }
     }
 
@@ -329,7 +341,9 @@ mod tests {
     impl ProvisionerStub {
         fn running(delete_fails: bool, exec_fails: bool) -> Self {
             Self {
-                inspector: InspectorStub { info_output: running_info() },
+                inspector: InspectorStub {
+                    info_output: running_info(),
+                },
                 lifecycle: LifecycleStub::new(delete_fails),
                 exec_spy: ExecSpy::new(exec_fails),
             }
@@ -337,7 +351,9 @@ mod tests {
 
         fn not_found() -> Self {
             Self {
-                inspector: InspectorStub { info_output: not_found_info() },
+                inspector: InspectorStub {
+                    info_output: not_found_info(),
+                },
                 lifecycle: LifecycleStub::new(false),
                 exec_spy: ExecSpy::new(false),
             }
@@ -518,7 +534,10 @@ mod tests {
             .expect("should succeed");
 
         assert_eq!(outcome, DeleteOutcome::NotFound);
-        assert!(!provisioner.lifecycle.delete_called.get(), "delete should NOT be called");
+        assert!(
+            !provisioner.lifecycle.delete_called.get(),
+            "delete should NOT be called"
+        );
     }
 
     #[tokio::test]
@@ -532,7 +551,10 @@ mod tests {
             .expect("should succeed");
 
         assert_eq!(outcome, DeleteOutcome::Deleted);
-        assert!(provisioner.lifecycle.delete_called.get(), "delete should be called");
+        assert!(
+            provisioner.lifecycle.delete_called.get(),
+            "delete should be called"
+        );
     }
 
     #[tokio::test]
@@ -575,7 +597,10 @@ mod tests {
             .await
             .expect("should succeed");
 
-        assert!(provisioner.exec_spy.exec_called.get(), "exec should be called for container stop");
+        assert!(
+            provisioner.exec_spy.exec_called.get(),
+            "exec should be called for container stop"
+        );
         let cmd = provisioner.exec_spy.last_cmd.borrow();
         assert!(
             cmd.contains("docker ps") && cmd.contains("docker stop"),
@@ -594,8 +619,14 @@ mod tests {
             .expect("should succeed despite exec failure");
 
         assert_eq!(outcome, DeleteOutcome::Deleted);
-        assert!(provisioner.exec_spy.exec_called.get(), "exec should be called");
-        assert!(provisioner.lifecycle.delete_called.get(), "delete should still be called");
+        assert!(
+            provisioner.exec_spy.exec_called.get(),
+            "exec should be called"
+        );
+        assert!(
+            provisioner.lifecycle.delete_called.get(),
+            "delete should still be called"
+        );
     }
 
     // ── delete_all tests ──────────────────────────────────────────────────────
@@ -607,17 +638,34 @@ mod tests {
         paths: &'a PathsStub,
         ssh: &'a SshStub,
         reporter: &'a ReporterStub,
-    ) -> CleanupContext<'a, ProvisionerStub, StateStoreStub, FsStub, PathsStub, SshStub, ReporterStub> {
-        CleanupContext { provisioner, state_store, local_fs: fs, paths, ssh, reporter }
+    ) -> CleanupContext<'a, ProvisionerStub, StateStoreStub, FsStub, PathsStub, SshStub, ReporterStub>
+    {
+        CleanupContext {
+            provisioner,
+            state_store,
+            local_fs: fs,
+            paths,
+            ssh,
+            reporter,
+        }
     }
 
     #[tokio::test]
     async fn delete_all_success() {
         let provisioner = ProvisionerStub::running(false, false);
         let state_store = StateStoreStub { clear_fails: false };
-        let fs = FsStub { exists: false, is_dir: false, remove_fails: false };
-        let paths = PathsStub { polis_dir_fails: false };
-        let ssh = SshStub { remove_config_fails: false, remove_include_fails: false };
+        let fs = FsStub {
+            exists: false,
+            is_dir: false,
+            remove_fails: false,
+        };
+        let paths = PathsStub {
+            polis_dir_fails: false,
+        };
+        let ssh = SshStub {
+            remove_config_fails: false,
+            remove_include_fails: false,
+        };
         let reporter = ReporterStub;
 
         let ctx = make_cleanup_ctx(&provisioner, &state_store, &fs, &paths, &ssh, &reporter);
@@ -630,16 +678,33 @@ mod tests {
     async fn delete_all_partial_failure() {
         let provisioner = ProvisionerStub::running(false, false);
         let state_store = StateStoreStub { clear_fails: true };
-        let fs = FsStub { exists: false, is_dir: false, remove_fails: false };
-        let paths = PathsStub { polis_dir_fails: false };
-        let ssh = SshStub { remove_config_fails: true, remove_include_fails: false };
+        let fs = FsStub {
+            exists: false,
+            is_dir: false,
+            remove_fails: false,
+        };
+        let paths = PathsStub {
+            polis_dir_fails: false,
+        };
+        let ssh = SshStub {
+            remove_config_fails: true,
+            remove_include_fails: false,
+        };
         let reporter = ReporterStub;
 
         let ctx = make_cleanup_ctx(&provisioner, &state_store, &fs, &paths, &ssh, &reporter);
-        let err = delete_all(&ctx).await.expect_err("should fail with accumulated errors");
+        let err = delete_all(&ctx)
+            .await
+            .expect_err("should fail with accumulated errors");
 
         let msg = err.to_string();
-        assert!(msg.contains("clear failed"), "expected 'clear failed' in: {msg}");
-        assert!(msg.contains("remove_config failed"), "expected 'remove_config failed' in: {msg}");
+        assert!(
+            msg.contains("clear failed"),
+            "expected 'clear failed' in: {msg}"
+        );
+        assert!(
+            msg.contains("remove_config failed"),
+            "expected 'remove_config failed' in: {msg}"
+        );
     }
 }

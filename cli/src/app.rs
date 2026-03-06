@@ -8,8 +8,7 @@
 use anyhow::Result;
 
 use crate::application::ports::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, LocalFs, ShellExecutor,
-    WorkspaceStateStore,
+    FileTransfer, InstanceInspector, InstanceLifecycle, LocalFs, ShellExecutor, WorkspaceStateStore,
 };
 use crate::infra::assets::EmbeddedAssets;
 use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, TokioCommandRunner};

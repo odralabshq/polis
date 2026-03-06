@@ -4,7 +4,7 @@ use owo_colors::OwoColorize as _;
 use polis_common::types::StatusOutput;
 use polis_common::types::{AgentHealth, WorkspaceState};
 
-use crate::domain::health::DoctorChecks;
+use crate::domain::health::DiagnosticReport;
 use crate::output::OutputContext;
 
 /// Renders domain types as human-readable terminal output using `OutputContext`.
@@ -152,8 +152,8 @@ impl<'a> HumanRenderer<'a> {
         println!();
     }
 
-    /// Render doctor health check results.
-    pub fn render_doctor(&self, checks: &DoctorChecks, issues: &[String], verbose: bool) {
+    /// Render diagnostic health check results.
+    pub fn render_diagnostics(&self, checks: &DiagnosticReport, issues: &[String], verbose: bool) {
         use owo_colors::OwoColorize;
 
         println!();
@@ -161,7 +161,7 @@ impl<'a> HumanRenderer<'a> {
         println!();
 
         // Prerequisites
-        self.render_doctor_prerequisites(checks);
+        self.render_diagnostics_prerequisites(checks);
 
         // Workspace
         println!("  Workspace:");
@@ -180,6 +180,12 @@ impl<'a> HumanRenderer<'a> {
                 ),
             );
         }
+        // Image cache status
+        if let Some(ref override_val) = checks.workspace.image.polis_image_override {
+            self.print_check(true, &format!("Image override: {override_val}"));
+        } else {
+            self.print_check(checks.workspace.image.cached, "Image cached");
+        }
         println!();
 
         // Network
@@ -189,7 +195,7 @@ impl<'a> HumanRenderer<'a> {
         println!();
 
         // Security
-        self.render_doctor_security(checks);
+        self.render_diagnostics_security(checks);
 
         // Summary
         println!();
@@ -220,19 +226,15 @@ impl<'a> HumanRenderer<'a> {
         println!();
     }
 
-    fn render_doctor_prerequisites(&self, checks: &DoctorChecks) {
+    fn render_diagnostics_prerequisites(&self, checks: &DiagnosticReport) {
         println!("  Prerequisites:");
-        if checks.prerequisites.multipass_found {
-            let ver = checks
-                .prerequisites
-                .multipass_version
-                .as_deref()
-                .unwrap_or("unknown");
+        if checks.prerequisites.found {
+            let ver = checks.prerequisites.version.as_deref().unwrap_or("unknown");
             self.print_check(
-                checks.prerequisites.multipass_version_ok,
+                checks.prerequisites.version_ok,
                 &format!("Multipass {ver} (need \u{2265} 1.16.0)"),
             );
-            if !checks.prerequisites.multipass_version_ok {
+            if !checks.prerequisites.version_ok {
                 #[cfg(target_os = "linux")]
                 println!("      Update: sudo snap refresh multipass");
                 #[cfg(not(target_os = "linux"))]
@@ -248,7 +250,7 @@ impl<'a> HumanRenderer<'a> {
         println!();
     }
 
-    fn render_doctor_security(&self, checks: &DoctorChecks) {
+    fn render_diagnostics_security(&self, checks: &DiagnosticReport) {
         use owo_colors::OwoColorize;
         println!("  Security:");
         self.print_check(
@@ -260,13 +262,13 @@ impl<'a> HumanRenderer<'a> {
             "traffic inspection responding",
         );
         self.print_check(
-            checks.security.malware_db_current,
+            checks.security.malware_db.is_current,
             &format!(
                 "malware scanner database current (updated: {}h ago)",
-                checks.security.malware_db_age_hours,
+                checks.security.malware_db.age_hours,
             ),
         );
-        let expire_days = checks.security.certificates_expire_days;
+        let expire_days = checks.security.certificates.expire_days;
         if expire_days > 30 {
             self.print_check(true, "certificates valid (no immediate action required)");
         } else if expire_days > 0 {

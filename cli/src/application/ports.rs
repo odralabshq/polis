@@ -9,8 +9,8 @@ use std::process::Output;
 
 use anyhow::Result;
 
+use crate::domain::WorkspaceState;
 use crate::domain::security::{AllowAction, SecurityLevel};
-use crate::domain::{DoctorChecks, WorkspaceState};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -231,18 +231,6 @@ pub trait NetworkProbe {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     async fn check_dns_resolution(&self, hostname: &str) -> Result<bool>;
-}
-
-// ── Health Port ───────────────────────────────────────────────────────────────
-
-/// Abstracts health probing so the doctor service can be tested with mocks.
-#[allow(async_fn_in_trait)]
-#[allow(dead_code)] // Not yet used from application services
-pub trait HealthProbe {
-    /// Run all health probes and return the aggregated results.
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn probe_all(&self) -> Result<DoctorChecks>;
 }
 
 // ── Asset Management Port ─────────────────────────────────────────────────────

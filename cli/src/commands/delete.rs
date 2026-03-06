@@ -60,7 +60,9 @@ async fn execute_delete(all: bool, app: &AppContext) -> Result<()> {
         };
         workspace_delete::delete_all(&ctx).await
     } else {
-        match workspace_delete::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await? {
+        match workspace_delete::delete_workspace(&app.provisioner, &app.state_mgr, &reporter)
+            .await?
+        {
             DeleteOutcome::NotFound => {
                 reporter.success("no workspace to delete");
             }

@@ -14,7 +14,7 @@ use crate::domain::workspace::COMPOSE_PATH;
 /// # Errors
 ///
 /// Returns an error if any repair step fails fatally.
-pub async fn run_repair(
+pub async fn repair(
     mp: &(impl InstanceInspector + ShellExecutor + FileTransfer),
     reporter: &impl ProgressReporter,
     assets_dir: &std::path::Path,
