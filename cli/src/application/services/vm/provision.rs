@@ -237,6 +237,9 @@ mod tests {
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
             anyhow::bail!("not expected")
         }
+        async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> {
+            Ok(ok_output(b""))
+        }
     }
     impl ShellExecutor for TransferConfigSpy {
         /// # Errors

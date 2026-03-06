@@ -3,6 +3,7 @@
 //! Imports only from `crate::domain` and `crate::application::ports`.
 
 use anyhow::{Context, Result};
+use std::net::Ipv4Addr;
 
 use crate::application::ports::{
     AssetExtractor, FileTransfer, HostKeyExtractor, InstanceInspector, InstanceLifecycle,
@@ -73,8 +74,9 @@ pub async fn resolve_vm_ip(mp: &impl InstanceInspector) -> Result<String> {
         .and_then(|arr| arr.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
-        .map(String::from)
-        .ok_or_else(|| anyhow::anyhow!("no IPv4 address found for polis VM"))
+        .and_then(|raw| raw.parse::<Ipv4Addr>().ok())
+        .map(|ip| ip.to_string())
+        .ok_or_else(|| anyhow::anyhow!("no valid IPv4 address found for polis VM"))
 }
 
 /// Verify that cloud-init completed successfully inside the VM.
@@ -367,6 +369,28 @@ mod tests {
     async fn exists_false_when_vm_info_fails() {
         let mp = MultipassVmInfoStub(fail());
         assert!(!exists(&mp).await);
+    }
+
+    #[tokio::test]
+    async fn resolve_vm_ip_returns_first_ipv4() {
+        let mp = MultipassVmInfoStub(ok(
+            br#"{"info":{"polis":{"ipv4":["10.20.30.40","192.168.1.8"]}}}"#,
+        ));
+        assert_eq!(resolve_vm_ip(&mp).await.expect("vm ip"), "10.20.30.40");
+    }
+
+    #[tokio::test]
+    async fn resolve_vm_ip_rejects_invalid_ipv4() {
+        let mp = MultipassVmInfoStub(ok(
+            br#"{"info":{"polis":{"ipv4":["10.20.30.40'; echo pwned"]}}}"#,
+        ));
+        let err = resolve_vm_ip(&mp)
+            .await
+            .expect_err("expected invalid ip error");
+        assert!(
+            err.to_string().contains("no valid IPv4"),
+            "expected invalid IPv4 error: {err}"
+        );
     }
 
     struct MultipassRestartSpy {

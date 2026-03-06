@@ -5,6 +5,7 @@ use clap::Args;
 
 use crate::app::AppContext;
 use crate::application::ports::SshConfigurator;
+use crate::application::services::vm::lifecycle as vm;
 
 /// Arguments for the connect command.
 #[derive(Args)]
@@ -53,6 +54,14 @@ pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::E
     crate::application::services::connect::pin_host_key(mp, &app.ssh).await;
 
     show_connection_options(ctx, already_configured);
+
+    // Show dashboard URL (best-effort)
+    if !ctx.quiet
+        && let Ok(ip) = vm::resolve_vm_ip(mp).await
+    {
+        ctx.kv("Control UI", &format!("http://{ip}:18789/overview"));
+    }
+
     Ok(std::process::ExitCode::SUCCESS)
 }
 

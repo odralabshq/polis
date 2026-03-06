@@ -27,4 +27,8 @@ pub struct DeleteArgs {
     /// Skip confirmation prompt
     #[arg(short = 'y', long)]
     pub yes: bool,
+
+    /// Skip workspace data backup before deletion
+    #[arg(long)]
+    pub no_backup: bool,
 }

@@ -5,6 +5,8 @@ use clap::Args;
 use std::process::ExitCode;
 
 use crate::app::AppContext;
+use crate::application::ports::InstanceInspector;
+use crate::application::services::vm::lifecycle as vm;
 use crate::application::services::workspace_start::{self as service, StartOutcome};
 use crate::output::OutputContext;
 use owo_colors::OwoColorize as _;
@@ -58,10 +60,18 @@ pub async fn run(args: &StartArgs, app: &AppContext) -> Result<ExitCode> {
         StartOutcome::AlreadyRunning { agent, .. } => {
             print_already_running_message(agent.as_deref(), &app.output);
         }
-        StartOutcome::Created { onboarding, .. } | StartOutcome::Restarted { onboarding, .. } => {
-            render_onboarding_steps(&app.output, &onboarding);
+        StartOutcome::Created {
+            agent, onboarding, ..
+        }
+        | StartOutcome::Restarted {
+            agent, onboarding, ..
+        } => {
+            render_onboarding_steps(&app.output, agent.as_deref(), &onboarding);
         }
     }
+
+    // Show dashboard URL if an agent is active
+    show_dashboard_url(&app.output, &app.provisioner).await;
 
     Ok(ExitCode::SUCCESS)
 }
@@ -83,6 +93,7 @@ fn print_already_running_message(agent: Option<&str>, ctx: &OutputContext) {
 
 fn render_onboarding_steps(
     ctx: &OutputContext,
+    agent: Option<&str>,
     agent_steps: &[polis_common::agent::OnboardingStep],
 ) {
     if ctx.quiet {
@@ -103,8 +114,31 @@ fn render_onboarding_steps(
     ctx.blank();
     ctx.header("Getting started");
     for (i, step) in default_steps.iter().chain(agent_steps.iter()).enumerate() {
-        let cmd = step.command.style(ctx.styles.bold);
+        // Agent-specific commands are written for use inside the workspace.
+        // When displayed on the host CLI, prefix with `polis exec <agent>`
+        // so the user can run them directly.
+        let cmd_str = if i >= default_steps.len() {
+            if agent.is_some() {
+                format!("polis exec {}", step.command)
+            } else {
+                step.command.clone()
+            }
+        } else {
+            step.command.clone()
+        };
+        let cmd = cmd_str.style(ctx.styles.bold);
         ctx.info(&format!("{}. {}  {}", i + 1, step.title, cmd));
+    }
+}
+
+/// Resolve the VM IP and show the dashboard URL (best-effort, no error on failure).
+async fn show_dashboard_url(ctx: &OutputContext, mp: &impl InstanceInspector) {
+    if ctx.quiet {
+        return;
+    }
+    if let Ok(ip) = vm::resolve_vm_ip(mp).await {
+        ctx.blank();
+        ctx.kv("Control UI", &format!("http://{ip}:18789/overview"));
     }
 }
 

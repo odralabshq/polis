@@ -29,6 +29,30 @@ use crate::application::services::vm::{
 use crate::domain::workspace::{ACTIVE_OVERLAY_PATH, READY_MARKER_PATH};
 use crate::domain::workspace::{VM_ROOT, WorkspaceState};
 
+/// Write the VM's external IP to `/opt/polis/.vm-ip` and append it to `.env`
+/// so containers can reference it via `$POLIS_VM_IP`.
+async fn persist_vm_ip(
+    mp: &(impl crate::application::ports::InstanceInspector + ShellExecutor),
+) -> Result<()> {
+    let ip = vm::resolve_vm_ip(mp).await?;
+    // Write standalone file for scripts
+    mp.exec(&[
+        "bash",
+        "-c",
+        &format!("printf '%s\\n' '{ip}' > /opt/polis/.vm-ip"),
+    ])
+    .await
+    .context("writing .vm-ip")?;
+    // Ensure POLIS_VM_IP is in .env (replace if exists, append if not)
+    let script = format!(
+        "sed -i '/^POLIS_VM_IP=/d' /opt/polis/.env 2>/dev/null; printf '%s\\n' 'POLIS_VM_IP={ip}' >> /opt/polis/.env"
+    );
+    mp.exec(&["bash", "-c", &script])
+        .await
+        .context("writing POLIS_VM_IP to .env")?;
+    Ok(())
+}
+
 /// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
 pub enum StartOutcome {
@@ -81,7 +105,17 @@ pub async fn start_workspace(
 
     match vm_state {
         VmState::Running => {
-            handle_running_vm(provisioner, state_mgr, local_fs, reporter, agent, envs).await
+            handle_running_vm(
+                provisioner,
+                state_mgr,
+                local_fs,
+                reporter,
+                agent,
+                envs,
+                assets_dir,
+                version,
+            )
+            .await
         }
         VmState::NotFound => {
             let onboarding = create_and_start_vm(
@@ -109,12 +143,12 @@ pub async fn start_workspace(
             let onboarding = restart_vm(
                 provisioner,
                 state_mgr,
-                assets,
-                ssh,
                 local_fs,
                 reporter,
                 agent,
                 envs,
+                assets_dir,
+                version,
             )
             .await?;
             let msg = agent.map_or_else(
@@ -135,6 +169,7 @@ pub async fn start_workspace(
 /// When no agent is currently active and one is requested, set it up
 /// in-place without stopping the VM. This avoids a stop/start cycle
 /// which triggers the Hyper-V Default Switch DHCP bug on Windows.
+#[allow(clippy::too_many_arguments)]
 async fn handle_running_vm(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
@@ -142,6 +177,8 @@ async fn handle_running_vm(
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     envs: Vec<String>,
+    assets_dir: &std::path::Path,
+    version: &str,
 ) -> Result<StartOutcome> {
     let current_agent = state_mgr.load_async().await?.and_then(|s| s.active_agent);
     if current_agent.as_deref() == agent {
@@ -155,8 +192,20 @@ async fn handle_running_vm(
     if current_agent.is_none()
         && let Some(name) = agent
     {
+        // Re-transfer config so the VM has the latest agents directory.
+        // This handles the case where the VM was created by an older binary
+        // that embedded a different config tarball.
+        reporter.begin_stage("updating workspace config...");
+        transfer_config(provisioner, assets_dir, version)
+            .await
+            .context("transferring config to VM")?;
+        reporter.complete_stage();
+
         reporter.begin_stage(&format!("installing agent '{name}'..."));
         let onboarding = setup_agent(provisioner, local_fs, name, &envs).await?;
+
+        // Persist VM IP for container access.
+        persist_vm_ip(provisioner).await.ok(); // best-effort
 
         // Update symlink for future reboots, then start via compose directly.
         let overlay = crate::domain::agent::overlay_path(name);
@@ -230,6 +279,9 @@ async fn create_and_start_vm(
         .await
         .context("transferring config to VM")?;
 
+    // Step 3b: Persist VM IP for container access.
+    persist_vm_ip(provisioner).await.ok(); // best-effort
+
     // Step 4: Generate certificates and secrets.
     generate_certs_and_secrets(provisioner)
         .await
@@ -292,17 +344,29 @@ async fn create_and_start_vm(
 async fn restart_vm(
     provisioner: &impl VmProvisioner,
     state_mgr: &impl WorkspaceStateStore,
-    _assets: &impl AssetExtractor,
-    _ssh: &impl SshConfigurator,
     local_fs: &impl LocalFs,
     reporter: &impl ProgressReporter,
     agent: Option<&str>,
     envs: Vec<String>,
+    assets_dir: &std::path::Path,
+    version: &str,
 ) -> Result<Vec<polis_common::agent::OnboardingStep>> {
     // Start the VM (systemd polis.service is gated by .ready which was cleared).
     reporter.begin_stage("starting workspace...");
     vm::start(provisioner).await?;
     reporter.complete_stage();
+
+    // Re-transfer config so the VM has the latest agents, scripts, and
+    // compose files from the current binary. This handles version upgrades
+    // and cases where the VM was created by an older binary.
+    reporter.begin_stage("updating workspace config...");
+    transfer_config(provisioner, assets_dir, version)
+        .await
+        .context("transferring config to VM")?;
+    reporter.complete_stage();
+
+    // Persist VM IP for container access.
+    persist_vm_ip(provisioner).await.ok(); // best-effort
 
     // Pull images BEFORE starting services.
     reporter.begin_stage("verifying components...");

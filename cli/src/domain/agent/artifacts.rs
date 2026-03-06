@@ -42,6 +42,8 @@ pub fn compose_overlay(manifest: &AgentManifest) -> String {
     out.push_str("  workspace:\n");
     out.push_str("    env_file:\n");
     out.push_str("      - .env\n");
+    out.push_str("    environment:\n");
+    out.push_str("      - POLIS_VM_IP=${POLIS_VM_IP:-}\n");
     out.push_str("    volumes:\n");
     out.push_str(&format!(
         "      - ./agents/{name}/:/opt/agents/{name}/:ro\n"
