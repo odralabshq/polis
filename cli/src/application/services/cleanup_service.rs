@@ -110,6 +110,26 @@ echo "BACKUP_OK"
         Ok(None)
     }
 }
+/// Attempt a best-effort backup, logging the outcome.
+///
+/// Returns without error even if the backup fails — warnings are printed
+/// via the reporter so the caller can proceed with deletion.
+async fn try_backup(
+    mp: &impl VmProvisioner,
+    local_fs: &impl LocalFs,
+    paths: &impl LocalPaths,
+    reporter: &impl ProgressReporter,
+) {
+    match backup_workspace(mp, local_fs, paths, reporter).await {
+        Ok(Some(path)) => {
+            reporter.success(&format!("backup saved to {}", path.display()));
+        }
+        Ok(None) => { /* warning already printed */ }
+        Err(e) => {
+            reporter.warn(&format!("backup failed: {e} — proceeding with delete"));
+        }
+    }
+}
 
 /// Delete the workspace VM and clear its state.
 ///
@@ -136,15 +156,7 @@ pub async fn delete_workspace(
 
     // 2. Backup workspace data before deletion
     if !skip_backup {
-        match backup_workspace(mp, local_fs, paths, reporter).await {
-            Ok(Some(path)) => {
-                reporter.success(&format!("backup saved to {}", path.display()));
-            }
-            Ok(None) => { /* warning already printed */ }
-            Err(e) => {
-                reporter.warn(&format!("backup failed: {e} — proceeding with delete"));
-            }
-        }
+        try_backup(mp, local_fs, paths, reporter).await;
     }
 
     // 3. Stop and delete VM (fail-fast: prerequisite step)
@@ -192,15 +204,7 @@ pub async fn delete_all(
     if state != vm::VmState::NotFound {
         // Backup before deletion
         if !skip_backup {
-            match backup_workspace(mp, local_fs, paths, reporter).await {
-                Ok(Some(path)) => {
-                    reporter.success(&format!("backup saved to {}", path.display()));
-                }
-                Ok(None) => { /* warning already printed */ }
-                Err(e) => {
-                    reporter.warn(&format!("backup failed: {e} — proceeding with delete"));
-                }
-            }
+            try_backup(mp, local_fs, paths, reporter).await;
         }
 
         reporter.begin_stage("removing workspace...");
