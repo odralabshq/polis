@@ -391,41 +391,46 @@ fn command_handlers_accept_app_context() {
             continue;
         };
 
-        if !content.contains("pub async fn run(") {
+        if !content.contains("pub async fn run(") && !content.contains("pub fn run(") {
             continue;
         }
 
-        // If the file uses AppContext fields directly (output, provisioner, state_mgr)
-        // it must receive &AppContext. Files that only use a single port trait are exempt.
-        let uses_app_fields = content.contains("app.output")
-            || content.contains("app.provisioner")
-            || content.contains("app.state_mgr")
-            || content.contains("&app.output")
-            || content.contains("&app.provisioner");
+        // If the file uses app method calls (output(), provisioner(), state_store())
+        // it must receive &impl App or &AppContext.
+        let uses_app = content.contains("app.output()")
+            || content.contains("app.provisioner()")
+            || content.contains("app.state_store()")
+            || content.contains("app.renderer()")
+            || content.contains("app.confirm(")
+            // Legacy field access patterns (kept for backward compat detection)
+            || content.contains("app.output.")
+            || content.contains("&app.provisioner")
+            || content.contains("&app.state_mgr");
 
-        if !uses_app_fields {
-            // This file only uses injected port traits — AppContext not required.
+        if !uses_app {
             continue;
         }
 
-        let has_app_context = content.contains("app: &AppContext")
-            || content.contains("app: &crate::app::AppContext");
+        let has_app_param = content.contains("app: &impl App")
+            || content.contains("app: &AppContext")
+            || content.contains("app: &crate::app::AppContext")
+            || content.contains("app: &A");
 
-        if !has_app_context {
+        if !has_app_param {
             let rel = file
                 .strip_prefix(env!("CARGO_MANIFEST_DIR"))
                 .unwrap_or(&file)
                 .display()
                 .to_string();
             violations.push(format!(
-                "{rel}: uses AppContext fields but pub async fn run() does not accept &AppContext"
+                "{rel}: uses app context but run() does not accept &impl App or &AppContext"
             ));
         }
     }
 
     assert!(
         violations.is_empty(),
-        "Command handlers that use AppContext fields must accept &AppContext:\n{}",
+        "Command handlers must accept &impl App or &AppContext:\n{}",
         violations.join("\n")
     );
 }

@@ -10,5 +10,4 @@ pub mod domain;
 pub mod infra;
 pub mod output;
 
-#[cfg(test)]
 pub mod test_utils;

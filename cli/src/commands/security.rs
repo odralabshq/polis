@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Subcommand;
 use std::process::ExitCode;
 
-use crate::app::AppContext;
+use crate::app::App;
 use crate::application::ports::SecurityGateway;
 use crate::application::services::security;
 use crate::domain::security::{AllowAction, SecurityLevel};
@@ -51,13 +51,13 @@ pub enum SecurityCommand {
 ///
 /// Returns an error if the underlying operations fail.
 pub async fn run(
-    app: &AppContext,
+    app: &impl App,
     cmd: SecurityCommand,
     gateway: &impl SecurityGateway,
 ) -> Result<ExitCode> {
     match cmd {
         SecurityCommand::Status => {
-            let s = security::get_status(&app.config_store, gateway).await?;
+            let s = security::get_status(app.config(), gateway).await?;
             let status = SecurityStatus::from_service(&s);
             app.renderer().render_security_status(&status)?;
         }
@@ -84,7 +84,7 @@ pub async fn run(
             app.renderer().render_security_action(&msg)?;
         }
         SecurityCommand::Level { level } => {
-            let msg = security::set_level(&app.config_store, gateway, level).await?;
+            let msg = security::set_level(app.config(), gateway, level).await?;
             app.renderer().render_security_action(&msg)?;
         }
     }

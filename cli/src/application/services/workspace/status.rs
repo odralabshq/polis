@@ -177,3 +177,111 @@ pub fn workspace_unknown() -> WorkspaceStatus {
         uptime_seconds: None,
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use std::process::Output;
+    use anyhow::Result;
+    use super::*;
+    use crate::application::ports::{InstanceInspector, ShellExecutor};
+    use crate::application::vm::test_support::{impl_shell_executor_stubs, ok_output, fail_output};
+
+    // ── Combined stub (InstanceInspector + ShellExecutor) ─────────────────
+
+    struct StatusStub {
+        info_out: Output,
+        exec_out: Output,
+    }
+
+    impl StatusStub {
+        fn not_found() -> Self {
+            Self {
+                info_out: Output {
+                    status: crate::application::vm::test_support::exit_status(1),
+                    stdout: vec![],
+                    stderr: b"instance \"polis\" does not exist".to_vec(),
+                },
+                exec_out: fail_output(),
+            }
+        }
+        fn stopped() -> Self {
+            Self {
+                info_out: ok_output(br#"{"info":{"polis":{"state":"Stopped","ipv4":[]}}}"#),
+                exec_out: fail_output(),
+            }
+        }
+        fn running(exec_json: &[u8]) -> Self {
+            Self {
+                info_out: ok_output(br#"{"info":{"polis":{"state":"Running","ipv4":["10.0.0.1"]}}}"#),
+                exec_out: ok_output(exec_json),
+            }
+        }
+    }
+
+    impl InstanceInspector for StatusStub {
+        async fn info(&self) -> Result<Output> {
+            Ok(Output { status: self.info_out.status, stdout: self.info_out.stdout.clone(), stderr: self.info_out.stderr.clone() })
+        }
+        async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+    }
+
+    impl ShellExecutor for StatusStub {
+        async fn exec(&self, _: &[&str]) -> Result<Output> {
+            Ok(Output { status: self.exec_out.status, stdout: self.exec_out.stdout.clone(), stderr: self.exec_out.stderr.clone() })
+        }
+        impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
+    }
+
+    #[tokio::test]
+    async fn gather_vm_not_found_returns_error_status() {
+        let mp = StatusStub::not_found();
+        let out = gather(&mp).await;
+        assert_eq!(out.workspace.status, WorkspaceState::NotFound);
+        assert!(out.agent.is_none());
+    }
+
+    #[tokio::test]
+    async fn gather_vm_stopped_returns_stopped_status() {
+        let mp = StatusStub::stopped();
+        let out = gather(&mp).await;
+        assert_eq!(out.workspace.status, WorkspaceState::Stopped);
+        assert!(out.agent.is_none());
+    }
+
+    #[tokio::test]
+    async fn gather_vm_running_healthy_workspace() {
+        let exec_json = br#"{"uptime":120.0,"containers":[{"Service":"workspace","State":"running","Health":"healthy"},{"Service":"gate","State":"running","Health":null},{"Service":"sentinel","State":"running","Health":null},{"Service":"scanner","State":"running","Health":null}]}"#;
+        let mp = StatusStub::running(exec_json);
+        let out = gather(&mp).await;
+        assert_eq!(out.workspace.status, WorkspaceState::Running);
+        assert!(out.agent.is_some());
+        assert_eq!(out.agent.unwrap().status, AgentHealth::Healthy);
+        assert!(out.security.traffic_inspection);
+        assert!(out.security.credential_protection);
+        assert!(out.security.malware_scanning);
+    }
+
+    #[tokio::test]
+    async fn gather_vm_running_unhealthy_workspace() {
+        let exec_json = br#"{"uptime":30.0,"containers":[{"Service":"workspace","State":"running","Health":"unhealthy"}]}"#;
+        let mp = StatusStub::running(exec_json);
+        let out = gather(&mp).await;
+        assert!(matches!(out.agent.unwrap().status, AgentHealth::Unhealthy));
+    }
+
+    #[tokio::test]
+    async fn gather_exec_failure_returns_starting_state() {
+        // exec fails → no containers → workspace not in map → Starting
+        let mp = StatusStub::running(b"not-json");
+        let out = gather(&mp).await;
+        assert_eq!(out.workspace.status, WorkspaceState::Starting);
+    }
+
+    #[tokio::test]
+    async fn workspace_unknown_returns_error() {
+        let ws = workspace_unknown();
+        assert_eq!(ws.status, WorkspaceState::Error);
+        assert!(ws.uptime_seconds.is_none());
+    }
+}

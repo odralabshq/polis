@@ -244,13 +244,10 @@ pub enum PostUpdateOutcome {
 /// # Errors
 ///
 /// Returns an error if the new binary cannot be executed.
-pub async fn run_post_update() -> Result<PostUpdateOutcome> {
+pub async fn run_post_update(launcher: &impl crate::application::ports::ProcessLauncher) -> Result<PostUpdateOutcome> {
     let exe = std::env::current_exe().context("resolving current executable path")?;
-    let status = tokio::process::Command::new(&exe)
-        .arg("_post-update")
-        .status()
-        .await
-        .context("failed to run post-update process")?;
+    let exe_str = exe.to_string_lossy();
+    let status = launcher.launch(&exe_str, &["_post-update"]).await?;
 
     if status.success() {
         Ok(PostUpdateOutcome::Success)
@@ -284,6 +281,7 @@ pub async fn run_vm_config_update_service(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::application::ports::UpdateInfo;
 
     #[test]
@@ -300,5 +298,76 @@ mod tests {
             download_url: "https://example.com/release.tar.gz".to_string(),
         };
         assert_eq!(info.to_string(), "v1.2.3 available");
+    }
+
+    // ── update_vm_config tests ────────────────────────────────────────────
+
+    use std::process::Output;
+    use std::path::PathBuf;
+    use anyhow::Result;
+    use crate::application::ports::{
+        AssetExtractor, FileHasher, FileTransfer, InstanceInspector, ShellExecutor,
+    };
+    use crate::application::vm::test_support::{
+        impl_shell_executor_stubs, ok_output, fail_output, NoopReporter,
+        FileHasherStub, ProcessLauncherStub,
+    };
+
+    struct UpdateStub {
+        hash_on_vm: &'static str,
+    }
+
+    impl InstanceInspector for UpdateStub {
+        async fn info(&self) -> Result<Output> { anyhow::bail!("not expected") }
+        async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+    }
+
+    impl ShellExecutor for UpdateStub {
+        async fn exec(&self, args: &[&str]) -> Result<Output> {
+            // cat /opt/polis/.config-hash → return configured hash
+            if args.first() == Some(&"cat") {
+                return Ok(ok_output(self.hash_on_vm.as_bytes()));
+            }
+            Ok(ok_output(b""))
+        }
+        impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
+    }
+
+    impl FileTransfer for UpdateStub {
+        async fn transfer(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+    }
+
+    struct NoopAssets;
+    impl AssetExtractor for NoopAssets {
+        async fn extract_assets(&self) -> Result<(PathBuf, Box<dyn std::any::Any>)> {
+            anyhow::bail!("not expected")
+        }
+        async fn get_asset(&self, _: &str) -> Result<&'static [u8]> {
+            anyhow::bail!("not expected")
+        }
+    }
+
+    #[tokio::test]
+    async fn update_vm_config_hashes_match_returns_up_to_date() {
+        let mp = UpdateStub { hash_on_vm: "abc123" };
+        let hasher = FileHasherStub("abc123".to_string());
+        let assets_dir = PathBuf::from("/tmp/fake-assets");
+        let result = update_vm_config(&mp, &NoopAssets, &hasher, &NoopReporter, &assets_dir, "0.4.0").await.unwrap();
+        assert!(matches!(result, UpdateVmConfigOutcome::UpToDate));
+    }
+
+    #[tokio::test]
+    async fn run_post_update_success() {
+        let launcher = ProcessLauncherStub(true);
+        let result = run_post_update(&launcher).await.unwrap();
+        assert!(matches!(result, PostUpdateOutcome::Success));
+    }
+
+    #[tokio::test]
+    async fn run_post_update_non_zero_exit() {
+        let launcher = ProcessLauncherStub(false);
+        let result = run_post_update(&launcher).await.unwrap();
+        assert!(matches!(result, PostUpdateOutcome::NonZeroExit));
     }
 }

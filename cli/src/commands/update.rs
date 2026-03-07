@@ -5,12 +5,11 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::Args;
 
-use crate::app::AppContext;
+use crate::app::App;
 use crate::application::ports::{ProgressReporter, UpdateChecker, UpdateInfo};
 use crate::application::services::update::{
-    PostUpdateOutcome, UpdateVmConfigOutcome,
-    download_and_verify_cli_update, install_cli_update, run_post_update,
-    run_vm_config_update_service,
+    PostUpdateOutcome, UpdateVmConfigOutcome, download_and_verify_cli_update, install_cli_update,
+    run_post_update, run_vm_config_update_service,
 };
 use crate::application::vm::lifecycle::is_running;
 
@@ -26,11 +25,11 @@ pub struct UpdateArgs {
 /// # Errors
 /// Returns an error if the version check, signature verification, download, or
 /// user prompt fails.
-pub async fn run<C>(app: &AppContext, args: &UpdateArgs, checker: C) -> Result<ExitCode>
+pub async fn run<A: App, C>(app: &A, args: &UpdateArgs, checker: C) -> Result<ExitCode>
 where
     C: UpdateChecker + Clone + Send + 'static,
 {
-    let ctx = &app.output;
+    let ctx = app.output();
     let current = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
 
@@ -51,11 +50,11 @@ where
     }
 
     let did_update = apply_cli_update(app, checker, cli_update).await?;
-    let vm_running = is_running(&app.provisioner).await?;
+    let vm_running = is_running(app.provisioner()).await?;
 
     // After CLI self-update, delegate VM config update to the NEW binary
     if did_update && vm_running {
-        match run_post_update().await? {
+        match run_post_update(&crate::infra::process::OsProcessLauncher).await? {
             PostUpdateOutcome::Success => ctx.success("VM config updated via new binary"),
             PostUpdateOutcome::NonZeroExit => {
                 ctx.warn("VM config update returned non-zero — check with: polis status");
@@ -69,11 +68,11 @@ where
 }
 
 /// Verify, confirm, and perform the CLI binary update. Returns `true` if updated.
-async fn apply_cli_update<C>(app: &AppContext, checker: C, cli_update: UpdateInfo) -> Result<bool>
+async fn apply_cli_update<A: App, C>(app: &A, checker: C, cli_update: UpdateInfo) -> Result<bool>
 where
     C: UpdateChecker + Clone + Send + 'static,
 {
-    let ctx = &app.output;
+    let ctx = app.output();
     let reporter = app.terminal_reporter();
     let UpdateInfo::Available {
         version,
@@ -105,23 +104,22 @@ where
 }
 
 /// Run the VM config update cycle with output rendering.
-async fn run_vm_config_update_with_output(app: &AppContext) -> Result<()> {
+async fn run_vm_config_update_with_output(app: &impl App) -> Result<()> {
     let (assets_dir, _guard) = app.assets_dir().context("extracting embedded assets")?;
     let reporter = app.terminal_reporter();
-    let hasher = &crate::infra::fs::OsFs;
 
     match run_vm_config_update_service(
-        &app.provisioner,
-        &app.assets,
-        hasher,
+        app.provisioner(),
+        app.assets(),
+        app.fs(),
         &reporter,
         &assets_dir,
         env!("CARGO_PKG_VERSION"),
     )
     .await?
     {
-        UpdateVmConfigOutcome::UpToDate => app.output.success("Config is up to date"),
-        UpdateVmConfigOutcome::Updated => app.output.success("Config updated successfully"),
+        UpdateVmConfigOutcome::UpToDate => app.output().success("Config is up to date"),
+        UpdateVmConfigOutcome::Updated => app.output().success("Config updated successfully"),
     }
     Ok(())
 }
@@ -131,7 +129,7 @@ async fn run_vm_config_update_with_output(app: &AppContext) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the VM config update fails.
-pub async fn post_update(app: &AppContext) -> Result<()> {
+pub async fn post_update(app: &impl App) -> Result<()> {
     run_vm_config_update_with_output(app).await
 }
 

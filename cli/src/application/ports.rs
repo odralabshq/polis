@@ -475,6 +475,18 @@ pub trait UpdateChecker {
     fn install(&self, asset: VerifiedAsset) -> Result<()>;
 }
 
+// ── Process Launcher Port ─────────────────────────────────────────────────────
+
+/// Abstracts spawning a child process so that `run_post_update` can be tested
+/// without a real binary on disk.
+#[allow(async_fn_in_trait)]
+pub trait ProcessLauncher {
+    /// Spawn `program` with `args` and wait for its exit status.
+    /// # Errors
+    /// Returns an error if the process cannot be spawned.
+    async fn launch(&self, program: &str, args: &[&str]) -> Result<std::process::ExitStatus>;
+}
+
 // ── Security Gateway Port ─────────────────────────────────────────────────────
 
 /// Abstracts security operations against the toolbox container.

@@ -76,9 +76,7 @@ mod tests {
             _interactive: bool,
         ) -> anyhow::Result<std::process::ExitStatus> {
             // Should not be called when VM is not running
-            Ok(crate::application::vm::test_support::exit_status(
-                0,
-            ))
+            Ok(crate::application::vm::test_support::exit_status(0))
         }
     }
 

@@ -8,8 +8,9 @@
 use anyhow::Result;
 
 use crate::application::ports::{
-    ContainerExecutor, FileTransfer, InstanceInspector, InstanceLifecycle, LocalFs, ShellExecutor,
-    WorkspaceStateStore,
+    AssetExtractor, CommandRunner, ConfigStore, ContainerExecutor, FileHasher, FileTransfer,
+    InstanceInspector, InstanceLifecycle, LocalFs, LocalPaths, NetworkProbe, ShellExecutor,
+    SshConfigurator, WorkspaceStateStore,
 };
 use crate::infra::assets::EmbeddedAssets;
 use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, TokioCommandRunner};
@@ -194,5 +195,124 @@ impl AppContext {
     #[must_use]
     pub fn local_fs(&self) -> &impl LocalFs {
         &self.local_fs
+    }
+}
+
+// ── App trait ─────────────────────────────────────────────────────────────────
+
+/// Trait abstracting the application context for dependency injection.
+///
+/// Implement this trait to provide mock dependencies in tests.
+/// `AppContext` is the production implementation; `test_utils::MockAppContext`
+/// is the test implementation.
+pub trait App {
+    /// VM provisioner type.
+    type Provisioner: ShellExecutor
+        + FileTransfer
+        + InstanceInspector
+        + InstanceLifecycle
+        + ContainerExecutor;
+    /// Workspace state store type.
+    type StateStore: WorkspaceStateStore;
+    /// Local filesystem type (implements `LocalFs` + `LocalPaths` + `FileHasher`).
+    type Fs: LocalFs + LocalPaths + FileHasher;
+    /// Configuration store type.
+    type Config: ConfigStore;
+    /// Command runner type.
+    type CmdRunner: CommandRunner;
+    /// Network probe type.
+    type Network: NetworkProbe;
+    /// SSH configurator type.
+    type Ssh: SshConfigurator;
+    /// Asset extractor type.
+    type Assets: AssetExtractor;
+
+    /// Returns a reference to the VM provisioner.
+    fn provisioner(&self) -> &Self::Provisioner;
+    /// Returns a reference to the workspace state store.
+    fn state_store(&self) -> &Self::StateStore;
+    /// Returns a reference to the local filesystem.
+    fn fs(&self) -> &Self::Fs;
+    /// Returns a reference to the configuration store.
+    fn config(&self) -> &Self::Config;
+    /// Returns a reference to the command runner.
+    fn cmd_runner(&self) -> &Self::CmdRunner;
+    /// Returns a reference to the network probe.
+    fn network(&self) -> &Self::Network;
+    /// Returns a reference to the SSH configurator.
+    fn ssh(&self) -> &Self::Ssh;
+    /// Returns a reference to the asset extractor.
+    fn assets(&self) -> &Self::Assets;
+    /// Ask the user for confirmation.
+    ///
+    /// # Errors
+    /// Returns an error if the terminal prompt fails.
+    fn confirm(&self, prompt: &str, default: bool) -> Result<bool>;
+    /// Returns the appropriate renderer for the current output mode.
+    fn renderer(&self) -> crate::output::Renderer<'_>;
+    /// Returns a terminal reporter bound to this context's output.
+    fn terminal_reporter(&self) -> crate::output::reporter::TerminalReporter<'_>;
+    /// Returns a reference to the output context.
+    fn output(&self) -> &OutputContext;
+    /// Returns `true` when interactive prompts should be skipped.
+    fn non_interactive(&self) -> bool;
+    /// Extract bundled assets to a temp directory.
+    ///
+    /// # Errors
+    /// Returns an error if asset extraction fails.
+    fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)>;
+}
+
+impl App for AppContext {
+    type Provisioner = MultipassProvisioner<TokioCommandRunner>;
+    type StateStore = StateManager;
+    type Fs = OsFs;
+    type Config = YamlConfigStore;
+    type CmdRunner = TokioCommandRunner;
+    type Network = TokioNetworkProbe;
+    type Ssh = SshConfigManager;
+    type Assets = EmbeddedAssets;
+
+    fn provisioner(&self) -> &Self::Provisioner {
+        &self.provisioner
+    }
+    fn state_store(&self) -> &Self::StateStore {
+        &self.state_mgr
+    }
+    fn fs(&self) -> &Self::Fs {
+        &self.local_fs
+    }
+    fn config(&self) -> &Self::Config {
+        &self.config_store
+    }
+    fn cmd_runner(&self) -> &Self::CmdRunner {
+        &self.cmd_runner
+    }
+    fn network(&self) -> &Self::Network {
+        &self.network_probe
+    }
+    fn ssh(&self) -> &Self::Ssh {
+        &self.ssh
+    }
+    fn assets(&self) -> &Self::Assets {
+        &self.assets
+    }
+    fn confirm(&self, prompt: &str, default: bool) -> Result<bool> {
+        self.confirm(prompt, default)
+    }
+    fn renderer(&self) -> crate::output::Renderer<'_> {
+        self.renderer()
+    }
+    fn terminal_reporter(&self) -> crate::output::reporter::TerminalReporter<'_> {
+        self.terminal_reporter()
+    }
+    fn output(&self) -> &OutputContext {
+        &self.output
+    }
+    fn non_interactive(&self) -> bool {
+        self.non_interactive
+    }
+    fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
+        self.assets_dir()
     }
 }

@@ -4,7 +4,8 @@ use anyhow::{Context, Result};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use crate::app::AppContext;
+use crate::app::App;
+use crate::application::ports::SshConfigurator;
 use crate::application::services::ssh::{self, SshProvisionOptions};
 use crate::application::services::workspace::start as service;
 
@@ -13,11 +14,11 @@ use crate::application::services::workspace::start as service;
 /// # Errors
 ///
 /// This function will return an error if the underlying operations fail.
-pub async fn run(app: &AppContext) -> Result<ExitCode> {
+pub async fn run(app: &impl App) -> Result<ExitCode> {
     let (assets_dir, _assets_guard) = app.assets_dir().context("extracting assets")?;
     let version = env!("CARGO_PKG_VERSION");
     let reporter = app.terminal_reporter();
-    app.output.info("Starting workspace.");
+    app.output().info("Starting workspace.");
 
     // Read start timeout from env var in the presentation layer (Req 8.6, 10.5).
     let start_timeout = Duration::from_secs(
@@ -35,26 +36,24 @@ pub async fn run(app: &AppContext) -> Result<ExitCode> {
         start_timeout,
     };
     let outcome = service::start(
-        &app.provisioner,
-        &app.state_mgr,
-        &app.assets,
-        // LocalFs implements both LocalFs and FileHasher — passed as `hasher`
-        // because start only needs SHA256 file hashing from it.
-        &app.local_fs,
+        app.provisioner(),
+        app.state_store(),
+        app.assets(),
+        app.fs(),
         opts,
     )
     .await?;
 
     // Phase 2: SSH provisioning — consent decided here in presentation layer (Req 8.7, 10.4).
-    let ssh_configured = app.ssh.is_configured()?;
+    let ssh_configured = app.ssh().is_configured().await?;
     let consent = if ssh_configured {
         true
     } else {
         app.confirm("Add SSH configuration to ~/.ssh/config?", true)?
     };
     ssh::provision_ssh(
-        &app.provisioner,
-        &app.ssh,
+        app.provisioner(),
+        app.ssh(),
         SshProvisionOptions {
             consent_given: consent,
         },

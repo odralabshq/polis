@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 use std::process::Stdio;
 
-use crate::app::AppContext;
+use crate::app::App;
 use crate::application::services::ssh::{self, SshProvisionOptions};
 use crate::application::vm::lifecycle::{self as vm, VmState};
 use crate::domain::error::WorkspaceError;
@@ -31,9 +31,9 @@ pub struct ConnectArgs {
 ///
 /// Returns an error if the VM is not running, SSH provisioning fails, or the
 /// SSH process cannot be spawned.
-pub async fn run(app: &AppContext, args: &ConnectArgs) -> Result<ExitCode> {
+pub async fn run(app: &impl App, args: &ConnectArgs) -> Result<ExitCode> {
     // Req 8.5 — return WorkspaceError::NotRunning when VM is not Running.
-    let vm_state = vm::state(&app.provisioner).await?;
+    let vm_state = vm::state(app.provisioner()).await?;
     if vm_state != VmState::Running {
         return Err(WorkspaceError::NotRunning.into());
     }
@@ -48,8 +48,8 @@ pub async fn run(app: &AppContext, args: &ConnectArgs) -> Result<ExitCode> {
     // Req 8.2 — self-healing SSH provisioning (consent always given for connect).
     let reporter = app.terminal_reporter();
     ssh::provision_ssh(
-        &app.provisioner,
-        &app.ssh,
+        app.provisioner(),
+        app.ssh(),
         SshProvisionOptions {
             consent_given: true,
         },

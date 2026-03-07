@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::Args;
 
-use crate::app::AppContext;
+use crate::app::App;
 use crate::application::services::workspace;
 use crate::domain::process::exit_code_from_status;
 
@@ -27,7 +27,7 @@ pub struct ExecArgs {
 /// # Errors
 ///
 /// Returns an error if the workspace is not running or the command cannot be spawned.
-pub async fn run(app: &AppContext, args: &ExecArgs) -> Result<ExitCode> {
+pub async fn run(app: &impl App, args: &ExecArgs) -> Result<ExitCode> {
     let interactive = std::io::stdin().is_terminal();
 
     let cmd_args: Vec<&str> = args.command.iter().map(String::as_str).collect();

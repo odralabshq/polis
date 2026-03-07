@@ -352,4 +352,82 @@ mod tests {
         assert!(msg.contains("symlink"));
         assert!(msg.contains("rm -f"));
     }
+
+    // ── remove_agent service tests ────────────────────────────────────────
+
+    use std::process::Output;
+    use std::sync::Mutex;
+    use anyhow::Result;
+    use crate::application::ports::{InstanceInspector, ShellExecutor, WorkspaceStateStore};
+    use crate::application::vm::test_support::{
+        impl_shell_executor_stubs, ok_output, fail_output, StateStoreStub, NoopReporter,
+    };
+    use crate::domain::workspace::WorkspaceState;
+
+    /// Configurable stub: controls info (running/not), and per-command responses.
+    struct RemoveStub {
+        running: bool,
+        agent_exists: bool,
+        /// If true, `rm -rf` (directory removal) fails.
+        rm_fails: bool,
+    }
+
+    impl InstanceInspector for RemoveStub {
+        async fn info(&self) -> Result<Output> {
+            if self.running {
+                Ok(ok_output(br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#))
+            } else {
+                Ok(fail_output())
+            }
+        }
+        async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+    }
+
+    impl ShellExecutor for RemoveStub {
+        async fn exec(&self, args: &[&str]) -> Result<Output> {
+            match args.first().copied() {
+                Some("test") => {
+                    if self.agent_exists { Ok(ok_output(b"")) } else { Ok(fail_output()) }
+                }
+                Some("rm") if args.contains(&"-rf") => {
+                    if self.rm_fails { Ok(fail_output()) } else { Ok(ok_output(b"")) }
+                }
+                _ => Ok(ok_output(b"[]")), // cat agents.json, docker compose, tee, etc.
+            }
+        }
+        async fn exec_with_stdin(&self, _: &[&str], _: &[u8]) -> Result<Output> {
+            Ok(ok_output(b"")) // tee for registry write
+        }
+        impl_shell_executor_stubs!(exec_spawn, exec_status);
+    }
+
+    #[tokio::test]
+    async fn remove_agent_invalid_name_returns_error() {
+        let stub = RemoveStub { running: true, agent_exists: true, rm_fails: false };
+        let store = StateStoreStub::empty();
+        let err = remove_agent(&stub, &store, &NoopReporter, "INVALID NAME").await.unwrap_err();
+        assert!(err.to_string().contains("Invalid"));
+    }
+
+    #[tokio::test]
+    async fn remove_agent_vm_not_running_returns_error() {
+        let stub = RemoveStub { running: false, agent_exists: true, rm_fails: false };
+        let store = StateStoreStub::empty();
+        assert!(remove_agent(&stub, &store, &NoopReporter, "openclaw").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn remove_agent_not_installed_returns_error() {
+        let stub = RemoveStub { running: true, agent_exists: false, rm_fails: false };
+        let store = StateStoreStub::empty();
+        let err = remove_agent(&stub, &store, &NoopReporter, "openclaw").await.unwrap_err();
+        assert!(err.to_string().contains("not installed"));
+    }
+
+    #[tokio::test]
+    async fn remove_agent_inactive_agent_succeeds() {
+        let stub = RemoveStub { running: true, agent_exists: true, rm_fails: false };
+        let store = StateStoreStub::empty();
+        assert!(remove_agent(&stub, &store, &NoopReporter, "openclaw").await.is_ok());
+    }
 }

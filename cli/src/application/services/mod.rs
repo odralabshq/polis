@@ -7,6 +7,6 @@
 
 pub mod agent;
 pub mod security;
-pub mod workspace;
 pub mod ssh;
 pub mod update;
+pub mod workspace;

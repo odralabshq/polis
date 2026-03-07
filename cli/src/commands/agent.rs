@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::Subcommand;
 
-use crate::app::AppContext;
+use crate::app::App;
 use crate::application::services::agent::{
     self, ActivateOutcome, AgentActivateOptions, AgentOutcome, AgentSwapOptions,
 };
@@ -35,24 +35,20 @@ pub enum AgentCommand {
 /// # Errors
 ///
 /// Returns an error if the agent operation fails.
-pub async fn run(app: &AppContext, cmd: AgentCommand) -> Result<ExitCode> {
+pub async fn run(app: &impl App, cmd: AgentCommand) -> Result<ExitCode> {
     match cmd {
         AgentCommand::List => {
             let agents = agent::list_agents(app.provisioner(), app.state_store()).await?;
             app.renderer().render_agent_list(&agents)?;
         }
         AgentCommand::Install { path } => {
-            let name = agent::install_agent(
-                app.provisioner(),
-                app.local_fs(),
-                &app.terminal_reporter(),
-                &path,
-            )
-            .await?;
-            app.output.success(&format!("Agent '{name}' installed"));
+            let name =
+                agent::install_agent(app.provisioner(), app.fs(), &app.terminal_reporter(), &path)
+                    .await?;
+            app.output().success(&format!("Agent '{name}' installed"));
         }
         AgentCommand::Remove { name } => {
-            app.output.info(&format!("Removing agent {name}..."));
+            app.output().info(&format!("Removing agent {name}..."));
             agent::remove_agent(
                 app.provisioner(),
                 app.state_store(),
@@ -60,14 +56,14 @@ pub async fn run(app: &AppContext, cmd: AgentCommand) -> Result<ExitCode> {
                 &name,
             )
             .await?;
-            app.output.success(&format!("Agent '{name}' removed"));
+            app.output().success(&format!("Agent '{name}' removed"));
         }
         AgentCommand::Activate { name, envs } => return activate_agent(app, &name, envs).await,
     }
     Ok(ExitCode::SUCCESS)
 }
 
-async fn activate_agent(app: &AppContext, name: &str, envs: Vec<String>) -> Result<ExitCode> {
+async fn activate_agent(app: &impl App, name: &str, envs: Vec<String>) -> Result<ExitCode> {
     let reporter = app.terminal_reporter();
     let opts = AgentActivateOptions {
         reporter: &reporter,
@@ -75,12 +71,12 @@ async fn activate_agent(app: &AppContext, name: &str, envs: Vec<String>) -> Resu
         envs: envs.clone(),
     };
     let outcome =
-        agent::activate_agent(app.provisioner(), app.state_store(), app.local_fs(), opts).await?;
+        agent::activate_agent(app.provisioner(), app.state_store(), app.fs(), opts).await?;
 
     if let ActivateOutcome::SwapRequired { active, requested } = outcome {
         let prompt = format!("Agent '{active}' is active. Swap to '{requested}'?");
         if !app.confirm(&prompt, true)? {
-            app.output.info("Swap cancelled.");
+            app.output().info("Swap cancelled.");
             return Ok(ExitCode::SUCCESS);
         }
         let swap_opts = AgentSwapOptions {
@@ -89,13 +85,8 @@ async fn activate_agent(app: &AppContext, name: &str, envs: Vec<String>) -> Resu
             new_name: &requested,
             envs,
         };
-        let swap_outcome = agent::swap_agent(
-            app.provisioner(),
-            app.state_store(),
-            app.local_fs(),
-            swap_opts,
-        )
-        .await?;
+        let swap_outcome =
+            agent::swap_agent(app.provisioner(), app.state_store(), app.fs(), swap_opts).await?;
         render_outcome(swap_outcome, app);
     } else {
         render_outcome(outcome, app);
@@ -103,14 +94,14 @@ async fn activate_agent(app: &AppContext, name: &str, envs: Vec<String>) -> Resu
     Ok(ExitCode::SUCCESS)
 }
 
-fn render_outcome(outcome: ActivateOutcome, app: &AppContext) {
+fn render_outcome(outcome: ActivateOutcome, app: &impl App) {
     let (o, unhealthy) = match outcome {
         ActivateOutcome::Activated(o) | ActivateOutcome::AlreadyActive(o) => (o, false),
         ActivateOutcome::ActivatedUnhealthy(o) => (o, true),
         ActivateOutcome::SwapRequired { .. } => unreachable!(),
     };
     if unhealthy {
-        app.output
+        app.output()
             .warn("Agent activated but health check timed out — it may not be ready yet.");
     }
     let renderer = app.renderer();

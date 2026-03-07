@@ -23,13 +23,14 @@ use std::process::Output;
 
 use anyhow::{Context, Result};
 
-use crate::app::OutputMode;
+use crate::app::{App, OutputMode};
 use crate::application::ports::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, LocalFs, ProgressReporter,
-    ShellExecutor, WorkspaceStateStore,
+    AssetExtractor, CommandRunner, ConfigStore, ContainerExecutor, FileHasher, FileTransfer,
+    InstanceInspector, InstanceLifecycle, InstanceSpec, LocalFs, LocalPaths, NetworkProbe,
+    ProgressReporter, ShellExecutor, SshConfigurator, WorkspaceStateStore,
 };
+use crate::domain::config::PolisConfig;
 use crate::domain::workspace::WorkspaceState;
-use crate::infra::assets::EmbeddedAssets;
 use crate::output::OutputContext;
 
 // ── Mock AppContext ───────────────────────────────────────────────────────────
@@ -63,12 +64,20 @@ pub struct MockAppContext {
     pub provisioner: MockProvisioner,
     /// Mock state store for workspace state.
     pub state_store: MockStateStore,
-    /// Embedded assets extractor.
-    pub assets: EmbeddedAssets,
+    /// Mock asset extractor.
+    pub assets: MockAssets,
     /// When `true`, skip interactive prompts and use defaults.
     pub non_interactive: bool,
     /// Mock local filesystem.
     pub local_fs: MockLocalFs,
+    /// Mock configuration store.
+    pub config: MockConfig,
+    /// Mock command runner.
+    pub cmd_runner: MockCmdRunner,
+    /// Mock network probe.
+    pub network: MockNetwork,
+    /// Mock SSH configurator.
+    pub ssh: MockSsh,
 }
 
 impl MockAppContext {
@@ -80,9 +89,13 @@ impl MockAppContext {
             mode: OutputMode::Human,
             provisioner: MockProvisioner::new(),
             state_store: MockStateStore::new(),
-            assets: EmbeddedAssets,
+            assets: MockAssets,
             non_interactive: true,
             local_fs: MockLocalFs::new(),
+            config: MockConfig,
+            cmd_runner: MockCmdRunner,
+            network: MockNetwork,
+            ssh: MockSsh,
         }
     }
 
@@ -116,6 +129,62 @@ impl MockAppContext {
 impl Default for MockAppContext {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl App for MockAppContext {
+    type Provisioner = MockProvisioner;
+    type StateStore = MockStateStore;
+    type Fs = MockLocalFs;
+    type Config = MockConfig;
+    type CmdRunner = MockCmdRunner;
+    type Network = MockNetwork;
+    type Ssh = MockSsh;
+    type Assets = MockAssets;
+
+    fn provisioner(&self) -> &Self::Provisioner {
+        &self.provisioner
+    }
+    fn state_store(&self) -> &Self::StateStore {
+        &self.state_store
+    }
+    fn fs(&self) -> &Self::Fs {
+        &self.local_fs
+    }
+    fn config(&self) -> &Self::Config {
+        &self.config
+    }
+    fn cmd_runner(&self) -> &Self::CmdRunner {
+        &self.cmd_runner
+    }
+    fn network(&self) -> &Self::Network {
+        &self.network
+    }
+    fn ssh(&self) -> &Self::Ssh {
+        &self.ssh
+    }
+    fn assets(&self) -> &Self::Assets {
+        &self.assets
+    }
+    fn confirm(&self, _prompt: &str, default: bool) -> Result<bool> {
+        Ok(default)
+    }
+    fn renderer(&self) -> crate::output::Renderer<'_> {
+        self.renderer()
+    }
+    fn terminal_reporter(&self) -> crate::output::reporter::TerminalReporter<'_> {
+        self.terminal_reporter()
+    }
+    fn output(&self) -> &OutputContext {
+        &self.output
+    }
+    fn non_interactive(&self) -> bool {
+        self.non_interactive
+    }
+    fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
+        let dir = tempfile::TempDir::new().context("creating mock assets dir")?;
+        let path = dir.path().to_path_buf();
+        Ok((path, dir))
     }
 }
 
@@ -312,6 +381,16 @@ impl ShellExecutor for MockProvisioner {
     }
 }
 
+impl ContainerExecutor for MockProvisioner {
+    async fn container_exec_status(
+        &self,
+        _args: &[&str],
+        _interactive: bool,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        Ok(exit_status(0))
+    }
+}
+
 // ── Mock State Store ──────────────────────────────────────────────────────────
 
 /// Mock implementation of `WorkspaceStateStore` for testing.
@@ -465,6 +544,133 @@ impl LocalFs for MockLocalFs {
 
     fn set_permissions(&self, _path: &Path, _mode: u32) -> Result<()> {
         Ok(())
+    }
+}
+
+impl LocalPaths for MockLocalFs {
+    fn images_dir(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from("/tmp/mock-images")
+    }
+    fn polis_dir(&self) -> Result<std::path::PathBuf> {
+        Ok(std::path::PathBuf::from("/tmp/mock-polis"))
+    }
+}
+
+impl FileHasher for MockLocalFs {
+    fn sha256_file(&self, _path: &Path) -> Result<String> {
+        Ok(
+            "mock-sha256-0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+        )
+    }
+}
+
+// ── Mock Config Store ─────────────────────────────────────────────────────────
+
+/// Mock implementation of `ConfigStore` for testing.
+pub struct MockConfig;
+
+impl ConfigStore for MockConfig {
+    fn load(&self) -> Result<PolisConfig> {
+        Ok(PolisConfig::default())
+    }
+    fn save(&self, _config: &PolisConfig) -> Result<()> {
+        Ok(())
+    }
+    fn path(&self) -> Result<std::path::PathBuf> {
+        Ok(std::path::PathBuf::from("/tmp/mock-config.yaml"))
+    }
+}
+
+// ── Mock Command Runner ───────────────────────────────────────────────────────
+
+/// Mock implementation of `CommandRunner` for testing.
+pub struct MockCmdRunner;
+
+impl CommandRunner for MockCmdRunner {
+    async fn run(&self, _program: &str, _args: &[&str]) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn run_with_timeout(
+        &self,
+        _program: &str,
+        _args: &[&str],
+        _timeout: std::time::Duration,
+    ) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    async fn run_with_stdin(
+        &self,
+        _program: &str,
+        _args: &[&str],
+        _stdin: &[u8],
+    ) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
+    fn spawn(&self, _program: &str, _args: &[&str]) -> Result<tokio::process::Child> {
+        anyhow::bail!("spawn not supported in mock")
+    }
+    async fn run_status(&self, _program: &str, _args: &[&str]) -> Result<std::process::ExitStatus> {
+        Ok(exit_status(0))
+    }
+}
+
+// ── Mock Network Probe ────────────────────────────────────────────────────────
+
+/// Mock implementation of `NetworkProbe` for testing.
+pub struct MockNetwork;
+
+impl NetworkProbe for MockNetwork {
+    async fn check_tcp_connectivity(&self, _host: &str, _port: u16) -> Result<bool> {
+        Ok(true)
+    }
+    async fn check_dns_resolution(&self, _hostname: &str) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+// ── Mock SSH Configurator ─────────────────────────────────────────────────────
+
+/// Mock implementation of `SshConfigurator` for testing.
+pub struct MockSsh;
+
+impl SshConfigurator for MockSsh {
+    async fn ensure_identity(&self) -> Result<String> {
+        Ok("ssh-ed25519 AAAA mock-pubkey".to_string())
+    }
+    async fn update_host_key(&self, _host_key: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn is_configured(&self) -> Result<bool> {
+        Ok(true)
+    }
+    async fn setup_config(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn validate_permissions(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn remove_config(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn remove_include_directive(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+// ── Mock Asset Extractor ──────────────────────────────────────────────────────
+
+/// Mock implementation of `AssetExtractor` for testing.
+pub struct MockAssets;
+
+impl AssetExtractor for MockAssets {
+    async fn extract_assets(&self) -> Result<(std::path::PathBuf, Box<dyn std::any::Any>)> {
+        let dir = tempfile::TempDir::new().context("creating mock assets dir")?;
+        let path = dir.path().to_path_buf();
+        Ok((path, Box::new(dir)))
+    }
+    async fn get_asset(&self, _name: &str) -> Result<&'static [u8]> {
+        Ok(b"")
     }
 }
 

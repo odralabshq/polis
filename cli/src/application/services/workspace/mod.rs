@@ -12,7 +12,7 @@ pub mod start;
 pub mod status;
 pub mod stop;
 
-pub use delete::{delete, delete_all, CleanupContext, DeleteOutcome};
+pub use delete::{CleanupContext, DeleteOutcome, delete, delete_all};
 pub use doctor::diagnose;
 pub use exec::exec;
 pub use repair::repair;

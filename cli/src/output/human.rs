@@ -125,7 +125,7 @@ impl<'a> HumanRenderer<'a> {
                 "{}. {}  {}",
                 i + 1,
                 step.title,
-                step.command.style(self.ctx.styles.bold)
+                step.command.style(self.ctx.styles.command)
             ));
         }
     }
@@ -356,17 +356,21 @@ impl<'a> HumanRenderer<'a> {
                 self.ctx.header("Getting started");
                 let default_steps = [
                     OnboardingStep {
-                        title: "Set up SSH keys".into(),
-                        command: "polis connect".into(),
+                        title: "Connect to workspace:".into(),
+                        command: "polis connect or ssh workspace".into(),
                     },
                     OnboardingStep {
-                        title: "Connect to workspace".into(),
-                        command: "ssh workspace".into(),
+                        title: "Manage agents:".into(),
+                        command: "polis agent".into(),
                     },
                 ];
                 for (i, step) in default_steps.iter().chain(onboarding.iter()).enumerate() {
-                    self.ctx
-                        .info(&format!("{}. {}  {}", i + 1, step.title, step.command));
+                    self.ctx.info(&format!(
+                        "{}. {}  {}",
+                        i + 1,
+                        step.title,
+                        step.command.style(self.ctx.styles.command)
+                    ));
                 }
             }
         }

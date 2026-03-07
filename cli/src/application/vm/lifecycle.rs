@@ -373,6 +373,12 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn state_starting() {
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Starting","ipv4":[]}}}"#));
+        assert_eq!(state(&mp).await.expect("state"), VmState::Starting);
+    }
+
+    #[tokio::test]
     async fn exists_true_when_vm_info_succeeds() {
         let mp = MultipassVmInfoStub(ok(b"{}"));
         assert!(exists(&mp).await);
@@ -382,6 +388,37 @@ mod tests {
     async fn exists_false_when_vm_info_fails() {
         let mp = MultipassVmInfoStub(fail());
         assert!(!exists(&mp).await);
+    }
+
+    #[tokio::test]
+    async fn is_running_true_when_running() {
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#));
+        assert!(is_running(&mp).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn is_running_false_when_stopped() {
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Stopped","ipv4":[]}}}"#));
+        assert!(!is_running(&mp).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn resolve_vm_ip_returns_first_ip() {
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Running","ipv4":["10.0.0.1","10.0.0.2"]}}}"#));
+        assert_eq!(resolve_vm_ip(&mp).await.unwrap(), "10.0.0.1");
+    }
+
+    #[tokio::test]
+    async fn resolve_vm_ip_errors_when_no_ip() {
+        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#));
+        let err = resolve_vm_ip(&mp).await.unwrap_err();
+        assert!(err.to_string().contains("no IPv4"));
+    }
+
+    #[tokio::test]
+    async fn resolve_vm_ip_errors_when_info_fails() {
+        let mp = MultipassVmInfoStub(fail());
+        assert!(resolve_vm_ip(&mp).await.is_err());
     }
 
     struct MultipassRestartSpy {

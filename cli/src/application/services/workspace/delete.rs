@@ -229,9 +229,7 @@ mod tests {
     use crate::application::ports::{
         InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor, WorkspaceStateStore,
     };
-    use crate::application::vm::test_support::{
-        fail_output, impl_shell_executor_stubs, ok_output,
-    };
+    use crate::application::vm::test_support::{fail_output, impl_shell_executor_stubs, ok_output};
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 

@@ -130,11 +130,7 @@ impl<'a, S: WorkspaceStateStore> ProvisioningRunner<'a, S> {
         R: ProgressReporter,
     {
         // Step 1: load current state (or default).
-        let mut state: WorkspaceState = self
-            .state_mgr
-            .load_async()
-            .await?
-            .unwrap_or_default();
+        let mut state: WorkspaceState = self.state_mgr.load_async().await?.unwrap_or_default();
 
         // Step 2: get or create checkpoint for this workflow.
         let mut checkpoint = state

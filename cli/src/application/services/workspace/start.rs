@@ -15,9 +15,7 @@ use chrono::Utc;
 use crate::application::ports::{
     AssetExtractor, FileHasher, ProgressReporter, VmProvisioner, WorkspaceStateStore,
 };
-use crate::application::provisioning::{
-    ProvisioningContext, ProvisioningRunner, ProvisioningStep,
-};
+use crate::application::provisioning::{ProvisioningContext, ProvisioningRunner, ProvisioningStep};
 use crate::application::vm::{
     compose::{set_active_overlay, set_ready_marker},
     health::wait_ready,

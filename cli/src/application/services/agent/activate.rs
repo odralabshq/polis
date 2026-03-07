@@ -633,4 +633,124 @@ mod tests {
             "Error should include the invalid value: {err}"
         );
     }
+
+    // ── activate_agent / swap_agent service tests ─────────────────────────
+
+    use std::process::Output;
+    use anyhow::Result;
+    use crate::application::ports::{FileTransfer, InstanceInspector, LocalFs, ShellExecutor, WorkspaceStateStore};
+    use crate::application::vm::test_support::{
+        impl_shell_executor_stubs, ok_output, fail_output, StateStoreStub, NoopReporter, LocalFsStub,
+    };
+    use crate::domain::workspace::WorkspaceState;
+
+    const MANIFEST_YAML: &str = r#"
+apiVersion: polis.dev/v1
+kind: AgentPlugin
+metadata:
+  name: openclaw
+  displayName: "OpenClaw"
+  version: "1.0.0"
+  description: "Test"
+spec:
+  packaging: script
+  install: install.sh
+  runtime:
+    command: "/usr/bin/node dist/index.js"
+    workdir: /app
+    user: polis
+"#;
+
+    /// Stub that simulates a running VM with an agent directory present.
+    struct ActivateStub {
+        compose_up_fails: bool,
+        compose_down_fails: bool,
+    }
+
+    impl InstanceInspector for ActivateStub {
+        async fn info(&self) -> Result<Output> {
+            Ok(ok_output(br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#))
+        }
+        async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+    }
+
+    impl ShellExecutor for ActivateStub {
+        async fn exec(&self, args: &[&str]) -> Result<Output> {
+            let cmd = args.join(" ");
+            if cmd.contains("compose") && cmd.contains("up") {
+                return if self.compose_up_fails { Ok(fail_output()) } else { Ok(ok_output(b"")) };
+            }
+            if cmd.contains("compose") && cmd.contains("down") {
+                return if self.compose_down_fails { Ok(fail_output()) } else { Ok(ok_output(b"")) };
+            }
+            // test -d, rm -rf, ln -sf, rm -f, cat agent.yaml
+            if args.first() == Some(&"cat") {
+                return Ok(ok_output(MANIFEST_YAML.as_bytes()));
+            }
+            Ok(ok_output(b""))
+        }
+        impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
+    }
+
+    impl FileTransfer for ActivateStub {
+        async fn transfer(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+    }
+
+    fn fs_with_manifest() -> LocalFsStub {
+        LocalFsStub::new(vec![])
+    }
+
+    #[tokio::test]
+    async fn activate_agent_fresh_returns_activated() {
+        let stub = ActivateStub { compose_up_fails: false, compose_down_fails: false };
+        let store = StateStoreStub::empty();
+        let fs = fs_with_manifest();
+        let opts = AgentActivateOptions { reporter: &NoopReporter, agent_name: "openclaw", envs: vec![] };
+        let result = activate_agent(&stub, &store, &fs, opts).await.unwrap();
+        assert!(matches!(result, ActivateOutcome::Activated(_) | ActivateOutcome::ActivatedUnhealthy(_)));
+    }
+
+    #[tokio::test]
+    async fn activate_agent_already_active_returns_already_active() {
+        let stub = ActivateStub { compose_up_fails: false, compose_down_fails: false };
+        let mut state = WorkspaceState::default();
+        state.active_agent = Some("openclaw".to_string());
+        let store = StateStoreStub::with(state);
+        let fs = fs_with_manifest();
+        let opts = AgentActivateOptions { reporter: &NoopReporter, agent_name: "openclaw", envs: vec![] };
+        let result = activate_agent(&stub, &store, &fs, opts).await.unwrap();
+        assert!(matches!(result, ActivateOutcome::AlreadyActive(_)));
+    }
+
+    #[tokio::test]
+    async fn activate_agent_mismatch_returns_swap_required() {
+        let stub = ActivateStub { compose_up_fails: false, compose_down_fails: false };
+        let mut state = WorkspaceState::default();
+        state.active_agent = Some("other-agent".to_string());
+        let store = StateStoreStub::with(state);
+        let fs = fs_with_manifest();
+        let opts = AgentActivateOptions { reporter: &NoopReporter, agent_name: "openclaw", envs: vec![] };
+        let result = activate_agent(&stub, &store, &fs, opts).await.unwrap();
+        assert!(matches!(result, ActivateOutcome::SwapRequired { .. }));
+    }
+
+    #[tokio::test]
+    async fn swap_agent_stop_fails_returns_error() {
+        let stub = ActivateStub { compose_up_fails: false, compose_down_fails: true };
+        let store = StateStoreStub::empty();
+        let fs = fs_with_manifest();
+        let opts = AgentSwapOptions { reporter: &NoopReporter, active_name: "old", new_name: "openclaw", envs: vec![] };
+        assert!(swap_agent(&stub, &store, &fs, opts).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn swap_agent_success() {
+        let stub = ActivateStub { compose_up_fails: false, compose_down_fails: false };
+        let store = StateStoreStub::empty();
+        let fs = fs_with_manifest();
+        let opts = AgentSwapOptions { reporter: &NoopReporter, active_name: "old", new_name: "openclaw", envs: vec![] };
+        let result = swap_agent(&stub, &store, &fs, opts).await.unwrap();
+        assert!(matches!(result, ActivateOutcome::Activated(_) | ActivateOutcome::ActivatedUnhealthy(_)));
+    }
 }

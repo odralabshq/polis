@@ -74,3 +74,52 @@ pub(crate) fn write_artifacts_to_dir(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use std::path::PathBuf;
+    use super::*;
+    use crate::application::vm::test_support::LocalFsStub;
+
+    fn minimal_manifest() -> polis_common::agent::AgentManifest {
+        serde_yaml_ng::from_str(r#"
+apiVersion: polis.dev/v1
+kind: AgentPlugin
+metadata:
+  name: test-agent
+  displayName: "Test Agent"
+  version: "1.0.0"
+  description: "Test"
+spec:
+  packaging: script
+  install: install.sh
+  runtime:
+    command: "/usr/bin/node dist/index.js"
+    workdir: /app
+    user: polis
+"#).unwrap()
+    }
+
+    #[test]
+    fn write_artifacts_creates_all_four_files() {
+        let fs = LocalFsStub::new(vec![]);
+        let dir = PathBuf::from("/tmp/generated");
+        let manifest = minimal_manifest();
+        write_artifacts_to_dir(&fs, &dir, "test-agent", &manifest, String::new()).unwrap();
+        let written = fs.written.lock().unwrap();
+        assert!(written.contains_key(&dir.join("compose.agent.yaml")));
+        assert!(written.contains_key(&dir.join("test-agent.service")));
+        assert!(written.contains_key(&dir.join("test-agent.service.sha256")));
+        assert!(written.contains_key(&dir.join("test-agent.env")));
+    }
+
+    #[test]
+    fn write_artifacts_write_failure_propagates() {
+        let mut fs = LocalFsStub::new(vec![]);
+        fs.write_fails = true;
+        let dir = PathBuf::from("/tmp/generated");
+        let manifest = minimal_manifest();
+        assert!(write_artifacts_to_dir(&fs, &dir, "test-agent", &manifest, String::new()).is_err());
+    }
+}
