@@ -35,7 +35,7 @@ pub enum AgentCommand {
 /// # Errors
 ///
 /// Returns an error if the agent operation fails.
-pub async fn run(cmd: AgentCommand, app: &AppContext) -> Result<ExitCode> {
+pub async fn run(app: &AppContext, cmd: AgentCommand) -> Result<ExitCode> {
     match cmd {
         AgentCommand::List => {
             let agents = agent::list_agents(app.provisioner(), app.state_store()).await?;

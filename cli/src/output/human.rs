@@ -5,10 +5,10 @@ use polis_common::agent::OnboardingStep;
 use polis_common::types::StatusOutput;
 use polis_common::types::{AgentHealth, WorkspaceState};
 
-use crate::application::services::update::UpdateInfo;
-use crate::application::services::workspace_delete::DeleteOutcome;
-use crate::application::services::workspace_start::StartOutcome;
-use crate::application::services::workspace_stop::StopOutcome;
+use crate::application::ports::UpdateInfo;
+use crate::application::services::workspace::DeleteOutcome;
+use crate::application::services::workspace::start::StartOutcome;
+use crate::application::services::workspace::stop::StopOutcome;
 use crate::domain::health::DiagnosticReport;
 use crate::output::OutputContext;
 use crate::output::models::{ConnectionInfo, LogEntry, PendingRequest, SecurityStatus};
@@ -499,7 +499,7 @@ pub fn format_events_warning(count: u32) -> String {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::application::services::workspace_status::workspace_unknown;
+    use crate::application::services::workspace::workspace_unknown;
     use polis_common::types::{
         AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
         WorkspaceState, WorkspaceStatus,

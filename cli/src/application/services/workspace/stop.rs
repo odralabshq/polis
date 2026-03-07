@@ -7,9 +7,9 @@ use anyhow::Result;
 use crate::application::ports::{
     InstanceInspector, InstanceLifecycle, ProgressReporter, ShellExecutor,
 };
-use crate::application::services::vm::lifecycle::{self as vm, VmState};
+use crate::application::vm::lifecycle::{self as vm, VmState};
 
-/// Outcome of the `stop_workspace` use-case.
+/// Outcome of the `stop` use-case.
 #[derive(Debug, PartialEq, Eq)]
 pub enum StopOutcome {
     /// Workspace was stopped successfully.
@@ -25,7 +25,7 @@ pub enum StopOutcome {
 /// # Errors
 ///
 /// Returns an error if the stop command fails.
-pub async fn stop_workspace(
+pub async fn stop(
     provisioner: &(impl InstanceInspector + InstanceLifecycle + ShellExecutor),
     reporter: &impl ProgressReporter,
 ) -> Result<StopOutcome> {
@@ -44,13 +44,4 @@ pub async fn stop_workspace(
             Ok(StopOutcome::Stopped)
         }
     }
-}
-
-/// Return the current VM running state (for use-cases that need to branch on it).
-///
-/// # Errors
-///
-/// Returns an error if the VM state cannot be determined.
-pub async fn is_vm_running(provisioner: &impl InstanceInspector) -> Result<bool> {
-    Ok(vm::state(provisioner).await? == VmState::Running)
 }

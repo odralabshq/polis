@@ -410,6 +410,71 @@ pub trait SshConfigurator {
     async fn remove_include_directive(&self) -> Result<()>;
 }
 
+// ── Update Port ───────────────────────────────────────────────────────────────
+
+/// Information about an available update.
+#[derive(Debug)]
+pub enum UpdateInfo {
+    /// A newer version is available.
+    Available {
+        /// The new version string (without leading `v`).
+        version: String,
+        /// Up to 5 bullet-point release notes.
+        release_notes: Vec<String>,
+        /// Direct download URL for the platform asset.
+        download_url: String,
+    },
+    /// Already on the latest version.
+    UpToDate,
+}
+
+impl std::fmt::Display for UpdateInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UpToDate => write!(f, "up to date"),
+            Self::Available { version, .. } => write!(f, "v{version} available"),
+        }
+    }
+}
+
+/// A downloaded and verified release asset.
+/// The binary has been checksum-verified and signature-verified.
+#[derive(Debug)]
+pub struct VerifiedAsset {
+    /// Path to the temporary file containing the verified binary.
+    pub temp_path: std::path::PathBuf,
+    /// Hex-encoded SHA-256 of the binary.
+    pub sha256: String,
+}
+
+/// Abstraction over the update backend, enabling test doubles.
+pub trait UpdateChecker {
+    /// Check whether a newer version is available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the release list cannot be fetched or parsed.
+    fn check(&self, current: &str) -> Result<UpdateInfo>;
+
+    /// Download and verify the release asset.
+    /// Returns a [`VerifiedAsset`] containing the path to the verified binary.
+    /// The binary is downloaded once and stored in a temp file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the download, checksum verification, or signature
+    /// verification fails.
+    fn download_and_verify(&self, download_url: &str) -> Result<VerifiedAsset>;
+
+    /// Install the verified binary using atomic replacement.
+    /// Consumes the [`VerifiedAsset`] to ensure the same bytes are installed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the binary replacement fails.
+    fn install(&self, asset: VerifiedAsset) -> Result<()>;
+}
+
 // ── Security Gateway Port ─────────────────────────────────────────────────────
 
 /// Abstracts security operations against the toolbox container.

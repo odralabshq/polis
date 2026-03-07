@@ -134,7 +134,7 @@ impl<'a, S: WorkspaceStateStore> ProvisioningRunner<'a, S> {
             .state_mgr
             .load_async()
             .await?
-            .unwrap_or_else(default_workspace_state);
+            .unwrap_or_default();
 
         // Step 2: get or create checkpoint for this workflow.
         let mut checkpoint = state
@@ -182,19 +182,5 @@ impl<'a, S: WorkspaceStateStore> ProvisioningRunner<'a, S> {
         self.state_mgr.save_async(&state).await?;
 
         Ok(())
-    }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Construct a minimal default [`WorkspaceState`] when no persisted state
-/// exists yet. Uses the current UTC time as `created_at`.
-fn default_workspace_state() -> WorkspaceState {
-    WorkspaceState {
-        created_at: chrono::Utc::now(),
-        image_sha256: None,
-        image_source: None,
-        active_agent: None,
-        provisioning: None,
     }
 }

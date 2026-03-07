@@ -13,6 +13,7 @@ use crate::domain::workspace::VM_ROOT;
 
 use super::artifacts::write_artifacts_to_dir;
 use super::ensure_vm_running;
+use super::registry::{read_registry, write_registry};
 
 /// Install an agent from a local folder into the VM.
 ///
@@ -121,7 +122,20 @@ pub async fn install_agent(
 
     // Step 6: Update the agents.json registry (Req 11.4 - registry update after successful transfer)
     reporter.step("updating agent registry...");
-    if let Err(e) = update_registry(provisioner, &manifest).await {
+    let update_result = async {
+        let result = read_registry(provisioner).await?;
+        let new_entry = AgentRegistryEntry {
+            name: manifest.metadata.name.clone(),
+            version: Some(manifest.metadata.version.clone()),
+            description: Some(manifest.metadata.description.clone()),
+        };
+        let mut entries = result.entries;
+        entries.retain(|e| e.name != new_entry.name);
+        entries.push(new_entry);
+        write_registry(provisioner, &entries).await
+    }
+    .await;
+    if let Err(e) = update_result {
         // Registry update failed - cleanup the transferred directory
         let _ = provisioner.exec(&["rm", "-rf", &dest]).await;
         return Err(e).context("failed to update agent registry");
@@ -158,109 +172,4 @@ fn generate_and_write_artifacts(
     write_artifacts_to_dir(local_fs, &generated_dir, name, &manifest, filtered)
 }
 
-/// Update the agents.json registry on the VM by appending a new entry.
-///
-/// Reads the current registry, appends the new agent entry, and writes back.
-async fn update_registry(
-    provisioner: &impl ShellExecutor,
-    manifest: &polis_common::agent::AgentManifest,
-) -> Result<()> {
-    let registry_path = format!("{VM_ROOT}/agents/agents.json");
 
-    // Read current registry
-    let out = provisioner.exec(&["cat", &registry_path]).await;
-    let mut registry: Vec<AgentRegistryEntry> = match out {
-        Ok(output) if output.status.success() => {
-            let content = String::from_utf8_lossy(&output.stdout);
-            if content.trim().is_empty() {
-                vec![]
-            } else {
-                serde_json::from_str(&content).unwrap_or_else(|_| vec![])
-            }
-        }
-        _ => vec![], // No registry file or failed to read - start fresh
-    };
-
-    // Create new entry from manifest
-    let new_entry = AgentRegistryEntry {
-        name: manifest.metadata.name.clone(),
-        version: Some(manifest.metadata.version.clone()),
-        description: Some(manifest.metadata.description.clone()),
-    };
-
-    // Remove any existing entry with the same name (shouldn't happen due to earlier check, but be safe)
-    registry.retain(|e| e.name != new_entry.name);
-
-    // Append new entry
-    registry.push(new_entry);
-
-    // Serialize and write back
-    let json = serde_json::to_string_pretty(&registry).context("serializing registry")?;
-
-    // Write via stdin to avoid shell escaping issues
-    let write_result = provisioner
-        .exec_with_stdin(&["tee", &registry_path], json.as_bytes())
-        .await?;
-
-    anyhow::ensure!(
-        write_result.status.success(),
-        "Failed to write agent registry: {}",
-        String::from_utf8_lossy(&write_result.stderr)
-    );
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Unit tests for install_agent would require mocking the provisioner, state manager,
-    // and local filesystem. These are integration-level tests that verify the function
-    // signature and basic logic. Full integration tests are in the CLI test suite.
-
-    #[test]
-    fn registry_entry_serializes_correctly() {
-        let entry = AgentRegistryEntry {
-            name: "test-agent".to_string(),
-            version: Some("1.0.0".to_string()),
-            description: Some("Test agent".to_string()),
-        };
-        let json = serde_json::to_string(&entry).expect("serialization should succeed");
-        assert!(json.contains("test-agent"));
-        assert!(json.contains("1.0.0"));
-        assert!(json.contains("Test agent"));
-    }
-
-    #[test]
-    fn registry_entry_serializes_with_optional_fields_none() {
-        let entry = AgentRegistryEntry {
-            name: "minimal-agent".to_string(),
-            version: None,
-            description: None,
-        };
-        let json = serde_json::to_string(&entry).expect("serialization should succeed");
-        assert!(json.contains("minimal-agent"));
-        // Optional fields should serialize as null
-        assert!(json.contains("null") || !json.contains("version"));
-    }
-
-    #[test]
-    fn registry_array_serializes_correctly() {
-        let entries = vec![
-            AgentRegistryEntry {
-                name: "agent1".to_string(),
-                version: Some("1.0.0".to_string()),
-                description: Some("First agent".to_string()),
-            },
-            AgentRegistryEntry {
-                name: "agent2".to_string(),
-                version: Some("2.0.0".to_string()),
-                description: Some("Second agent".to_string()),
-            },
-        ];
-        let json = serde_json::to_string_pretty(&entries).expect("serialization should succeed");
-        assert!(json.contains("agent1"));
-        assert!(json.contains("agent2"));
-    }
-}

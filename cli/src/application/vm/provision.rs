@@ -203,7 +203,7 @@ mod tests {
 
     use super::*;
     use crate::application::ports::{FileTransfer, ShellExecutor};
-    use crate::application::services::vm::test_support::{impl_shell_executor_stubs, ok_output};
+    use crate::application::vm::test_support::{impl_shell_executor_stubs, ok_output};
 
     struct TransferConfigSpy {
         transferred: std::cell::RefCell<Vec<(String, String)>>,

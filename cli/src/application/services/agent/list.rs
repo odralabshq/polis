@@ -6,15 +6,15 @@
 use anyhow::Result;
 
 use crate::application::ports::{InstanceInspector, ShellExecutor, WorkspaceStateStore};
-use crate::domain::agent::{AgentInfo, AgentRegistryEntry};
-use crate::domain::workspace::VM_ROOT;
+use crate::domain::agent::AgentInfo;
 
 use super::ensure_vm_running;
 
 /// List all installed agents by reading the JSON registry from the VM.
 ///
-/// Reads `{VM_ROOT}/agents/agents.json` and maps each entry to `AgentInfo`,
-/// marking the currently active agent based on persisted workspace state.
+/// Delegates registry I/O to [`super::registry::read_registry`] and maps each
+/// entry to `AgentInfo`, marking the currently active agent based on persisted
+/// workspace state.
 ///
 /// # Errors
 ///
@@ -32,6 +32,7 @@ use super::ensure_vm_running;
 /// - 13.5: Return empty list when no agents installed
 /// - 13.7: Return typed error when VM not running
 /// - 13.8: Include warning field for malformed entries
+/// - 16.6: Use shared registry module for registry reads
 pub async fn list_agents(
     provisioner: &(impl ShellExecutor + InstanceInspector),
     state_mgr: &impl WorkspaceStateStore,
@@ -39,104 +40,86 @@ pub async fn list_agents(
     // Fail fast with a friendly message if the VM isn't running
     ensure_vm_running(provisioner).await?;
 
-    // Read the registry file from the VM
-    let registry_path = format!("{VM_ROOT}/agents/agents.json");
-    let out = provisioner.exec(&["cat", &registry_path]).await;
-
-    // Parse the registry - missing file means no agents
-    let entries: Vec<serde_json::Value> = match out {
-        Ok(output) => {
-            let content = String::from_utf8_lossy(&output.stdout);
-            if content.trim().is_empty() || !output.status.success() {
-                vec![]
-            } else {
-                serde_json::from_str(content.trim()).unwrap_or_else(|_| vec![])
-            }
-        }
-        Err(_) => vec![], // No registry file = no agents
-    };
+    // Read the registry via the shared registry module
+    let result = super::registry::read_registry(provisioner).await?;
 
     // Load persisted state to determine active agent
     let state = state_mgr.load_async().await?;
     let active = state.and_then(|s| s.active_agent);
 
-    // Map registry entries to AgentInfo, handling malformed entries individually
-    Ok(entries
+    // Map valid registry entries to AgentInfo; include a synthetic warning entry
+    // for each malformed entry so callers can surface the issue to the user.
+    let mut agents: Vec<AgentInfo> = result
+        .entries
         .into_iter()
-        .map(
-            |v| match serde_json::from_value::<AgentRegistryEntry>(v.clone()) {
-                Ok(e) => AgentInfo {
-                    active: active.as_deref() == Some(&e.name),
-                    name: e.name,
-                    version: e.version,
-                    description: e.description,
-                    warning: None,
-                },
-                Err(err) => {
-                    let name = v
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    AgentInfo {
-                        active: active.as_deref() == Some(&name),
-                        name,
-                        version: None,
-                        description: None,
-                        warning: Some(format!("malformed registry entry: {err}")),
-                    }
-                }
-            },
-        )
-        .collect())
+        .map(|e| AgentInfo {
+            active: active.as_deref() == Some(&e.name),
+            name: e.name,
+            version: e.version,
+            description: e.description,
+            warning: None,
+        })
+        .collect();
+
+    for warning in result.warnings {
+        agents.push(AgentInfo {
+            active: false,
+            name: "<malformed>".to_string(),
+            version: None,
+            description: None,
+            warning: Some(warning),
+        });
+    }
+
+    Ok(agents)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::agent::AgentRegistryEntry;
 
     // Unit tests for list_agents would require mocking the provisioner and state manager.
     // These are integration-level tests that verify the function signature and basic logic.
     // Full integration tests are in the CLI test suite.
 
     #[test]
-    fn registry_entry_deserializes_correctly() {
-        let json = r#"{"name": "test-agent", "version": "1.0.0", "description": "Test agent"}"#;
-        let entry: AgentRegistryEntry =
-            serde_json::from_str(json).expect("deserialization should succeed");
-        assert_eq!(entry.name, "test-agent");
-        assert_eq!(entry.version, Some("1.0.0".to_string()));
-        assert_eq!(entry.description, Some("Test agent".to_string()));
+    fn agent_info_maps_from_registry_entry() {
+        let entry = AgentRegistryEntry {
+            name: "test-agent".to_string(),
+            version: Some("1.0.0".to_string()),
+            description: Some("Test agent".to_string()),
+        };
+        let active: Option<String> = Some("test-agent".to_string());
+        let info = AgentInfo {
+            active: active.as_deref() == Some(&entry.name),
+            name: entry.name.clone(),
+            version: entry.version.clone(),
+            description: entry.description.clone(),
+            warning: None,
+        };
+        assert!(info.active);
+        assert_eq!(info.name, "test-agent");
+        assert_eq!(info.version, Some("1.0.0".to_string()));
+        assert_eq!(info.description, Some("Test agent".to_string()));
+        assert!(info.warning.is_none());
     }
 
     #[test]
-    fn registry_entry_deserializes_with_optional_fields() {
-        let json = r#"{"name": "minimal-agent"}"#;
-        let entry: AgentRegistryEntry =
-            serde_json::from_str(json).expect("deserialization should succeed");
-        assert_eq!(entry.name, "minimal-agent");
-        assert_eq!(entry.version, None);
-        assert_eq!(entry.description, None);
-    }
-
-    #[test]
-    fn registry_array_deserializes_correctly() {
-        let json = r#"[
-            {"name": "agent1", "version": "1.0.0", "description": "First agent"},
-            {"name": "agent2", "version": "2.0.0", "description": "Second agent"}
-        ]"#;
-        let entries: Vec<AgentRegistryEntry> =
-            serde_json::from_str(json).expect("deserialization should succeed");
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].name, "agent1");
-        assert_eq!(entries[1].name, "agent2");
-    }
-
-    #[test]
-    fn empty_registry_array_deserializes_correctly() {
-        let json = "[]";
-        let entries: Vec<AgentRegistryEntry> =
-            serde_json::from_str(json).expect("deserialization should succeed");
-        assert!(entries.is_empty());
+    fn inactive_agent_marked_correctly() {
+        let entry = AgentRegistryEntry {
+            name: "other-agent".to_string(),
+            version: None,
+            description: None,
+        };
+        let active: Option<String> = Some("active-agent".to_string());
+        let info = AgentInfo {
+            active: active.as_deref() == Some(&entry.name),
+            name: entry.name.clone(),
+            version: entry.version,
+            description: entry.description,
+            warning: None,
+        };
+        assert!(!info.active);
     }
 }

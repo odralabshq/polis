@@ -7,8 +7,8 @@ use clap::Args;
 use std::process::Stdio;
 
 use crate::app::AppContext;
-use crate::application::services::ssh_provision::{self, SshProvisionOptions};
-use crate::application::services::vm::lifecycle::{self as vm, VmState};
+use crate::application::services::ssh::{self, SshProvisionOptions};
+use crate::application::vm::lifecycle::{self as vm, VmState};
 use crate::domain::error::WorkspaceError;
 use crate::domain::process::exit_code_from_status;
 use crate::output::models::ConnectionInfo;
@@ -47,7 +47,7 @@ pub async fn run(app: &AppContext, args: &ConnectArgs) -> Result<ExitCode> {
 
     // Req 8.2 — self-healing SSH provisioning (consent always given for connect).
     let reporter = app.terminal_reporter();
-    ssh_provision::provision_ssh(
+    ssh::provision_ssh(
         &app.provisioner,
         &app.ssh,
         SshProvisionOptions {

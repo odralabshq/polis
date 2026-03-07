@@ -13,18 +13,12 @@ use polis_common::types::{
 use crate::application::ports::{InstanceInspector, ShellExecutor};
 use crate::domain::workspace::QUERY_SCRIPT;
 
-/// Gather all workspace status information.
-///
-/// # Errors
-///
-/// This function is infallible — all errors are swallowed and reflected as
-/// `WorkspaceState::Error` or absent optional fields.
 struct ContainerInfo {
     state: String,
     health: Option<String>,
 }
 
-pub async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutput {
+pub async fn gather(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutput {
     let Some(vm_state) = check_multipass_status(mp).await else {
         return StatusOutput {
             workspace: workspace_unknown(),
@@ -147,8 +141,6 @@ async fn gather_remote_info(
     let mut containers = HashMap::new();
     let mut uptime = None;
 
-    // Call the query script inside the VM to avoid Multipass Windows pipe issues.
-    // If this fails, the script may not be deployed in the VM (check config tarball).
     let output = mp.exec(&[QUERY_SCRIPT, "status"]).await;
 
     let Ok(o) = output else {
@@ -158,7 +150,6 @@ async fn gather_remote_info(
         return (uptime, containers);
     }
 
-    // Parse the consolidated JSON response.
     if let Ok(response) = serde_json::from_slice::<StatusResponse>(&o.stdout) {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         {

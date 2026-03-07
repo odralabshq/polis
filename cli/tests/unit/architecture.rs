@@ -1048,9 +1048,9 @@ fn agent_activate_has_no_workspace_lifecycle_imports() {
     );
 }
 
-// ── Req 14.3: ssh_provision has no presentation concerns ─────────────────────
+// ── Req 14.3: ssh has no presentation concerns ─────────────────────
 
-/// `ssh_provision.rs` must not use dialoguer, `non_interactive`, or Confirm.
+/// `ssh.rs` must not use dialoguer, `non_interactive`, or Confirm.
 ///
 /// SSH provisioning is an application service — consent is passed in as a
 /// boolean from the presentation layer, never prompted for internally.
@@ -1060,7 +1060,7 @@ fn ssh_provision_has_no_presentation_concerns() {
         .join("src")
         .join("application")
         .join("services")
-        .join("ssh_provision.rs");
+        .join("ssh.rs");
 
     let forbidden = [
         "dialoguer",
@@ -1076,7 +1076,7 @@ fn ssh_provision_has_no_presentation_concerns() {
         for pattern in &forbidden {
             if line.contains(pattern) {
                 violations.push(format!(
-                    "ssh_provision.rs:{}: forbidden presentation symbol `{pattern}`: {line}",
+                    "ssh.rs:{}: forbidden presentation symbol `{pattern}`: {line}",
                     i + 1
                 ));
             }
@@ -1085,7 +1085,7 @@ fn ssh_provision_has_no_presentation_concerns() {
 
     assert!(
         violations.is_empty(),
-        "ssh_provision.rs must not contain presentation concerns (Req 14.3):\n{}",
+        "ssh.rs must not contain presentation concerns (Req 14.3):\n{}",
         violations.join("\n")
     );
 }

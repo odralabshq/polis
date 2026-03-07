@@ -51,8 +51,8 @@ pub enum SecurityCommand {
 ///
 /// Returns an error if the underlying operations fail.
 pub async fn run(
-    cmd: SecurityCommand,
     app: &AppContext,
+    cmd: SecurityCommand,
     gateway: &impl SecurityGateway,
 ) -> Result<ExitCode> {
     match cmd {

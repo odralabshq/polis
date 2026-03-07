@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
-use crate::application::services::update::{UpdateChecker, UpdateInfo, VerifiedAsset};
+use crate::application::ports::{UpdateChecker, UpdateInfo, VerifiedAsset};
 
 /// The base64-encoded ed25519 public key used to verify release signatures.
 pub const POLIS_PUBLIC_KEY_B64: &str = "jI42dOaR/5mN1T0hH+QeWc+L0aH9BwG1L7Yd/4O5QeQ=";

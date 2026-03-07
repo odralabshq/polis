@@ -12,6 +12,3 @@ pub mod status;
 pub mod stop;
 pub mod update;
 pub mod version;
-
-// Re-export DeleteArgs from delete module for backward compatibility
-pub use delete::DeleteArgs;

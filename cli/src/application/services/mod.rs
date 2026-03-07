@@ -6,15 +6,7 @@
 //! or `crate::output`.
 
 pub mod agent;
-pub mod provisioning;
 pub mod security;
-pub mod ssh_provision;
+pub mod workspace;
+pub mod ssh;
 pub mod update;
-pub mod vm;
-pub mod workspace_delete;
-pub mod workspace_doctor;
-pub mod workspace_exec;
-pub mod workspace_repair;
-pub mod workspace_start;
-pub mod workspace_status;
-pub mod workspace_stop;

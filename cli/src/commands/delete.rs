@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Args;
 
 use crate::app::AppContext;
-use crate::application::services::workspace_delete::{self, DeleteOutcome};
+use crate::application::services::workspace::{self as workspace_svc, DeleteOutcome};
 
 /// Arguments for the delete command.
 #[derive(Args)]
@@ -40,7 +40,7 @@ pub async fn run(app: &AppContext, args: &DeleteArgs) -> Result<ExitCode> {
 
     let reporter = app.terminal_reporter();
     let outcome = if args.all {
-        let ctx = workspace_delete::CleanupContext {
+        let ctx = workspace_svc::CleanupContext {
             provisioner: &app.provisioner,
             state_store: &app.state_mgr,
             local_fs: &app.local_fs,
@@ -48,10 +48,10 @@ pub async fn run(app: &AppContext, args: &DeleteArgs) -> Result<ExitCode> {
             ssh: &app.ssh,
             reporter: &reporter,
         };
-        workspace_delete::delete_all(&ctx).await?;
+        workspace_svc::delete_all(&ctx).await?;
         DeleteOutcome::Deleted
     } else {
-        workspace_delete::delete_workspace(&app.provisioner, &app.state_mgr, &reporter).await?
+        workspace_svc::delete(&app.provisioner, &app.state_mgr, &reporter).await?
     };
 
     app.renderer().render_delete_outcome(&outcome, args.all)?;

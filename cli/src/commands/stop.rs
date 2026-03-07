@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 
 use crate::app::AppContext;
-use crate::application::services::workspace_stop::stop_workspace;
+use crate::application::services::workspace::stop;
 
 /// Run `polis stop`.
 ///
@@ -14,7 +14,7 @@ use crate::application::services::workspace_stop::stop_workspace;
 /// Returns an error if the workspace cannot be stopped.
 pub async fn run(app: &AppContext) -> Result<ExitCode> {
     let reporter = app.terminal_reporter();
-    let outcome = stop_workspace(&app.provisioner, &reporter).await?;
+    let outcome = stop::stop(&app.provisioner, &reporter).await?;
     app.renderer().render_stop_outcome(&outcome)?;
     Ok(ExitCode::SUCCESS)
 }

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use polis_cli::application::ports::{InstanceInspector, ShellExecutor};
-use polis_cli::application::services::workspace_status::gather_status;
+use polis_cli::application::services::workspace::gather;
 use polis_common::types::{AgentHealth, WorkspaceState};
 use std::process::{ExitStatus, Output};
 
@@ -112,7 +112,7 @@ async fn status_parses_healthy_response() {
             true,
         );
 
-    let result = gather_status(&mock).await;
+    let result = gather(&mock).await;
     assert_eq!(result.workspace.status, WorkspaceState::Running);
     assert_eq!(result.workspace.uptime_seconds, Some(1764));
     assert_eq!(
@@ -134,7 +134,7 @@ async fn status_degrades_gracefully_when_script_missing() {
             false,
         );
 
-    let result = gather_status(&mock).await;
+    let result = gather(&mock).await;
     assert_eq!(result.workspace.status, WorkspaceState::Starting);
     assert!(!result.security.traffic_inspection);
 }
@@ -149,6 +149,6 @@ async fn status_handles_malformed_json() {
             true,
         );
 
-    let result = gather_status(&mock).await;
+    let result = gather(&mock).await;
     assert_eq!(result.workspace.status, WorkspaceState::Starting);
 }

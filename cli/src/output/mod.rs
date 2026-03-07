@@ -19,10 +19,10 @@ use anyhow::Result;
 use polis_common::agent::OnboardingStep;
 use polis_common::types::StatusOutput;
 
-use crate::application::services::update::UpdateInfo;
-use crate::application::services::workspace_delete::DeleteOutcome;
-use crate::application::services::workspace_start::StartOutcome;
-use crate::application::services::workspace_stop::StopOutcome;
+use crate::application::ports::UpdateInfo;
+use crate::application::services::workspace::DeleteOutcome;
+use crate::application::services::workspace::start::StartOutcome;
+use crate::application::services::workspace::stop::StopOutcome;
 use crate::domain::health::DiagnosticReport;
 use crate::output::models::{ConnectionInfo, LogEntry, PendingRequest, SecurityStatus};
 

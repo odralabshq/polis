@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 
 use crate::application::ports::{FileTransfer, InstanceInspector, ProgressReporter, ShellExecutor};
-use crate::application::services::vm::provision::{generate_certs_and_secrets, transfer_config};
+use crate::application::vm::provision::{generate_certs_and_secrets, transfer_config};
 use crate::domain::workspace::COMPOSE_PATH;
 
 /// Repair the workspace.

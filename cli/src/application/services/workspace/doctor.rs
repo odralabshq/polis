@@ -13,7 +13,7 @@ use crate::application::ports::{
     CommandRunner, FileTransfer, InstanceInspector, LocalPaths, NetworkProbe, ProgressReporter,
     ShellExecutor,
 };
-use crate::application::services::vm::lifecycle::{self as vm, VmState};
+use crate::application::vm::lifecycle::{self as vm, VmState};
 use crate::domain::health::{CertificateStatus, DiagnosticReport, MalwareDbStatus};
 use crate::domain::workspace::QUERY_SCRIPT;
 
@@ -402,7 +402,7 @@ mod tests {
         CommandRunner, FileTransfer, InstanceInspector, LocalFs, LocalPaths, NetworkProbe,
         ProgressReporter, ShellExecutor,
     };
-    use crate::application::services::vm::test_support::{impl_shell_executor_stubs, ok_output};
+    use crate::application::vm::test_support::{impl_shell_executor_stubs, ok_output};
 
     // ── Test helpers ──────────────────────────────────────────────────────────
 

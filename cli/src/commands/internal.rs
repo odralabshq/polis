@@ -29,7 +29,7 @@ use crate::infra::ssh::SshTransport;
 ///
 /// Returns an error if the VM IP cannot be resolved or SSH cannot be spawned.
 pub async fn ssh_proxy(mp: &impl crate::application::ports::InstanceInspector) -> Result<ExitCode> {
-    let vm_ip = crate::application::services::vm::lifecycle::resolve_vm_ip(mp).await?;
+    let vm_ip = crate::application::vm::lifecycle::resolve_vm_ip(mp).await?;
 
     let docker_cmd = format!("docker exec -i {CONTAINER_NAME} /usr/sbin/sshd -i");
 

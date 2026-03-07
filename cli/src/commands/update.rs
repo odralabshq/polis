@@ -6,13 +6,13 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::app::AppContext;
-use crate::application::ports::ProgressReporter;
+use crate::application::ports::{ProgressReporter, UpdateChecker, UpdateInfo};
 use crate::application::services::update::{
-    PostUpdateOutcome, UpdateChecker, UpdateInfo, UpdateVmConfigOutcome,
+    PostUpdateOutcome, UpdateVmConfigOutcome,
     download_and_verify_cli_update, install_cli_update, run_post_update,
     run_vm_config_update_service,
 };
-use crate::application::services::workspace_stop::is_vm_running;
+use crate::application::vm::lifecycle::is_running;
 
 /// Arguments for the update command.
 #[derive(Args)]
@@ -51,7 +51,7 @@ where
     }
 
     let did_update = apply_cli_update(app, checker, cli_update).await?;
-    let vm_running = is_vm_running(&app.provisioner).await?;
+    let vm_running = is_running(&app.provisioner).await?;
 
     // After CLI self-update, delegate VM config update to the NEW binary
     if did_update && vm_running {
@@ -141,7 +141,7 @@ pub async fn post_update(app: &AppContext) -> Result<()> {
 #[allow(clippy::expect_used, clippy::unwrap_used, clippy::wildcard_imports)]
 mod tests {
     use super::*;
-    use crate::application::services::update::VerifiedAsset;
+    use crate::application::ports::VerifiedAsset;
 
     #[tokio::test]
     async fn test_run_up_to_date_returns_ok() {

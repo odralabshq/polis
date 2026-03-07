@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use crate::app::AppContext;
 use crate::application::ports::ProgressReporter;
-use crate::application::services::workspace_status::gather_status;
+use crate::application::services::workspace::gather;
 
 /// Run the status command.
 ///
@@ -17,7 +17,7 @@ pub async fn run(app: &AppContext) -> Result<ExitCode> {
     let reporter = app.terminal_reporter();
     reporter.begin_stage("gathering status...");
 
-    let output = gather_status(app.provisioner()).await;
+    let output = gather(app.provisioner()).await;
 
     reporter.complete_stage();
 

@@ -6,8 +6,6 @@ use anyhow::Result;
 use std::process::ExitStatus;
 
 use crate::application::ports::{ContainerExecutor, InstanceInspector};
-use crate::application::services::vm::lifecycle::{self as vm, VmState};
-use crate::domain::error::WorkspaceError;
 
 /// Execute a command inside the workspace container.
 ///
@@ -28,11 +26,7 @@ pub async fn exec(
     args: &[&str],
     interactive: bool,
 ) -> Result<ExitStatus> {
-    let vm_state = vm::state(provisioner).await?;
-    if vm_state != VmState::Running {
-        return Err(WorkspaceError::NotRunning.into());
-    }
-
+    super::ensure_running(provisioner).await?;
     provisioner.container_exec_status(args, interactive).await
 }
 
@@ -42,7 +36,8 @@ mod tests {
     use proptest::prelude::*;
     use std::process::Output;
 
-    use crate::application::services::vm::test_support::ok_output;
+    use crate::application::vm::lifecycle::VmState;
+    use crate::application::vm::test_support::ok_output;
 
     /// Stub provisioner that returns a configurable VM state.
     struct VmStateStub {
@@ -59,7 +54,7 @@ mod tests {
                 VmState::NotFound => {
                     // Return a failed output to simulate VM not found
                     return Ok(Output {
-                        status: crate::application::services::vm::test_support::exit_status(1),
+                        status: crate::application::vm::test_support::exit_status(1),
                         stdout: Vec::new(),
                         stderr: Vec::new(),
                     });
@@ -81,7 +76,7 @@ mod tests {
             _interactive: bool,
         ) -> anyhow::Result<std::process::ExitStatus> {
             // Should not be called when VM is not running
-            Ok(crate::application::services::vm::test_support::exit_status(
+            Ok(crate::application::vm::test_support::exit_status(
                 0,
             ))
         }

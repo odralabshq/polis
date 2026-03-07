@@ -114,7 +114,7 @@ mod tests {
 
     use super::*;
     use crate::application::ports::ShellExecutor;
-    use crate::application::services::vm::test_support::{
+    use crate::application::vm::test_support::{
         fail_output, impl_shell_executor_stubs, ok_output,
     };
 

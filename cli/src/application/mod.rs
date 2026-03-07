@@ -4,7 +4,9 @@
 //! `crate::commands`, or `crate::output`.
 
 pub mod ports;
+pub mod provisioning;
 pub mod services;
+pub mod vm;
 
 #[allow(unused_imports)]
 pub use ports::{

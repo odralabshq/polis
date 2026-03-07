@@ -7,84 +7,13 @@ use anyhow::{Context, Result};
 
 use crate::application::ports::{
     AssetExtractor, FileHasher, FileTransfer, InstanceInspector, ProgressReporter, ShellExecutor,
+    UpdateChecker, VerifiedAsset,
 };
-use crate::application::services::vm::{
+use crate::application::vm::{
     integrity::{verify_image_digests, write_config_hash},
     provision::transfer_config,
-    services::pull_images,
+    pull::pull_images,
 };
-
-// ── Public types ──────────────────────────────────────────────────────────────
-
-/// Information about an available update.
-#[derive(Debug)]
-pub enum UpdateInfo {
-    /// A newer version is available.
-    Available {
-        /// The new version string (without leading `v`).
-        version: String,
-        /// Up to 5 bullet-point release notes.
-        release_notes: Vec<String>,
-        /// Direct download URL for the platform asset.
-        download_url: String,
-    },
-    /// Already on the latest version.
-    UpToDate,
-}
-
-impl std::fmt::Display for UpdateInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UpToDate => write!(f, "up to date"),
-            Self::Available { version, .. } => write!(f, "v{version} available"),
-        }
-    }
-}
-
-/// A downloaded and verified release asset.
-/// The binary has been checksum-verified and signature-verified.
-#[derive(Debug)]
-pub struct VerifiedAsset {
-    /// Path to the temporary file containing the verified binary.
-    pub temp_path: std::path::PathBuf,
-    /// Hex-encoded SHA-256 of the binary.
-    pub sha256: String,
-}
-
-/// Checksum verification result.
-#[derive(Debug)]
-pub struct SignatureInfo {
-    /// Hex-encoded SHA-256 of the downloaded asset.
-    pub sha256: String,
-}
-
-/// Abstraction over the update backend, enabling test doubles.
-pub trait UpdateChecker {
-    /// Check whether a newer version is available.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the release list cannot be fetched or parsed.
-    fn check(&self, current: &str) -> Result<UpdateInfo>;
-
-    /// Download and verify the release asset.
-    /// Returns a [`VerifiedAsset`] containing the path to the verified binary.
-    /// The binary is downloaded once and stored in a temp file.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the download, checksum verification, or signature
-    /// verification fails.
-    fn download_and_verify(&self, download_url: &str) -> Result<VerifiedAsset>;
-
-    /// Install the verified binary using atomic replacement.
-    /// Consumes the [`VerifiedAsset`] to ensure the same bytes are installed.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the binary replacement fails.
-    fn install(&self, asset: VerifiedAsset) -> Result<()>;
-}
 
 // ── VM config update service ──────────────────────────────────────────────────
 
@@ -355,7 +284,7 @@ pub async fn run_vm_config_update_service(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::application::ports::UpdateInfo;
 
     #[test]
     fn test_update_info_display_up_to_date() {

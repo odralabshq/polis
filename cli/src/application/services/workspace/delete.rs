@@ -4,10 +4,10 @@ use crate::application::ports::{
     InstanceInspector, InstanceLifecycle, LocalFs, LocalPaths, ProgressReporter, ShellExecutor,
     SshConfigurator,
 };
-use crate::application::services::vm::lifecycle as vm;
+use crate::application::vm::lifecycle as vm;
 use anyhow::Result;
 
-/// Outcome of the `delete_workspace` use-case.
+/// Outcome of the `delete` use-case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteOutcome {
     /// Workspace VM was deleted successfully.
@@ -21,7 +21,7 @@ pub enum DeleteOutcome {
 /// # Errors
 ///
 /// This function will return an error if the underlying operations fail.
-pub async fn delete_workspace(
+pub async fn delete(
     provisioner: &(impl InstanceInspector + InstanceLifecycle + ShellExecutor),
     state_mgr: &impl crate::application::ports::WorkspaceStateStore,
     reporter: &impl ProgressReporter,
@@ -229,7 +229,7 @@ mod tests {
     use crate::application::ports::{
         InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor, WorkspaceStateStore,
     };
-    use crate::application::services::vm::test_support::{
+    use crate::application::vm::test_support::{
         fail_output, impl_shell_executor_stubs, ok_output,
     };
 
@@ -521,15 +521,15 @@ mod tests {
         }
     }
 
-    // ── delete_workspace tests ────────────────────────────────────────────────
+    // ── delete tests ──────────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn delete_workspace_not_found() {
+    async fn delete_not_found() {
         let provisioner = ProvisionerStub::not_found();
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        let outcome = delete_workspace(&provisioner, &state_store, &reporter)
+        let outcome = delete(&provisioner, &state_store, &reporter)
             .await
             .expect("should succeed");
 
@@ -541,12 +541,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_workspace_success() {
+    async fn delete_success() {
         let provisioner = ProvisionerStub::running(false, false);
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        let outcome = delete_workspace(&provisioner, &state_store, &reporter)
+        let outcome = delete(&provisioner, &state_store, &reporter)
             .await
             .expect("should succeed");
 
@@ -558,12 +558,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_workspace_vm_delete_fails() {
+    async fn delete_vm_delete_fails() {
         let provisioner = ProvisionerStub::running(true, false);
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        let err = delete_workspace(&provisioner, &state_store, &reporter)
+        let err = delete(&provisioner, &state_store, &reporter)
             .await
             .expect_err("should fail");
 
@@ -572,12 +572,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_workspace_state_clear_fails() {
+    async fn delete_state_clear_fails() {
         let provisioner = ProvisionerStub::running(false, false);
         let state_store = StateStoreStub { clear_fails: true };
         let reporter = ReporterStub;
 
-        let err = delete_workspace(&provisioner, &state_store, &reporter)
+        let err = delete(&provisioner, &state_store, &reporter)
             .await
             .expect_err("should fail");
 
@@ -588,12 +588,12 @@ mod tests {
     // ── container stop behavior tests ─────────────────────────────────────────
 
     #[tokio::test]
-    async fn delete_workspace_stops_containers_when_running() {
+    async fn delete_stops_containers_when_running() {
         let provisioner = ProvisionerStub::running(false, false);
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        delete_workspace(&provisioner, &state_store, &reporter)
+        delete(&provisioner, &state_store, &reporter)
             .await
             .expect("should succeed");
 
@@ -609,12 +609,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_workspace_container_stop_failure_continues() {
+    async fn delete_container_stop_failure_continues() {
         let provisioner = ProvisionerStub::running(false, true);
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        let outcome = delete_workspace(&provisioner, &state_store, &reporter)
+        let outcome = delete(&provisioner, &state_store, &reporter)
             .await
             .expect("should succeed despite exec failure");
 

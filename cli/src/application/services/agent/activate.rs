@@ -16,7 +16,7 @@ use chrono::Utc;
 use crate::application::ports::{
     FileTransfer, InstanceInspector, LocalFs, ProgressReporter, ShellExecutor, WorkspaceStateStore,
 };
-use crate::application::services::vm::{compose::set_active_overlay, health::wait_ready};
+use crate::application::vm::{compose::set_active_overlay, health::wait_ready};
 use crate::domain::agent::{AgentAction, overlay_path, resolve_agent_action};
 use crate::domain::error::SwapError;
 use crate::domain::workspace::{VM_ROOT, WorkspaceState};

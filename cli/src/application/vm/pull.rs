@@ -1,4 +1,4 @@
-//! VM service operations: image pulling and service startup.
+//! VM image pulling operations.
 //!
 //! Imports only from `crate::domain` and `crate::application::ports`.
 
@@ -80,7 +80,7 @@ mod tests {
 
     use super::*;
     use crate::application::ports::ShellExecutor;
-    use crate::application::services::vm::test_support::{exit_status, impl_shell_executor_stubs};
+    use crate::application::vm::test_support::{exit_status, impl_shell_executor_stubs};
 
     struct PullImagesStub {
         exit_code: i32,

@@ -11,7 +11,6 @@ use anyhow::{Context, Result};
 use crate::application::ports::{
     InstanceInspector, ProgressReporter, ShellExecutor, WorkspaceStateStore,
 };
-use crate::domain::agent::AgentRegistryEntry;
 use crate::domain::error::RemoveError;
 use crate::domain::workspace::{ACTIVE_OVERLAY_PATH, VM_ROOT};
 
@@ -275,47 +274,20 @@ async fn restart_control_plane_and_clear_state(
 }
 
 /// Remove an agent entry from the agents.json registry on the VM.
+///
+/// Delegates to the shared registry module for read/write operations.
 async fn remove_from_registry(provisioner: &impl ShellExecutor, agent_name: &str) -> Result<()> {
-    let registry_path = format!("{VM_ROOT}/agents/agents.json");
-
-    // Read current registry
-    let out = provisioner.exec(&["cat", &registry_path]).await;
-    let mut registry: Vec<AgentRegistryEntry> = match out {
-        Ok(output) if output.status.success() => {
-            let content = String::from_utf8_lossy(&output.stdout);
-            if content.trim().is_empty() {
-                vec![]
-            } else {
-                serde_json::from_str(&content).unwrap_or_else(|_| vec![])
-            }
-        }
-        _ => return Ok(()), // No registry file - nothing to remove
-    };
-
-    // Remove entry with matching name
-    let original_len = registry.len();
-    registry.retain(|e| e.name != agent_name);
+    let result = super::registry::read_registry(provisioner).await?;
+    let mut entries = result.entries;
+    let original_len = entries.len();
+    entries.retain(|e| e.name != agent_name);
 
     // If nothing was removed, we're done
-    if registry.len() == original_len {
+    if entries.len() == original_len {
         return Ok(());
     }
 
-    // Serialize and write back
-    let json = serde_json::to_string_pretty(&registry).context("serializing registry")?;
-
-    // Write via stdin to avoid shell escaping issues
-    let write_result = provisioner
-        .exec_with_stdin(&["tee", &registry_path], json.as_bytes())
-        .await?;
-
-    anyhow::ensure!(
-        write_result.status.success(),
-        "Failed to write agent registry: {}",
-        String::from_utf8_lossy(&write_result.stderr)
-    );
-
-    Ok(())
+    super::registry::write_registry(provisioner, &entries).await
 }
 
 #[cfg(test)]

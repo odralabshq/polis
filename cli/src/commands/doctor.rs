@@ -5,8 +5,8 @@ use clap::Args;
 use std::process::ExitCode;
 
 use crate::app::AppContext;
-use crate::application::services::workspace_doctor;
-use crate::application::services::workspace_repair;
+use crate::application::services::workspace::doctor as workspace_doctor;
+use crate::application::services::workspace::repair as workspace_repair;
 
 /// Arguments for the doctor command.
 #[derive(Args)]

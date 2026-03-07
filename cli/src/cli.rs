@@ -48,7 +48,7 @@ pub enum Command {
     Stop,
 
     /// Remove workspace
-    Delete(commands::DeleteArgs),
+    Delete(commands::delete::DeleteArgs),
 
     /// Show workspace status
     Status,
@@ -126,11 +126,11 @@ impl Cli {
             Command::Doctor(args) => commands::doctor::run(&app, &args).await?,
             Command::Exec(args) => commands::exec::run(&app, &args).await?,
             Command::Version => commands::version::run(&app)?,
-            Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
+            Command::Agent(cmd) => commands::agent::run(&app, cmd).await?,
             Command::Security(cmd) => {
                 let gw =
                     crate::infra::security_gateway::ToolboxSecurityGateway::new(&app.provisioner);
-                commands::security::run(cmd, &app, &gw).await?
+                commands::security::run(&app, cmd, &gw).await?
             }
 
             // --- Internal commands ---

@@ -110,6 +110,18 @@ pub struct WorkspaceState {
     pub provisioning: Option<ProvisioningCheckpoint>,
 }
 
+impl Default for WorkspaceState {
+    fn default() -> Self {
+        Self {
+            created_at: chrono::Utc::now(),
+            image_sha256: None,
+            image_source: None,
+            active_agent: None,
+            provisioning: None,
+        }
+    }
+}
+
 /// Check that the host architecture is amd64.
 ///
 /// Sysbox (the container runtime used by Polis) does not support arm64 as of v0.6.7.

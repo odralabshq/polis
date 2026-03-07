@@ -13,7 +13,7 @@
 use anyhow::{Result, bail};
 
 use crate::application::ports::InstanceInspector;
-use crate::application::services::vm::lifecycle::{self as vm, VmState};
+use crate::application::vm::lifecycle;
 use crate::domain::error::WorkspaceError;
 
 // ── Submodules ────────────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ pub mod activate;
 pub mod artifacts;
 pub mod install;
 pub mod list;
+pub mod registry;
 pub mod remove;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
@@ -43,7 +44,7 @@ pub use remove::remove_agent;
 ///
 /// Returns `WorkspaceError::NotRunning` if the VM is not in the Running state.
 pub(crate) async fn ensure_vm_running(provisioner: &impl InstanceInspector) -> Result<()> {
-    if vm::state(provisioner).await? != VmState::Running {
+    if !lifecycle::is_running(provisioner).await? {
         bail!(WorkspaceError::NotRunning)
     }
     Ok(())

@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::Args;
 
 use crate::app::AppContext;
-use crate::application::services::workspace_exec;
+use crate::application::services::workspace;
 use crate::domain::process::exit_code_from_status;
 
 /// Arguments for the exec command.
@@ -32,7 +32,7 @@ pub async fn run(app: &AppContext, args: &ExecArgs) -> Result<ExitCode> {
 
     let cmd_args: Vec<&str> = args.command.iter().map(String::as_str).collect();
 
-    let status = workspace_exec::exec(app.provisioner(), &cmd_args, interactive).await?;
+    let status = workspace::exec(app.provisioner(), &cmd_args, interactive).await?;
 
     Ok(exit_code_from_status(status))
 }

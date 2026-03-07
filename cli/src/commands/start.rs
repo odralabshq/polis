@@ -5,8 +5,8 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use crate::app::AppContext;
-use crate::application::services::ssh_provision::{self, SshProvisionOptions};
-use crate::application::services::workspace_start as service;
+use crate::application::services::ssh::{self, SshProvisionOptions};
+use crate::application::services::workspace::start as service;
 
 /// Run `polis start`.
 ///
@@ -34,12 +34,12 @@ pub async fn run(app: &AppContext) -> Result<ExitCode> {
         version,
         start_timeout,
     };
-    let outcome = service::start_workspace(
+    let outcome = service::start(
         &app.provisioner,
         &app.state_mgr,
         &app.assets,
         // LocalFs implements both LocalFs and FileHasher — passed as `hasher`
-        // because start_workspace only needs SHA256 file hashing from it.
+        // because start only needs SHA256 file hashing from it.
         &app.local_fs,
         opts,
     )
@@ -52,7 +52,7 @@ pub async fn run(app: &AppContext) -> Result<ExitCode> {
     } else {
         app.confirm("Add SSH configuration to ~/.ssh/config?", true)?
     };
-    ssh_provision::provision_ssh(
+    ssh::provision_ssh(
         &app.provisioner,
         &app.ssh,
         SshProvisionOptions {

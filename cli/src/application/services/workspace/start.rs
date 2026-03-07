@@ -15,26 +15,26 @@ use chrono::Utc;
 use crate::application::ports::{
     AssetExtractor, FileHasher, ProgressReporter, VmProvisioner, WorkspaceStateStore,
 };
-use crate::application::services::provisioning::{
+use crate::application::provisioning::{
     ProvisioningContext, ProvisioningRunner, ProvisioningStep,
 };
-use crate::application::services::vm::{
+use crate::application::vm::{
     compose::{set_active_overlay, set_ready_marker},
     health::wait_ready,
     integrity::{verify_image_digests, write_config_hash},
     lifecycle::{self as vm, VmState},
     provision::{generate_certs_and_secrets, transfer_config},
-    services::pull_images,
+    pull::pull_images,
 };
 use crate::domain::error::WorkspaceError;
 use crate::domain::workspace::{StartAction, WorkspaceState, resolve_action};
 
 // ── StartOptions ──────────────────────────────────────────────────────────────
 
-/// Options for the `start_workspace` use-case.
+/// Options for the `start` use-case.
 ///
 /// No `agent` field — agent activation is handled by `agent_activate.rs`.
-/// No `ssh` or `local_fs` — SSH provisioning is handled by `ssh_provision.rs`.
+/// No `ssh` or `local_fs` — SSH provisioning is handled by `ssh.rs`.
 pub struct StartOptions<'a, R: ProgressReporter> {
     pub reporter: &'a R,
     pub assets_dir: &'a std::path::Path,
@@ -44,7 +44,7 @@ pub struct StartOptions<'a, R: ProgressReporter> {
 
 // ── StartOutcome ──────────────────────────────────────────────────────────────
 
-/// Outcome of the `start_workspace` use-case.
+/// Outcome of the `start` use-case.
 #[derive(Debug)]
 pub enum StartOutcome {
     /// Workspace was already running with no incomplete provisioning.
@@ -66,7 +66,7 @@ pub enum StartOutcome {
 ///
 /// Returns an error if any step of the provisioning workflow fails, or if the
 /// VM remains in `Starting` state after `opts.start_timeout`.
-pub async fn start_workspace<P, S, A, H, R>(
+pub async fn start<P, S, A, H, R>(
     provisioner: &P,
     state_mgr: &S,
     assets: &A,

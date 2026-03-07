@@ -11,7 +11,7 @@ use crate::application::ports::{
 };
 
 /// Re-export `VmState` from the domain layer so existing application-layer
-/// imports (`use crate::application::services::vm::lifecycle::VmState`) continue
+/// imports (`use crate::application::vm::lifecycle::VmState`) continue
 /// to compile without modification.
 pub use crate::domain::workspace::VmState;
 
@@ -255,6 +255,15 @@ pub async fn delete(provisioner: &impl InstanceLifecycle) -> Result<()> {
     Ok(())
 }
 
+/// Check if the VM is currently running.
+///
+/// # Errors
+///
+/// Returns an error if the VM state cannot be determined.
+pub async fn is_running(provisioner: &impl InstanceInspector) -> Result<bool> {
+    Ok(state(provisioner).await? == VmState::Running)
+}
+
 /// Restart a stopped VM.
 ///
 /// # Errors
@@ -273,7 +282,7 @@ pub async fn restart(
         reporter.complete_stage();
     }
 
-    super::services::start_services_with_progress(provisioner, reporter, quiet).await;
+    super::pull::start_services_with_progress(provisioner, reporter, quiet).await;
     Ok(())
 }
 
@@ -314,7 +323,7 @@ mod tests {
     use crate::application::ports::{
         InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
     };
-    use crate::application::services::vm::test_support::{
+    use crate::application::vm::test_support::{
         exit_status, fail_output, impl_shell_executor_stubs, ok_output,
     };
 
