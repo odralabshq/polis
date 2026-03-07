@@ -49,3 +49,35 @@ teardown() {
         [ "$perms" = "644" ] || [ "$perms" = "600" ] || fail "$(basename "$f") has perms $perms"
     done
 }
+
+@test "generate-secrets: rerun backfills control-plane secret without rotating existing secrets" {
+    bash "$SCRIPT" "$TEST_DIR" "$TEST_DIR"
+
+    local healthcheck_password
+    local agent_password
+    healthcheck_password="$(cat "$TEST_DIR/valkey_password.txt")"
+    agent_password="$(cat "$TEST_DIR/valkey_mcp_agent_password.txt")"
+
+    rm -f "$TEST_DIR/valkey_cp_server_password.txt"
+    grep -v '^user cp-server ' "$TEST_DIR/valkey_users.acl" > "$TEST_DIR/valkey_users.acl.tmp"
+    mv "$TEST_DIR/valkey_users.acl.tmp" "$TEST_DIR/valkey_users.acl"
+
+    run bash "$SCRIPT" "$TEST_DIR" "$TEST_DIR"
+    assert_success
+
+    [ "$(cat "$TEST_DIR/valkey_password.txt")" = "$healthcheck_password" ]
+    [ "$(cat "$TEST_DIR/valkey_mcp_agent_password.txt")" = "$agent_password" ]
+    [ -f "$TEST_DIR/valkey_cp_server_password.txt" ]
+
+    run grep '^user cp-server ' "$TEST_DIR/valkey_users.acl"
+    assert_success
+}
+
+@test "generate-secrets: empty placeholder directories are replaced with files" {
+    mkdir -p "$TEST_DIR/valkey_password.txt"
+
+    run bash "$SCRIPT" "$TEST_DIR" "$TEST_DIR"
+    assert_success
+
+    [ -f "$TEST_DIR/valkey_password.txt" ]
+}

@@ -72,8 +72,11 @@ lint: lint-rust lint-c lint-shell
 
 lint-rust:
 	cargo fmt --all --check --manifest-path cli/Cargo.toml
+	cargo fmt --all --check --manifest-path services/control-plane/Cargo.toml
 	cargo fmt --all --check --manifest-path services/toolbox/Cargo.toml
+	cargo check --manifest-path cli/Cargo.toml --no-default-features
 	cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
+	cargo clippy --workspace --all-targets --manifest-path services/control-plane/Cargo.toml -- -D warnings
 	cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
 lint-c:
@@ -87,8 +90,10 @@ lint-shell:
 test: test-rust test-c test-unit
 
 test-rust:
+	cargo test --workspace --manifest-path cli/Cargo.toml --lib
 	cargo test --workspace --manifest-path cli/Cargo.toml --test unit -- --test-threads=1
 	cargo test --workspace --manifest-path cli/Cargo.toml --test integration
+	cargo test --workspace --manifest-path services/control-plane/Cargo.toml
 	cargo test --workspace --manifest-path services/toolbox/Cargo.toml
 	cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 
@@ -130,6 +135,7 @@ test-clean: clean-all prepare-config build-docker setup up test-all
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
 	cargo fmt --all --manifest-path cli/Cargo.toml
+	cargo fmt --all --manifest-path services/control-plane/Cargo.toml
 	cargo fmt --all --manifest-path services/toolbox/Cargo.toml
 
 # ── Build ───────────────────────────────────────────────────────────

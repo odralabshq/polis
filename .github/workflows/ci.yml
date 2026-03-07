@@ -19,6 +19,7 @@ env:
     ghcr.io/odralabshq/polis-scanner-oss:latest
     ghcr.io/odralabshq/polis-workspace-oss:latest
     ghcr.io/odralabshq/polis-toolbox-oss:latest
+    ghcr.io/odralabshq/polis-control-plane-oss:latest
 
 jobs:
   # ── Stage 1a: Lint Rust ───────────────────────────────────────────
@@ -42,11 +43,16 @@ jobs:
       - name: Check formatting
         run: |
           cargo fmt --all --manifest-path cli/Cargo.toml -- --check
+          cargo fmt --all --manifest-path services/control-plane/Cargo.toml -- --check
           cargo fmt --all --manifest-path services/toolbox/Cargo.toml -- --check
+
+      - name: Check CLI without dashboard feature
+        run: cargo check --manifest-path cli/Cargo.toml --no-default-features
 
       - name: Clippy
         run: |
           cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
+          cargo clippy --workspace --all-targets --manifest-path services/control-plane/Cargo.toml -- -D warnings
           cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
   # ── Stage 1b: Lint C ──────────────────────────────────────────────
@@ -99,6 +105,9 @@ jobs:
 
       - name: Test CLI (skip proptests)
         run: cargo test --workspace --manifest-path cli/Cargo.toml -- --skip proptests
+
+      - name: Test control-plane
+        run: cargo test --workspace --manifest-path services/control-plane/Cargo.toml
 
       - name: Test Toolbox
         run: cargo test --workspace --manifest-path services/toolbox/Cargo.toml
@@ -220,6 +229,42 @@ jobs:
       - name: Run unit tests
         run: ./tests/run-tests.sh unit
 
+  # ── Stage 3d: Container structure tests ─────────────────────────────────
+  container-structure-tests:
+    runs-on: ubuntu-24.04
+    needs: build-containers
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install container-structure-test
+        run: |
+          curl -fsSL -o /tmp/container-structure-test https://github.com/GoogleContainerTools/container-structure-test/releases/download/v1.19.3/container-structure-test-linux-amd64
+          sudo install -m 755 /tmp/container-structure-test /usr/local/bin/container-structure-test
+          rm /tmp/container-structure-test
+
+      - name: Download image artifact
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
+
+      - name: Run container structure tests
+        run: |
+          container-structure-test test --image ghcr.io/odralabshq/polis-certgen-oss:latest --config tests/container-structure/certgen.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-gate-oss:latest --config tests/container-structure/gate.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-resolver-oss:latest --config tests/container-structure/resolver.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-scanner-oss:latest --config tests/container-structure/scanner.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-sentinel-oss:latest --config tests/container-structure/sentinel.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-toolbox-oss:latest --config tests/container-structure/toolbox.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-control-plane-oss:latest --config tests/container-structure/control-plane.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-workspace-oss:latest --config tests/container-structure/workspace.yaml
+
   # ── Stage 3c: Scan images (Trivy) ─────────────────────────────────
   scan-images:
     runs-on: ubuntu-24.04
@@ -236,6 +281,7 @@ jobs:
           - polis-scanner-oss
           - polis-resolver-oss
           - polis-toolbox-oss
+          - polis-control-plane-oss
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

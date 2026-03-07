@@ -53,3 +53,8 @@ setup() {
     run docker exec "$CTR_STATE" test -f /run/secrets/valkey_acl
     assert_success
 }
+
+@test "state: control-plane password secret mounted" {
+    run docker exec "$CTR_STATE" test -f /run/secrets/valkey_cp_server_password
+    assert_success
+}

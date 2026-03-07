@@ -3,6 +3,8 @@
 pub mod agent;
 pub mod config;
 pub mod connect;
+#[cfg(feature = "dashboard")]
+pub mod dashboard;
 pub mod delete;
 pub mod doctor;
 pub mod exec;

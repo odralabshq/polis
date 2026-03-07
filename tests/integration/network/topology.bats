@@ -85,6 +85,25 @@ setup() {
     assert_not_on_network "$CTR_STATE" "$NET_EXTERNAL"
 }
 
+# ── Control plane ───────────────────────────────────────────────────────────
+
+@test "control-plane: on gateway-bridge" {
+    require_container "$CTR_CONTROL_PLANE"
+    assert_on_network "$CTR_CONTROL_PLANE" "$NET_GATEWAY"
+}
+
+@test "control-plane: on host-bridge" {
+    require_container "$CTR_CONTROL_PLANE"
+    assert_on_network "$CTR_CONTROL_PLANE" "$NET_HOST"
+}
+
+@test "control-plane: NOT on internal-bridge, external-bridge, or internet" {
+    require_container "$CTR_CONTROL_PLANE"
+    assert_not_on_network "$CTR_CONTROL_PLANE" "$NET_INTERNAL"
+    assert_not_on_network "$CTR_CONTROL_PLANE" "$NET_EXTERNAL"
+    assert_not_on_network "$CTR_CONTROL_PLANE" "$NET_INTERNET"
+}
+
 # ── Toolbox ────────────────────────────────────────────────────────────────
 
 @test "toolbox: on internal-bridge" {
@@ -124,18 +143,22 @@ setup() {
 }
 
 @test "all networks: IPv6 disabled" {
-    for net in "$NET_INTERNAL" "$NET_GATEWAY" "$NET_EXTERNAL" "$NET_INTERNET"; do
+    for net in "$NET_INTERNAL" "$NET_GATEWAY" "$NET_EXTERNAL" "$NET_INTERNET" "$NET_HOST"; do
         local v6
         v6=$(docker network inspect "$net" --format '{{.EnableIPv6}}' 2>/dev/null)
         [[ "$v6" == "false" ]] || fail "IPv6 enabled on $net"
     done
 }
 
-@test "no containers expose ports to host" {
+@test "only control-plane exposes the expected host port" {
     for ctr in "${ALL_CONTAINERS[@]}"; do
         local ports
         ports=$(docker port "$ctr" 2>/dev/null || true)
-        [[ -z "$ports" ]] || fail "$ctr exposes ports: $ports"
+        if [[ "$ctr" == "$CTR_CONTROL_PLANE" ]]; then
+            [[ "$ports" == *"127.0.0.1:${PORT_CONTROL_PLANE}"* ]] || fail "$ctr missing expected loopback port: $ports"
+        else
+            [[ -z "$ports" ]] || fail "$ctr exposes ports: $ports"
+        fi
     done
 }
 

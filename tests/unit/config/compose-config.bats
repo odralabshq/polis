@@ -11,19 +11,23 @@ setup() {
     [ -f "$COMPOSE" ]
 }
 
-@test "compose config: all 3 networks defined" {
+@test "compose config: all required networks defined" {
     run grep "internal-bridge:" "$COMPOSE"
     assert_success
     run grep "gateway-bridge:" "$COMPOSE"
     assert_success
     run grep "external-bridge:" "$COMPOSE"
     assert_success
+    run grep "internet:" "$COMPOSE"
+    assert_success
+    run grep "host-bridge:" "$COMPOSE"
+    assert_success
 }
 
 @test "compose config: all networks have IPv6 disabled" {
     local count
     count=$(grep -c "enable_ipv6: false" "$COMPOSE")
-    [ "$count" -ge 3 ]
+    [ "$count" -ge 5 ]
 }
 
 @test "compose config: internal-bridge is internal" {
@@ -85,13 +89,21 @@ setup() {
     assert_success
 }
 
-@test "compose config: secrets section defines all 8 secrets" {
+@test "compose config: secrets section defines all 9 secrets" {
     for s in valkey_password valkey_acl valkey_dlp_password valkey_mcp_agent_password \
              valkey_mcp_admin_password valkey_log_writer_password valkey_reqmod_password \
-             valkey_respmod_password; do
+             valkey_respmod_password valkey_cp_server_password; do
         run grep "^  ${s}:" "$COMPOSE"
         assert_success
     done
+}
+
+@test "compose config: control-plane binds loopback on 9080" {
+    run grep -A30 "^  control-plane:" "$COMPOSE"
+    assert_success
+    assert_output --partial "127.0.0.1:9080:9080"
+    assert_output --partial "host-bridge: {}"
+    assert_output --partial "seccomp=./services/control-plane/config/seccomp.json"
 }
 
 @test "compose config: workspace DNS points to resolver" {

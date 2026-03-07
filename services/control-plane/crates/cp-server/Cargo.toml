@@ -1,0 +1,34 @@
+[package]
+name = "cp-server"
+version = "0.1.0"
+edition = "2024"
+description = "Polis control-plane server"
+
+[dependencies]
+anyhow = "1.0"
+async-stream = "0.3"
+async-trait = "0.1"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+cp-api-types = { path = "../cp-api-types" }
+envy = "0.4"
+fred = { version = "10.1", features = ["enable-rustls", "i-all"] }
+futures = "0.3"
+http = "1"
+polis-common = { path = "../../../../lib/crates/polis-common" }
+rustls = "0.23"
+rustls-pemfile = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+tokio = { version = "1.49", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

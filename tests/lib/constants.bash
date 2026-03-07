@@ -10,6 +10,7 @@ export CTR_SENTINEL="polis-sentinel"
 export CTR_SCANNER="polis-scanner"
 export CTR_STATE="polis-state"
 export CTR_TOOLBOX="polis-toolbox"
+export CTR_CONTROL_PLANE="polis-control-plane"
 export CTR_WORKSPACE="polis-workspace"
 
 # Init containers
@@ -21,6 +22,7 @@ export NET_INTERNAL="polis_internal-bridge"
 export NET_GATEWAY="polis_gateway-bridge"
 export NET_EXTERNAL="polis_external-bridge"
 export NET_INTERNET="polis_internet"
+export NET_HOST="polis_host-bridge"
 
 # Subnets
 export SUBNET_INTERNAL="10.10.1.0/24"
@@ -37,6 +39,7 @@ export IP_CERTGEN="10.30.1.7"
 export IP_SENTINEL="10.30.1.5"
 export IP_TOOLBOX_INT="10.10.1.20"
 export IP_TOOLBOX_GW="10.30.1.20"
+export IP_CONTROL_PLANE_GW="10.30.1.30"
 
 # Ports
 export PORT_TPROXY=18080
@@ -44,11 +47,12 @@ export PORT_ICAP=1344
 export PORT_CLAMAV=3310
 export PORT_VALKEY=6379
 export PORT_MCP=8080
+export PORT_CONTROL_PLANE=9080
 export PORT_DNS=53
 export PORT_G3FCGEN=2999
 
 # All long-running containers (for iteration)
-export ALL_CONTAINERS=("$CTR_RESOLVER" "$CTR_GATE" "$CTR_CERTGEN" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_WORKSPACE")
+export ALL_CONTAINERS=("$CTR_RESOLVER" "$CTR_GATE" "$CTR_CERTGEN" "$CTR_SENTINEL" "$CTR_SCANNER" "$CTR_STATE" "$CTR_TOOLBOX" "$CTR_CONTROL_PLANE" "$CTR_WORKSPACE")
 export ALL_INIT_CONTAINERS=("$CTR_SCANNER_INIT" "$CTR_STATE_INIT")
 
 # Test profile containers
