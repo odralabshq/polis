@@ -53,6 +53,21 @@ async fn persist_vm_ip(
     Ok(())
 }
 
+/// Detect the Docker socket GID inside the VM and persist it to `.env`
+/// so the control-plane container gets the correct `group_add` value.
+async fn persist_docker_gid(mp: &impl ShellExecutor) -> Result<()> {
+    let script = concat!(
+        "GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999); ",
+        "sed -i '/^DOCKER_GID=/d' /opt/polis/.env 2>/dev/null; ",
+        "printf '%s\\n' \"DOCKER_GID=$GID\" >> /opt/polis/.env",
+    );
+    mp.exec(&["bash", "-c", script])
+        .await
+        .context("writing DOCKER_GID to .env")?;
+    Ok(())
+}
+
+
 async fn persist_agent_metadata(
     mp: &impl ShellExecutor,
     metadata: &polis_common::agent::AgentMetadata,
@@ -268,6 +283,7 @@ async fn handle_running_vm(
 
         // Persist VM IP for container access.
         persist_vm_ip(provisioner).await.ok(); // best-effort
+        persist_docker_gid(provisioner).await.ok(); // best-effort
 
         // Update symlink for future reboots, then start via compose directly.
         let overlay = crate::domain::agent::overlay_path(name);
@@ -343,6 +359,7 @@ async fn create_and_start_vm(
 
     // Step 3b: Persist VM IP for container access.
     persist_vm_ip(provisioner).await.ok(); // best-effort
+    persist_docker_gid(provisioner).await.ok(); // best-effort
 
     // Step 4: Generate certificates and secrets.
     generate_certs_and_secrets(provisioner)
@@ -432,6 +449,7 @@ async fn restart_vm(
 
     // Persist VM IP for container access.
     persist_vm_ip(provisioner).await.ok(); // best-effort
+    persist_docker_gid(provisioner).await.ok(); // best-effort
 
     // Pull images BEFORE starting services.
     reporter.begin_stage("verifying components...");
