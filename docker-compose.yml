@@ -273,11 +273,11 @@ services:
       - CLAMAV_NO_FRESHCLAMD=false
       - CLAMAV_NO_MILTERD=true
     healthcheck:
-      test: ["CMD", "clamdscan", "--ping", "3"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
+      test: ["CMD", "clamdscan", "--ping", "10"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 180s
     restart: unless-stopped
     logging:
       driver: json-file

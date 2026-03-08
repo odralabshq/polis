@@ -468,7 +468,7 @@ impl App {
                 existing.memory_usage_mb = metric.memory_usage_mb;
                 existing.memory_limit_mb = metric.memory_limit_mb;
                 existing.cpu_percent = metric.cpu_percent;
-                existing.stale = false;
+                existing.stale = metric.stale;
             } else {
                 containers.push(ContainerInfo {
                     name: format!("polis-{}", metric.service),
@@ -481,7 +481,7 @@ impl App {
                     cpu_percent: metric.cpu_percent,
                     network: UNKNOWN_VALUE.to_string(),
                     ip: UNKNOWN_VALUE.to_string(),
-                    stale: false,
+                    stale: metric.stale,
                 });
             }
         }
@@ -1248,7 +1248,18 @@ fn render_workspace_containers(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     format_memory_mb(container.memory_usage_mb),
                     format_memory_mb(container.memory_limit_mb)
                 )),
-                Cell::from(format!("{:.1}%", container.cpu_percent)),
+                Cell::from(Span::styled(
+                    if container.stale {
+                        format!("{:.1}%~", container.cpu_percent)
+                    } else {
+                        format!("{:.1}%", container.cpu_percent)
+                    },
+                    if container.stale {
+                        Style::default().fg(Color::DarkGray)
+                    } else {
+                        Style::default()
+                    },
+                )),
             ])
             .style(row_style)
         })
@@ -1869,6 +1880,7 @@ mod tests {
                     network_rx_bytes: 0,
                     network_tx_bytes: 0,
                     pids: 42,
+                    stale: false,
                 },
                 cp_api_types::ContainerMetrics {
                     service: "sentinel".to_string(),
@@ -1880,6 +1892,7 @@ mod tests {
                     network_rx_bytes: 0,
                     network_tx_bytes: 0,
                     pids: 8,
+                    stale: false,
                 },
             ],
         }

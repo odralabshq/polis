@@ -29,7 +29,7 @@ use crate::error::{AppError, AppResult};
 
 const METRICS_HISTORY_LIMIT: usize = 360;
 pub const METRICS_INTERVAL_SECONDS: u64 = 10;
-const CONTAINER_STATS_TIMEOUT: Duration = Duration::from_secs(2);
+const CONTAINER_STATS_TIMEOUT: Duration = Duration::from_secs(3);
 const PROJECT_LABEL: &str = "com.docker.compose.project=polis";
 const UNKNOWN_VALUE: &str = "unknown";
 const NO_ACTIVE_AGENT_MESSAGE: &str = "no active agent detected";
@@ -175,6 +175,7 @@ impl DockerClient {
                 network_rx_bytes: stats.network_rx_bytes,
                 network_tx_bytes: stats.network_tx_bytes,
                 pids: stats.pids,
+                stale: stats.stale,
             });
         }
 
