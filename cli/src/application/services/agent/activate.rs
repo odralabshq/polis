@@ -638,7 +638,7 @@ mod tests {
 
     use std::process::Output;
     use anyhow::Result;
-    use crate::application::ports::{FileTransfer, InstanceInspector, LocalFs, ShellExecutor, WorkspaceStateStore};
+    use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
     use crate::application::vm::test_support::{
         impl_shell_executor_stubs, ok_output, fail_output, StateStoreStub, NoopReporter, LocalFsStub,
     };
@@ -711,31 +711,29 @@ spec:
         let store = StateStoreStub::empty();
         let fs = fs_with_manifest();
         let opts = AgentActivateOptions { reporter: &NoopReporter, agent_name: "openclaw", envs: vec![] };
-        let result = activate_agent(&stub, &store, &fs, opts).await.unwrap();
+        let result = activate_agent(&stub, &store, &fs, opts).await.expect("activate_agent failed");
         assert!(matches!(result, ActivateOutcome::Activated(_) | ActivateOutcome::ActivatedUnhealthy(_)));
     }
 
     #[tokio::test]
     async fn activate_agent_already_active_returns_already_active() {
         let stub = ActivateStub { compose_up_fails: false, compose_down_fails: false };
-        let mut state = WorkspaceState::default();
-        state.active_agent = Some("openclaw".to_string());
+        let state = WorkspaceState { active_agent: Some("openclaw".to_string()), ..WorkspaceState::default() };
         let store = StateStoreStub::with(state);
         let fs = fs_with_manifest();
         let opts = AgentActivateOptions { reporter: &NoopReporter, agent_name: "openclaw", envs: vec![] };
-        let result = activate_agent(&stub, &store, &fs, opts).await.unwrap();
+        let result = activate_agent(&stub, &store, &fs, opts).await.expect("activate_agent failed");
         assert!(matches!(result, ActivateOutcome::AlreadyActive(_)));
     }
 
     #[tokio::test]
     async fn activate_agent_mismatch_returns_swap_required() {
         let stub = ActivateStub { compose_up_fails: false, compose_down_fails: false };
-        let mut state = WorkspaceState::default();
-        state.active_agent = Some("other-agent".to_string());
+        let state = WorkspaceState { active_agent: Some("other-agent".to_string()), ..WorkspaceState::default() };
         let store = StateStoreStub::with(state);
         let fs = fs_with_manifest();
         let opts = AgentActivateOptions { reporter: &NoopReporter, agent_name: "openclaw", envs: vec![] };
-        let result = activate_agent(&stub, &store, &fs, opts).await.unwrap();
+        let result = activate_agent(&stub, &store, &fs, opts).await.expect("activate_agent failed");
         assert!(matches!(result, ActivateOutcome::SwapRequired { .. }));
     }
 
@@ -754,7 +752,7 @@ spec:
         let store = StateStoreStub::empty();
         let fs = fs_with_manifest();
         let opts = AgentSwapOptions { reporter: &NoopReporter, active_name: "old", new_name: "openclaw", envs: vec![] };
-        let result = swap_agent(&stub, &store, &fs, opts).await.unwrap();
+        let result = swap_agent(&stub, &store, &fs, opts).await.expect("swap_agent failed");
         assert!(matches!(result, ActivateOutcome::Activated(_) | ActivateOutcome::ActivatedUnhealthy(_)));
     }
 }

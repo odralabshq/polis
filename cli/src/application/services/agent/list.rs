@@ -126,7 +126,7 @@ mod tests {
     // ── list_agents service tests ─────────────────────────────────────────
 
     use std::process::Output;
-    use crate::application::ports::{InstanceInspector, ShellExecutor, WorkspaceStateStore};
+    use crate::application::ports::{InstanceInspector, ShellExecutor};
     use crate::application::vm::test_support::{impl_shell_executor_stubs, ok_output, fail_output, StateStoreStub};
     use crate::domain::workspace::WorkspaceState;
 
@@ -164,7 +164,7 @@ mod tests {
     async fn list_agents_empty_registry() {
         let stub = ListStub { info_running: true, registry_json: b"[]" };
         let store = StateStoreStub::empty();
-        let agents = list_agents(&stub, &store).await.unwrap();
+        let agents = list_agents(&stub, &store).await.expect("list_agents failed");
         assert!(agents.is_empty());
     }
 
@@ -174,13 +174,12 @@ mod tests {
             info_running: true,
             registry_json: br#"[{"name":"openclaw","version":"1.0"},{"name":"other"}]"#,
         };
-        let mut state = WorkspaceState::default();
-        state.active_agent = Some("openclaw".to_string());
+        let state = WorkspaceState { active_agent: Some("openclaw".to_string()), ..WorkspaceState::default() };
         let store = StateStoreStub::with(state);
-        let agents = list_agents(&stub, &store).await.unwrap();
+        let agents = list_agents(&stub, &store).await.expect("list_agents failed");
         assert_eq!(agents.len(), 2);
-        assert!(agents.iter().find(|a| a.name == "openclaw").unwrap().active);
-        assert!(!agents.iter().find(|a| a.name == "other").unwrap().active);
+        assert!(agents.iter().find(|a| a.name == "openclaw").expect("openclaw not found").active);
+        assert!(!agents.iter().find(|a| a.name == "other").expect("other not found").active);
     }
 
     #[tokio::test]
@@ -190,7 +189,7 @@ mod tests {
             registry_json: br#"[{"name":"good"},{"version":"no-name"}]"#,
         };
         let store = StateStoreStub::empty();
-        let agents = list_agents(&stub, &store).await.unwrap();
+        let agents = list_agents(&stub, &store).await.expect("list_agents failed");
         assert_eq!(agents.len(), 2);
         assert!(agents.iter().any(|a| a.warning.is_some()));
     }

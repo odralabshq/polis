@@ -73,72 +73,6 @@ macro_rules! impl_shell_executor_stubs {
 
 pub(crate) use impl_shell_executor_stubs;
 
-// ── InstanceInspector stub ────────────────────────────────────────────────────
-
-/// Stub for `InstanceInspector`. `info_output` is returned from `info()`.
-pub struct InfoStub(pub std::process::Output);
-
-impl crate::application::ports::InstanceInspector for InfoStub {
-    async fn info(&self) -> anyhow::Result<std::process::Output> {
-        Ok(std::process::Output {
-            status: self.0.status,
-            stdout: self.0.stdout.clone(),
-            stderr: self.0.stderr.clone(),
-        })
-    }
-    async fn version(&self) -> anyhow::Result<std::process::Output> {
-        anyhow::bail!("not expected")
-    }
-}
-
-// ── InstanceLifecycle stub ────────────────────────────────────────────────────
-
-/// Stub for `InstanceLifecycle`. All methods return `ok_output(b"")` by default.
-/// Set `stop_fails` to make `stop()` return a failure output.
-pub struct LifecycleStub {
-    pub stop_fails: bool,
-}
-
-impl Default for LifecycleStub {
-    fn default() -> Self {
-        Self { stop_fails: false }
-    }
-}
-
-impl crate::application::ports::InstanceLifecycle for LifecycleStub {
-    async fn launch(&self, _: &crate::application::ports::InstanceSpec<'_>) -> anyhow::Result<std::process::Output> {
-        anyhow::bail!("not expected")
-    }
-    async fn start(&self) -> anyhow::Result<std::process::Output> {
-        Ok(ok_output(b""))
-    }
-    async fn stop(&self) -> anyhow::Result<std::process::Output> {
-        if self.stop_fails { Ok(fail_output()) } else { Ok(ok_output(b"")) }
-    }
-    async fn delete(&self) -> anyhow::Result<std::process::Output> {
-        anyhow::bail!("not expected")
-    }
-    async fn purge(&self) -> anyhow::Result<std::process::Output> {
-        anyhow::bail!("not expected")
-    }
-}
-
-// ── FileTransfer stub ─────────────────────────────────────────────────────────
-
-/// Stub for `FileTransfer`. Returns `ok_output(b"")` unless `fail` is true.
-pub struct TransferStub {
-    pub fail: bool,
-}
-
-impl crate::application::ports::FileTransfer for TransferStub {
-    async fn transfer(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
-        if self.fail { Ok(fail_output()) } else { Ok(ok_output(b"")) }
-    }
-    async fn transfer_recursive(&self, _: &str, _: &str) -> anyhow::Result<std::process::Output> {
-        if self.fail { Ok(fail_output()) } else { Ok(ok_output(b"")) }
-    }
-}
-
 // ── WorkspaceStateStore stub ──────────────────────────────────────────────────
 
 use std::sync::Mutex;
@@ -155,14 +89,14 @@ impl StateStoreStub {
 
 impl crate::application::ports::WorkspaceStateStore for StateStoreStub {
     async fn load_async(&self) -> anyhow::Result<Option<crate::domain::workspace::WorkspaceState>> {
-        Ok(self.0.lock().unwrap().clone())
+        Ok(self.0.lock().expect("state store mutex poisoned").clone())
     }
     async fn save_async(&self, state: &crate::domain::workspace::WorkspaceState) -> anyhow::Result<()> {
-        *self.0.lock().unwrap() = Some(state.clone());
+        *self.0.lock().expect("state store mutex poisoned") = Some(state.clone());
         Ok(())
     }
     async fn clear_async(&self) -> anyhow::Result<()> {
-        *self.0.lock().unwrap() = None;
+        *self.0.lock().expect("state store mutex poisoned") = None;
         Ok(())
     }
 }
@@ -214,7 +148,7 @@ pub struct ProcessLauncherStub(pub bool);
 
 impl crate::application::ports::ProcessLauncher for ProcessLauncherStub {
     async fn launch(&self, _: &str, _: &[&str]) -> anyhow::Result<std::process::ExitStatus> {
-        Ok(exit_status(if self.0 { 0 } else { 1 }))
+        Ok(exit_status(i32::from(!self.0)))
     }
 }
 
@@ -257,11 +191,11 @@ impl crate::application::ports::LocalFs for LocalFsStub {
         if self.write_fails {
             anyhow::bail!("write failed")
         }
-        self.written.lock().unwrap().insert(path.to_path_buf(), content);
+        self.written.lock().expect("written mutex poisoned").insert(path.to_path_buf(), content);
         Ok(())
     }
     fn read_to_string(&self, path: &std::path::Path) -> anyhow::Result<String> {
-        self.written.lock().unwrap().get(path)
+        self.written.lock().expect("written mutex poisoned").get(path)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("file not found: {}", path.display()))
     }

@@ -356,13 +356,11 @@ mod tests {
     // ── remove_agent service tests ────────────────────────────────────────
 
     use std::process::Output;
-    use std::sync::Mutex;
     use anyhow::Result;
-    use crate::application::ports::{InstanceInspector, ShellExecutor, WorkspaceStateStore};
+    use crate::application::ports::{InstanceInspector, ShellExecutor};
     use crate::application::vm::test_support::{
         impl_shell_executor_stubs, ok_output, fail_output, StateStoreStub, NoopReporter,
     };
-    use crate::domain::workspace::WorkspaceState;
 
     /// Configurable stub: controls info (running/not), and per-command responses.
     struct RemoveStub {
@@ -405,7 +403,7 @@ mod tests {
     async fn remove_agent_invalid_name_returns_error() {
         let stub = RemoveStub { running: true, agent_exists: true, rm_fails: false };
         let store = StateStoreStub::empty();
-        let err = remove_agent(&stub, &store, &NoopReporter, "INVALID NAME").await.unwrap_err();
+        let err = remove_agent(&stub, &store, &NoopReporter, "INVALID NAME").await.expect_err("should fail for invalid name");
         assert!(err.to_string().contains("Invalid"));
     }
 
@@ -420,7 +418,7 @@ mod tests {
     async fn remove_agent_not_installed_returns_error() {
         let stub = RemoveStub { running: true, agent_exists: false, rm_fails: false };
         let store = StateStoreStub::empty();
-        let err = remove_agent(&stub, &store, &NoopReporter, "openclaw").await.unwrap_err();
+        let err = remove_agent(&stub, &store, &NoopReporter, "openclaw").await.expect_err("should fail for not installed");
         assert!(err.to_string().contains("not installed"));
     }
 

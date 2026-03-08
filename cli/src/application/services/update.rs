@@ -306,10 +306,9 @@ mod tests {
     use std::path::PathBuf;
     use anyhow::Result;
     use crate::application::ports::{
-        AssetExtractor, FileHasher, FileTransfer, InstanceInspector, ShellExecutor,
-    };
-    use crate::application::vm::test_support::{
-        impl_shell_executor_stubs, ok_output, fail_output, NoopReporter,
+        AssetExtractor, FileTransfer, InstanceInspector, ShellExecutor,
+    };    use crate::application::vm::test_support::{
+        impl_shell_executor_stubs, ok_output, NoopReporter,
         FileHasherStub, ProcessLauncherStub,
     };
 
@@ -353,21 +352,21 @@ mod tests {
         let mp = UpdateStub { hash_on_vm: "abc123" };
         let hasher = FileHasherStub("abc123".to_string());
         let assets_dir = PathBuf::from("/tmp/fake-assets");
-        let result = update_vm_config(&mp, &NoopAssets, &hasher, &NoopReporter, &assets_dir, "0.4.0").await.unwrap();
+        let result = update_vm_config(&mp, &NoopAssets, &hasher, &NoopReporter, &assets_dir, "0.4.0").await.expect("update_vm_config failed");
         assert!(matches!(result, UpdateVmConfigOutcome::UpToDate));
     }
 
     #[tokio::test]
     async fn run_post_update_success() {
         let launcher = ProcessLauncherStub(true);
-        let result = run_post_update(&launcher).await.unwrap();
+        let result = run_post_update(&launcher).await.expect("run_post_update failed");
         assert!(matches!(result, PostUpdateOutcome::Success));
     }
 
     #[tokio::test]
     async fn run_post_update_non_zero_exit() {
         let launcher = ProcessLauncherStub(false);
-        let result = run_post_update(&launcher).await.unwrap();
+        let result = run_post_update(&launcher).await.expect("run_post_update failed");
         assert!(matches!(result, PostUpdateOutcome::NonZeroExit));
     }
 }
