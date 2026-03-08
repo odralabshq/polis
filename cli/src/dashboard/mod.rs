@@ -1697,7 +1697,18 @@ pub async fn run(args: &DashboardArgs, app: &AppContext) -> Result<ExitCode> {
         bail!("dashboard does not support --json output");
     }
 
-    let api_url = normalize_api_url(&args.api_url);
+
+    // When the user hasn't overridden --api-url, resolve the Multipass VM IP
+    // so the dashboard connects to the control-plane inside the VM rather than
+    // assuming localhost (which only works when Docker Desktop forwards ports).
+    let api_url = if args.api_url == DEFAULT_API_URL {
+        match crate::application::services::vm::lifecycle::resolve_vm_ip(&app.provisioner).await {
+            Ok(ip) => normalize_api_url(&format!("http://{ip}:9080")),
+            Err(_) => normalize_api_url(&args.api_url),
+        }
+    } else {
+        normalize_api_url(&args.api_url)
+    };
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .build()
