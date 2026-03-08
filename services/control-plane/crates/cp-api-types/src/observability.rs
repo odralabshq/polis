@@ -1,6 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LogLine {
     pub timestamp: DateTime<Utc>,
@@ -27,6 +32,8 @@ pub struct ContainerMetrics {
     pub network_rx_bytes: u64,
     pub network_tx_bytes: u64,
     pub pids: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stale: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -113,6 +120,7 @@ mod tests {
                 network_rx_bytes: 1_048_576,
                 network_tx_bytes: 524_288,
                 pids: 42,
+                stale: false,
             }],
         });
     }

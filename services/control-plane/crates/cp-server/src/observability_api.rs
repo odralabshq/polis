@@ -401,6 +401,7 @@ mod tests {
                 network_rx_bytes: 1_024,
                 network_tx_bytes: 2_048,
                 pids: 42,
+                stale: false,
             }],
         }
     }

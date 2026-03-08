@@ -55,8 +55,10 @@ Get-ChildItem "services" -Directory | ForEach-Object {
     if (Test-Path "$($_.FullName)\scripts") { $includes += "services/$($_.Name)/scripts" }
 }
 
-if (Test-Path "certs")   { $includes += "certs" }
-if (Test-Path "secrets") { $includes += "secrets" }
+# NOTE: certs/ and secrets/ are intentionally excluded from the tarball.
+# The VM generates its own CA and secrets via generate_certs_and_secrets().
+# Including pre-generated certs causes a CA mismatch: certgen signs with
+# the VM-generated CA, but workspace trusts the tarball CA → TLS failures.
 
 $tarArgs = @("-cf", $tarDest) + $includes
 & tar @tarArgs

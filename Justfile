@@ -152,6 +152,10 @@ prepare-config:
 		./scripts/generate-agent.sh "$name" agents
 	done
 	# Build config tarball (sudo needed to read keys owned by container uid 65532)
+	# NOTE: certs/ and secrets/ are intentionally excluded.
+	# The VM generates its own CA and secrets via generate_certs_and_secrets().
+	# Including pre-generated certs causes a CA mismatch (certgen signs with
+	# VM CA, but workspace trusts tarball CA → TLS failures).
 	sudo tar cf .build/assets/polis-setup.config.tar \
 		docker-compose.yml \
 		scripts/generate-ca.sh \
@@ -159,9 +163,7 @@ prepare-config:
 		scripts/polis-query.sh \
 		agents/ \
 		services/*/config/ \
-		services/*/scripts/ \
-		$([ -d certs ] && echo "certs/") \
-		$([ -d secrets ] && echo "secrets/")
+		services/*/scripts/
 	sudo chown "$(id -u):$(id -g)" .build/assets/polis-setup.config.tar
 	echo "✓ Built .build/assets/polis-setup.config.tar"
 	# Copy cloud-init.yaml

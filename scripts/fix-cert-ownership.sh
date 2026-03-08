@@ -73,6 +73,25 @@ echo "--- Fixing Toolbox key ownership (65532:65532) [OPTIONAL] ---"
 chown 65532:65532 "${POLIS_ROOT}/certs/toolbox/toolbox.key" || true
 
 # ---------------------------------------------------------------------------
+# Secrets — readable by container user 65532 (REQUIRED)
+# Docker Compose in standalone mode uses bind mounts for secrets, so the
+# container sees the host file permissions. Secret files are created with
+# mode 600 by generate-secrets.sh (root-only). Containers run as uid 65532
+# and need read access to /run/secrets/* which maps to these host files.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Fixing secret file permissions (root:65532, mode 640) ---"
+if [[ -d "${POLIS_ROOT}/secrets" ]]; then
+    find "${POLIS_ROOT}/secrets" -type f -name '*.txt' -exec chown root:65532 {} +
+    find "${POLIS_ROOT}/secrets" -type f -name '*.txt' -exec chmod 640 {} +
+    # ACL file also needs to be readable
+    if [[ -f "${POLIS_ROOT}/secrets/valkey_users.acl" ]]; then
+        chown root:65532 "${POLIS_ROOT}/secrets/valkey_users.acl"
+        chmod 640 "${POLIS_ROOT}/secrets/valkey_users.acl"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Sentinel — signals that the entire cert chain completed successfully.
 # Doctor repair checks for this file rather than individual cert files to
 # catch partial failures where some certs exist but others are missing.

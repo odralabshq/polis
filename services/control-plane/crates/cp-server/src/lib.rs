@@ -688,6 +688,7 @@ mod tests {
                 network_rx_bytes: 1,
                 network_tx_bytes: 2,
                 pids: 3,
+                stale: false,
             }],
         };
 

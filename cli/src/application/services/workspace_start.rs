@@ -67,6 +67,16 @@ async fn persist_docker_gid(mp: &impl ShellExecutor) -> Result<()> {
     Ok(())
 }
 
+/// Fix ownership/permissions on cert keys and secret files so containers
+/// running as uid 65532 can read them. Delegates to `fix-cert-ownership.sh`
+/// which is idempotent and already present in the VM after `transfer_config`.
+async fn fix_permissions(mp: &impl ShellExecutor) -> Result<()> {
+    mp.exec(&["sudo", "bash", "/opt/polis/scripts/fix-cert-ownership.sh", "/opt/polis"])
+        .await
+        .context("fixing cert/secret permissions")?;
+    Ok(())
+}
+
 
 async fn persist_agent_metadata(
     mp: &impl ShellExecutor,
@@ -284,6 +294,7 @@ async fn handle_running_vm(
         // Persist VM IP for container access.
         persist_vm_ip(provisioner).await.ok(); // best-effort
         persist_docker_gid(provisioner).await.ok(); // best-effort
+        fix_permissions(provisioner).await.ok(); // best-effort
 
         // Update symlink for future reboots, then start via compose directly.
         let overlay = crate::domain::agent::overlay_path(name);
@@ -450,6 +461,7 @@ async fn restart_vm(
     // Persist VM IP for container access.
     persist_vm_ip(provisioner).await.ok(); // best-effort
     persist_docker_gid(provisioner).await.ok(); // best-effort
+    fix_permissions(provisioner).await.ok(); // best-effort
 
     // Pull images BEFORE starting services.
     reporter.begin_stage("verifying components...");
