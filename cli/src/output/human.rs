@@ -6,6 +6,7 @@ use polis_common::types::StatusOutput;
 use polis_common::types::{AgentHealth, WorkspaceState};
 
 use crate::application::ports::UpdateInfo;
+use crate::application::services::agent::{ActivateOutcome, AgentOutcome};
 use crate::application::services::workspace::DeleteOutcome;
 use crate::application::services::workspace::start::StartOutcome;
 use crate::application::services::workspace::stop::StopOutcome;
@@ -127,6 +128,29 @@ impl<'a> HumanRenderer<'a> {
                 step.title,
                 step.command.style(self.ctx.styles.command)
             ));
+        }
+    }
+
+    /// Render agent activation outcome with health warning and onboarding.
+    pub fn render_activate_outcome(&self, outcome: &ActivateOutcome) {
+        let (o, unhealthy) = match outcome {
+            ActivateOutcome::Activated(o) | ActivateOutcome::AlreadyActive(o) => (o, false),
+            ActivateOutcome::ActivatedUnhealthy(o) => (o, true),
+            ActivateOutcome::SwapRequired { .. } => return,
+        };
+        if unhealthy {
+            self.ctx
+                .warn("Agent activated but health check timed out — it may not be ready yet.");
+        }
+        match o {
+            AgentOutcome::Activated { agent, onboarding } => {
+                self.render_agent_activated(agent, false);
+                self.render_onboarding(onboarding);
+            }
+            AgentOutcome::AlreadyActive { agent, onboarding } => {
+                self.render_agent_activated(agent, true);
+                self.render_onboarding(onboarding);
+            }
         }
     }
 

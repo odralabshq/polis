@@ -683,6 +683,10 @@ spec:
             if cmd.contains("compose") && cmd.contains("down") {
                 return if self.compose_down_fails { Ok(fail_output()) } else { Ok(ok_output(b"")) };
             }
+            // Health check: docker compose ps --format json workspace
+            if cmd.contains("compose") && cmd.contains("ps") {
+                return Ok(ok_output(br#"{"State":"running","Health":"healthy"}"#));
+            }
             // test -d, rm -rf, ln -sf, rm -f, cat agent.yaml
             if args.first() == Some(&"cat") {
                 return Ok(ok_output(MANIFEST_YAML.as_bytes()));

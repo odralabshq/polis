@@ -20,6 +20,7 @@ use polis_common::agent::OnboardingStep;
 use polis_common::types::StatusOutput;
 
 use crate::application::ports::UpdateInfo;
+use crate::application::services::agent::ActivateOutcome;
 use crate::application::services::workspace::DeleteOutcome;
 use crate::application::services::workspace::start::StartOutcome;
 use crate::application::services::workspace::stop::StopOutcome;
@@ -87,6 +88,14 @@ impl Renderer<'_> {
     pub fn render_agent_activated(&self, agent: &str, already_active: bool) {
         match self {
             Renderer::Human(r) => r.render_agent_activated(agent, already_active),
+            Renderer::Json(_) => {} // JSON output handled separately
+        }
+    }
+
+    /// Render agent activation outcome (activated, already active, or unhealthy).
+    pub fn render_activate_outcome(&self, outcome: &ActivateOutcome) {
+        match self {
+            Renderer::Human(r) => r.render_activate_outcome(outcome),
             Renderer::Json(_) => {} // JSON output handled separately
         }
     }
