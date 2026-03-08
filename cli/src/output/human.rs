@@ -43,6 +43,15 @@ impl<'a> HumanRenderer<'a> {
         if let Some(uptime) = status.workspace.uptime_seconds {
             self.ctx.kv("Uptime:", &format_uptime(uptime));
         }
+        if let Some(containers) = &status.containers {
+            self.ctx.kv(
+                "Containers:",
+                &format!(
+                    "{}/{} healthy ({} unhealthy, {} starting)",
+                    containers.healthy, containers.total, containers.unhealthy, containers.starting
+                ),
+            );
+        }
 
         println!();
         self.ctx.header("Security:");
@@ -104,6 +113,19 @@ impl<'a> HumanRenderer<'a> {
         );
         println!();
         println!("  {:<20} {}", "security.level:", config.security.level);
+        println!(
+            "  {:<20} {}",
+            "control_plane.url:", config.control_plane.url
+        );
+        println!(
+            "  {:<20} {}",
+            "control_plane.token:",
+            if config.control_plane.token.is_some() {
+                "(configured)"
+            } else {
+                "(not set)"
+            }
+        );
         println!();
         println!("  {}", "Environment:".style(self.ctx.styles.bold));
         println!(
@@ -310,8 +332,8 @@ mod tests {
     use super::*;
     use crate::application::services::workspace_status::workspace_unknown;
     use polis_common::types::{
-        AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
-        WorkspaceState, WorkspaceStatus,
+        AgentHealth, AgentStatus, ContainerHealthSummary, EventSeverity, SecurityEvents,
+        SecurityStatus, StatusOutput, WorkspaceState, WorkspaceStatus,
     };
 
     #[test]
@@ -391,6 +413,12 @@ mod tests {
                 name: "claude-dev".to_string(),
                 status: AgentHealth::Healthy,
             }),
+            containers: Some(ContainerHealthSummary {
+                total: 6,
+                healthy: 5,
+                unhealthy: 1,
+                starting: 0,
+            }),
             security: SecurityStatus {
                 traffic_inspection: true,
                 credential_protection: true,
@@ -420,6 +448,7 @@ mod tests {
                 uptime_seconds: None,
             },
             agent: None,
+            containers: None,
             security: SecurityStatus {
                 traffic_inspection: false,
                 credential_protection: false,
@@ -433,5 +462,6 @@ mod tests {
         let json = serde_json::to_string(&status).expect("serialize");
         assert!(!json.contains("uptime_seconds"));
         assert!(!json.contains(r#""agent""#));
+        assert!(!json.contains(r#""containers""#));
     }
 }

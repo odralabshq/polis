@@ -81,16 +81,21 @@ typedef enum {
 /* Valkey polling constants */
 #define LEVEL_POLL_INTERVAL 1      /* Requests between Valkey polls */
 #define LEVEL_POLL_MAX      10000  /* Max backoff interval (requests) */
+#define BYPASS_POLL_INTERVAL 100   /* Requests between bypass cache refreshes */
 
 /* Security level state — Valkey connection and polling */
 static redisContext *valkey_level_ctx = NULL;
 static security_level_t current_level = LEVEL_BALANCED;
 static unsigned long request_counter = 0;
 static unsigned long current_poll_interval = LEVEL_POLL_INTERVAL;
+static char **runtime_bypass_domains = NULL;
+static size_t runtime_bypass_count = 0;
+static unsigned long bypass_poll_interval = BYPASS_POLL_INTERVAL;
 
 /*
  * Mutex protecting all Valkey-related shared state:
- * valkey_level_ctx, current_level, request_counter, current_poll_interval.
+ * valkey_level_ctx, current_level, request_counter, current_poll_interval,
+ * runtime_bypass_domains, runtime_bypass_count, bypass_poll_interval.
  * c-ICAP uses MPMT (multi-threaded) model — concurrent requests call
  * apply_security_policy() from different threads. hiredis contexts are
  * NOT thread-safe, so all access must be serialized.
@@ -522,6 +527,150 @@ static void refresh_security_level(void)
     freeReplyObject(reply);
 }
 
+static void free_runtime_bypass_domains(char **domains, size_t count)
+{
+    size_t i;
+
+    if (domains == NULL)
+        return;
+
+    for (i = 0; i < count; i++) {
+        free(domains[i]);
+    }
+    free(domains);
+}
+
+static int domain_matches_entry(const char *host, const char *entry)
+{
+    size_t hlen;
+    size_t dlen;
+
+    if (host == NULL || host[0] == '\0' || entry == NULL || entry[0] == '\0')
+        return 0;
+
+    hlen = strlen(host);
+    dlen = strlen(entry);
+
+    if (entry[0] == '.') {
+        if (hlen >= dlen &&
+            strcasecmp(host + (hlen - dlen), entry) == 0) {
+            return 1;
+        }
+        return strcasecmp(host, entry + 1) == 0;
+    }
+
+    return strcasecmp(host, entry) == 0;
+}
+
+static void refresh_runtime_bypass_domains(void)
+{
+    char cursor[32];
+    char next_cursor[32];
+    char **new_domains = NULL;
+    size_t new_count = 0;
+    redisReply *reply = NULL;
+    size_t i;
+
+    strcpy(cursor, "0");
+
+    if (valkey_level_ctx == NULL) {
+        if (dlp_valkey_init_locked() != 0)
+            return;
+    }
+
+    do {
+        reply = redisCommand(
+            valkey_level_ctx,
+            "SCAN %s MATCH polis:config:bypass:* COUNT 200",
+            cursor);
+
+        if (reply == NULL || reply->type == REDIS_REPLY_ERROR ||
+            reply->type != REDIS_REPLY_ARRAY || reply->elements != 2 ||
+            reply->element[0] == NULL || reply->element[1] == NULL ||
+            reply->element[0]->str == NULL ||
+            reply->element[1]->type != REDIS_REPLY_ARRAY) {
+            if (reply)
+                freeReplyObject(reply);
+            if (valkey_level_ctx) {
+                redisFree(valkey_level_ctx);
+                valkey_level_ctx = NULL;
+            }
+            free_runtime_bypass_domains(new_domains, new_count);
+            bypass_poll_interval *= 2;
+            if (bypass_poll_interval > LEVEL_POLL_MAX)
+                bypass_poll_interval = LEVEL_POLL_MAX;
+            ci_debug_printf(1, "polis_dlp: bypass refresh failed, "
+                               "keeping %zu cached domains, next poll in "
+                               "%lu requests\n",
+                            runtime_bypass_count,
+                            bypass_poll_interval);
+            return;
+        }
+
+        strncpy(next_cursor, reply->element[0]->str, sizeof(next_cursor) - 1);
+        next_cursor[sizeof(next_cursor) - 1] = '\0';
+
+        for (i = 0; i < reply->element[1]->elements; i++) {
+            redisReply *key_reply = reply->element[1]->element[i];
+            const char *key;
+            const char *domain;
+            char **resized;
+
+            if (key_reply == NULL || key_reply->type != REDIS_REPLY_STRING ||
+                key_reply->str == NULL)
+                continue;
+
+            key = key_reply->str;
+            if (strncmp(key, "polis:config:bypass:", 21) != 0)
+                continue;
+
+            domain = key + 21;
+            resized = realloc(new_domains, sizeof(char *) * (new_count + 1));
+            if (resized == NULL) {
+                freeReplyObject(reply);
+                free_runtime_bypass_domains(new_domains, new_count);
+                bypass_poll_interval *= 2;
+                if (bypass_poll_interval > LEVEL_POLL_MAX)
+                    bypass_poll_interval = LEVEL_POLL_MAX;
+                ci_debug_printf(1, "polis_dlp: bypass refresh failed, "
+                                   "out of memory while resizing cache\n");
+                return;
+            }
+            new_domains = resized;
+            new_domains[new_count] = strdup(domain);
+            if (new_domains[new_count] == NULL) {
+                freeReplyObject(reply);
+                free_runtime_bypass_domains(new_domains, new_count);
+                bypass_poll_interval *= 2;
+                if (bypass_poll_interval > LEVEL_POLL_MAX)
+                    bypass_poll_interval = LEVEL_POLL_MAX;
+                ci_debug_printf(1, "polis_dlp: bypass refresh failed, "
+                                   "out of memory while copying domain\n");
+                return;
+            }
+            new_count++;
+        }
+
+        strcpy(cursor, next_cursor);
+        freeReplyObject(reply);
+        reply = NULL;
+    } while (strcmp(cursor, "0") != 0);
+
+    {
+        char **old_domains = runtime_bypass_domains;
+        size_t old_count = runtime_bypass_count;
+
+        runtime_bypass_domains = new_domains;
+        runtime_bypass_count = new_count;
+        bypass_poll_interval = BYPASS_POLL_INTERVAL;
+
+        free_runtime_bypass_domains(old_domains, old_count);
+    }
+
+    ci_debug_printf(5, "polis_dlp: Runtime bypass cache refreshed "
+                       "(%zu domains)\n", runtime_bypass_count);
+}
+
 /*
  * is_new_domain - Check if a host is a known-good domain.
  *
@@ -533,8 +682,10 @@ static void refresh_security_level(void)
  *   - "github.com" matches via exact match (domain + 1)
  *
  * Returns 0 if the host is a known domain, 1 if new.
+ *
+ * Caller must hold valkey_mutex while reading runtime_bypass_domains.
  */
-static int is_new_domain(const char *host)
+static int is_new_domain_locked(const char *host)
 {
     static const char *known_domains[] = {
         /* ── LLM / AI providers ─────────────────────────────────────── */
@@ -673,27 +824,20 @@ static int is_new_domain(const char *host)
 
         NULL
     };
-    size_t hlen, dlen;
     int i;
 
     if (host == NULL || host[0] == '\0')
         return 1;
 
-    hlen = strlen(host);
-
     for (i = 0; known_domains[i] != NULL; i++) {
-        dlen = strlen(known_domains[i]);
-
-        /* Suffix match: host ends with ".domain.com" */
-        if (hlen >= dlen &&
-            strcasecmp(host + (hlen - dlen),
-                       known_domains[i]) == 0) {
+        if (domain_matches_entry(host, known_domains[i])) {
             return 0;  /* known domain */
         }
+    }
 
-        /* Exact match without leading dot */
-        if (strcasecmp(host, known_domains[i] + 1) == 0) {
-            return 0;  /* known domain */
+    for (i = 0; i < (int)runtime_bypass_count; i++) {
+        if (domain_matches_entry(host, runtime_bypass_domains[i])) {
+            return 0;  /* runtime bypass domain */
         }
     }
 
@@ -722,22 +866,23 @@ static int apply_security_policy(const char *host, int has_credential)
     int new_domain;
     security_level_t level_snapshot;
 
-    /* Lock: increment counter, poll if needed, snapshot level */
+    /* Lock: increment counter, poll if needed, snapshot level and bypass cache */
     pthread_mutex_lock(&valkey_mutex);
     request_counter++;
     if (request_counter % current_poll_interval == 0) {
         refresh_security_level();
     }
+    if (request_counter % bypass_poll_interval == 0) {
+        refresh_runtime_bypass_domains();
+    }
     level_snapshot = current_level;
+    new_domain = is_new_domain_locked(host);
     pthread_mutex_unlock(&valkey_mutex);
 
     /* Credentials always trigger a HITL prompt at any level */
     if (has_credential) {
         return 1;  /* prompt */
     }
-
-    /* Check if this is a new (unknown) domain */
-    new_domain = is_new_domain(host);
 
     if (!new_domain) {
         return 0;  /* known domain, no credential → allow */
@@ -959,6 +1104,13 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
     ci_service_enable_204(srv_xdata);
 
     pattern_count = 0;
+    request_counter = 0;
+    current_level = LEVEL_BALANCED;
+    current_poll_interval = LEVEL_POLL_INTERVAL;
+    bypass_poll_interval = BYPASS_POLL_INTERVAL;
+    free_runtime_bypass_domains(runtime_bypass_domains, runtime_bypass_count);
+    runtime_bypass_domains = NULL;
+    runtime_bypass_count = 0;
 
     ci_debug_printf(3, "polis_dlp: Initializing service, "
                        "loading config from /etc/c-icap/polis_dlp.conf\n");
@@ -1133,6 +1285,9 @@ void dlp_close_service(void)
         redisFree(valkey_level_ctx);
         valkey_level_ctx = NULL;
     }
+    free_runtime_bypass_domains(runtime_bypass_domains, runtime_bypass_count);
+    runtime_bypass_domains = NULL;
+    runtime_bypass_count = 0;
     pthread_mutex_unlock(&valkey_mutex);
     pthread_mutex_destroy(&valkey_mutex);
     

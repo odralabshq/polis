@@ -2,11 +2,14 @@ use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if std::env::args_os()
-        .nth(1)
-        .is_some_and(|arg| arg == "--healthcheck")
-    {
-        return cp_server::run_healthcheck().await;
+    if let Some(arg) = std::env::args_os().nth(1) {
+        if arg == "--healthcheck" {
+            return cp_server::run_healthcheck().await;
+        }
+        if arg == "--version" {
+            println!("cp-server {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
     }
 
     cp_server::run().await

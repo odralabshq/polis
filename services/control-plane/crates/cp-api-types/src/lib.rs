@@ -5,6 +5,23 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+mod config;
+mod observability;
+mod workspace;
+
+pub use config::{
+    BypassAddRequest, BypassListResponse, ConfigAgentResponse, ConfigEvent, ConfigResponse,
+    SecurityConfigResponse, SecurityOverview,
+};
+pub use observability::{
+    ContainerMetrics, LogLine, LogsResponse, MetricsHistoryResponse, MetricsPoint, MetricsResponse,
+    SystemMetrics,
+};
+pub use workspace::{
+    AgentResponse, ContainerInfo, ContainerSummary, ContainersResponse, PortMapping, ResourceUsage,
+    WorkspaceResponse,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StatusResponse {
     pub security_level: String,

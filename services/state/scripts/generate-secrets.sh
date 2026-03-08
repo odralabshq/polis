@@ -23,6 +23,11 @@ generate_password() {
     openssl rand -base64 32 | tr -d '/+=' | head -c 32
 }
 
+generate_token() {
+    local prefix="$1"
+    printf '%s_%s' "${prefix}" "$(openssl rand -hex 16)"
+}
+
 ensure_password_file() {
     local path="$1"
     ensure_output_file_path "${path}"
@@ -37,6 +42,21 @@ ensure_password_file() {
     fi
 }
 
+ensure_token_file() {
+    local path="$1"
+    local prefix="$2"
+    ensure_output_file_path "${path}"
+    if [[ -s "${path}" ]]; then
+        tr -d '[:space:]' < "${path}"
+    else
+        local token
+        token="$(generate_token "${prefix}")"
+        printf '%s' "${token}" > "${path}"
+        chmod 600 "${path}" 2>/dev/null || true
+        printf '%s' "${token}"
+    fi
+}
+
 ensure_output_file_path() {
     local path="$1"
     if [[ -d "${path}" ]]; then
@@ -45,6 +65,36 @@ ensure_output_file_path() {
             return 1
         fi
         rmdir "${path}"
+    fi
+}
+
+upsert_env_var() {
+    local key="$1"
+    local value="$2"
+    touch "${ENV_FILE}"
+    sed -i "/^${key}=.*/d" "${ENV_FILE}"
+    printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+}
+
+detect_docker_gid() {
+    if [[ -n "${DOCKER_GID:-}" ]]; then
+        echo "${DOCKER_GID}"
+        return
+    fi
+    if [[ -n "${WSL_DISTRO_NAME:-}" || -n "${WSL_INTEROP:-}" ]]; then
+        echo "0"
+        return
+    fi
+    case "$(uname -s 2>/dev/null || true)" in
+        MINGW*|MSYS*|CYGWIN*)
+            echo "0"
+            return
+            ;;
+    esac
+    if [[ -S /var/run/docker.sock ]]; then
+        stat -c '%g' /var/run/docker.sock 2>/dev/null || echo "999"
+    else
+        echo "999"
     fi
 }
 
@@ -63,6 +113,18 @@ PASS_GOV_REQMOD="$(ensure_password_file "${OUTPUT_DIR}/valkey_reqmod_password.tx
 PASS_GOV_RESPMOD="$(ensure_password_file "${OUTPUT_DIR}/valkey_respmod_password.txt")"
 PASS_LOG_WRITER="$(ensure_password_file "${OUTPUT_DIR}/valkey_log_writer_password.txt")"
 PASS_CP_SERVER="$(ensure_password_file "${OUTPUT_DIR}/valkey_cp_server_password.txt")"
+
+AUTH_ENABLED="${POLIS_CP_AUTH_ENABLED:-false}"
+AUTH_ENABLED="$(printf '%s' "${AUTH_ENABLED}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${AUTH_ENABLED}" == "true" ]]; then
+    echo ""
+    echo "--- Ensuring control-plane auth token files ---"
+    CP_ADMIN_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_admin_token.txt" "polis_admin")"
+    CP_OPERATOR_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_operator_token.txt" "polis_operator")"
+    CP_VIEWER_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_viewer_token.txt" "polis_viewer")"
+    CP_AGENT_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_agent_token.txt" "polis_agent")"
+    echo "Auth token files are present for enabled control-plane auth."
+fi
 
 echo "Password files are present for all Valkey users."
 
@@ -90,11 +152,11 @@ user default off
 user governance-reqmod on #${HASH_GOV_REQMOD} ~polis:ott:* ~polis:blocked:* ~polis:approved:* ~polis:log:* -@all +get +set +setex +setnx +exists +zadd
 user governance-respmod on #${HASH_GOV_RESPMOD} ~polis:ott:* ~polis:blocked:* ~polis:approved:* ~polis:log:* -@all +get +del +setex +exists +zadd
 user mcp-agent on #${HASH_MCP_AGENT} ~polis:blocked:* ~polis:approved:* -@all +GET +SET +SETEX +MGET +EXISTS +SCAN +PING +TTL (~polis:config:security_level -@all +GET +PING) (~polis:log:events -@all +ZADD +ZREMRANGEBYRANK +ZREVRANGE +ZCARD +PING)
-user cp-server on #${HASH_CP_SERVER} ~polis:blocked:* ~polis:approved:* ~polis:config:security_level ~polis:config:auto_approve:* ~polis:log:events -@all +GET +SET +SETEX +DEL +MGET +EXISTS +SCAN +PING +ZADD +ZREVRANGE +ZCARD +ZREMRANGEBYRANK
+user cp-server on #${HASH_CP_SERVER} ~polis:blocked:* ~polis:approved:* ~polis:config:security_level ~polis:config:auto_approve:* ~polis:config:bypass:* ~polis:auth:tokens:* ~polis:log:events -@all +GET +SET +SETEX +DEL +MGET +EXISTS +SCAN +PING +INFO +ZADD +ZREVRANGE +ZCARD +ZREMRANGEBYRANK
 user mcp-admin on #${HASH_MCP_ADMIN} ~polis:* +@all -@dangerous -FLUSHALL -FLUSHDB -DEBUG -CONFIG -SHUTDOWN
 user log-writer on #${HASH_LOG_WRITER} ~polis:log:events -@all +ZADD +ZRANGEBYSCORE +ZCARD +PING
 user healthcheck on #${HASH_HEALTHCHECK} -@all +PING +INFO
-user dlp-reader on #${HASH_DLP} ~polis:config:security_level -@all +GET +PING
+user dlp-reader on #${HASH_DLP} ~polis:config:security_level ~polis:config:bypass:* -@all +GET +SCAN +PING
 EOF
 
 echo "valkey_users.acl written"
@@ -107,7 +169,11 @@ if [[ -f "${ENV_FILE}" ]]; then
     sed -i '/^VALKEY_MCP_ADMIN_PASS=/d' "${ENV_FILE}"
     sed -i '/^VALKEY_REQMOD_PASS=/d' "${ENV_FILE}"
     sed -i '/^VALKEY_RESPMOD_PASS=/d' "${ENV_FILE}"
+    sed -i '/^DOCKER_GID=/d' "${ENV_FILE}"
 fi
+
+DOCKER_GID="$(detect_docker_gid)"
+upsert_env_var "DOCKER_GID" "${DOCKER_GID}"
 
 echo ".env cleaned (passwords removed, now using Docker secrets)"
 
@@ -123,3 +189,9 @@ echo "  valkey_respmod_password.txt      (ICAP RESPMOD)"
 echo "  valkey_log_writer_password.txt   (log writer)"
 echo "  valkey_cp_server_password.txt    (control plane)"
 echo "  valkey_users.acl                 (ACL with hashes)"
+if [[ "${AUTH_ENABLED}" == "true" ]]; then
+    echo "  cp_admin_token.txt               (control plane admin token)"
+    echo "  cp_operator_token.txt            (control plane operator token)"
+    echo "  cp_viewer_token.txt              (control plane viewer token)"
+    echo "  cp_agent_token.txt               (control plane agent token)"
+fi

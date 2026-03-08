@@ -1,8 +1,15 @@
 //! Polis control-plane server library.
 
+#![cfg_attr(test, allow(clippy::expect_used))]
+
+pub mod auth;
 pub mod config;
+pub mod config_api;
+pub mod docker;
 pub mod error;
+pub mod observability_api;
 pub mod state;
+pub mod workspace_api;
 
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
@@ -12,6 +19,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::{HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
+    middleware,
     response::{
         Html,
         sse::{Event, KeepAlive, Sse},
@@ -32,22 +40,31 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
+    auth::Permission,
     config::Config,
-    error::AppResult,
-    state::{AppState, GovernanceStore},
+    error::{AppError, AppResult},
+    state::{
+        AppState, AuthStore, GovernanceStore, LogsStore, MetricsStore, RuntimeConfigStore,
+        WorkspaceStore,
+    },
 };
 
 const INDEX_HTML: &str = include_str!("../web/index.html");
 const DEFAULT_EVENT_LIMIT: usize = 50;
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const HEALTHCHECK_TIMEOUT: Duration = Duration::from_secs(2);
+const WORKSPACE_POLL_TICKS: u64 = 5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BroadcastMessage {
     Status,
     Blocked,
     EventLog,
     Rules,
+    Metrics,
+    Workspace,
+    Agent,
+    Config(cp_api_types::ConfigEvent),
     Full,
 }
 
@@ -71,32 +88,99 @@ impl<S> HttpState<S> {
 /// Build the Phase 1 control-plane router.
 pub fn build_router<S>(state: HttpState<S>) -> Router
 where
-    S: GovernanceStore,
+    S: GovernanceStore + WorkspaceStore + MetricsStore + LogsStore + RuntimeConfigStore + AuthStore,
 {
     let api: Router<HttpState<S>> = Router::new()
-        .route("/status", get(status::<S>))
-        .route("/blocked", get(blocked::<S>))
-        .route("/blocked/{id}/approve", post(approve::<S>))
-        .route("/blocked/{id}/deny", post(deny::<S>))
-        .route("/events", get(events::<S>))
+        .route(
+            "/status",
+            get(status::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadDashboard)
+            })),
+        )
+        .route(
+            "/workspace",
+            get(workspace_api::workspace::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadDashboard)
+            })),
+        )
+        .route(
+            "/agent",
+            get(workspace_api::agent::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadDashboard)
+            })),
+        )
+        .route(
+            "/containers",
+            get(workspace_api::containers::<S>).route_layer(middleware::from_fn(
+                |request, next| auth::require_permission(request, next, Permission::ReadDashboard),
+            )),
+        )
+        .route(
+            "/blocked",
+            get(blocked::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadBlocked)
+            })),
+        )
+        .route(
+            "/blocked/{id}/approve",
+            post(approve::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::MutateGovernance)
+            })),
+        )
+        .route(
+            "/blocked/{id}/deny",
+            post(deny::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::MutateGovernance)
+            })),
+        )
+        .route(
+            "/events",
+            get(events::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadDashboard)
+            })),
+        )
         .route(
             "/config/level",
-            get(get_security_level::<S>).put(set_security_level::<S>),
+            get(get_security_level::<S>)
+                .route_layer(middleware::from_fn(|request, next| {
+                    auth::require_permission(request, next, Permission::ReadLevel)
+                }))
+                .put(set_security_level::<S>)
+                .route_layer(middleware::from_fn(|request, next| {
+                    auth::require_permission(request, next, Permission::MutateConfig)
+                })),
         )
         .route(
             "/config/rules",
             get(list_rules::<S>)
+                .route_layer(middleware::from_fn(|request, next| {
+                    auth::require_permission(request, next, Permission::ReadDashboard)
+                }))
                 .post(add_rule::<S>)
+                .route_layer(middleware::from_fn(|request, next| {
+                    auth::require_permission(request, next, Permission::MutateConfig)
+                }))
                 .delete(delete_rule::<S>),
         )
-        .route("/stream", get(stream_events::<S>))
+        .merge(config_api::routes::<S>())
+        .merge(observability_api::routes::<S>())
+        .route(
+            "/stream",
+            get(stream_events::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadDashboard)
+            })),
+        )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware::<S>,
+        ))
         .with_state(state.clone());
 
     Router::<HttpState<S>>::new()
         .route("/", get(index))
         .route("/health", get(health))
         .nest("/api/v1", api)
-        .layer(build_cors())
+        .layer(build_cors(state.store.auth_enabled()))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -178,7 +262,7 @@ pub async fn run_healthcheck() -> Result<()> {
 #[must_use]
 pub fn spawn_poller<S>(state: HttpState<S>) -> JoinHandle<()>
 where
-    S: GovernanceStore,
+    S: GovernanceStore + WorkspaceStore + MetricsStore,
 {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(POLL_INTERVAL);
@@ -188,9 +272,14 @@ where
         let mut last_blocked: Option<BlockedListResponse> = None;
         let mut last_events: Option<EventsResponse> = None;
         let mut last_rules: Option<RulesResponse> = None;
+        let mut last_workspace = None;
+        let mut last_agent = None;
+        let mut last_metrics = None;
+        let mut ticks = 0_u64;
 
         loop {
             interval.tick().await;
+            ticks = ticks.wrapping_add(1);
 
             match state.store.get_status().await {
                 Ok(status) => {
@@ -230,6 +319,47 @@ where
                     }
                 }
                 Err(error) => tracing::warn!(%error, "failed to poll rules snapshot"),
+            }
+
+            if !ticks.is_multiple_of(WORKSPACE_POLL_TICKS) {
+                continue;
+            }
+
+            match state.store.get_workspace().await {
+                Ok(workspace) => {
+                    if last_workspace.as_ref() != Some(&workspace) {
+                        last_workspace = Some(workspace);
+                        state.notify(BroadcastMessage::Workspace);
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "failed to poll workspace snapshot"),
+            }
+
+            match state.store.get_agent().await {
+                Ok(agent) => {
+                    if last_agent.as_ref() != Some(&agent) {
+                        last_agent = Some(agent);
+                        state.notify(BroadcastMessage::Agent);
+                    }
+                }
+                Err(AppError::NotFound(error)) => {
+                    tracing::debug!(%error, "no active agent detected during polling");
+                }
+                Err(error) => tracing::warn!(%error, "failed to poll agent snapshot"),
+            }
+
+            if !ticks.is_multiple_of(docker::METRICS_INTERVAL_SECONDS) {
+                continue;
+            }
+
+            match state.store.get_metrics().await {
+                Ok(metrics) => {
+                    if last_metrics.as_ref() != Some(&metrics) {
+                        last_metrics = Some(metrics);
+                        state.notify(BroadcastMessage::Metrics);
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "failed to poll metrics snapshot"),
             }
         }
     })
@@ -317,6 +447,11 @@ where
 {
     let response = state.store.set_security_level(&request.level).await?;
     state.notify(BroadcastMessage::Full);
+    state.notify(BroadcastMessage::Config(cp_api_types::ConfigEvent {
+        event_type: "level_changed".to_string(),
+        level: Some(request.level.to_ascii_lowercase()),
+        domain: None,
+    }));
     Ok(Json(response))
 }
 
@@ -360,7 +495,7 @@ async fn stream_events<S>(
     State(state): State<HttpState<S>>,
 ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>>
 where
-    S: GovernanceStore,
+    S: GovernanceStore + WorkspaceStore + MetricsStore,
 {
     let mut receiver = state.broadcaster.subscribe();
     let stream = stream! {
@@ -386,34 +521,65 @@ where
 
 async fn snapshot_events<S>(store: &S, message: BroadcastMessage) -> Vec<Event>
 where
-    S: GovernanceStore,
+    S: GovernanceStore + WorkspaceStore + MetricsStore,
 {
     let mut events = Vec::new();
 
-    if matches!(message, BroadcastMessage::Status | BroadcastMessage::Full)
+    if matches!(&message, BroadcastMessage::Status | BroadcastMessage::Full)
         && let Ok(status) = store.get_status().await
         && let Some(event) = serialize_sse_event("status", &status)
     {
         events.push(event);
     }
 
-    if matches!(message, BroadcastMessage::Blocked | BroadcastMessage::Full)
+    if matches!(&message, BroadcastMessage::Blocked | BroadcastMessage::Full)
         && let Ok(blocked) = store.list_blocked().await
         && let Some(event) = serialize_sse_event("blocked", &blocked)
     {
         events.push(event);
     }
 
-    if matches!(message, BroadcastMessage::EventLog | BroadcastMessage::Full)
-        && let Ok(events_response) = store.list_events(DEFAULT_EVENT_LIMIT).await
+    if matches!(
+        &message,
+        BroadcastMessage::EventLog | BroadcastMessage::Full
+    ) && let Ok(events_response) = store.list_events(DEFAULT_EVENT_LIMIT).await
         && let Some(event) = serialize_sse_event("event_log", &events_response)
     {
         events.push(event);
     }
 
-    if matches!(message, BroadcastMessage::Rules | BroadcastMessage::Full)
+    if matches!(&message, BroadcastMessage::Rules | BroadcastMessage::Full)
         && let Ok(rules) = store.list_rules().await
         && let Some(event) = serialize_sse_event("rules", &rules)
+    {
+        events.push(event);
+    }
+
+    if matches!(
+        &message,
+        BroadcastMessage::Workspace | BroadcastMessage::Full
+    ) && let Ok(workspace) = store.get_workspace().await
+        && let Some(event) = serialize_sse_event("workspace", &workspace)
+    {
+        events.push(event);
+    }
+
+    if matches!(&message, BroadcastMessage::Agent | BroadcastMessage::Full)
+        && let Ok(agent) = store.get_agent().await
+        && let Some(event) = serialize_sse_event("agent", &agent)
+    {
+        events.push(event);
+    }
+
+    if matches!(&message, BroadcastMessage::Metrics | BroadcastMessage::Full)
+        && let Ok(metrics) = store.get_metrics().await
+        && let Some(event) = serialize_sse_event("metrics", &metrics)
+    {
+        events.push(event);
+    }
+
+    if let BroadcastMessage::Config(config_event) = message
+        && let Some(event) = serialize_sse_event("config", &config_event)
     {
         events.push(event);
     }
@@ -425,8 +591,16 @@ fn serialize_sse_event<T>(name: &str, payload: &T) -> Option<Event>
 where
     T: serde::Serialize,
 {
+    serialize_sse_message(name, payload)
+        .map(|(event, json)| Event::default().event(event).data(json))
+}
+
+fn serialize_sse_message<T>(name: &str, payload: &T) -> Option<(String, String)>
+where
+    T: serde::Serialize,
+{
     match serde_json::to_string(payload) {
-        Ok(json) => Some(Event::default().event(name).data(json)),
+        Ok(json) => Some((name.to_string(), json)),
         Err(error) => {
             tracing::warn!(%error, event = name, "failed to serialize SSE payload");
             None
@@ -434,7 +608,13 @@ where
     }
 }
 
-fn build_cors() -> CorsLayer {
+fn build_cors(auth_enabled: bool) -> CorsLayer {
+    let allow_headers = if auth_enabled {
+        vec![CONTENT_TYPE, axum::http::header::AUTHORIZATION]
+    } else {
+        vec![CONTENT_TYPE]
+    };
+
     CorsLayer::new()
         .allow_origin([
             HeaderValue::from_static("http://localhost:9080"),
@@ -447,7 +627,7 @@ fn build_cors() -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([CONTENT_TYPE])
+        .allow_headers(allow_headers)
 }
 
 async fn shutdown_signal() {
@@ -470,5 +650,107 @@ async fn shutdown_signal() {
     tokio::select! {
         () = ctrl_c => {}
         () = terminate => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use chrono::{TimeZone, Utc};
+    use cp_api_types::{
+        AgentResponse, ConfigEvent, ContainerMetrics, MetricsResponse, PortMapping, ResourceUsage,
+        SystemMetrics, WorkspaceResponse,
+    };
+
+    use super::serialize_sse_message;
+
+    #[test]
+    fn serializes_metrics_sse_payload() {
+        let payload = MetricsResponse {
+            timestamp: Utc
+                .with_ymd_and_hms(2026, 3, 6, 8, 0, 0)
+                .single()
+                .expect("valid timestamp"),
+            system: SystemMetrics {
+                total_memory_usage_mb: 1_024,
+                total_memory_limit_mb: 8_192,
+                total_cpu_percent: 12.5,
+                container_count: 8,
+            },
+            containers: vec![ContainerMetrics {
+                service: "workspace".to_string(),
+                status: "running".to_string(),
+                health: "healthy".to_string(),
+                memory_usage_mb: 512,
+                memory_limit_mb: 4_096,
+                cpu_percent: 8.1,
+                network_rx_bytes: 1,
+                network_tx_bytes: 2,
+                pids: 3,
+            }],
+        };
+
+        let (event, json) = serialize_sse_message("metrics", &payload).expect("serialize");
+        assert_eq!(event, "metrics");
+        assert!(json.contains("\"total_memory_usage_mb\":1024"));
+    }
+
+    #[test]
+    fn serializes_workspace_and_agent_sse_payloads() {
+        let workspace = WorkspaceResponse {
+            status: "running".to_string(),
+            uptime_seconds: Some(3_600),
+            containers: cp_api_types::ContainerSummary {
+                total: 11,
+                healthy: 10,
+                unhealthy: 1,
+                starting: 0,
+            },
+            networks: HashMap::from([("gateway_bridge".to_string(), "10.30.1.0/24".to_string())]),
+        };
+        let agent = AgentResponse {
+            name: "openclaw".to_string(),
+            display_name: "OpenClaw".to_string(),
+            version: "1.0.0".to_string(),
+            status: "running".to_string(),
+            health: "healthy".to_string(),
+            uptime_seconds: Some(3_500),
+            ports: vec![PortMapping {
+                container: 18_789,
+                host: 18_789,
+                protocol: "tcp".to_string(),
+            }],
+            resources: ResourceUsage {
+                memory_usage_mb: 512,
+                memory_limit_mb: 4_096,
+                cpu_percent: 8.1,
+            },
+            stale: false,
+        };
+
+        let (workspace_event, workspace_json) =
+            serialize_sse_message("workspace", &workspace).expect("workspace serialize");
+        let (agent_event, agent_json) =
+            serialize_sse_message("agent", &agent).expect("agent serialize");
+
+        assert_eq!(workspace_event, "workspace");
+        assert!(workspace_json.contains("\"status\":\"running\""));
+        assert_eq!(agent_event, "agent");
+        assert!(agent_json.contains("\"display_name\":\"OpenClaw\""));
+    }
+
+    #[test]
+    fn serializes_config_sse_payload() {
+        let payload = ConfigEvent {
+            event_type: "level_changed".to_string(),
+            level: Some("strict".to_string()),
+            domain: None,
+        };
+
+        let (event, json) = serialize_sse_message("config", &payload).expect("serialize");
+        assert_eq!(event, "config");
+        assert!(json.contains("\"type\":\"level_changed\""));
+        assert!(json.contains("\"level\":\"strict\""));
     }
 }

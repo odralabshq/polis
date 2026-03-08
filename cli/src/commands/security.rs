@@ -52,9 +52,13 @@ pub async fn run(
     app: &AppContext,
     mp: &impl ShellExecutor,
 ) -> Result<ExitCode> {
+    let reporter = app.terminal_reporter();
+
     match cmd {
         SecurityCommand::Status => {
-            let s = security_service::get_status(&app.config_store, mp).await?;
+            let s =
+                security_service::get_status(&app.config_store, &reporter, &app.control_plane, mp)
+                    .await?;
             app.output.info(&format!("Security level: {}", s.level));
             if let Some(err) = s.pending_error {
                 app.output
@@ -70,7 +74,7 @@ pub async fn run(
             Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Pending => {
-            let lines = security_service::list_pending(mp).await?;
+            let lines = security_service::list_pending(&reporter, &app.control_plane, mp).await?;
             if lines.is_empty() {
                 app.output.success("No pending blocked requests");
             } else {
@@ -81,17 +85,19 @@ pub async fn run(
             Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Approve { request_id } => {
-            let msg = security_service::approve(mp, &request_id).await?;
+            let msg =
+                security_service::approve(&reporter, &app.control_plane, mp, &request_id).await?;
             app.output.success(&msg);
             Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Deny { request_id } => {
-            let msg = security_service::deny(mp, &request_id).await?;
+            let msg =
+                security_service::deny(&reporter, &app.control_plane, mp, &request_id).await?;
             app.output.success(&msg);
             Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Log => {
-            let lines = security_service::get_log(mp).await?;
+            let lines = security_service::get_log(&reporter, &app.control_plane, mp).await?;
             if lines.is_empty() {
                 app.output.info("No recent security events");
             } else {
@@ -102,12 +108,21 @@ pub async fn run(
             Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Allow { pattern, action } => {
-            let msg = security_service::auto_allow(mp, &pattern, &action).await?;
+            let msg =
+                security_service::auto_allow(&reporter, &app.control_plane, mp, &pattern, &action)
+                    .await?;
             app.output.success(&msg);
             Ok(ExitCode::SUCCESS)
         }
         SecurityCommand::Level { level } => {
-            let msg = security_service::set_level(&app.config_store, mp, &level).await?;
+            let msg = security_service::set_level(
+                &app.config_store,
+                &reporter,
+                &app.control_plane,
+                mp,
+                &level,
+            )
+            .await?;
             app.output.success(&msg);
             Ok(ExitCode::SUCCESS)
         }

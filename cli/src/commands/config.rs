@@ -57,6 +57,8 @@ async fn set_config(app: &AppContext, key: &str, value: &str) -> Result<ExitCode
 
     match key {
         "security.level" => config.security.level = value.to_string(),
+        "control_plane.url" => config.control_plane.url = value.to_string(),
+        "control_plane.token" => config.control_plane.token = Some(value.to_string()),
         _ => anyhow::bail!("Unknown setting: {key}"),
     }
 

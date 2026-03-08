@@ -61,6 +61,10 @@ impl JsonRenderer {
             "security": {
                 "level": config.security.level
             },
+            "control_plane": {
+                "url": config.control_plane.url,
+                "token_configured": config.control_plane.token.is_some()
+            },
             "environment": {
                 "polis_config": polis_config_env,
                 "no_color": no_color_env

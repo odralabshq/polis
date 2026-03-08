@@ -53,6 +53,68 @@ async fn persist_vm_ip(
     Ok(())
 }
 
+async fn persist_agent_metadata(
+    mp: &impl ShellExecutor,
+    metadata: &polis_common::agent::AgentMetadata,
+) -> Result<()> {
+    write_control_plane_env(
+        mp,
+        &[
+            ("POLIS_AGENT_NAME", Some(metadata.name.as_str())),
+            ("POLIS_AGENT_VERSION", Some(metadata.version.as_str())),
+            (
+                "POLIS_AGENT_DISPLAY_NAME",
+                Some(metadata.display_name.as_str()),
+            ),
+        ],
+    )
+    .await
+}
+
+async fn clear_agent_metadata(mp: &impl ShellExecutor) -> Result<()> {
+    write_control_plane_env(
+        mp,
+        &[
+            ("POLIS_AGENT_NAME", None),
+            ("POLIS_AGENT_VERSION", None),
+            ("POLIS_AGENT_DISPLAY_NAME", None),
+        ],
+    )
+    .await
+}
+
+async fn write_control_plane_env(
+    mp: &impl ShellExecutor,
+    entries: &[(&str, Option<&str>)],
+) -> Result<()> {
+    let cleanup = entries
+        .iter()
+        .map(|(key, _)| format!("/^{key}=/d"))
+        .collect::<Vec<_>>()
+        .join(";");
+    let appends = entries
+        .iter()
+        .filter_map(|(key, value)| value.map(|value| format!("{key}={value}")))
+        .map(|line| shell_single_quote(&line))
+        .collect::<Vec<_>>();
+    let append_cmd = if appends.is_empty() {
+        String::new()
+    } else {
+        format!("; printf '%s\\n' {} >> /opt/polis/.env", appends.join(" "))
+    };
+    let script = format!(
+        "touch /opt/polis/.env; sed -i '{cleanup}' /opt/polis/.env 2>/dev/null || true{append_cmd}"
+    );
+    mp.exec(&["bash", "-c", &script])
+        .await
+        .context("updating agent metadata in .env")?;
+    Ok(())
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 /// Outcome of the `start_workspace` use-case.
 #[derive(Debug)]
 pub enum StartOutcome {
@@ -304,6 +366,9 @@ async fn create_and_start_vm(
         let steps = setup_agent(provisioner, local_fs, name, &envs).await?;
         (Some(crate::domain::agent::overlay_path(name)), steps)
     } else {
+        clear_agent_metadata(provisioner)
+            .await
+            .context("clearing active agent metadata")?;
         (None, vec![])
     };
 
@@ -379,6 +444,9 @@ async fn restart_vm(
         let steps = setup_agent(provisioner, local_fs, name, &envs).await?;
         (Some(crate::domain::agent::overlay_path(name)), steps)
     } else {
+        clear_agent_metadata(provisioner)
+            .await
+            .context("clearing active agent metadata")?;
         (None, vec![])
     };
 
@@ -462,6 +530,10 @@ async fn setup_agent<P: VmProvisioner>(
     crate::domain::agent::validate::validate_full_manifest(&manifest)?;
 
     let onboarding = manifest.spec.onboarding.clone();
+
+    persist_agent_metadata(provisioner, &manifest.metadata)
+        .await
+        .context("persisting active agent metadata")?;
 
     let generated_dir = tmp_path.join("agents").join(&name).join(".generated");
 
@@ -579,4 +651,114 @@ async fn start_compose<P: VmProvisioner>(provisioner: &P, agent_name: Option<&st
         anyhow::bail!("failed to start platform.\n{stderr}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    use std::{
+        process::{Output, Stdio},
+        sync::Mutex,
+    };
+
+    use polis_common::agent::AgentMetadata;
+
+    use crate::application::ports::ShellExecutor;
+    use crate::application::services::vm::test_support::ok_output;
+
+    #[derive(Default)]
+    struct RecordingShell {
+        calls: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl RecordingShell {
+        fn calls(&self) -> Vec<Vec<String>> {
+            self.calls.lock().expect("calls lock").clone()
+        }
+    }
+
+    impl ShellExecutor for RecordingShell {
+        async fn exec(&self, args: &[&str]) -> Result<Output> {
+            self.calls
+                .lock()
+                .expect("calls lock")
+                .push(args.iter().map(ToString::to_string).collect());
+            Ok(ok_output(b""))
+        }
+
+        async fn exec_with_stdin(&self, _args: &[&str], _input: &[u8]) -> Result<Output> {
+            anyhow::bail!("exec_with_stdin not expected in test")
+        }
+
+        fn exec_spawn(&self, _args: &[&str]) -> Result<tokio::process::Child> {
+            let mut command = tokio::process::Command::new("cmd");
+            command
+                .arg("/C")
+                .arg("exit 0")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command.spawn().context("failed to spawn placeholder child")
+        }
+
+        async fn exec_status(&self, _args: &[&str]) -> Result<std::process::ExitStatus> {
+            anyhow::bail!("exec_status not expected in test")
+        }
+    }
+
+    #[test]
+    fn shell_single_quote_escapes_single_quotes() {
+        assert_eq!(shell_single_quote("o'clock"), "'o'\"'\"'clock'");
+    }
+
+    #[tokio::test]
+    async fn persist_agent_metadata_writes_control_plane_env_vars() {
+        let shell = RecordingShell::default();
+        let metadata = AgentMetadata {
+            name: "openclaw".to_string(),
+            display_name: "OpenClaw Agent".to_string(),
+            version: "1.2.3".to_string(),
+            description: "test agent".to_string(),
+            author: None,
+            license: None,
+            provider: None,
+            capabilities: Vec::new(),
+        };
+
+        persist_agent_metadata(&shell, &metadata)
+            .await
+            .expect("persist metadata");
+
+        let calls = shell.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0][0], "bash");
+        assert_eq!(calls[0][1], "-c");
+
+        let script = &calls[0][2];
+        assert!(script.contains("POLIS_AGENT_NAME=openclaw"), "{script}");
+        assert!(script.contains("POLIS_AGENT_VERSION=1.2.3"), "{script}");
+        assert!(
+            script.contains("POLIS_AGENT_DISPLAY_NAME=OpenClaw Agent"),
+            "{script}"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_agent_metadata_only_removes_existing_vars() {
+        let shell = RecordingShell::default();
+
+        clear_agent_metadata(&shell)
+            .await
+            .expect("clear agent metadata");
+
+        let calls = shell.calls();
+        assert_eq!(calls.len(), 1);
+        let script = &calls[0][2];
+        assert!(script.contains("/^POLIS_AGENT_NAME=/d"), "{script}");
+        assert!(script.contains("/^POLIS_AGENT_VERSION=/d"), "{script}");
+        assert!(script.contains("/^POLIS_AGENT_DISPLAY_NAME=/d"), "{script}");
+        assert!(!script.contains("printf '%s\\n'"), "{script}");
+    }
 }

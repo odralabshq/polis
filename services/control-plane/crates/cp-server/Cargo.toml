@@ -9,6 +9,7 @@ anyhow = "1.0"
 async-stream = "0.3"
 async-trait = "0.1"
 axum = "0.8"
+bollard = "0.18"
 chrono = { version = "0.4", features = ["serde"] }
 cp-api-types = { path = "../cp-api-types" }
 envy = "0.4"
@@ -20,6 +21,7 @@ rustls = "0.23"
 rustls-pemfile = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1.49", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }

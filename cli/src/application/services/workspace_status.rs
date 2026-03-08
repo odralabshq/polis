@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 
 use polis_common::types::{
-    AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
-    WorkspaceState, WorkspaceStatus,
+    AgentHealth, AgentStatus, ContainerHealthSummary, EventSeverity, SecurityEvents,
+    SecurityStatus, StatusOutput, WorkspaceState, WorkspaceStatus,
 };
 
-use crate::application::ports::{InstanceInspector, ShellExecutor};
+use crate::application::ports::{ControlPlanePort, InstanceInspector, ShellExecutor};
 use crate::domain::workspace::QUERY_SCRIPT;
 
 /// Gather all workspace status information.
@@ -24,11 +24,19 @@ struct ContainerInfo {
     health: Option<String>,
 }
 
-pub async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutput {
+pub async fn gather_status(
+    cp: &impl ControlPlanePort,
+    mp: &(impl InstanceInspector + ShellExecutor),
+) -> StatusOutput {
+    if let Some(status) = gather_control_plane_status(cp).await {
+        return status;
+    }
+
     let Some(vm_state) = check_multipass_status(mp).await else {
         return StatusOutput {
             workspace: workspace_unknown(),
             agent: None,
+            containers: None,
             security: empty_security(),
             events: empty_events(),
         };
@@ -41,6 +49,7 @@ pub async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> Sta
                 uptime_seconds: None,
             },
             agent: None,
+            containers: None,
             security: empty_security(),
             events: empty_events(),
         };
@@ -72,6 +81,7 @@ pub async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> Sta
             uptime_seconds,
         },
         agent,
+        containers: None,
         security: SecurityStatus {
             traffic_inspection: containers.get("gate").is_some_and(|i| i.state == "running"),
             credential_protection: containers
@@ -83,6 +93,38 @@ pub async fn gather_status(mp: &(impl InstanceInspector + ShellExecutor)) -> Sta
         },
         events: empty_events(),
     }
+}
+
+async fn gather_control_plane_status(cp: &impl ControlPlanePort) -> Option<StatusOutput> {
+    let workspace = cp.workspace().await.ok()?;
+    let containers = cp.containers().await.ok()?;
+    let agent = cp.agent().await.ok();
+    let status = cp.status().await.ok();
+
+    Some(StatusOutput {
+        workspace: WorkspaceStatus {
+            status: workspace_state_from_control_plane(&workspace.status),
+            uptime_seconds: workspace.uptime_seconds,
+        },
+        agent: agent.map(control_plane_agent_status),
+        containers: Some(ContainerHealthSummary {
+            total: workspace.containers.total,
+            healthy: workspace.containers.healthy,
+            unhealthy: workspace.containers.unhealthy,
+            starting: workspace.containers.starting,
+        }),
+        security: SecurityStatus {
+            traffic_inspection: service_is_active(&containers.containers, "gate"),
+            credential_protection: service_is_active(&containers.containers, "sentinel"),
+            malware_scanning: service_is_active(&containers.containers, "scanner"),
+        },
+        events: SecurityEvents {
+            count: status.map_or(0, |value| {
+                u32::try_from(value.events_count).unwrap_or(u32::MAX)
+            }),
+            severity: EventSeverity::None,
+        },
+    })
 }
 
 fn empty_security() -> SecurityStatus {
@@ -185,4 +227,35 @@ pub fn workspace_unknown() -> WorkspaceStatus {
         status: WorkspaceState::Error,
         uptime_seconds: None,
     }
+}
+
+fn workspace_state_from_control_plane(status: &str) -> WorkspaceState {
+    match status {
+        "running" => WorkspaceState::Running,
+        "stopped" => WorkspaceState::Stopped,
+        "starting" => WorkspaceState::Starting,
+        "stopping" => WorkspaceState::Stopping,
+        "not_found" => WorkspaceState::NotFound,
+        _ => WorkspaceState::Error,
+    }
+}
+
+fn control_plane_agent_status(agent: cp_api_types::AgentResponse) -> AgentStatus {
+    AgentStatus {
+        name: agent.display_name,
+        status: match agent.health.as_str() {
+            "healthy" => AgentHealth::Healthy,
+            "unhealthy" => AgentHealth::Unhealthy,
+            "starting" => AgentHealth::Starting,
+            _ => AgentHealth::Stopped,
+        },
+    }
+}
+
+fn service_is_active(containers: &[cp_api_types::ContainerInfo], service: &str) -> bool {
+    containers.iter().any(|container| {
+        container.service == service
+            && container.status == "running"
+            && matches!(container.health.as_str(), "healthy" | "starting")
+    })
 }

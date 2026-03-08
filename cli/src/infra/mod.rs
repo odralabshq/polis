@@ -9,6 +9,7 @@
 pub mod assets;
 pub mod command_runner;
 pub mod config;
+pub mod control_plane;
 pub mod fs;
 pub mod image;
 pub mod network;

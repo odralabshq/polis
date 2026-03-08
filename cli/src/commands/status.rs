@@ -24,7 +24,7 @@ pub async fn run(
         None
     };
 
-    let output = gather_status(mp).await;
+    let output = gather_status(&app.control_plane, mp).await;
 
     if let Some(pb) = pb {
         pb.finish_and_clear();

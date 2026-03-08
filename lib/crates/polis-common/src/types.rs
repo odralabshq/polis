@@ -220,6 +220,8 @@ pub struct StatusOutput {
     pub workspace: WorkspaceStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub containers: Option<ContainerHealthSummary>,
     pub security: SecurityStatus,
     pub events: SecurityEvents,
 }
@@ -263,6 +265,19 @@ pub struct AgentStatus {
     pub name: String,
     /// Agent health status
     pub status: AgentHealth,
+}
+
+/// Container health summary for CLI status output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerHealthSummary {
+    /// Total observed containers in the workspace.
+    pub total: usize,
+    /// Healthy containers.
+    pub healthy: usize,
+    /// Unhealthy containers.
+    pub unhealthy: usize,
+    /// Containers that are still starting.
+    pub starting: usize,
 }
 
 /// Security status for CLI display and JSON output.
@@ -539,6 +554,12 @@ mod tests {
             agent: Some(AgentStatus {
                 name: "claude-dev".to_string(),
                 status: AgentHealth::Healthy,
+            }),
+            containers: Some(ContainerHealthSummary {
+                total: 5,
+                healthy: 4,
+                unhealthy: 1,
+                starting: 0,
             }),
             security: SecurityStatus {
                 traffic_inspection: true,

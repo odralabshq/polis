@@ -106,6 +106,28 @@ setup() {
     assert_output --partial "seccomp=./services/control-plane/config/seccomp.json"
 }
 
+@test "compose config: control-plane has docker socket integration" {
+    run grep -A50 "^  control-plane:" "$COMPOSE"
+    assert_success
+    assert_output --partial '/var/run/docker.sock:/var/run/docker.sock:ro'
+    assert_output --partial 'POLIS_CP_DOCKER_ENABLED=true'
+    assert_output --partial 'POLIS_CP_AUTH_ENABLED=false'
+    assert_output --partial 'POLIS_CP_ADMIN_TOKEN_FILE=/run/secrets/cp_admin_token'
+    assert_output --partial 'POLIS_CP_OPERATOR_TOKEN_FILE=/run/secrets/cp_operator_token'
+    assert_output --partial 'POLIS_CP_VIEWER_TOKEN_FILE=/run/secrets/cp_viewer_token'
+    assert_output --partial 'POLIS_CP_AGENT_TOKEN_FILE=/run/secrets/cp_agent_token'
+    assert_output --partial '${DOCKER_GID:-999}'
+    assert_output --partial 'memory: 384M'
+}
+
+@test "compose config: workspace has agent metadata labels" {
+    run grep -A120 "^  workspace:" "$COMPOSE"
+    assert_success
+    assert_output --partial 'polis.agent.name: "${POLIS_AGENT_NAME:-openclaw}"'
+    assert_output --partial 'polis.agent.version: "${POLIS_AGENT_VERSION:-1.0.0}"'
+    assert_output --partial 'polis.agent.display_name: "${POLIS_AGENT_DISPLAY_NAME:-OpenClaw}"'
+}
+
 @test "compose config: workspace DNS points to resolver" {
     run grep "10.10.1.2" "$COMPOSE"
     assert_success

@@ -4,6 +4,7 @@ WORKDIR /build
 COPY services/control-plane/crates/ crates/
 COPY services/control-plane/Cargo.toml services/control-plane/Cargo.lock* ./
 COPY lib/crates/ ../../lib/crates/
+COPY services/sentinel/modules/dlp/srv_polis_dlp.c /sentinel/modules/dlp/srv_polis_dlp.c
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/build/target,sharing=locked \

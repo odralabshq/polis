@@ -384,6 +384,9 @@ services:
         labels: "service"
     labels:
       service: "polis-workspace"
+      polis.agent.name: "${POLIS_AGENT_NAME:-openclaw}"
+      polis.agent.version: "${POLIS_AGENT_VERSION:-1.0.0}"
+      polis.agent.display_name: "${POLIS_AGENT_DISPLAY_NAME:-OpenClaw}"
 
   # =========================================================
   # HOST INIT (Host network setup for TPROXY)
@@ -599,6 +602,8 @@ services:
     image: ghcr.io/odralabshq/polis-control-plane-oss:${POLIS_CONTROL_PLANE_VERSION:-latest}
     container_name: polis-control-plane
     user: "65532:65532"
+    group_add:
+      - "${DOCKER_GID:-999}"
     read_only: true
     tmpfs:
       - /tmp:size=10M,mode=1777
@@ -610,7 +615,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 384M
           cpus: "0.5"
     networks:
       host-bridge: {}
@@ -624,10 +629,22 @@ services:
       - POLIS_CP_VALKEY_URL=rediss://valkey:6379
       - POLIS_CP_VALKEY_USER=cp-server
       - POLIS_CP_VALKEY_PASS_FILE=/run/secrets/valkey_cp_server_password
+      - POLIS_CP_DOCKER_ENABLED=true
+      - POLIS_CP_AUTH_ENABLED=false
+      - POLIS_CP_ADMIN_TOKEN_FILE=/run/secrets/cp_admin_token
+      - POLIS_CP_OPERATOR_TOKEN_FILE=/run/secrets/cp_operator_token
+      - POLIS_CP_VIEWER_TOKEN_FILE=/run/secrets/cp_viewer_token
+      - POLIS_CP_AGENT_TOKEN_FILE=/run/secrets/cp_agent_token
     secrets:
       - valkey_cp_server_password
+      # Optional auth tokens (disabled by default)
+      # - cp_admin_token
+      # - cp_operator_token
+      # - cp_viewer_token
+      # - cp_agent_token
     volumes:
       - ./certs/valkey:/etc/valkey/tls:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       state:
         condition: service_healthy

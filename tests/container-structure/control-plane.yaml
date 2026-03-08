@@ -25,3 +25,9 @@ commandTests:
     args: ['POLIS_CP_VALKEY_URL']
     exitCode: 0
     expectedOutput: ['rediss://valkey:6379']
+
+  - name: 'binary version'
+    command: '/usr/local/bin/cp-server'
+    args: ['--version']
+    exitCode: 0
+    expectedOutput: ['cp-server']

@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -12,13 +13,20 @@ use axum::{
 };
 use chrono::{TimeZone, Utc};
 use cp_api_types::{
-    ActionResponse, BlockedItem, BlockedListResponse, EventItem, EventsResponse, LevelResponse,
-    RuleCreateRequest, RuleItem, RulesResponse, StatusResponse,
+    ActionResponse, AgentResponse, BlockedItem, BlockedListResponse, BypassListResponse,
+    ConfigAgentResponse, ConfigResponse, ContainerInfo, ContainerSummary, ContainersResponse,
+    EventItem, EventsResponse, LevelResponse, LogLine, LogsResponse, MetricsHistoryResponse,
+    MetricsPoint, MetricsResponse, ResourceUsage, RuleCreateRequest, RuleItem, RulesResponse,
+    SecurityConfigResponse, StatusResponse, SystemMetrics, WorkspaceResponse,
 };
 use cp_server::{
-    HttpState, build_router,
+    HttpState,
+    auth::Role,
+    build_router,
     error::{AppError, AppResult},
-    state::GovernanceStore,
+    state::{
+        AuthStore, GovernanceStore, LogsStore, MetricsStore, RuntimeConfigStore, WorkspaceStore,
+    },
 };
 use futures::StreamExt;
 use tower::ServiceExt;
@@ -34,8 +42,11 @@ struct Fixture {
     blocked: Vec<BlockedItem>,
     rules: Vec<RuleItem>,
     events: Vec<EventItem>,
+    bypass_domains: Vec<String>,
     fail_status: bool,
     approvals: usize,
+    auth_enabled: bool,
+    auth_failures: usize,
 }
 
 impl Default for Fixture {
@@ -65,8 +76,11 @@ impl Default for Fixture {
                 request_id: Some("req-abc12345".to_string()),
                 details: "Blocked request to example.com".to_string(),
             }],
+            bypass_domains: vec!["internal.corp.com".to_string()],
             fail_status: false,
             approvals: 0,
+            auth_enabled: false,
+            auth_failures: 0,
         }
     }
 }
@@ -80,6 +94,10 @@ impl TestStore {
 
     fn set_fail_status(&self, fail: bool) {
         self.inner.lock().expect("fixture lock").fail_status = fail;
+    }
+
+    fn set_auth_enabled(&self, enabled: bool) {
+        self.inner.lock().expect("fixture lock").auth_enabled = enabled;
     }
 
     fn router(&self) -> axum::Router {
@@ -230,6 +248,209 @@ impl GovernanceStore for TestStore {
     }
 }
 
+#[async_trait]
+impl WorkspaceStore for TestStore {
+    async fn get_workspace(&self) -> AppResult<WorkspaceResponse> {
+        Ok(WorkspaceResponse {
+            status: "running".to_string(),
+            uptime_seconds: Some(3_600),
+            containers: ContainerSummary {
+                total: 2,
+                healthy: 2,
+                unhealthy: 0,
+                starting: 0,
+            },
+            networks: HashMap::from([("gateway-bridge".to_string(), "10.20.0.0/24".to_string())]),
+        })
+    }
+
+    async fn get_agent(&self) -> AppResult<AgentResponse> {
+        Ok(AgentResponse {
+            name: "openclaw".to_string(),
+            display_name: "OpenClaw".to_string(),
+            version: "1.0.0".to_string(),
+            status: "running".to_string(),
+            health: "healthy".to_string(),
+            uptime_seconds: Some(3_540),
+            ports: Vec::new(),
+            resources: ResourceUsage {
+                memory_usage_mb: 512,
+                memory_limit_mb: 4_096,
+                cpu_percent: 8.1,
+            },
+            stale: false,
+        })
+    }
+
+    async fn list_containers(&self) -> AppResult<ContainersResponse> {
+        Ok(ContainersResponse {
+            containers: vec![ContainerInfo {
+                name: "polis-workspace".to_string(),
+                service: "workspace".to_string(),
+                status: "running".to_string(),
+                health: "healthy".to_string(),
+                uptime_seconds: Some(3_600),
+                memory_usage_mb: 512,
+                memory_limit_mb: 4_096,
+                cpu_percent: 8.1,
+                network: "gateway-bridge".to_string(),
+                ip: "10.20.0.10".to_string(),
+                stale: false,
+            }],
+        })
+    }
+}
+
+#[async_trait]
+impl MetricsStore for TestStore {
+    async fn get_metrics(&self) -> AppResult<MetricsResponse> {
+        Ok(MetricsResponse {
+            timestamp: Utc::now(),
+            system: SystemMetrics {
+                total_memory_usage_mb: 768,
+                total_memory_limit_mb: 4_096,
+                total_cpu_percent: 12.5,
+                container_count: 2,
+            },
+            containers: Vec::new(),
+        })
+    }
+
+    async fn get_metrics_history(&self, minutes: u32) -> AppResult<MetricsHistoryResponse> {
+        Ok(MetricsHistoryResponse {
+            interval_seconds: 10,
+            points: vec![MetricsPoint {
+                timestamp: Utc::now(),
+                total_memory_usage_mb: u64::from(minutes),
+                total_cpu_percent: 12.5,
+            }],
+        })
+    }
+}
+
+#[async_trait]
+impl LogsStore for TestStore {
+    async fn get_logs(
+        &self,
+        lines: usize,
+        _since_seconds: Option<i64>,
+        level: Option<String>,
+    ) -> AppResult<LogsResponse> {
+        Ok(sample_logs_response(lines, level.as_deref()))
+    }
+
+    async fn get_logs_for_service(
+        &self,
+        service: &str,
+        lines: usize,
+        _since_seconds: Option<i64>,
+        level: Option<String>,
+    ) -> AppResult<LogsResponse> {
+        let mut response = sample_logs_response(lines, level.as_deref());
+        response.lines.retain(|line| line.service == service);
+        response.total = response.lines.len();
+        Ok(response)
+    }
+}
+
+#[async_trait]
+impl RuntimeConfigStore for TestStore {
+    fn normalize_bypass_domain(&self, domain: &str) -> AppResult<String> {
+        Ok(domain.trim().to_ascii_lowercase())
+    }
+
+    fn display_bypass_domain(&self, domain: &str) -> String {
+        domain.to_string()
+    }
+
+    async fn get_config(&self) -> AppResult<ConfigResponse> {
+        let fixture = self.inner.lock().expect("fixture lock").clone();
+        Ok(ConfigResponse {
+            security: cp_api_types::SecurityOverview {
+                level: fixture.level,
+                protected_paths: vec!["~/.ssh".to_string()],
+            },
+            auto_approve_rules: fixture.rules,
+            bypass_domains_count: fixture.bypass_domains.len(),
+            agent: ConfigAgentResponse {
+                name: "openclaw".to_string(),
+                version: "1.0.0".to_string(),
+            },
+        })
+    }
+
+    async fn get_security_config(&self) -> AppResult<SecurityConfigResponse> {
+        let fixture = self.inner.lock().expect("fixture lock").clone();
+        Ok(SecurityConfigResponse {
+            level: fixture.level,
+            auto_approve_rules: fixture.rules,
+        })
+    }
+
+    async fn set_security_level_via_config(&self, level: &str) -> AppResult<ActionResponse> {
+        self.inner.lock().expect("fixture lock").level = level.to_string();
+        Ok(ActionResponse {
+            message: format!("security level set to {level}"),
+        })
+    }
+
+    async fn list_bypass_domains(&self) -> AppResult<BypassListResponse> {
+        let fixture = self.inner.lock().expect("fixture lock").clone();
+        Ok(BypassListResponse {
+            domains: fixture.bypass_domains.clone(),
+            total: fixture.bypass_domains.len(),
+            source: "runtime".to_string(),
+        })
+    }
+
+    async fn add_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
+        self.inner
+            .lock()
+            .expect("fixture lock")
+            .bypass_domains
+            .push(domain.to_string());
+        Ok(ActionResponse {
+            message: format!("added bypass domain {domain}"),
+        })
+    }
+
+    async fn delete_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
+        self.inner
+            .lock()
+            .expect("fixture lock")
+            .bypass_domains
+            .retain(|entry| entry != domain);
+        Ok(ActionResponse {
+            message: format!("removed bypass domain {domain}"),
+        })
+    }
+}
+
+#[async_trait]
+impl AuthStore for TestStore {
+    fn auth_enabled(&self) -> bool {
+        self.inner.lock().expect("fixture lock").auth_enabled
+    }
+
+    async fn validate_token(&self, token: &str) -> AppResult<Role> {
+        match token {
+            "polis_admin_token" => Ok(Role::Admin),
+            "polis_operator_token" => Ok(Role::Operator),
+            "polis_viewer_token" => Ok(Role::Viewer),
+            "polis_agent_token" => Ok(Role::Agent),
+            _ => Err(AppError::Validation(
+                "invalid authentication token".to_string(),
+            )),
+        }
+    }
+
+    async fn register_auth_failure(&self, _client_id: &str, _reason: &str) -> AppResult<bool> {
+        let mut fixture = self.inner.lock().expect("fixture lock");
+        fixture.auth_failures += 1;
+        Ok(false)
+    }
+}
+
 async fn request_body_text(response: axum::response::Response) -> String {
     let bytes = to_bytes(response.into_body(), usize::MAX)
         .await
@@ -329,6 +550,38 @@ async fn strict_cors_preflight_is_present() {
 }
 
 #[tokio::test]
+async fn auth_enabled_cors_allows_authorization_header() {
+    let store = TestStore::new();
+    store.set_auth_enabled(true);
+    let router = store.router();
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/api/v1/status")
+                .header(header::ORIGIN, "http://localhost:9080")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(
+                    header::ACCESS_CONTROL_REQUEST_HEADERS,
+                    "Content-Type, Authorization",
+                )
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::ACCESS_CONTROL_ALLOW_HEADERS),
+        Some(&header::HeaderValue::from_static(
+            "content-type,authorization"
+        ))
+    );
+}
+
+#[tokio::test]
 async fn dependency_unavailable_maps_to_503() {
     let store = TestStore::new();
     store.set_fail_status(true);
@@ -345,6 +598,37 @@ async fn dependency_unavailable_maps_to_503() {
         .expect("response");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn workspace_endpoints_return_snapshots() {
+    let router = TestStore::new().router();
+
+    for uri in [
+        "/api/v1/workspace",
+        "/api/v1/agent",
+        "/api/v1/containers",
+        "/api/v1/config",
+        "/api/v1/config/security",
+        "/api/v1/config/bypass",
+        "/api/v1/logs",
+        "/api/v1/logs/workspace",
+        "/api/v1/metrics",
+        "/api/v1/metrics/history",
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+    }
 }
 
 #[tokio::test]
@@ -368,6 +652,59 @@ async fn delete_rule_accepts_url_encoded_pattern() {
 }
 
 #[tokio::test]
+async fn auth_enabled_routes_require_a_valid_token() {
+    let store = TestStore::new();
+    store.set_auth_enabled(true);
+    let router = store.router();
+
+    let unauthorized = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/status")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let authorized = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/status")
+                .header(header::AUTHORIZATION, "Bearer polis_viewer_token")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(authorized.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn viewer_cannot_mutate_config_when_auth_is_enabled() {
+    let store = TestStore::new();
+    store.set_auth_enabled(true);
+    let router = store.router();
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/v1/config/security")
+                .header(header::AUTHORIZATION, "Bearer polis_viewer_token")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"level":"strict"}"#))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn sse_stream_sends_initial_snapshot() {
     let router = TestStore::new().router();
 
@@ -386,12 +723,18 @@ async fn sse_stream_sends_initial_snapshot() {
         text.contains("event: status")
             && text.contains("event: blocked")
             && text.contains("event: event_log")
+            && text.contains("event: workspace")
+            && text.contains("event: agent")
+            && text.contains("event: metrics")
     })
     .await;
 
     assert!(text.contains("event: status"));
     assert!(text.contains("event: blocked"));
     assert!(text.contains("event: event_log"));
+    assert!(text.contains("event: workspace"));
+    assert!(text.contains("event: agent"));
+    assert!(text.contains("event: metrics"));
 }
 
 #[tokio::test]
@@ -415,6 +758,9 @@ async fn sse_stream_broadcasts_after_mutation() {
         text.contains("event: status")
             && text.contains("event: blocked")
             && text.contains("event: event_log")
+            && text.contains("event: workspace")
+            && text.contains("event: agent")
+            && text.contains("event: metrics")
     })
     .await;
 
@@ -442,4 +788,34 @@ async fn sse_stream_broadcasts_after_mutation() {
             || text.contains("\"pending_count\":0")
             || text.contains("event: blocked")
     );
+}
+
+fn sample_logs_response(lines: usize, level: Option<&str>) -> LogsResponse {
+    let mut response_lines = vec![
+        LogLine {
+            timestamp: Utc::now(),
+            service: "workspace".to_string(),
+            level: "info".to_string(),
+            message: "workspace booted".to_string(),
+        },
+        LogLine {
+            timestamp: Utc::now(),
+            service: "control-plane".to_string(),
+            level: "warn".to_string(),
+            message: "retrying docker socket".to_string(),
+        },
+    ];
+
+    if let Some(level) = level {
+        response_lines.retain(|line| line.level == level);
+    }
+    if response_lines.len() > lines {
+        response_lines.truncate(lines);
+    }
+
+    LogsResponse {
+        total: response_lines.len(),
+        truncated: false,
+        lines: response_lines,
+    }
 }

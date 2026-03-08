@@ -8,6 +8,10 @@ use std::collections::HashMap;
 use std::process::Output;
 
 use anyhow::Result;
+use cp_api_types::{
+    ActionResponse, AgentResponse, BlockedListResponse, ContainersResponse, EventsResponse,
+    LevelResponse, RulesResponse, StatusResponse, WorkspaceResponse,
+};
 
 use crate::domain::{DoctorChecks, WorkspaceState};
 
@@ -345,6 +349,33 @@ pub trait ConfigStore {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     fn path(&self) -> Result<std::path::PathBuf>;
+}
+
+/// Abstracts control-plane HTTP operations for CLI features.
+#[allow(async_fn_in_trait)]
+pub trait ControlPlanePort {
+    /// Fetch the governance dashboard status summary.
+    async fn status(&self) -> Result<StatusResponse>;
+    /// Fetch blocked requests.
+    async fn blocked_requests(&self) -> Result<BlockedListResponse>;
+    /// Approve a blocked request.
+    async fn approve_request(&self, request_id: &str) -> Result<ActionResponse>;
+    /// Deny a blocked request.
+    async fn deny_request(&self, request_id: &str) -> Result<ActionResponse>;
+    /// Fetch recent security events.
+    async fn security_events(&self, limit: usize) -> Result<EventsResponse>;
+    /// Fetch configured rules.
+    async fn rules(&self) -> Result<RulesResponse>;
+    /// Create a rule.
+    async fn add_rule(&self, pattern: &str, action: &str) -> Result<ActionResponse>;
+    /// Update the security level.
+    async fn set_security_level(&self, level: &str) -> Result<LevelResponse>;
+    /// Fetch workspace summary.
+    async fn workspace(&self) -> Result<WorkspaceResponse>;
+    /// Fetch active agent details.
+    async fn agent(&self) -> Result<AgentResponse>;
+    /// Fetch workspace containers.
+    async fn containers(&self) -> Result<ContainersResponse>;
 }
 
 // ── Host Key Extraction Port ──────────────────────────────────────────────────

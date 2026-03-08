@@ -9,14 +9,23 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 
-use std::{fs::File, io::BufReader, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::BufReader,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use cp_api_types::{
-    ActionResponse, BlockedItem, BlockedListResponse, EventItem, EventsResponse, LevelResponse,
-    RuleCreateRequest, RuleItem, RulesResponse, StatusResponse,
+    ActionResponse, AgentResponse, BlockedItem, BlockedListResponse, BypassListResponse,
+    ConfigAgentResponse, ConfigResponse, ContainersResponse, EventItem, EventsResponse,
+    LevelResponse, LogsResponse, MetricsHistoryResponse, MetricsResponse, RuleCreateRequest,
+    RuleItem, RulesResponse, SecurityConfigResponse, SecurityOverview, StatusResponse,
+    WorkspaceResponse,
 };
 use fred::types::scan::Scanner;
 use fred::{
@@ -29,13 +38,34 @@ use polis_common::{
     approved_key, auto_approve_key, blocked_key,
     redis_keys::{keys, ttl},
 };
+use sha2::{Digest, Sha256};
 
 use crate::{
+    auth::Role,
     config::Config,
+    docker::{DockerClient, MetricsCollector},
     error::{AppError, AppResult},
 };
 
 const EVENT_LOG_MAX_ENTRIES: usize = 1_000;
+const AUTH_FAILURE_LIMIT: usize = 10;
+const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+const AUTH_TOKEN_PREFIX: &str = "polis:auth:tokens:";
+const RUNTIME_BYPASS_PREFIX: &str = "polis:config:bypass:";
+const DEFAULT_AGENT_NAME: &str = "openclaw";
+const DEFAULT_AGENT_VERSION: &str = "1.0.0";
+const PROTECTED_PATHS: &[&str] = &[
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.config/gcloud",
+    "~/.kube",
+    "~/.docker",
+];
+const COMPILED_BYPASS_SOURCE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../sentinel/modules/dlp/srv_polis_dlp.c"
+));
 
 #[async_trait]
 pub trait ValkeyClient: Clone + Send + Sync + 'static {
@@ -71,6 +101,61 @@ pub trait GovernanceStore: Clone + Send + Sync + 'static {
         self.add_rule(&request.pattern, &request.action).await
     }
     async fn delete_rule(&self, pattern: &str) -> AppResult<ActionResponse>;
+}
+
+#[async_trait]
+pub trait WorkspaceStore: Clone + Send + Sync + 'static {
+    async fn get_workspace(&self) -> AppResult<WorkspaceResponse>;
+    async fn get_agent(&self) -> AppResult<AgentResponse>;
+    async fn list_containers(&self) -> AppResult<ContainersResponse>;
+}
+
+#[async_trait]
+pub trait MetricsStore: Clone + Send + Sync + 'static {
+    async fn get_metrics(&self) -> AppResult<MetricsResponse>;
+    async fn get_metrics_history(&self, minutes: u32) -> AppResult<MetricsHistoryResponse>;
+}
+
+#[async_trait]
+pub trait LogsStore: Clone + Send + Sync + 'static {
+    async fn get_logs(
+        &self,
+        lines: usize,
+        since_seconds: Option<i64>,
+        level: Option<String>,
+    ) -> AppResult<LogsResponse>;
+    async fn get_logs_for_service(
+        &self,
+        service: &str,
+        lines: usize,
+        since_seconds: Option<i64>,
+        level: Option<String>,
+    ) -> AppResult<LogsResponse>;
+}
+
+#[async_trait]
+pub trait RuntimeConfigStore: Clone + Send + Sync + 'static {
+    /// Validate and normalize a bypass domain or suffix entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input is empty, malformed, or violates the
+    /// runtime bypass domain constraints.
+    fn normalize_bypass_domain(&self, domain: &str) -> AppResult<String>;
+    fn display_bypass_domain(&self, domain: &str) -> String;
+    async fn get_config(&self) -> AppResult<ConfigResponse>;
+    async fn get_security_config(&self) -> AppResult<SecurityConfigResponse>;
+    async fn set_security_level_via_config(&self, level: &str) -> AppResult<ActionResponse>;
+    async fn list_bypass_domains(&self) -> AppResult<BypassListResponse>;
+    async fn add_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse>;
+    async fn delete_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse>;
+}
+
+#[async_trait]
+pub trait AuthStore: Clone + Send + Sync + 'static {
+    fn auth_enabled(&self) -> bool;
+    async fn validate_token(&self, token: &str) -> AppResult<Role>;
+    async fn register_auth_failure(&self, client_id: &str, reason: &str) -> AppResult<bool>;
 }
 
 #[derive(Clone)]
@@ -269,7 +354,49 @@ pub struct GovernanceState<C> {
     client: C,
 }
 
-pub type AppState = GovernanceState<FredValkeyClient>;
+#[derive(Clone)]
+pub struct AppState<C = FredValkeyClient> {
+    governance: GovernanceState<C>,
+    docker: Option<DockerClient>,
+    metrics: MetricsCollector,
+    auth: AuthState,
+}
+
+#[derive(Clone, Default)]
+pub struct AuthState {
+    enabled: bool,
+    failures: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
+}
+
+impl AuthState {
+    #[must_use]
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            failures: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[must_use]
+    /// Record a failed authentication attempt and report whether the caller is
+    /// now rate-limited.
+    pub fn record_failure(&self, client_id: &str) -> bool {
+        let now = Instant::now();
+        let mut failures = match self.failures.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let window = failures.entry(client_id.to_string()).or_default();
+        window.retain(|timestamp| now.duration_since(*timestamp) <= AUTH_FAILURE_WINDOW);
+        window.push(now);
+        window.len() > AUTH_FAILURE_LIMIT
+    }
+}
 
 impl<C> GovernanceState<C> {
     #[must_use]
@@ -287,6 +414,101 @@ impl GovernanceState<FredValkeyClient> {
     pub async fn new(config: &Config) -> Result<Self> {
         let client = FredValkeyClient::connect(config).await?;
         Ok(Self { client })
+    }
+}
+
+impl AppState<FredValkeyClient> {
+    /// Build the production app state from the process configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Valkey client cannot be initialized.
+    pub async fn new(config: &Config) -> Result<Self> {
+        let governance = GovernanceState::new(config).await?;
+        let docker = if config.docker_enabled {
+            match DockerClient::new().await {
+                Ok(client) => Some(client),
+                Err(error) => {
+                    tracing::warn!(%error, "docker integration unavailable");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let state = Self::new_with_auth(
+            governance,
+            docker,
+            MetricsCollector::new(),
+            AuthState::new(config.auth_enabled),
+        );
+        if config.auth_enabled {
+            state.seed_auth_tokens(config).await?;
+        }
+        Ok(state)
+    }
+
+    async fn seed_auth_tokens(&self, config: &Config) -> Result<()> {
+        let tokens = vec![
+            (Role::Admin, config.read_secret(&config.admin_token_file)?),
+            (
+                Role::Operator,
+                config.read_secret(&config.operator_token_file)?,
+            ),
+            (Role::Viewer, config.read_secret(&config.viewer_token_file)?),
+            (Role::Agent, config.read_secret(&config.agent_token_file)?),
+        ];
+        self.governance
+            .register_auth_tokens(&tokens)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+    }
+}
+
+impl<C> AppState<C> {
+    #[must_use]
+    fn new_with_auth(
+        governance: GovernanceState<C>,
+        docker: Option<DockerClient>,
+        metrics: MetricsCollector,
+        auth: AuthState,
+    ) -> Self {
+        Self {
+            governance,
+            docker,
+            metrics,
+            auth,
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_parts(
+        governance: GovernanceState<C>,
+        docker: Option<DockerClient>,
+        metrics: MetricsCollector,
+    ) -> Self {
+        Self::new_with_auth(governance, docker, metrics, AuthState::default())
+    }
+
+    #[must_use]
+    pub fn governance(&self) -> &GovernanceState<C> {
+        &self.governance
+    }
+
+    #[must_use]
+    pub fn docker(&self) -> Option<&DockerClient> {
+        self.docker.as_ref()
+    }
+
+    #[must_use]
+    pub fn metrics(&self) -> &MetricsCollector {
+        &self.metrics
+    }
+
+    #[must_use]
+    pub fn auth(&self) -> &AuthState {
+        &self.auth
     }
 }
 
@@ -479,6 +701,237 @@ where
             event_type,
             request_id,
             details,
+        })
+    }
+
+    async fn log_security_event(&self, event_type: &str, details: String) -> AppResult<()> {
+        self.append_event(&SecurityLogEntry {
+            timestamp: Utc::now(),
+            event_type: event_type.to_string(),
+            request_id: None,
+            details,
+        })
+        .await
+    }
+
+    fn auth_token_key(hash: &str) -> String {
+        format!("{AUTH_TOKEN_PREFIX}{hash}")
+    }
+
+    fn bypass_key(domain: &str) -> String {
+        format!("{RUNTIME_BYPASS_PREFIX}{domain}")
+    }
+
+    fn normalize_bypass_domain(domain: &str) -> AppResult<String> {
+        let trimmed = domain.trim().to_ascii_lowercase();
+        if trimmed.is_empty() {
+            return Err(AppError::Validation(
+                "bypass domain must not be empty".to_string(),
+            ));
+        }
+        if trimmed.len() > 253 {
+            return Err(AppError::Validation(
+                "bypass domain must be 253 characters or fewer".to_string(),
+            ));
+        }
+        if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains(':') {
+            return Err(AppError::Validation(
+                "bypass domain must not contain path separators or ports".to_string(),
+            ));
+        }
+        if trimmed.chars().any(char::is_whitespace) {
+            return Err(AppError::Validation(
+                "bypass domain must not contain whitespace".to_string(),
+            ));
+        }
+
+        let normalized = if let Some(suffix) = trimmed.strip_prefix("*.") {
+            format!(".{suffix}")
+        } else {
+            trimmed
+        };
+
+        let bare = normalized.strip_prefix('.').unwrap_or(&normalized);
+        if bare.is_empty() || bare.starts_with('.') || bare.ends_with('.') || bare.contains("..") {
+            return Err(AppError::Validation(
+                "bypass domain must be a valid hostname or wildcard hostname".to_string(),
+            ));
+        }
+
+        let valid = bare.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        });
+        if !valid {
+            return Err(AppError::Validation(
+                "bypass domain must contain only letters, digits, hyphens, and dots".to_string(),
+            ));
+        }
+
+        Ok(normalized)
+    }
+
+    fn display_bypass_domain(domain: &str) -> String {
+        domain
+            .strip_prefix('.')
+            .map_or_else(|| domain.to_string(), |suffix| format!("*.{suffix}"))
+    }
+
+    fn compiled_bypass_domains() -> Vec<String> {
+        let mut in_array = false;
+        let mut domains = COMPILED_BYPASS_SOURCE
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("static const char *known_domains[]") {
+                    in_array = true;
+                    return None;
+                }
+                if !in_array {
+                    return None;
+                }
+                if trimmed.starts_with("NULL") {
+                    in_array = false;
+                    return None;
+                }
+
+                let start = trimmed.find('"')?;
+                let tail = &trimmed[start + 1..];
+                let end = tail.find('"')?;
+                let raw = &tail[..end];
+                Some(Self::display_bypass_domain(raw))
+            })
+            .collect::<Vec<_>>();
+        domains.sort();
+        domains.dedup();
+        domains
+    }
+
+    async fn list_runtime_bypass_domains(&self) -> AppResult<Vec<String>> {
+        let mut domains = self
+            .client
+            .scan_keys(&format!("{RUNTIME_BYPASS_PREFIX}*"))
+            .await
+            .map_err(|error| Self::dependency_error("failed to scan bypass domains", &error))?
+            .into_iter()
+            .filter_map(|key| {
+                key.strip_prefix(RUNTIME_BYPASS_PREFIX)
+                    .map(ToString::to_string)
+            })
+            .map(|domain| Self::display_bypass_domain(&domain))
+            .collect::<Vec<_>>();
+        domains.sort();
+        domains.dedup();
+        Ok(domains)
+    }
+
+    async fn register_auth_tokens(&self, tokens: &[(Role, String)]) -> AppResult<()> {
+        for (role, token) in tokens {
+            let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+            self.client
+                .set_string(&Self::auth_token_key(&hash), role.as_str())
+                .await
+                .map_err(|error| {
+                    Self::dependency_error("failed to register control-plane auth token", &error)
+                })?;
+        }
+        Ok(())
+    }
+
+    async fn validate_token(&self, token: &str) -> AppResult<Role> {
+        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        let value = self
+            .client
+            .get_string(&Self::auth_token_key(&hash))
+            .await
+            .map_err(|error| Self::dependency_error("failed to validate auth token", &error))?
+            .ok_or_else(|| AppError::Validation("invalid authentication token".to_string()))?;
+
+        Role::parse(&value)
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("stored auth role is invalid")))
+    }
+
+    async fn get_security_config(&self) -> AppResult<SecurityConfigResponse> {
+        Ok(SecurityConfigResponse {
+            level: self.get_security_level().await?.level,
+            auto_approve_rules: self.list_rules().await?.rules,
+        })
+    }
+
+    async fn get_config(&self, agent: ConfigAgentResponse) -> AppResult<ConfigResponse> {
+        let bypass_domains = self.list_bypass_domains().await?;
+        Ok(ConfigResponse {
+            security: SecurityOverview {
+                level: self.get_security_level().await?.level,
+                protected_paths: PROTECTED_PATHS.iter().map(ToString::to_string).collect(),
+            },
+            auto_approve_rules: self.list_rules().await?.rules,
+            bypass_domains_count: bypass_domains.total,
+            agent,
+        })
+    }
+
+    async fn set_security_level_via_config(&self, level: &str) -> AppResult<ActionResponse> {
+        let response = self.set_security_level(level).await?;
+        self.log_security_event(
+            "config_changed",
+            format!("security level changed to {}", response.level),
+        )
+        .await?;
+        Ok(ActionResponse {
+            message: format!("security level set to {}", response.level),
+        })
+    }
+
+    async fn list_bypass_domains(&self) -> AppResult<BypassListResponse> {
+        let mut domains = Self::compiled_bypass_domains();
+        let runtime_domains = self.list_runtime_bypass_domains().await?;
+        domains.extend(runtime_domains.iter().cloned());
+        domains.sort();
+        domains.dedup();
+
+        Ok(BypassListResponse {
+            total: domains.len(),
+            source: if runtime_domains.is_empty() {
+                "compiled".to_string()
+            } else {
+                "combined".to_string()
+            },
+            domains,
+        })
+    }
+
+    async fn add_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
+        let normalized = Self::normalize_bypass_domain(domain)?;
+        self.client
+            .set_string(&Self::bypass_key(&normalized), "bypass")
+            .await
+            .map_err(|error| Self::dependency_error("failed to add bypass domain", &error))?;
+        let display = Self::display_bypass_domain(&normalized);
+        self.log_security_event("config_changed", format!("bypass domain added: {display}"))
+            .await?;
+        Ok(ActionResponse {
+            message: format!("added bypass domain {display}"),
+        })
+    }
+
+    async fn delete_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
+        let normalized = Self::normalize_bypass_domain(domain)?;
+        self.client
+            .del(&Self::bypass_key(&normalized))
+            .await
+            .map_err(|error| Self::dependency_error("failed to remove bypass domain", &error))?;
+        let display = Self::display_bypass_domain(&normalized);
+        self.log_security_event(
+            "config_changed",
+            format!("bypass domain removed: {display}"),
+        )
+        .await?;
+        Ok(ActionResponse {
+            message: format!("removed bypass domain {display}"),
         })
     }
 }
@@ -758,6 +1211,225 @@ where
     }
 }
 
+#[async_trait]
+impl<C> GovernanceStore for AppState<C>
+where
+    C: ValkeyClient,
+{
+    async fn get_status(&self) -> AppResult<StatusResponse> {
+        self.governance.get_status().await
+    }
+
+    async fn list_blocked(&self) -> AppResult<BlockedListResponse> {
+        self.governance.list_blocked().await
+    }
+
+    async fn approve(&self, request_id: &str) -> AppResult<ActionResponse> {
+        self.governance.approve(request_id).await
+    }
+
+    async fn deny(&self, request_id: &str) -> AppResult<ActionResponse> {
+        self.governance.deny(request_id).await
+    }
+
+    async fn list_events(&self, limit: usize) -> AppResult<EventsResponse> {
+        self.governance.list_events(limit).await
+    }
+
+    async fn get_security_level(&self) -> AppResult<LevelResponse> {
+        self.governance.get_security_level().await
+    }
+
+    async fn set_security_level(&self, level: &str) -> AppResult<LevelResponse> {
+        self.governance.set_security_level(level).await
+    }
+
+    async fn list_rules(&self) -> AppResult<RulesResponse> {
+        self.governance.list_rules().await
+    }
+
+    async fn add_rule(&self, pattern: &str, action: &str) -> AppResult<ActionResponse> {
+        self.governance.add_rule(pattern, action).await
+    }
+
+    async fn add_rule_from_request(
+        &self,
+        request: &RuleCreateRequest,
+    ) -> AppResult<ActionResponse> {
+        self.governance.add_rule_from_request(request).await
+    }
+
+    async fn delete_rule(&self, pattern: &str) -> AppResult<ActionResponse> {
+        self.governance.delete_rule(pattern).await
+    }
+}
+
+#[async_trait]
+impl<C> WorkspaceStore for AppState<C>
+where
+    C: ValkeyClient,
+{
+    async fn get_workspace(&self) -> AppResult<WorkspaceResponse> {
+        let docker = self.docker.as_ref().ok_or_else(|| {
+            AppError::DependencyUnavailable("docker socket not accessible".to_string())
+        })?;
+        docker.workspace_status().await
+    }
+
+    async fn get_agent(&self) -> AppResult<AgentResponse> {
+        let docker = self.docker.as_ref().ok_or_else(|| {
+            AppError::DependencyUnavailable("docker socket not accessible".to_string())
+        })?;
+        docker.agent_info().await
+    }
+
+    async fn list_containers(&self) -> AppResult<ContainersResponse> {
+        let docker = self.docker.as_ref().ok_or_else(|| {
+            AppError::DependencyUnavailable("docker socket not accessible".to_string())
+        })?;
+        Ok(ContainersResponse {
+            containers: docker.list_polis_containers().await?,
+        })
+    }
+}
+
+#[async_trait]
+impl<C> MetricsStore for AppState<C>
+where
+    C: ValkeyClient,
+{
+    async fn get_metrics(&self) -> AppResult<MetricsResponse> {
+        if let Some(docker) = self.docker.as_ref() {
+            let snapshot = docker.metrics_snapshot().await?;
+            self.metrics.update_snapshot(snapshot.clone()).await;
+            return Ok(snapshot);
+        }
+
+        self.metrics.current_snapshot().await.ok_or_else(|| {
+            AppError::DependencyUnavailable("docker socket not accessible".to_string())
+        })
+    }
+
+    async fn get_metrics_history(&self, minutes: u32) -> AppResult<MetricsHistoryResponse> {
+        Ok(self.metrics.history(Some(minutes)).await)
+    }
+}
+
+#[async_trait]
+impl<C> LogsStore for AppState<C>
+where
+    C: ValkeyClient,
+{
+    async fn get_logs(
+        &self,
+        lines: usize,
+        since_seconds: Option<i64>,
+        level: Option<String>,
+    ) -> AppResult<LogsResponse> {
+        let docker = self.docker.as_ref().ok_or_else(|| {
+            AppError::DependencyUnavailable("docker socket not accessible".to_string())
+        })?;
+        docker
+            .logs_snapshot(None, lines, since_seconds, level.as_deref())
+            .await
+    }
+
+    async fn get_logs_for_service(
+        &self,
+        service: &str,
+        lines: usize,
+        since_seconds: Option<i64>,
+        level: Option<String>,
+    ) -> AppResult<LogsResponse> {
+        let docker = self.docker.as_ref().ok_or_else(|| {
+            AppError::DependencyUnavailable("docker socket not accessible".to_string())
+        })?;
+        docker
+            .logs_snapshot(Some(service), lines, since_seconds, level.as_deref())
+            .await
+    }
+}
+
+#[async_trait]
+impl<C> RuntimeConfigStore for AppState<C>
+where
+    C: ValkeyClient,
+{
+    fn normalize_bypass_domain(&self, domain: &str) -> AppResult<String> {
+        GovernanceState::<C>::normalize_bypass_domain(domain)
+    }
+
+    fn display_bypass_domain(&self, domain: &str) -> String {
+        GovernanceState::<C>::display_bypass_domain(domain)
+    }
+
+    async fn get_config(&self) -> AppResult<ConfigResponse> {
+        let agent = if let Some(docker) = self.docker.as_ref() {
+            match docker.agent_info().await {
+                Ok(agent) => ConfigAgentResponse {
+                    name: agent.name,
+                    version: agent.version,
+                },
+                Err(_) => default_config_agent(),
+            }
+        } else {
+            default_config_agent()
+        };
+
+        self.governance.get_config(agent).await
+    }
+
+    async fn get_security_config(&self) -> AppResult<SecurityConfigResponse> {
+        self.governance.get_security_config().await
+    }
+
+    async fn set_security_level_via_config(&self, level: &str) -> AppResult<ActionResponse> {
+        self.governance.set_security_level_via_config(level).await
+    }
+
+    async fn list_bypass_domains(&self) -> AppResult<BypassListResponse> {
+        self.governance.list_bypass_domains().await
+    }
+
+    async fn add_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
+        self.governance.add_bypass_domain(domain).await
+    }
+
+    async fn delete_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
+        self.governance.delete_bypass_domain(domain).await
+    }
+}
+
+#[async_trait]
+impl<C> AuthStore for AppState<C>
+where
+    C: ValkeyClient,
+{
+    fn auth_enabled(&self) -> bool {
+        self.auth.enabled()
+    }
+
+    async fn validate_token(&self, token: &str) -> AppResult<Role> {
+        if !self.auth.enabled() {
+            return Ok(Role::Admin);
+        }
+        self.governance.validate_token(token).await
+    }
+
+    async fn register_auth_failure(&self, client_id: &str, reason: &str) -> AppResult<bool> {
+        let rate_limited = self.auth.record_failure(client_id);
+        let details = if rate_limited {
+            format!("rate-limited failed auth attempt from {client_id}: {reason}")
+        } else {
+            format!("failed auth attempt from {client_id}: {reason}")
+        };
+        self.governance
+            .log_security_event("auth_failed", details)
+            .await?;
+        Ok(rate_limited)
+    }
+}
+
 fn parse_event_timestamp(value: &serde_json::Value) -> Option<DateTime<Utc>> {
     if let Some(timestamp) = value.as_i64() {
         return DateTime::<Utc>::from_timestamp(timestamp, 0);
@@ -776,6 +1448,13 @@ fn legacy_details(value: &serde_json::Value) -> Option<String> {
         return Some(format!("{} ({})", request.destination, request.request_id));
     }
     Some(raw.to_string())
+}
+
+fn default_config_agent() -> ConfigAgentResponse {
+    ConfigAgentResponse {
+        name: DEFAULT_AGENT_NAME.to_string(),
+        version: DEFAULT_AGENT_VERSION.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -1195,6 +1874,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validate_token_roundtrips_registered_roles() {
+        let client = FakeValkeyClient::default();
+        let store = GovernanceState::new_with_client(client);
+
+        store
+            .register_auth_tokens(&[(Role::Viewer, "polis_viewer_deadbeef".to_string())])
+            .await
+            .expect("register token");
+
+        let role = store
+            .validate_token("polis_viewer_deadbeef")
+            .await
+            .expect("validate token");
+        assert_eq!(role, Role::Viewer);
+    }
+
+    #[tokio::test]
+    async fn register_auth_failure_logs_and_rate_limits_after_threshold() {
+        let client = FakeValkeyClient::default();
+        let governance = GovernanceState::new_with_client(client.clone());
+        let app_state = AppState::new_with_auth(
+            governance,
+            None,
+            MetricsCollector::new(),
+            AuthState::new(true),
+        );
+
+        for attempt in 1..=AUTH_FAILURE_LIMIT {
+            let rate_limited = app_state
+                .register_auth_failure("127.0.0.1", "invalid authentication token")
+                .await
+                .expect("register auth failure");
+            assert!(!rate_limited, "unexpected rate limit on attempt {attempt}");
+        }
+
+        let rate_limited = app_state
+            .register_auth_failure("127.0.0.1", "invalid authentication token")
+            .await
+            .expect("register auth failure");
+        assert!(rate_limited);
+        assert_eq!(
+            client.zcard(keys::EVENT_LOG).await.expect("event count"),
+            11
+        );
+    }
+
+    #[tokio::test]
     async fn list_events_parses_structured_and_legacy_entries() {
         let client = FakeValkeyClient::default();
         client.seed_event(
@@ -1266,5 +1992,89 @@ mod tests {
 
         let error = store.list_blocked().await.expect_err("dependency failure");
         assert!(matches!(error, AppError::DependencyUnavailable(_)));
+    }
+
+    #[tokio::test]
+    async fn app_state_delegates_phase1_reads_to_governance_state() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request("req-abc12345", "https://a.example", 1),
+        );
+        client.seed_event(
+            1.0,
+            serde_json::to_string(&SecurityLogEntry {
+                timestamp: Utc::now(),
+                event_type: "block_reported".to_string(),
+                request_id: Some("req-abc12345".to_string()),
+                details: "Blocked".to_string(),
+            })
+            .expect("serialize event"),
+        );
+
+        let governance = GovernanceState::new_with_client(client);
+        let app_state = AppState::new_with_parts(governance.clone(), None, MetricsCollector::new());
+
+        assert_eq!(
+            GovernanceStore::get_status(&app_state)
+                .await
+                .expect("status"),
+            GovernanceStore::get_status(&governance)
+                .await
+                .expect("status"),
+        );
+        assert_eq!(
+            GovernanceStore::list_blocked(&app_state)
+                .await
+                .expect("blocked list"),
+            GovernanceStore::list_blocked(&governance)
+                .await
+                .expect("blocked list"),
+        );
+        assert_eq!(
+            GovernanceStore::list_events(&app_state, 50)
+                .await
+                .expect("events"),
+            GovernanceStore::list_events(&governance, 50)
+                .await
+                .expect("events"),
+        );
+    }
+
+    #[tokio::test]
+    async fn app_state_delegates_phase1_mutations_to_governance_state() {
+        let client = FakeValkeyClient::default();
+        let governance = GovernanceState::new_with_client(client);
+        let app_state = AppState::new_with_parts(governance.clone(), None, MetricsCollector::new());
+
+        let level = GovernanceStore::set_security_level(&app_state, "strict")
+            .await
+            .expect("level update");
+        assert_eq!(level.level, "strict");
+
+        let rule_response = GovernanceStore::add_rule(&app_state, "*.example.com", "allow")
+            .await
+            .expect("rule add");
+        assert!(rule_response.message.contains("*.example.com"));
+
+        assert_eq!(
+            GovernanceStore::get_security_level(&governance)
+                .await
+                .expect("governance level")
+                .level,
+            "strict",
+        );
+        assert_eq!(
+            GovernanceStore::list_rules(&governance)
+                .await
+                .expect("governance rules")
+                .rules,
+            vec![RuleItem {
+                pattern: "*.example.com".to_string(),
+                action: "allow".to_string(),
+            }],
+        );
+        assert!(app_state.docker().is_none());
+        assert!(app_state.metrics().current_snapshot().await.is_none());
     }
 }

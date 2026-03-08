@@ -11,7 +11,9 @@ pub mod health;
 pub mod workspace;
 
 #[allow(unused_imports)]
-pub use config::{PolisConfig, SecurityConfig, validate_config_key, validate_config_value};
+pub use config::{
+    ControlPlaneConfig, PolisConfig, SecurityConfig, validate_config_key, validate_config_value,
+};
 #[allow(unused_imports)]
 pub use error::{AgentError, ConfigError, WorkspaceError};
 #[allow(unused_imports)]

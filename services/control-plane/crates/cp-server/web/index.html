@@ -178,7 +178,7 @@
       .dashboard-grid {
         display: grid;
         gap: 1rem;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
       }
 
       .stat-card h2 {
@@ -293,6 +293,143 @@
         grid-template-columns: 2fr 1fr;
       }
 
+      .workspace-layout {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .workspace-header-card,
+      .metric-card,
+      .log-controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      .workspace-summary,
+      .agent-resources {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1rem;
+        align-items: center;
+      }
+
+      .metrics-bars {
+        display: grid;
+        gap: 0.85rem;
+        margin-top: 1rem;
+      }
+
+      .metric-row {
+        display: grid;
+        gap: 0.5rem;
+        grid-template-columns: minmax(5rem, auto) minmax(0, 1fr) minmax(6rem, auto);
+        align-items: center;
+      }
+
+      .metric-bar {
+        height: 0.7rem;
+        border-radius: 999px;
+        background: var(--border);
+        overflow: hidden;
+      }
+
+      .metric-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), #7dd3fc);
+        transition: width 0.25s ease;
+      }
+
+      .health-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.25rem 0.6rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        font-size: 0.9rem;
+        text-transform: capitalize;
+      }
+
+      .health-badge.healthy {
+        color: var(--success);
+      }
+
+      .health-badge.starting {
+        color: var(--warning);
+      }
+
+      .health-badge.unhealthy,
+      .health-badge.exited,
+      .health-badge.dead {
+        color: var(--danger);
+      }
+
+      .table-wrapper {
+        overflow-x: auto;
+      }
+
+      .log-controls {
+        margin-bottom: 1rem;
+      }
+
+      .log-controls select,
+      .log-controls button {
+        min-height: 2.5rem;
+      }
+
+      .log-viewer {
+        max-height: 32rem;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 0.85rem;
+        background: var(--bg-muted);
+        padding: 0.35rem 0.75rem;
+      }
+
+      .log-line {
+        display: grid;
+        gap: 0.5rem;
+        grid-template-columns: 9rem 7rem 5rem minmax(0, 1fr);
+        padding: 0.45rem 0;
+        border-bottom: 1px solid rgba(154, 164, 178, 0.16);
+        font-family:
+          "SFMono-Regular",
+          ui-monospace,
+          "Cascadia Code",
+          "Source Code Pro",
+          monospace;
+        font-size: 0.9rem;
+      }
+
+      .log-line:last-child {
+        border-bottom: none;
+      }
+
+      .log-line.error .log-level {
+        color: var(--danger);
+      }
+
+      .log-line.warn .log-level {
+        color: var(--warning);
+      }
+
+      .log-line.info .log-level {
+        color: var(--text-muted);
+      }
+
+      .log-level,
+      .log-service,
+      .log-time {
+        white-space: nowrap;
+      }
+
+      .log-message {
+        word-break: break-word;
+      }
+
       .rule-form {
         display: grid;
         gap: 0.75rem;
@@ -351,7 +488,9 @@
         }
 
         .dashboard-grid,
-        .rules-layout {
+        .rules-layout,
+        .metric-row,
+        .log-line {
           grid-template-columns: 1fr;
         }
 
@@ -387,6 +526,8 @@
         <button type="button" class="tab-button" data-tab="blocked-section">Blocked Requests</button>
         <button type="button" class="tab-button" data-tab="events-section">Event Log</button>
         <button type="button" class="tab-button" data-tab="rules-section">Rules</button>
+        <button type="button" class="tab-button" data-tab="workspace-section">Workspace</button>
+        <button type="button" class="tab-button" data-tab="logs-section">Logs</button>
       </nav>
 
       <main>
@@ -413,6 +554,37 @@
               <h2>Total Events</h2>
               <p id="events-count">0</p>
             </article>
+            <article class="panel stat-card">
+              <h2>Agent</h2>
+              <p id="agent-name-card">Waiting</p>
+              <span id="agent-health-card" class="health-badge starting">starting</span>
+            </article>
+            <article class="panel stat-card">
+              <h2>Containers</h2>
+              <p id="container-health-card">0/0</p>
+            </article>
+          </div>
+          <div class="panel metric-card">
+            <div>
+              <h2>System Metrics</h2>
+              <p class="empty-state">Updated from live SSE metrics events.</p>
+            </div>
+            <div class="metrics-bars" aria-live="polite">
+              <div class="metric-row">
+                <span>CPU</span>
+                <div class="metric-bar" aria-hidden="true">
+                  <div id="cpu-fill" class="metric-fill" style="width: 0%"></div>
+                </div>
+                <span id="cpu-label">0%</span>
+              </div>
+              <div class="metric-row">
+                <span>Memory</span>
+                <div class="metric-bar" aria-hidden="true">
+                  <div id="memory-fill" class="metric-fill" style="width: 0%"></div>
+                </div>
+                <span id="memory-label">0 / 0 MB</span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -498,10 +670,87 @@
             </form>
           </div>
         </section>
+
+        <section id="workspace-section" class="section panel" hidden>
+          <div class="section-header">
+            <div>
+              <h2>Workspace</h2>
+              <p class="empty-state">Live workspace, agent, and container health snapshot.</p>
+            </div>
+            <button id="refresh-workspace-button" type="button" aria-label="Refresh workspace status">
+              Refresh Workspace
+            </button>
+          </div>
+          <div class="workspace-layout">
+            <div class="panel workspace-header-card">
+              <div class="workspace-summary">
+                <strong id="workspace-agent-name">Waiting for agent</strong>
+                <span id="workspace-agent-health" class="health-badge starting">starting</span>
+                <span id="workspace-uptime" class="empty-state">Uptime unavailable</span>
+              </div>
+              <div class="agent-resources">
+                <span id="workspace-agent-cpu">CPU: 0%</span>
+                <span id="workspace-agent-memory">Memory: 0 / 0 MB</span>
+              </div>
+            </div>
+            <div class="panel table-wrapper">
+              <table class="container-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Container</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Health</th>
+                    <th scope="col">Memory</th>
+                    <th scope="col">CPU</th>
+                  </tr>
+                </thead>
+                <tbody id="workspace-table-body"></tbody>
+              </table>
+              <p id="workspace-empty-state" class="empty-state">No workspace containers reported yet.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="logs-section" class="section panel" hidden>
+          <div class="section-header">
+            <div>
+              <h2>Logs</h2>
+              <p class="empty-state">On-demand container logs across the Polis workspace.</p>
+            </div>
+          </div>
+          <div class="log-controls">
+            <label>
+              <span class="empty-state">Service</span>
+              <select id="log-service-filter" aria-label="Filter logs by service">
+                <option value="">All Services</option>
+                <option value="gate">Gate</option>
+                <option value="sentinel">Sentinel</option>
+                <option value="scanner">Scanner</option>
+                <option value="resolver">Resolver</option>
+                <option value="state">State</option>
+                <option value="toolbox">Toolbox</option>
+                <option value="workspace">Workspace</option>
+                <option value="control-plane">Control Plane</option>
+              </select>
+            </label>
+            <label>
+              <span class="empty-state">Level</span>
+              <select id="log-level-filter" aria-label="Filter logs by level">
+                <option value="">All Levels</option>
+                <option value="error">Error</option>
+                <option value="warn">Warning</option>
+                <option value="info">Info</option>
+              </select>
+            </label>
+            <button id="refresh-logs-button" type="button" aria-label="Refresh logs">Refresh Logs</button>
+          </div>
+          <div id="log-viewer" class="log-viewer" tabindex="0" aria-label="Scrollable log viewer"></div>
+          <p id="logs-empty-state" class="empty-state">No logs loaded.</p>
+        </section>
       </main>
 
       <footer class="page-footer">
-        <span>Version: Phase 1</span>
+        <span>Version: Phase 2</span>
         <span id="last-update">Last update: waiting for data</span>
       </footer>
     </div>
@@ -509,11 +758,21 @@
     <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
     <script>
+      const authToken = new URLSearchParams(window.location.search).get("token") || "";
       const state = {
         status: null,
         blocked: [],
         events: [],
         rules: [],
+        workspace: null,
+        agent: null,
+        metrics: null,
+        containers: [],
+        logs: [],
+        logFilter: {
+          service: "",
+          level: "",
+        },
       };
 
       function createElement(tagName, options = {}) {
@@ -521,7 +780,7 @@
         if (options.className) {
           element.className = options.className;
         }
-        if (options.text) {
+        if (options.text !== undefined) {
           element.textContent = options.text;
         }
         if (options.attrs) {
@@ -541,17 +800,15 @@
       }
 
       function setLastUpdate() {
-        const now = new Date();
-        document.getElementById("last-update").textContent = `Last update: ${now.toLocaleString()}`;
+        document.getElementById("last-update").textContent =
+          `Last update: ${new Date().toLocaleString()}`;
       }
 
       function showToast(message, type = "success") {
         const stack = document.getElementById("toast-stack");
         const toast = createElement("div", { className: `toast ${type}`, text: message });
         stack.append(toast);
-        window.setTimeout(() => {
-          toast.remove();
-        }, 5000);
+        window.setTimeout(() => toast.remove(), 5000);
       }
 
       function switchTab(sectionId) {
@@ -561,6 +818,76 @@
         document.querySelectorAll(".tab-button").forEach((button) => {
           button.classList.toggle("active", button.dataset.tab === sectionId);
         });
+
+        if (sectionId === "workspace-section") {
+          refreshWorkspace();
+        } else if (sectionId === "logs-section") {
+          refreshLogs();
+        }
+      }
+
+      function healthClass(value) {
+        return (value || "starting").toLowerCase();
+      }
+
+      function applyHealthBadge(elementId, value) {
+        const element = document.getElementById(elementId);
+        const normalized = healthClass(value);
+        element.className = `health-badge ${normalized}`;
+        element.textContent = normalized;
+      }
+
+      function formatPercent(value) {
+        return `${Number(value || 0).toFixed(1)}%`;
+      }
+
+      function formatUptime(seconds) {
+        if (!seconds) {
+          return "Uptime unavailable";
+        }
+        const total = Number(seconds);
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        if (hours > 0) {
+          return `Uptime: ${hours}h ${minutes}m`;
+        }
+        return `Uptime: ${minutes}m`;
+      }
+
+      function formatMemory(used, limit) {
+        return `${Number(used || 0)} / ${Number(limit || 0)} MB`;
+      }
+
+      function metricWidth(used, limit) {
+        if (!limit) {
+          return 0;
+        }
+        return Math.min(100, Math.round((Number(used) / Number(limit)) * 100));
+      }
+
+      function mergeContainerMetrics(metricsContainers) {
+        const byService = new Map(state.containers.map((container) => [container.service, container]));
+        for (const metrics of metricsContainers || []) {
+          const current = byService.get(metrics.service) || {
+            name: metrics.service,
+            service: metrics.service,
+            status: metrics.status,
+            health: metrics.health,
+            uptime_seconds: null,
+            network: "",
+            ip: "",
+          };
+          byService.set(metrics.service, {
+            ...current,
+            status: metrics.status,
+            health: metrics.health,
+            memory_usage_mb: metrics.memory_usage_mb,
+            memory_limit_mb: metrics.memory_limit_mb,
+            cpu_percent: metrics.cpu_percent,
+            stale: metrics.stale || current.stale || false,
+          });
+        }
+        state.containers = Array.from(byService.values());
       }
 
       function renderDashboard() {
@@ -575,6 +902,25 @@
         document.getElementById("pending-count").textContent = String(status.pending_count);
         document.getElementById("approval-count").textContent = String(status.recent_approvals);
         document.getElementById("events-count").textContent = String(status.events_count);
+
+        document.getElementById("agent-name-card").textContent =
+          state.agent?.display_name || state.agent?.name || "Waiting";
+        applyHealthBadge("agent-health-card", state.agent?.health || "starting");
+
+        const containerSummary = state.workspace?.containers;
+        document.getElementById("container-health-card").textContent = containerSummary
+          ? `${containerSummary.healthy}/${containerSummary.total} healthy`
+          : "0/0";
+
+        const system = state.metrics?.system;
+        document.getElementById("cpu-fill").style.width = `${Math.min(100, Math.round(system?.total_cpu_percent || 0))}%`;
+        document.getElementById("cpu-label").textContent = formatPercent(system?.total_cpu_percent || 0);
+        document.getElementById("memory-fill").style.width = `${metricWidth(system?.total_memory_usage_mb, system?.total_memory_limit_mb)}%`;
+        document.getElementById("memory-label").textContent = formatMemory(
+          system?.total_memory_usage_mb || 0,
+          system?.total_memory_limit_mb || 0
+        );
+
         document.getElementById("dashboard-summary").textContent =
           `${status.pending_count} pending blocked request(s), ${status.recent_approvals} recent approval(s), ${status.events_count} event(s).`;
       }
@@ -588,36 +934,33 @@
 
         for (const item of state.blocked) {
           const row = document.createElement("tr");
-
-          const idCell = createElement("td", { className: "mono", text: item.request_id });
-          const reasonCell = createElement("td", { text: item.reason });
-          const destinationCell = createElement("td", { text: item.destination });
-          const blockedAtCell = createElement("td", {
-            className: "mono",
-            text: new Date(item.blocked_at).toLocaleString(),
-          });
+          row.append(
+            createElement("td", { className: "mono", text: item.request_id }),
+            createElement("td", { text: item.reason }),
+            createElement("td", { text: item.destination }),
+            createElement("td", {
+              className: "mono",
+              text: new Date(item.blocked_at).toLocaleString(),
+            })
+          );
 
           const actionsCell = document.createElement("td");
           const actions = createElement("div", { className: "button-row" });
-
           const approveButton = createElement("button", {
             className: "button-success",
             text: "Approve",
             attrs: { type: "button", "aria-label": `Approve request ${item.request_id}` },
           });
           approveButton.addEventListener("click", () => approveRequest(item.request_id));
-
           const denyButton = createElement("button", {
             className: "button-danger",
             text: "Deny",
             attrs: { type: "button", "aria-label": `Deny request ${item.request_id}` },
           });
           denyButton.addEventListener("click", () => denyRequest(item.request_id));
-
           actions.append(approveButton, denyButton);
           actionsCell.append(actions);
-
-          row.append(idCell, reasonCell, destinationCell, blockedAtCell, actionsCell);
+          row.append(actionsCell);
           body.append(row);
         }
       }
@@ -625,9 +968,7 @@
       function renderEvents() {
         const list = document.getElementById("events-list");
         list.replaceChildren();
-
-        const emptyState = document.getElementById("events-empty-state");
-        emptyState.hidden = state.events.length > 0;
+        document.getElementById("events-empty-state").hidden = state.events.length > 0;
 
         for (const item of state.events) {
           const card = createElement("article", { className: "event-item" });
@@ -643,8 +984,7 @@
               text: item.request_id || "no request id",
             })
           );
-          const details = createElement("div", { text: item.details });
-          card.append(meta, details);
+          card.append(meta, createElement("div", { text: item.details }));
           list.append(card);
         }
       }
@@ -652,9 +992,7 @@
       function renderRules() {
         const body = document.getElementById("rules-table-body");
         body.replaceChildren();
-
-        const emptyState = document.getElementById("rules-empty-state");
-        emptyState.hidden = state.rules.length > 0;
+        document.getElementById("rules-empty-state").hidden = state.rules.length > 0;
 
         for (const rule of state.rules) {
           const row = document.createElement("tr");
@@ -662,15 +1000,11 @@
             createElement("td", { className: "mono", text: rule.pattern }),
             createElement("td", { text: rule.action })
           );
-
           const actionsCell = document.createElement("td");
           const deleteButton = createElement("button", {
             className: "button-danger",
             text: "Delete",
-            attrs: {
-              type: "button",
-              "aria-label": `Delete rule ${rule.pattern}`,
-            },
+            attrs: { type: "button", "aria-label": `Delete rule ${rule.pattern}` },
           });
           deleteButton.addEventListener("click", () => deleteRule(rule.pattern));
           actionsCell.append(deleteButton);
@@ -679,10 +1013,86 @@
         }
       }
 
+      function renderWorkspace() {
+        document.getElementById("workspace-agent-name").textContent =
+          state.agent?.display_name
+            ? `${state.agent.display_name} v${state.agent.version}`
+            : "Waiting for agent";
+        applyHealthBadge("workspace-agent-health", state.agent?.health || "starting");
+        document.getElementById("workspace-uptime").textContent = formatUptime(
+          state.workspace?.uptime_seconds || state.agent?.uptime_seconds || 0
+        );
+        document.getElementById("workspace-agent-cpu").textContent =
+          `CPU: ${formatPercent(state.agent?.resources?.cpu_percent || 0)}`;
+        document.getElementById("workspace-agent-memory").textContent =
+          `Memory: ${formatMemory(
+            state.agent?.resources?.memory_usage_mb || 0,
+            state.agent?.resources?.memory_limit_mb || 0
+          )}`;
+
+        const body = document.getElementById("workspace-table-body");
+        body.replaceChildren();
+        const rows = [...state.containers].sort(
+          (left, right) => (right.memory_usage_mb || 0) - (left.memory_usage_mb || 0)
+        );
+        document.getElementById("workspace-empty-state").hidden = rows.length > 0;
+
+        for (const container of rows) {
+          const row = document.createElement("tr");
+          row.append(
+            createElement("td", { className: "mono", text: container.name || container.service }),
+            createElement("td", { text: container.status || "unknown" })
+          );
+          const healthCell = document.createElement("td");
+          healthCell.append(
+            createElement("span", {
+              className: `health-badge ${healthClass(container.health || container.status)}`,
+              text: container.health || container.status || "unknown",
+            })
+          );
+          row.append(
+            healthCell,
+            createElement("td", {
+              text: formatMemory(container.memory_usage_mb || 0, container.memory_limit_mb || 0),
+            }),
+            createElement("td", { text: formatPercent(container.cpu_percent || 0) })
+          );
+          body.append(row);
+        }
+      }
+
+      function renderLogs() {
+        const viewer = document.getElementById("log-viewer");
+        viewer.replaceChildren();
+        document.getElementById("logs-empty-state").hidden = state.logs.length > 0;
+
+        for (const line of state.logs) {
+          const row = createElement("div", { className: `log-line ${healthClass(line.level)}` });
+          row.append(
+            createElement("span", {
+              className: "log-time",
+              text: new Date(line.timestamp).toLocaleString(),
+            }),
+            createElement("span", { className: "log-service", text: line.service }),
+            createElement("span", { className: "log-level", text: line.level }),
+            createElement("span", { className: "log-message", text: line.message })
+          );
+          viewer.append(row);
+        }
+      }
+
       async function requestJson(url, options = {}) {
+        const headers = new Headers(options.headers || {});
+        if (options.body !== undefined && !headers.has("Content-Type")) {
+          headers.set("Content-Type", "application/json");
+        }
+        if (authToken && !headers.has("Authorization")) {
+          headers.set("Authorization", `Bearer ${authToken}`);
+        }
+
         const response = await fetch(url, {
-          headers: { "Content-Type": "application/json" },
           ...options,
+          headers,
         });
 
         if (!response.ok) {
@@ -693,7 +1103,7 @@
               errorMessage = errorBody.error;
             }
           } catch (_error) {
-            // Keep the fallback message when the body is not JSON.
+            // Keep the fallback message.
           }
           throw new Error(errorMessage);
         }
@@ -727,11 +1137,51 @@
         }
       }
 
+      async function refreshWorkspace() {
+        try {
+          const [workspace, agent, containers, metrics] = await Promise.all([
+            requestJson("/api/v1/workspace"),
+            requestJson("/api/v1/agent").catch(() => null),
+            requestJson("/api/v1/containers").catch(() => ({ containers: [] })),
+            requestJson("/api/v1/metrics").catch(() => null),
+          ]);
+          state.workspace = workspace;
+          state.agent = agent;
+          state.containers = containers.containers || [];
+          state.metrics = metrics;
+          mergeContainerMetrics(metrics?.containers || []);
+          renderDashboard();
+          renderWorkspace();
+          setLastUpdate();
+        } catch (error) {
+          showToast(error.message, "error");
+        }
+      }
+
+      async function refreshLogs() {
+        try {
+          const params = new URLSearchParams({ lines: "200" });
+          if (state.logFilter.level) {
+            params.set("level", state.logFilter.level);
+          }
+          const baseUrl = state.logFilter.service
+            ? `/api/v1/logs/${encodeURIComponent(state.logFilter.service)}`
+            : "/api/v1/logs";
+          const response = await requestJson(`${baseUrl}?${params.toString()}`);
+          state.logs = response.lines;
+          renderLogs();
+          setLastUpdate();
+        } catch (error) {
+          showToast(error.message, "error");
+        }
+      }
+
       async function approveRequest(requestId) {
         try {
-          const response = await requestJson(`/api/v1/blocked/${encodeURIComponent(requestId)}/approve`, {
-            method: "POST",
-          });
+          const response = await requestJson(
+            `/api/v1/blocked/${encodeURIComponent(requestId)}/approve`,
+            { method: "POST" }
+          );
           showToast(response.message, "success");
         } catch (error) {
           showToast(error.message, "error");
@@ -740,9 +1190,10 @@
 
       async function denyRequest(requestId) {
         try {
-          const response = await requestJson(`/api/v1/blocked/${encodeURIComponent(requestId)}/deny`, {
-            method: "POST",
-          });
+          const response = await requestJson(
+            `/api/v1/blocked/${encodeURIComponent(requestId)}/deny`,
+            { method: "POST" }
+          );
           showToast(response.message, "success");
         } catch (error) {
           showToast(error.message, "error");
@@ -777,15 +1228,13 @@
       }
 
       function connectStream() {
-        const source = new EventSource("/api/v1/stream");
+        const streamUrl = authToken
+          ? `/api/v1/stream?token=${encodeURIComponent(authToken)}`
+          : "/api/v1/stream";
+        const source = new EventSource(streamUrl);
 
-        source.addEventListener("open", () => {
-          setConnectionStatus(true);
-        });
-
-        source.addEventListener("error", () => {
-          setConnectionStatus(false);
-        });
+        source.addEventListener("open", () => setConnectionStatus(true));
+        source.addEventListener("error", () => setConnectionStatus(false));
 
         source.addEventListener("status", (event) => {
           state.status = JSON.parse(event.data);
@@ -794,29 +1243,73 @@
         });
 
         source.addEventListener("blocked", (event) => {
-          const payload = JSON.parse(event.data);
-          state.blocked = payload.items;
+          state.blocked = JSON.parse(event.data).items;
           renderBlockedRequests();
           setLastUpdate();
         });
 
         source.addEventListener("event_log", (event) => {
-          const payload = JSON.parse(event.data);
-          state.events = payload.events;
+          state.events = JSON.parse(event.data).events;
           renderEvents();
           setLastUpdate();
+        });
+
+        source.addEventListener("rules", (event) => {
+          state.rules = JSON.parse(event.data).rules;
+          renderRules();
+          setLastUpdate();
+        });
+
+        source.addEventListener("workspace", (event) => {
+          state.workspace = JSON.parse(event.data);
+          renderDashboard();
+          renderWorkspace();
+          setLastUpdate();
+        });
+
+        source.addEventListener("agent", (event) => {
+          state.agent = JSON.parse(event.data);
+          renderDashboard();
+          renderWorkspace();
+          setLastUpdate();
+        });
+
+        source.addEventListener("metrics", (event) => {
+          state.metrics = JSON.parse(event.data);
+          mergeContainerMetrics(state.metrics.containers || []);
+          renderDashboard();
+          renderWorkspace();
+          setLastUpdate();
+        });
+
+        source.addEventListener("config", (event) => {
+          const payload = JSON.parse(event.data);
+          showToast(`Config updated: ${payload.type}`, "success");
         });
       }
 
       document.addEventListener("DOMContentLoaded", () => {
-        for (const button of document.querySelectorAll(".tab-button")) {
+        document.querySelectorAll(".tab-button").forEach((button) => {
           button.addEventListener("click", () => switchTab(button.dataset.tab));
-        }
+        });
 
         document
           .getElementById("refresh-events-button")
           .addEventListener("click", () => refreshEvents());
-
+        document
+          .getElementById("refresh-workspace-button")
+          .addEventListener("click", () => refreshWorkspace());
+        document
+          .getElementById("refresh-logs-button")
+          .addEventListener("click", () => refreshLogs());
+        document.getElementById("log-service-filter").addEventListener("change", (event) => {
+          state.logFilter.service = event.target.value;
+          refreshLogs();
+        });
+        document.getElementById("log-level-filter").addEventListener("change", (event) => {
+          state.logFilter.level = event.target.value;
+          refreshLogs();
+        });
         document.getElementById("rule-form").addEventListener("submit", (event) => {
           event.preventDefault();
           const pattern = document.getElementById("rule-pattern-input").value.trim();
@@ -828,8 +1321,12 @@
         renderBlockedRequests();
         renderEvents();
         renderRules();
+        renderWorkspace();
+        renderLogs();
         refreshEvents();
         loadRules();
+        refreshWorkspace();
+        refreshLogs();
         connectStream();
       });
     </script>
