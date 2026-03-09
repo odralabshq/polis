@@ -67,6 +67,7 @@ pub fn compose_overlay(manifest: &AgentManifest) -> String {
     // Build workspace service
     let workspace_service = WorkspaceService {
         env_file: vec![".env".to_string()],
+        environment: vec!["POLIS_VM_IP=${POLIS_VM_IP:-}".to_string()],
         volumes: volume_mounts,
         healthcheck: ComposeHealthcheck {
             test: vec!["CMD-SHELL".to_string(), healthcheck_test],
@@ -342,6 +343,8 @@ pub(crate) enum ComposeServiceEntry {
 #[derive(Debug, Serialize)]
 pub(crate) struct WorkspaceService {
     pub env_file: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<String>,
     pub volumes: Vec<String>,
     pub healthcheck: ComposeHealthcheck,
     #[serde(skip_serializing_if = "Option::is_none")]

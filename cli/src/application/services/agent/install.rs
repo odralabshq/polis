@@ -235,6 +235,7 @@ spec:
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
             if self.transfer_fails { Ok(fail_output()) } else { Ok(ok_output(b"")) }
         }
+        async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
     }
 
     fn fs_with_manifest(path: &str) -> LocalFsStub {

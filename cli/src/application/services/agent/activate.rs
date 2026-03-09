@@ -697,9 +697,10 @@ spec:
     }
 
     impl FileTransfer for ActivateStub {
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
-    }
+            async fn transfer(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+            async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+            async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+        }
 
     fn fs_with_manifest() -> LocalFsStub {
         LocalFsStub::new(vec![])

@@ -346,6 +346,10 @@ impl FileTransfer for MockProvisioner {
     async fn transfer_recursive(&self, _local: &str, _remote: &str) -> Result<Output> {
         Ok(ok_output(b""))
     }
+
+    async fn transfer_from(&self, _remote: &str, _local: &str) -> Result<Output> {
+        Ok(ok_output(b""))
+    }
 }
 
 impl ShellExecutor for MockProvisioner {

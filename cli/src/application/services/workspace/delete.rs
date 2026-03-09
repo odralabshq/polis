@@ -25,6 +25,7 @@ pub async fn delete(
     provisioner: &(impl InstanceInspector + InstanceLifecycle + ShellExecutor),
     state_mgr: &impl crate::application::ports::WorkspaceStateStore,
     reporter: &impl ProgressReporter,
+    _skip_backup: bool,
 ) -> Result<DeleteOutcome> {
     // 1. Check if VM exists (fail-fast: prerequisite check)
     let state = vm::state(provisioner).await?;
@@ -77,6 +78,7 @@ pub struct CleanupContext<'a, P, S, F, L, C, R> {
     pub paths: &'a L,
     pub ssh: &'a C,
     pub reporter: &'a R,
+    pub skip_backup: bool,
 }
 
 /// Delete all workspace data (images, state, agents, config, certs, SSH artifacts).
@@ -527,7 +529,7 @@ mod tests {
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        let outcome = delete(&provisioner, &state_store, &reporter)
+        let outcome = delete(&provisioner, &state_store, &reporter, false)
             .await
             .expect("should succeed");
 
@@ -544,7 +546,7 @@ mod tests {
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        let outcome = delete(&provisioner, &state_store, &reporter)
+        let outcome = delete(&provisioner, &state_store, &reporter, false)
             .await
             .expect("should succeed");
 
@@ -561,7 +563,7 @@ mod tests {
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        let err = delete(&provisioner, &state_store, &reporter)
+        let err = delete(&provisioner, &state_store, &reporter, false)
             .await
             .expect_err("should fail");
 
@@ -575,7 +577,7 @@ mod tests {
         let state_store = StateStoreStub { clear_fails: true };
         let reporter = ReporterStub;
 
-        let err = delete(&provisioner, &state_store, &reporter)
+        let err = delete(&provisioner, &state_store, &reporter, false)
             .await
             .expect_err("should fail");
 
@@ -591,7 +593,7 @@ mod tests {
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        delete(&provisioner, &state_store, &reporter)
+        delete(&provisioner, &state_store, &reporter, false)
             .await
             .expect("should succeed");
 
@@ -612,7 +614,7 @@ mod tests {
         let state_store = StateStoreStub { clear_fails: false };
         let reporter = ReporterStub;
 
-        let outcome = delete(&provisioner, &state_store, &reporter)
+        let outcome = delete(&provisioner, &state_store, &reporter, false)
             .await
             .expect("should succeed despite exec failure");
 
@@ -645,6 +647,7 @@ mod tests {
             paths,
             ssh,
             reporter,
+            skip_backup: true,
         }
     }
 

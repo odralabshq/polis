@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use std::net::Ipv4Addr;
 
 use crate::application::ports::{
     AssetExtractor, InstanceInspector, InstanceLifecycle, InstanceSpec, ProgressReporter,
@@ -86,8 +87,9 @@ pub async fn resolve_vm_ip(provisioner: &impl InstanceInspector) -> Result<Strin
         .polis
         .ipv4
         .first()
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no IPv4 address found for polis VM"))
+        .and_then(|raw| raw.parse::<Ipv4Addr>().ok())
+        .map(|ip| ip.to_string())
+        .ok_or_else(|| anyhow::anyhow!("no valid IPv4 address found for polis VM"))
 }
 
 /// Verify that cloud-init completed successfully inside the VM.
@@ -412,13 +414,27 @@ mod tests {
     async fn resolve_vm_ip_errors_when_no_ip() {
         let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#));
         let err = resolve_vm_ip(&mp).await.unwrap_err();
-        assert!(err.to_string().contains("no IPv4"));
+        assert!(err.to_string().contains("no valid IPv4"));
     }
 
     #[tokio::test]
     async fn resolve_vm_ip_errors_when_info_fails() {
         let mp = MultipassVmInfoStub(fail());
         assert!(resolve_vm_ip(&mp).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_vm_ip_rejects_invalid_ipv4() {
+        let mp = MultipassVmInfoStub(ok(
+            br#"{"info":{"polis":{"state":"Running","ipv4":["10.20.30.40'; echo pwned"]}}}"#,
+        ));
+        let err = resolve_vm_ip(&mp)
+            .await
+            .expect_err("expected invalid ip error");
+        assert!(
+            err.to_string().contains("no valid IPv4"),
+            "expected invalid IPv4 error: {err}"
+        );
     }
 
     struct MultipassRestartSpy {

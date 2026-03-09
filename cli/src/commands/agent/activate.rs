@@ -8,6 +8,7 @@ use crate::app::App;
 use crate::application::services::agent::{
     self, ActivateOutcome, AgentActivateOptions, AgentSwapOptions,
 };
+use crate::application::vm::lifecycle as vm;
 
 /// Run the `agent activate` subcommand.
 ///
@@ -39,8 +40,19 @@ pub async fn run(app: &impl App, name: &str, envs: Vec<String>) -> Result<ExitCo
         let swap_outcome =
             agent::swap_agent(app.provisioner(), app.state_store(), app.fs(), swap_opts).await?;
         app.renderer().render_activate_outcome(&swap_outcome);
+        show_dashboard_url(app).await;
     } else {
         app.renderer().render_activate_outcome(&outcome);
+        show_dashboard_url(app).await;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Show the agent dashboard URL (best-effort, no error on failure).
+async fn show_dashboard_url(app: &impl App) {
+    if let Ok(ip) = vm::resolve_vm_ip(app.provisioner()).await {
+        app.output().blank();
+        app.output()
+            .kv("Control UI", &format!("http://{ip}:18789/overview"));
+    }
 }

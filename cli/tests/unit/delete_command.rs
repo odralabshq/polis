@@ -10,7 +10,7 @@ async fn test_delete_cancelled_when_not_confirmed() -> Result<()> {
     let mut app = MockAppContext::new();
     // non_interactive=false → confirm() returns default=false → cancelled
     app.non_interactive = false;
-    let args = DeleteArgs { all: false };
+    let args = DeleteArgs { all: false, yes: false, no_backup: false };
     let result = run(&app, &args).await?;
     assert_eq!(result, ExitCode::SUCCESS);
     Ok(())
@@ -19,7 +19,7 @@ async fn test_delete_cancelled_when_not_confirmed() -> Result<()> {
 #[tokio::test]
 async fn test_delete_proceeds_when_non_interactive() {
     let app = MockAppContext::new(); // non_interactive=true → confirmed
-    let args = DeleteArgs { all: false };
+    let args = DeleteArgs { all: false, yes: false, no_backup: false };
     // Mock provisioner returns "Running" → delete proceeds → returns Deleted or NotFound
     let result = run(&app, &args).await;
     assert!(result.is_ok());
@@ -29,7 +29,7 @@ async fn test_delete_proceeds_when_non_interactive() {
 async fn test_delete_all_cancelled_when_not_confirmed() -> Result<()> {
     let mut app = MockAppContext::new();
     app.non_interactive = false;
-    let args = DeleteArgs { all: true };
+    let args = DeleteArgs { all: true, yes: false, no_backup: false };
     let result = run(&app, &args).await?;
     assert_eq!(result, ExitCode::SUCCESS);
     Ok(())

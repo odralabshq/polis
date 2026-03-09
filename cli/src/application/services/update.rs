@@ -333,9 +333,10 @@ mod tests {
     }
 
     impl FileTransfer for UpdateStub {
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
-    }
+            async fn transfer(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+            async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+            async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+        }
 
     struct NoopAssets;
     impl AssetExtractor for NoopAssets {

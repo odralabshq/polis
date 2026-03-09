@@ -20,6 +20,75 @@ FIRST_RUN_MARKER="${CONFIG_DIR}/.initialized"
 
 echo "[openclaw-init] Starting initialization..."
 
+is_ipv4() {
+    local candidate="${1:-}"
+    local o1 o2 o3 o4
+    local IFS=.
+
+    [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    read -r o1 o2 o3 o4 <<< "$candidate"
+    for octet in "$o1" "$o2" "$o3" "$o4"; do
+        (( octet >= 0 && octet <= 255 )) || return 1
+    done
+}
+
+# =============================================================================
+# Install openclaw CLI wrapper (shared by first-run and restart paths)
+# =============================================================================
+install_openclaw_wrapper() {
+    local bin_dir="${1:?bin_dir required}"
+    cat > "${bin_dir}/openclaw" << 'OCWRAPPER'
+#!/bin/bash
+# Intercept dashboard command to replace localhost with VM IP
+is_ipv4() {
+    local candidate="${1:-}"
+    local o1 o2 o3 o4
+    local IFS=.
+
+    [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    read -r o1 o2 o3 o4 <<< "$candidate"
+    for octet in "$o1" "$o2" "$o3" "$o4"; do
+        (( octet >= 0 && octet <= 255 )) || return 1
+    done
+}
+
+if [[ "${1:-}" == "dashboard" ]]; then
+    VM_IP="${POLIS_VM_IP:-$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "")}"
+    if is_ipv4 "$VM_IP"; then
+        node /app/dist/index.js "$@" 2>&1 | sed "s|127\.0\.0\.1|${VM_IP}|g"
+        exit_code=${PIPESTATUS[0]}
+        exit "$exit_code"
+    fi
+fi
+exec node /app/dist/index.js "$@"
+OCWRAPPER
+    chmod 755 "${bin_dir}/openclaw"
+    # Overwrite the stock wrapper so docker exec (which lacks ~/.local/bin in
+    # PATH) picks up the IP-aware version.
+    cp "${bin_dir}/openclaw" /usr/local/bin/openclaw
+    chmod 755 /usr/local/bin/openclaw
+    echo "[openclaw-init] Installed openclaw CLI wrapper to ${bin_dir}/openclaw and /usr/local/bin/openclaw"
+}
+
+# =============================================================================
+# Install polis security CLI wrappers (shared by first-run and restart paths)
+# =============================================================================
+install_polis_security_wrappers() {
+    local scripts_src="/usr/local/share/openclaw/scripts"
+    local bin_dir="/home/polis/.local/bin"
+    mkdir -p "$bin_dir"
+    if [[ -d "$scripts_src" ]]; then
+        for script in polis-toolbox-call.sh polis-report-block.sh polis-check-status.sh \
+                      polis-list-pending.sh polis-security-status.sh polis-security-log.sh; do
+            if [[ -f "${scripts_src}/${script}" ]]; then
+                cp "${scripts_src}/${script}" "${bin_dir}/${script}"
+                chmod 755 "${bin_dir}/${script}"
+            fi
+        done
+        echo "[openclaw-init] Installed polis security CLI wrappers to ${bin_dir}"
+    fi
+}
+
 # =============================================================================
 # Inject Polis MITM CA into system trust store
 # =============================================================================
@@ -423,28 +492,15 @@ EAEOF
     inject_polis_soul
 
     # Install polis security CLI wrappers (bridge to MCP toolbox server)
-    POLIS_SCRIPTS_SRC="/usr/local/share/openclaw/scripts"
+    install_polis_security_wrappers
     POLIS_BIN_DIR="/home/polis/.local/bin"
-    mkdir -p "$POLIS_BIN_DIR"
-    if [[ -d "$POLIS_SCRIPTS_SRC" ]]; then
-        for script in polis-toolbox-call.sh polis-report-block.sh polis-check-status.sh \
-                      polis-list-pending.sh polis-security-status.sh polis-security-log.sh; do
-            if [[ -f "${POLIS_SCRIPTS_SRC}/${script}" ]]; then
-                cp "${POLIS_SCRIPTS_SRC}/${script}" "${POLIS_BIN_DIR}/${script}"
-                chmod 755 "${POLIS_BIN_DIR}/${script}"
-            fi
-        done
-        echo "[openclaw-init] Installed polis security CLI wrappers to ${POLIS_BIN_DIR}"
-    fi
 
     # Install openclaw CLI wrapper so `openclaw <cmd>` works from both
     # `polis exec openclaw <cmd>` and SSH sessions via `polis connect`.
-    cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
-#!/bin/bash
-exec node /app/dist/index.js "$@"
-OCWRAPPER
-    chmod 755 "${POLIS_BIN_DIR}/openclaw"
-    echo "[openclaw-init] Installed openclaw CLI wrapper to ${POLIS_BIN_DIR}/openclaw"
+    # We write to both ~/.local/bin (for login shells) and /usr/local/bin
+    # (overwriting the stock wrapper) so `docker exec` finds it without
+    # needing ~/.local/bin in PATH.
+    install_openclaw_wrapper "$POLIS_BIN_DIR"
     
 else
     echo "[openclaw-init] Already initialized, checking config..."
@@ -452,12 +508,24 @@ else
     # Always ensure controlUi settings for HTTP token access on non-loopback bind.
     # The gateway may rewrite config on startup, so unconditionally re-apply.
     if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
-        jq '.gateway.controlUi.enabled = true
+        # Build VM IP origin if available (set by polis CLI during start)
+        VM_IP="${POLIS_VM_IP:-$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "")}"
+        if ! is_ipv4 "$VM_IP"; then
+            VM_IP=""
+        fi
+        jq --arg vm_ip "$VM_IP" '
+            .gateway.controlUi.enabled = true
             | .gateway.controlUi.allowInsecureAuth = true
             | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
             | .gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true
-            | .gateway.controlUi.allowedOrigins = ((.gateway.controlUi.allowedOrigins // []) + ["http://localhost:18789", "http://127.0.0.1:18789"] | unique)
-            | .tools = ((.tools // {}) + {"profile":"coding"})' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
+            | .gateway.controlUi.allowedOrigins = (
+                (.gateway.controlUi.allowedOrigins // [])
+                + ["http://localhost:18789", "http://127.0.0.1:18789"]
+                + (if $vm_ip == "" then [] else ["http://\($vm_ip):18789"] end)
+                | unique
+            )
+            | .tools = ((.tools // {}) + {"profile":"coding"})
+        ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
             && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
         echo "[openclaw-init] Ensured controlUi HTTP token settings, origin policy, and coding tool profile"
@@ -484,26 +552,11 @@ EAEOF
     fi
 
     # Re-install polis security CLI wrappers (they live in tmpfs, lost on restart)
-    POLIS_SCRIPTS_SRC="/usr/local/share/openclaw/scripts"
+    install_polis_security_wrappers
     POLIS_BIN_DIR="/home/polis/.local/bin"
-    mkdir -p "$POLIS_BIN_DIR"
-    if [[ -d "$POLIS_SCRIPTS_SRC" ]]; then
-        for script in polis-toolbox-call.sh polis-report-block.sh polis-check-status.sh \
-                      polis-list-pending.sh polis-security-status.sh polis-security-log.sh; do
-            if [[ -f "${POLIS_SCRIPTS_SRC}/${script}" ]]; then
-                cp "${POLIS_SCRIPTS_SRC}/${script}" "${POLIS_BIN_DIR}/${script}"
-                chmod 755 "${POLIS_BIN_DIR}/${script}"
-            fi
-        done
-        echo "[openclaw-init] Re-installed polis security CLI wrappers"
-    fi
 
     # Re-install openclaw CLI wrapper (lost on restart if home is tmpfs)
-    cat > "${POLIS_BIN_DIR}/openclaw" << 'OCWRAPPER'
-#!/bin/bash
-exec node /app/dist/index.js "$@"
-OCWRAPPER
-    chmod 755 "${POLIS_BIN_DIR}/openclaw"
+    install_openclaw_wrapper "$POLIS_BIN_DIR"
 
     # Re-inject polis security section into workspace SOUL.md (idempotent)
     inject_polis_soul

@@ -21,7 +21,7 @@ use crate::application::vm::{
     health::wait_ready,
     integrity::{verify_image_digests, write_config_hash},
     lifecycle::{self as vm, VmState},
-    provision::{generate_certs_and_secrets, transfer_config},
+    provision::{generate_certs_and_secrets, persist_vm_ip, transfer_config},
     pull::pull_images,
 };
 use crate::domain::error::WorkspaceError;
@@ -144,6 +144,7 @@ where
         assets_dir: opts.assets_dir,
         version: opts.version,
     };
+    let persist_ip = PersistVmIp;
     let generate_certs = GenerateCerts;
     let pull_images_step = PullImages;
     let verify_digests = VerifyDigests;
@@ -157,6 +158,7 @@ where
     let steps: &[&dyn ProvisioningStep<P, A, H, R>] = &[
         &launch_vm,
         &transfer_config_step,
+        &persist_ip,
         &generate_certs,
         &pull_images_step,
         &verify_digests,
@@ -227,6 +229,30 @@ where
     }
 }
 
+struct PersistVmIp;
+
+impl<P, A, H, R> ProvisioningStep<P, A, H, R> for PersistVmIp
+where
+    P: VmProvisioner,
+    A: AssetExtractor,
+    H: FileHasher,
+    R: ProgressReporter,
+{
+    fn id(&self) -> &'static str {
+        "persist-vm-ip"
+    }
+
+    fn execute<'a>(
+        &'a self,
+        ctx: &'a ProvisioningContext<'a, P, A, H>,
+        _reporter: &'a R,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            persist_vm_ip(ctx.provisioner).await.ok(); // best-effort
+            Ok(())
+        })
+    }
+}
 struct GenerateCerts;
 
 impl<P, A, H, R> ProvisioningStep<P, A, H, R> for GenerateCerts
@@ -484,6 +510,9 @@ where
     opts.reporter.begin_stage("starting workspace...");
     vm::start(provisioner).await?;
     opts.reporter.complete_stage();
+
+    // Persist VM IP for container access (best-effort).
+    persist_vm_ip(provisioner).await.ok();
 
     opts.reporter.begin_stage("verifying components...");
     pull_images(provisioner, opts.reporter)

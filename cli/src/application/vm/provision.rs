@@ -6,7 +6,34 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::application::ports::{FileTransfer, ShellExecutor};
+use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
+use crate::application::vm::lifecycle as vm;
+
+/// Write the VM's external IP to `/opt/polis/.vm-ip` and append it to `.env`
+/// so containers can reference it via `$POLIS_VM_IP`.
+///
+/// # Errors
+///
+/// Returns an error if the VM IP cannot be resolved or the write commands fail.
+pub async fn persist_vm_ip(
+    mp: &(impl InstanceInspector + ShellExecutor),
+) -> Result<()> {
+    let ip = vm::resolve_vm_ip(mp).await?;
+    mp.exec(&[
+        "bash",
+        "-c",
+        &format!("printf '%s\\n' '{ip}' > /opt/polis/.vm-ip"),
+    ])
+    .await
+    .context("writing .vm-ip")?;
+    let script = format!(
+        "sed -i '/^POLIS_VM_IP=/d' /opt/polis/.env 2>/dev/null; printf '%s\\n' 'POLIS_VM_IP={ip}' >> /opt/polis/.env"
+    );
+    mp.exec(&["bash", "-c", &script])
+        .await
+        .context("writing POLIS_VM_IP to .env")?;
+    Ok(())
+}
 
 /// Transfer the embedded `polis-setup.config.tar` into the VM and extract it.
 ///
@@ -236,6 +263,9 @@ mod tests {
         /// This function will return an error if the underlying operations fail.
         async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
             anyhow::bail!("not expected")
+        }
+        async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> {
+            Ok(ok_output(b""))
         }
     }
     impl ShellExecutor for TransferConfigSpy {
