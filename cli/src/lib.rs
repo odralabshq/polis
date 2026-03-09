@@ -9,3 +9,5 @@ pub mod commands;
 pub mod domain;
 pub mod infra;
 pub mod output;
+
+pub mod test_utils;

@@ -8,8 +8,8 @@ use serde::Serialize;
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /// All check categories returned by the doctor command.
-#[derive(Debug)]
-pub struct DoctorChecks {
+#[derive(Debug, Default, Serialize)]
+pub struct DiagnosticReport {
     /// Prerequisite checks (multipass version, hypervisor).
     pub prerequisites: PrerequisiteChecks,
     /// Workspace health.
@@ -21,19 +21,18 @@ pub struct DoctorChecks {
 }
 
 /// Prerequisite checks — multipass version and platform hypervisor.
-#[derive(Debug)]
-#[allow(clippy::struct_field_names)]
+#[derive(Debug, Default, Serialize)]
 pub struct PrerequisiteChecks {
     /// Whether `multipass` is on PATH.
-    pub multipass_found: bool,
+    pub found: bool,
     /// Installed Multipass version string (e.g. `"1.16.1"`), if found.
-    pub multipass_version: Option<String>,
+    pub version: Option<String>,
     /// Whether the installed version meets the minimum (1.16.0).
-    pub multipass_version_ok: bool,
+    pub version_ok: bool,
 }
 
 /// Workspace health checks.
-#[derive(Debug)]
+#[derive(Debug, Default, Serialize)]
 pub struct WorkspaceChecks {
     /// Whether the workspace can be started.
     pub ready: bool,
@@ -55,7 +54,7 @@ pub struct ImageCheckResult {
 }
 
 /// Network health checks.
-#[derive(Debug)]
+#[derive(Debug, Default, Serialize)]
 pub struct NetworkChecks {
     /// Whether internet connectivity is available.
     pub internet: bool,
@@ -63,22 +62,36 @@ pub struct NetworkChecks {
     pub dns: bool,
 }
 
+/// Result of malware database freshness check.
+#[derive(Debug, Default, Serialize)]
+pub struct MalwareDbStatus {
+    /// Whether the malware scanner database is current.
+    pub is_current: bool,
+    /// Hours since the malware database was last updated.
+    pub age_hours: u64,
+}
+
+/// Result of certificate validity check.
+#[derive(Debug, Default, Serialize)]
+pub struct CertificateStatus {
+    /// Whether certificates are valid.
+    pub is_valid: bool,
+    /// Days until certificate expiry (≤ 0 means expired).
+    pub expire_days: i64,
+}
+
 /// Security health checks.
-#[derive(Debug)]
+#[derive(Debug, Default, Serialize)]
 #[allow(clippy::struct_excessive_bools)] // fields are spec-mandated; a bitfield would obscure intent
 pub struct SecurityChecks {
     /// Whether process isolation (sysbox) is active.
     pub process_isolation: bool,
     /// Whether traffic inspection is responding.
     pub traffic_inspection: bool,
-    /// Whether the malware scanner database is current.
-    pub malware_db_current: bool,
-    /// Hours since the malware database was last updated.
-    pub malware_db_age_hours: u64,
-    /// Whether certificates are valid.
-    pub certificates_valid: bool,
-    /// Days until certificate expiry (≤ 0 means expired).
-    pub certificates_expire_days: i64,
+    /// Malware database status.
+    pub malware_db: MalwareDbStatus,
+    /// Certificate validity status.
+    pub certificates: CertificateStatus,
 }
 
 // ── Pure functions ────────────────────────────────────────────────────────────
@@ -89,16 +102,12 @@ pub struct SecurityChecks {
 /// Certificates expiring in 1–30 days are a **warning only** and are NOT
 /// included in the returned issues list.
 #[must_use]
-pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
+pub fn collect_issues(checks: &DiagnosticReport) -> Vec<String> {
     let mut issues = Vec::new();
-    if !checks.prerequisites.multipass_found {
+    if !checks.prerequisites.found {
         issues.push("multipass is not installed".to_string());
-    } else if !checks.prerequisites.multipass_version_ok {
-        let ver = checks
-            .prerequisites
-            .multipass_version
-            .as_deref()
-            .unwrap_or("unknown");
+    } else if !checks.prerequisites.version_ok {
+        let ver = checks.prerequisites.version.as_deref().unwrap_or("unknown");
         issues.push(format!("Multipass {ver} is too old (need ≥ 1.16.0)"));
     }
     if !checks.workspace.disk_space_ok {
@@ -113,13 +122,13 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
     if !checks.security.traffic_inspection {
         issues.push("Traffic inspection not responding".to_string());
     }
-    if !checks.security.malware_db_current {
+    if !checks.security.malware_db.is_current {
         issues.push(format!(
             "Malware scanner database stale (updated: {}h ago)",
-            checks.security.malware_db_age_hours
+            checks.security.malware_db.age_hours
         ));
     }
-    if checks.security.certificates_expire_days <= 0 {
+    if checks.security.certificates.expire_days <= 0 {
         issues.push("Certificates expired".to_string());
     }
     issues
@@ -131,12 +140,12 @@ pub fn collect_issues(checks: &DoctorChecks) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn all_healthy() -> DoctorChecks {
-        DoctorChecks {
+    fn all_healthy() -> DiagnosticReport {
+        DiagnosticReport {
             prerequisites: PrerequisiteChecks {
-                multipass_found: true,
-                multipass_version: Some("1.16.1".to_string()),
-                multipass_version_ok: true,
+                found: true,
+                version: Some("1.16.1".to_string()),
+                version_ok: true,
             },
             workspace: WorkspaceChecks {
                 ready: true,
@@ -151,10 +160,14 @@ mod tests {
             security: SecurityChecks {
                 process_isolation: true,
                 traffic_inspection: true,
-                malware_db_current: true,
-                malware_db_age_hours: 2,
-                certificates_valid: true,
-                certificates_expire_days: 90,
+                malware_db: MalwareDbStatus {
+                    is_current: true,
+                    age_hours: 2,
+                },
+                certificates: CertificateStatus {
+                    is_valid: true,
+                    expire_days: 90,
+                },
             },
         }
     }
@@ -196,7 +209,7 @@ mod tests {
     #[test]
     fn test_collect_issues_expired_certs_returns_issue() {
         let mut checks = all_healthy();
-        checks.security.certificates_expire_days = 0;
+        checks.security.certificates.expire_days = 0;
         let issues = collect_issues(&checks);
         assert_eq!(issues.len(), 1);
         assert!(issues[0].contains("Certificates expired"));
@@ -206,7 +219,7 @@ mod tests {
     fn test_collect_issues_expiring_soon_not_in_issues() {
         // Certs expiring in 1–30 days are a warning only, NOT an issue.
         let mut checks = all_healthy();
-        checks.security.certificates_expire_days = 15;
+        checks.security.certificates.expire_days = 15;
         assert!(collect_issues(&checks).is_empty());
     }
 
@@ -224,7 +237,7 @@ mod tests {
     #[test]
     fn test_collect_issues_multipass_not_found_returns_issue() {
         let mut checks = all_healthy();
-        checks.prerequisites.multipass_found = false;
+        checks.prerequisites.found = false;
         let issues = collect_issues(&checks);
         assert_eq!(issues.len(), 1);
         assert!(issues[0].contains("multipass is not installed"));
@@ -233,8 +246,8 @@ mod tests {
     #[test]
     fn test_collect_issues_multipass_version_too_old_returns_issue() {
         let mut checks = all_healthy();
-        checks.prerequisites.multipass_version = Some("1.14.0".to_string());
-        checks.prerequisites.multipass_version_ok = false;
+        checks.prerequisites.version = Some("1.14.0".to_string());
+        checks.prerequisites.version_ok = false;
         let issues = collect_issues(&checks);
         assert_eq!(issues.len(), 1);
         assert!(issues[0].contains("too old"));
@@ -245,5 +258,118 @@ mod tests {
         let result = ImageCheckResult::default();
         assert!(!result.cached);
         assert!(result.polis_image_override.is_none());
+    }
+
+    // ── Exit code logic tests (Property 6) ────────────────────────────────────
+
+    /// **Validates: Requirements 15.1, 15.2**
+    ///
+    /// Property 6: Exit code reflects issue presence.
+    /// When `collect_issues` returns empty, the command handler should return
+    /// `ExitCode::SUCCESS`. This test verifies the healthy report → empty issues
+    /// relationship.
+    #[test]
+    fn test_exit_code_logic_healthy_report_yields_empty_issues() {
+        // A fully healthy report should produce no issues
+        let healthy = all_healthy();
+        let issues = collect_issues(&healthy);
+
+        // Empty issues → ExitCode::SUCCESS in command handler
+        assert!(
+            issues.is_empty(),
+            "Healthy report should yield empty issues (ExitCode::SUCCESS)"
+        );
+    }
+
+    /// **Validates: Requirements 15.1, 15.2, 15.3, 15.4**
+    ///
+    /// Property 6: Exit code reflects issue presence.
+    /// When `collect_issues` returns non-empty, the command handler should return
+    /// `ExitCode::FAILURE`. This test verifies unhealthy report → non-empty issues
+    /// relationship.
+    #[test]
+    fn test_exit_code_logic_unhealthy_report_yields_non_empty_issues() {
+        // Test various failure conditions that should produce issues
+
+        // Case 1: Multipass not found
+        let mut checks = all_healthy();
+        checks.prerequisites.found = false;
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.is_empty(),
+            "Missing multipass should yield non-empty issues (ExitCode::FAILURE)"
+        );
+
+        // Case 2: Version too old
+        let mut checks = all_healthy();
+        checks.prerequisites.version_ok = false;
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.is_empty(),
+            "Old multipass version should yield non-empty issues (ExitCode::FAILURE)"
+        );
+
+        // Case 3: Low disk space
+        let mut checks = all_healthy();
+        checks.workspace.disk_space_ok = false;
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.is_empty(),
+            "Low disk space should yield non-empty issues (ExitCode::FAILURE)"
+        );
+
+        // Case 4: DNS failure
+        let mut checks = all_healthy();
+        checks.network.dns = false;
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.is_empty(),
+            "DNS failure should yield non-empty issues (ExitCode::FAILURE)"
+        );
+
+        // Case 5: Traffic inspection failure
+        let mut checks = all_healthy();
+        checks.security.traffic_inspection = false;
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.is_empty(),
+            "Traffic inspection failure should yield non-empty issues (ExitCode::FAILURE)"
+        );
+
+        // Case 6: Stale malware database
+        let mut checks = all_healthy();
+        checks.security.malware_db.is_current = false;
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.is_empty(),
+            "Stale malware DB should yield non-empty issues (ExitCode::FAILURE)"
+        );
+
+        // Case 7: Expired certificates
+        let mut checks = all_healthy();
+        checks.security.certificates.expire_days = 0;
+        let issues = collect_issues(&checks);
+        assert!(
+            !issues.is_empty(),
+            "Expired certificates should yield non-empty issues (ExitCode::FAILURE)"
+        );
+    }
+
+    /// **Validates: Requirements 15.1, 15.2**
+    ///
+    /// Property 6: Exit code reflects issue presence.
+    /// Verifies that the default `DiagnosticReport` (all fields at default values)
+    /// produces issues, since defaults represent an unhealthy state.
+    #[test]
+    fn test_exit_code_logic_default_report_yields_issues() {
+        // Default report has found=false, version_ok=false, disk_space_ok=false, etc.
+        let default_report = DiagnosticReport::default();
+        let issues = collect_issues(&default_report);
+
+        // Default state is unhealthy → should have issues → ExitCode::FAILURE
+        assert!(
+            !issues.is_empty(),
+            "Default report should yield non-empty issues (ExitCode::FAILURE)"
+        );
     }
 }

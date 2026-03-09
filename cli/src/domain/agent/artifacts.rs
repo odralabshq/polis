@@ -6,21 +6,30 @@
 //! This module has zero imports from `crate::infra`, `crate::commands`,
 //! `crate::application`, `tokio`, `std::fs`, `std::process`, or `std::net`.
 
-#![allow(clippy::format_push_string)]
-#![allow(clippy::too_many_lines)]
-
 use polis_common::agent::AgentManifest;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::fmt::Write;
 
 /// Generate `compose.agent.yaml` content — Docker Compose overlay with port
 /// mappings, volumes, healthcheck, and socat proxy sidecars.
 ///
 /// Returns the YAML string — does NOT write to disk.
+///
+/// Uses typed structs serialized via `serde_yaml_ng` to ensure YAML-special
+/// characters are properly escaped and structural errors are caught at compile time.
+///
+/// # Panics
+///
+/// Panics if YAML serialization fails, which should never happen as all fields
+/// are simple strings and the structure is well-defined.
 #[must_use]
 pub fn compose_overlay(manifest: &AgentManifest) -> String {
     let name = &manifest.metadata.name;
     let spec = &manifest.spec;
 
+    // Build healthcheck test command
     let health_interval = spec.health.as_ref().map_or("30s", |h| h.interval.as_str());
     let health_timeout = spec.health.as_ref().map_or("10s", |h| h.timeout.as_str());
     let health_retries = spec.health.as_ref().map_or(3, |h| h.retries);
@@ -34,119 +43,133 @@ pub fn compose_overlay(manifest: &AgentManifest) -> String {
         "systemctl is-active polis-init.service && systemctl is-active {name}.service && {health_cmd} && ip route | grep -q default"
     );
 
-    let mut out = String::new();
-    out.push_str(&format!(
-        "# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n"
-    ));
-    out.push_str("services:\n");
-    out.push_str("  workspace:\n");
-    out.push_str("    env_file:\n");
-    out.push_str("      - .env\n");
-    out.push_str("    environment:\n");
-    out.push_str("      - POLIS_VM_IP=${POLIS_VM_IP:-}\n");
-    out.push_str("    volumes:\n");
-    out.push_str(&format!(
-        "      - ./agents/{name}/:/opt/agents/{name}/:ro\n"
-    ));
-    out.push_str(&format!(
-        "      - ./agents/{name}/.generated/{name}.service:/etc/systemd/system/{name}.service:ro\n"
-    ));
-    out.push_str(&format!("      - ./agents/{name}/.generated/{name}.service.sha256:/etc/systemd/system/{name}.service.sha256:ro\n"));
-    // Mount agent env file so init scripts can read it (e.g. /run/{name}-env)
-    out.push_str(&format!(
-        "      - ./agents/{name}/.generated/{name}.env:/run/{name}-env:ro\n"
-    ));
+    // Build actual volume mounts
+    let mut volume_mounts = vec![
+        format!("./agents/{name}/:/opt/agents/{name}/:ro"),
+        format!("./agents/{name}/.generated/{name}.service:/etc/systemd/system/{name}.service:ro"),
+        format!(
+            "./agents/{name}/.generated/{name}.service.sha256:/etc/systemd/system/{name}.service.sha256:ro"
+        ),
+        format!("./agents/{name}/.generated/{name}.env:/run/{name}-env:ro"),
+    ];
 
-    // Persistence volume mounts
+    // Add persistence volume mounts
     for p in &spec.persistence {
-        out.push_str(&format!(
-            "      - polis-agent-{name}-{}:{}\n",
+        volume_mounts.push(format!(
+            "polis-agent-{name}-{}:{}",
             p.name, p.container_path
         ));
     }
 
-    out.push_str("    healthcheck:\n");
-    out.push_str(&format!(
-        "      test: [\"CMD-SHELL\", \"{healthcheck_test}\"]\n"
-    ));
-    out.push_str(&format!("      interval: {health_interval}\n"));
-    out.push_str(&format!("      timeout: {health_timeout}\n"));
-    out.push_str(&format!("      retries: {health_retries}\n"));
-    out.push_str(&format!("      start_period: {health_start_period}\n"));
+    // Build deploy resources if specified
+    let deploy = build_deploy_resources(spec);
 
-    // Resources
-    append_resource_limits(&mut out, spec);
+    // Build workspace service
+    let workspace_service = WorkspaceService {
+        env_file: vec![".env".to_string()],
+        environment: vec!["POLIS_VM_IP=${POLIS_VM_IP:-}".to_string()],
+        volumes: volume_mounts,
+        healthcheck: ComposeHealthcheck {
+            test: vec!["CMD-SHELL".to_string(), healthcheck_test],
+            interval: health_interval.to_string(),
+            timeout: health_timeout.to_string(),
+            retries: health_retries,
+            start_period: health_start_period.to_string(),
+        },
+        deploy,
+    };
 
-    // Socat proxy sidecars (one per port)
-    append_socat_sidecars(&mut out, name, spec);
+    // Build services map
+    let mut services: BTreeMap<String, ComposeServiceEntry> = BTreeMap::new();
+    services.insert(
+        "workspace".to_string(),
+        ComposeServiceEntry::Workspace(workspace_service),
+    );
 
-    // Top-level volumes section
-    if !spec.persistence.is_empty() {
-        out.push('\n');
-        out.push_str("volumes:\n");
-        for p in &spec.persistence {
-            out.push_str(&format!("  polis-agent-{name}-{}:\n", p.name));
-            out.push_str(&format!("    name: polis-agent-{name}-{}\n", p.name));
-        }
-    }
-
-    out
-}
-
-fn append_resource_limits(out: &mut String, spec: &polis_common::agent::AgentSpec) {
-    let mem_limit = spec.resources.as_ref().map(|r| r.memory_limit.as_str());
-    let mem_reservation = spec
-        .resources
-        .as_ref()
-        .map(|r| r.memory_reservation.as_str());
-    if mem_limit.is_some() || mem_reservation.is_some() {
-        out.push_str("    deploy:\n");
-        out.push_str("      resources:\n");
-        if let Some(limit) = mem_limit {
-            out.push_str("        limits:\n");
-            out.push_str(&format!("          memory: {limit}\n"));
-        }
-        if let Some(reservation) = mem_reservation {
-            out.push_str("        reservations:\n");
-            out.push_str(&format!("          memory: {reservation}\n"));
-        }
-    }
-}
-
-fn append_socat_sidecars(out: &mut String, name: &str, spec: &polis_common::agent::AgentSpec) {
-    if spec.ports.is_empty() {
-        return;
-    }
-    out.push('\n');
+    // Add socat proxy sidecars (one per port)
     for port_spec in &spec.ports {
         let container_port = port_spec.container;
         let host_env = port_spec.host_env.as_str();
         let default_port = port_spec.default;
-        out.push_str(&format!("  {name}-proxy-{container_port}:\n"));
-        out.push_str("    image: alpine/socat:latest\n");
-        out.push_str("    restart: unless-stopped\n");
-        out.push_str("    ports:\n");
-        if host_env.is_empty() {
-            out.push_str(&format!("      - \"{default_port}:{container_port}\"\n"));
+
+        let port_mapping = if host_env.is_empty() {
+            format!("{default_port}:{container_port}")
         } else {
-            out.push_str(&format!(
-                "      - \"${{{host_env}:-{default_port}}}:{container_port}\"\n"
-            ));
-        }
-        out.push_str(&format!(
-            "    command: TCP-LISTEN:{container_port},fork,reuseaddr TCP:polis-workspace:{container_port}\n"
-        ));
-        out.push_str("    networks:\n");
-        out.push_str("      - internal-bridge\n");
-        out.push_str("      - default\n");
-        out.push_str("    depends_on:\n");
-        out.push_str("      - workspace\n");
+            format!("${{{host_env}:-{default_port}}}:{container_port}")
+        };
+
+        let socat_service = SocatService {
+            image: "alpine/socat:latest".to_string(),
+            restart: "unless-stopped".to_string(),
+            ports: vec![port_mapping],
+            command: format!(
+                "TCP-LISTEN:{container_port},fork,reuseaddr TCP:polis-workspace:{container_port}"
+            ),
+            networks: vec!["internal-bridge".to_string(), "default".to_string()],
+            depends_on: vec!["workspace".to_string()],
+        };
+
+        services.insert(
+            format!("{name}-proxy-{container_port}"),
+            ComposeServiceEntry::Socat(socat_service),
+        );
     }
+
+    // Build top-level volumes section
+    let mut top_level_volumes: BTreeMap<String, ComposeVolume> = BTreeMap::new();
+    for p in &spec.persistence {
+        let volume_name = format!("polis-agent-{name}-{}", p.name);
+        top_level_volumes.insert(volume_name.clone(), ComposeVolume { name: volume_name });
+    }
+
+    // Build the complete overlay
+    let overlay = ComposeOverlay {
+        services,
+        volumes: top_level_volumes,
+    };
+
+    // Serialize to YAML with header comment
+    // Note: serialization of ComposeOverlay should never fail as all fields are
+    // simple strings and the structure is well-defined. If it does fail, it
+    // indicates a bug in the code that should be caught during development.
+    let yaml = serde_yaml_ng::to_string(&overlay)
+        .unwrap_or_else(|e| panic!("ComposeOverlay serialization failed unexpectedly: {e}"));
+
+    format!("# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n{yaml}")
+}
+
+/// Build deploy resources configuration from the agent spec.
+fn build_deploy_resources(spec: &polis_common::agent::AgentSpec) -> Option<ComposeDeploy> {
+    let mem_limit = spec.resources.as_ref().map(|r| r.memory_limit.clone());
+    let mem_reservation = spec
+        .resources
+        .as_ref()
+        .map(|r| r.memory_reservation.clone());
+
+    if mem_limit.is_none() && mem_reservation.is_none() {
+        return None;
+    }
+
+    let limits = mem_limit.map(|m| ComposeResourceLimit { memory: Some(m) });
+
+    let reservations = mem_reservation.map(|m| ComposeResourceLimit { memory: Some(m) });
+
+    Some(ComposeDeploy {
+        resources: ComposeResources {
+            limits,
+            reservations,
+        },
+    })
 }
 
 /// Generate `<name>.service` content — systemd unit with security hardening.
 ///
 /// Returns the unit file string — does NOT write to disk.
+///
+/// # Panics
+///
+/// Panics if writing to the internal string buffer fails, which should never
+/// happen in practice as `String` implements `Write` infallibly.
 #[must_use]
 pub fn systemd_unit(manifest: &AgentManifest) -> String {
     let name = &manifest.metadata.name;
@@ -168,66 +191,74 @@ pub fn systemd_unit(manifest: &AgentManifest) -> String {
     let rw_paths = spec.security.as_ref().map(|s| s.read_write_paths.join(" "));
 
     let mut out = String::new();
-    out.push_str(&format!(
-        "# Generated from agents/{name}/agent.yaml - DO NOT EDIT\n"
-    ));
-    out.push_str("[Unit]\n");
-    out.push_str(&format!("Description={display_name}\n"));
-    out.push_str("After=network-online.target polis-init.service\n");
-    out.push_str("Wants=network-online.target\n");
-    out.push_str("Requires=polis-init.service\n");
-    out.push_str("StartLimitIntervalSec=300\n");
-    out.push_str("StartLimitBurst=5\n");
-    out.push('\n');
-    out.push_str("[Service]\n");
-    out.push_str("Type=simple\n");
-    out.push_str(&format!("User={}\n", runtime.user));
-    out.push_str(&format!("WorkingDirectory={}\n", runtime.workdir));
-    out.push('\n');
+    let _ = writeln!(
+        out,
+        "# Generated from agents/{name}/agent.yaml - DO NOT EDIT"
+    );
+    let _ = writeln!(out, "[Unit]");
+    let _ = writeln!(out, "Description={display_name}");
+    let _ = writeln!(out, "After=network-online.target polis-init.service");
+    let _ = writeln!(out, "Wants=network-online.target");
+    let _ = writeln!(out, "Requires=polis-init.service");
+    let _ = writeln!(out, "StartLimitIntervalSec=300");
+    let _ = writeln!(out, "StartLimitBurst=5");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "[Service]");
+    let _ = writeln!(out, "Type=simple");
+    let _ = writeln!(out, "User={}", runtime.user);
+    let _ = writeln!(out, "WorkingDirectory={}", runtime.workdir);
+    let _ = writeln!(out);
     if let Some(env_file) = &runtime.env_file {
-        out.push_str(&format!("EnvironmentFile=-{env_file}\n"));
+        let _ = writeln!(out, "EnvironmentFile=-{env_file}");
     }
-    out.push('\n');
-    out.push_str("Environment=NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/polis-ca.crt\n");
-    out.push_str("Environment=SSL_CERT_FILE=/usr/local/share/ca-certificates/polis-ca.crt\n");
-    out.push_str("Environment=REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/polis-ca.crt\n");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "Environment=NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/polis-ca.crt"
+    );
+    let _ = writeln!(
+        out,
+        "Environment=SSL_CERT_FILE=/usr/local/share/ca-certificates/polis-ca.crt"
+    );
+    let _ = writeln!(
+        out,
+        "Environment=REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/polis-ca.crt"
+    );
 
     // Inline env vars from spec.runtime.env (sorted for deterministic output)
     let mut entries: Vec<(&String, &String)> = runtime.env.iter().collect();
     entries.sort_by_key(|(k, _)| k.as_str());
     for (k, v) in entries {
-        out.push_str(&format!("Environment=\"{k}={v}\"\n"));
+        let _ = writeln!(out, "Environment=\"{k}={v}\"");
     }
 
-    out.push('\n');
+    let _ = writeln!(out);
     if let Some(init) = &spec.init {
-        out.push_str(&format!(
-            "ExecStartPre=+/bin/bash /opt/agents/{name}/{init}\n"
-        ));
+        let _ = writeln!(out, "ExecStartPre=+/bin/bash /opt/agents/{name}/{init}");
     }
-    out.push_str(&format!("ExecStart={}\n", runtime.command));
-    out.push('\n');
-    out.push_str("Restart=always\n");
-    out.push_str("RestartSec=5\n");
-    out.push('\n');
-    out.push_str("NoNewPrivileges=true\n");
-    out.push_str(&format!("ProtectSystem={protect_system}\n"));
-    out.push_str(&format!("ProtectHome={protect_home}\n"));
+    let _ = writeln!(out, "ExecStart={}", runtime.command);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "Restart=always");
+    let _ = writeln!(out, "RestartSec=5");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "NoNewPrivileges=true");
+    let _ = writeln!(out, "ProtectSystem={protect_system}");
+    let _ = writeln!(out, "ProtectHome={protect_home}");
     if let Some(paths) = &rw_paths
         && !paths.is_empty()
     {
-        out.push_str(&format!("ReadWritePaths={paths}\n"));
+        let _ = writeln!(out, "ReadWritePaths={paths}");
     }
-    out.push_str(&format!("PrivateTmp={private_tmp}\n"));
+    let _ = writeln!(out, "PrivateTmp={private_tmp}");
     if let Some(mem) = mem_max {
-        out.push_str(&format!("MemoryMax={mem}\n"));
+        let _ = writeln!(out, "MemoryMax={mem}");
     }
     if let Some(cpu) = cpu_quota {
-        out.push_str(&format!("CPUQuota={cpu}\n"));
+        let _ = writeln!(out, "CPUQuota={cpu}");
     }
-    out.push('\n');
-    out.push_str("[Install]\n");
-    out.push_str("WantedBy=multi-user.target\n");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "[Install]");
+    let _ = writeln!(out, "WantedBy=multi-user.target");
 
     out
 }
@@ -274,4 +305,100 @@ pub fn filtered_env(env_content: &str, manifest: &AgentManifest) -> String {
     } else {
         format!("{}\n", filtered_lines.join("\n"))
     }
+}
+
+// ============================================================================
+// Typed Compose Overlay Structs
+// ============================================================================
+//
+// These structs model the Docker Compose overlay structure for typed
+// serialization via `serde_yaml_ng`. They replace manual string concatenation
+// with compile-time validated structures.
+
+/// Top-level Docker Compose overlay structure.
+///
+/// Contains service definitions and optional named volumes.
+#[derive(Debug, Serialize)]
+pub(crate) struct ComposeOverlay {
+    pub services: BTreeMap<String, ComposeServiceEntry>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub volumes: BTreeMap<String, ComposeVolume>,
+}
+
+/// Two distinct service shapes in the compose overlay.
+/// Uses `#[serde(untagged)]` so serde picks the variant whose fields match.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum ComposeServiceEntry {
+    /// The main workspace container override (`env_file`, volumes, healthcheck, deploy).
+    Workspace(WorkspaceService),
+    /// A socat TCP-proxy sidecar (image, restart, ports, command, networks, `depends_on`).
+    Socat(SocatService),
+}
+
+/// Workspace service override configuration.
+///
+/// Extends the base workspace service with agent-specific env files,
+/// volume mounts, healthcheck, and optional resource limits.
+#[derive(Debug, Serialize)]
+pub(crate) struct WorkspaceService {
+    pub env_file: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<String>,
+    pub volumes: Vec<String>,
+    pub healthcheck: ComposeHealthcheck,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deploy: Option<ComposeDeploy>,
+}
+
+/// Socat TCP-proxy sidecar service configuration.
+///
+/// Creates a proxy container that forwards traffic from the host
+/// to the workspace container on a specific port.
+#[derive(Debug, Serialize)]
+pub(crate) struct SocatService {
+    pub image: String,
+    pub restart: String,
+    pub ports: Vec<String>,
+    pub command: String,
+    pub networks: Vec<String>,
+    pub depends_on: Vec<String>,
+}
+
+/// Docker Compose healthcheck configuration.
+#[derive(Debug, Serialize)]
+pub(crate) struct ComposeHealthcheck {
+    pub test: Vec<String>,
+    pub interval: String,
+    pub timeout: String,
+    pub retries: u32,
+    pub start_period: String,
+}
+
+/// Docker Compose deploy configuration (resource constraints).
+#[derive(Debug, Serialize)]
+pub(crate) struct ComposeDeploy {
+    pub resources: ComposeResources,
+}
+
+/// Resource limits and reservations for a service.
+#[derive(Debug, Serialize)]
+pub(crate) struct ComposeResources {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<ComposeResourceLimit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reservations: Option<ComposeResourceLimit>,
+}
+
+/// Individual resource limit (memory, etc.).
+#[derive(Debug, Serialize)]
+pub(crate) struct ComposeResourceLimit {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+}
+
+/// Named volume definition in the compose overlay.
+#[derive(Debug, Serialize)]
+pub(crate) struct ComposeVolume {
+    pub name: String,
 }

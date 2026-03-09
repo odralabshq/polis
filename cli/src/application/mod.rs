@@ -4,11 +4,13 @@
 //! `crate::commands`, or `crate::output`.
 
 pub mod ports;
+pub mod provisioning;
 pub mod services;
+pub mod vm;
 
 #[allow(unused_imports)]
 pub use ports::{
-    CommandRunner, FileTransfer, HealthProbe, InstanceInspector, InstanceLifecycle, InstanceSpec,
-    InstanceState, LocalArtifactWriter, POLIS_INSTANCE, ProgressReporter, ShellExecutor,
-    VmProvisioner, WorkspaceStateStore,
+    CommandRunner, FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec,
+    LocalArtifactWriter, POLIS_INSTANCE, ProgressReporter, ShellExecutor, VmProvisioner,
+    WorkspaceStateStore,
 };

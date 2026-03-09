@@ -817,10 +817,9 @@ Open `http://<host>:18789/#token=<token>`. On Multipass use the VM IP; on native
 
 ```bash
 polis agent list                    # list installed agents and active status
-polis agent restart                 # restart active agent's workspace
-polis agent update                  # re-generate artifacts and recreate workspace
+polis agent activate <name>         # activate an agent on the running workspace
+polis agent install --path ./my-agent   # install a new agent from a local folder
 polis agent remove openclaw         # remove agent (stops workspace if active)
-polis agent add --path ./my-agent   # install a new agent from a local folder
 ```
 
 ### Reset config (new token, re-detect API keys)

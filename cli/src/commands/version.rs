@@ -1,6 +1,6 @@
 //! `polis version` — show version and diagnostic info.
 
-use crate::app::AppContext;
+use crate::app::App;
 use anyhow::Result;
 use std::process::ExitCode;
 
@@ -9,7 +9,7 @@ use std::process::ExitCode;
 /// # Errors
 ///
 /// This function will return an error if the underlying operations fail.
-pub fn run(app: &AppContext) -> Result<ExitCode> {
+pub fn run(app: &impl App) -> Result<ExitCode> {
     let version = env!("CARGO_PKG_VERSION");
     let build_date = option_env!("VERGEN_BUILD_TIMESTAMP")
         .or(option_env!("VERGEN_BUILD_DATE"))

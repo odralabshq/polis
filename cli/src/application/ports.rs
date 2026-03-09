@@ -9,7 +9,8 @@ use std::process::Output;
 
 use anyhow::Result;
 
-use crate::domain::{DoctorChecks, WorkspaceState};
+use crate::domain::WorkspaceState;
+use crate::domain::security::{AllowAction, SecurityLevel};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -33,18 +34,6 @@ pub struct InstanceSpec<'a> {
     pub cloud_init: Option<&'a str>,
     /// Launch timeout in seconds. Defaults to `"600"` when `None`.
     pub timeout: Option<&'a str>,
-}
-
-/// VM instance state — preserved exactly from `provisioner.rs` (move-only).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Reserved for future use — VmState in lifecycle.rs is the active enum
-pub enum InstanceState {
-    Running,
-    Stopped,
-    Starting,
-    Stopping,
-    NotFound,
-    Error,
 }
 
 // ── VM Port Traits ────────────────────────────────────────────────────────────
@@ -102,6 +91,37 @@ pub trait FileTransfer {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     async fn transfer_from(&self, remote: &str, local: &str) -> Result<Output>;
+}
+
+/// Command execution inside the workspace container.
+///
+/// Encapsulates docker exec command construction including:
+/// - User identity (`-u polis`)
+/// - Environment variables (`XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`)
+/// - TTY allocation (platform-specific: `-it` on Unix, `-i` on Windows)
+///
+/// This trait abstracts the docker command construction so that the command
+/// layer doesn't need to know about container internals.
+#[allow(async_fn_in_trait)]
+pub trait ContainerExecutor {
+    /// Execute a command inside the workspace container with inherited stdio.
+    ///
+    /// Returns the process exit status. The caller is responsible for
+    /// converting this to an `ExitCode` using `exit_code_from_status`.
+    ///
+    /// # Arguments
+    ///
+    /// * `args` - Command and arguments to run inside the container
+    /// * `interactive` - Whether stdin is a terminal (controls TTY allocation)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the docker exec command cannot be spawned.
+    async fn container_exec_status(
+        &self,
+        args: &[&str],
+        interactive: bool,
+    ) -> anyhow::Result<std::process::ExitStatus>;
 }
 
 /// Command execution inside the VM.
@@ -248,18 +268,6 @@ pub trait NetworkProbe {
     async fn check_dns_resolution(&self, hostname: &str) -> Result<bool>;
 }
 
-// ── Health Port ───────────────────────────────────────────────────────────────
-
-/// Abstracts health probing so the doctor service can be tested with mocks.
-#[allow(async_fn_in_trait)]
-#[allow(dead_code)] // Not yet used from application services
-pub trait HealthProbe {
-    /// Run all health probes and return the aggregated results.
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn probe_all(&self) -> Result<DoctorChecks>;
-}
-
 // ── Asset Management Port ─────────────────────────────────────────────────────
 
 /// Abstracts extraction of embedded assets.
@@ -329,6 +337,8 @@ pub trait LocalFs {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     fn set_permissions(&self, path: &std::path::Path, mode: u32) -> Result<()>;
+    /// Check if a path is a directory.
+    fn is_dir(&self, path: &std::path::Path) -> bool;
 }
 
 /// Abstracts configuration persistence.
@@ -402,4 +412,124 @@ pub trait SshConfigurator {
     /// # Errors
     /// This function will return an error if the user SSH config cannot be read or written.
     async fn remove_include_directive(&self) -> Result<()>;
+}
+
+// ── Update Port ───────────────────────────────────────────────────────────────
+
+/// Information about an available update.
+#[derive(Debug)]
+pub enum UpdateInfo {
+    /// A newer version is available.
+    Available {
+        /// The new version string (without leading `v`).
+        version: String,
+        /// Up to 5 bullet-point release notes.
+        release_notes: Vec<String>,
+        /// Direct download URL for the platform asset.
+        download_url: String,
+    },
+    /// Already on the latest version.
+    UpToDate,
+}
+
+impl std::fmt::Display for UpdateInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UpToDate => write!(f, "up to date"),
+            Self::Available { version, .. } => write!(f, "v{version} available"),
+        }
+    }
+}
+
+/// A downloaded and verified release asset.
+/// The binary has been checksum-verified and signature-verified.
+#[derive(Debug)]
+pub struct VerifiedAsset {
+    /// Path to the temporary file containing the verified binary.
+    pub temp_path: std::path::PathBuf,
+    /// Hex-encoded SHA-256 of the binary.
+    pub sha256: String,
+}
+
+/// Abstraction over the update backend, enabling test doubles.
+pub trait UpdateChecker {
+    /// Check whether a newer version is available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the release list cannot be fetched or parsed.
+    fn check(&self, current: &str) -> Result<UpdateInfo>;
+
+    /// Download and verify the release asset.
+    /// Returns a [`VerifiedAsset`] containing the path to the verified binary.
+    /// The binary is downloaded once and stored in a temp file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the download, checksum verification, or signature
+    /// verification fails.
+    fn download_and_verify(&self, download_url: &str) -> Result<VerifiedAsset>;
+
+    /// Install the verified binary using atomic replacement.
+    /// Consumes the [`VerifiedAsset`] to ensure the same bytes are installed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the binary replacement fails.
+    fn install(&self, asset: VerifiedAsset) -> Result<()>;
+}
+
+// ── Process Launcher Port ─────────────────────────────────────────────────────
+
+/// Abstracts spawning a child process so that `run_post_update` can be tested
+/// without a real binary on disk.
+#[allow(async_fn_in_trait)]
+pub trait ProcessLauncher {
+    /// Spawn `program` with `args` and wait for its exit status.
+    /// # Errors
+    /// Returns an error if the process cannot be spawned.
+    async fn launch(&self, program: &str, args: &[&str]) -> Result<std::process::ExitStatus>;
+}
+
+// ── Security Gateway Port ─────────────────────────────────────────────────────
+
+/// Abstracts security operations against the toolbox container.
+/// Enables testing without Docker infrastructure.
+#[allow(async_fn_in_trait)]
+pub trait SecurityGateway {
+    /// List pending blocked requests awaiting approval.
+    /// Returns empty vec if no pending requests.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn list_pending(&self) -> Result<Vec<String>>;
+
+    /// Approve a blocked request by ID.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn approve(&self, request_id: &str) -> Result<String>;
+
+    /// Deny a blocked request by ID.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn deny(&self, request_id: &str) -> Result<String>;
+
+    /// Set the security level in Valkey.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn set_level(&self, level: SecurityLevel) -> Result<String>;
+
+    /// Add a domain rule for auto-approve/prompt/block behavior.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn add_domain_rule(&self, pattern: &str, action: AllowAction) -> Result<String>;
+
+    /// Get recent security events from the event log.
+    /// Returns empty vec if no events.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn get_log(&self) -> Result<Vec<String>>;
 }
