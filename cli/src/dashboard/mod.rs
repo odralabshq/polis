@@ -1702,7 +1702,7 @@ pub async fn run(args: &DashboardArgs, app: &AppContext) -> Result<ExitCode> {
     // so the dashboard connects to the control-plane inside the VM rather than
     // assuming localhost (which only works when Docker Desktop forwards ports).
     let api_url = if args.api_url == DEFAULT_API_URL {
-        match crate::application::services::vm::lifecycle::resolve_vm_ip(&app.provisioner).await {
+        match crate::application::vm::lifecycle::resolve_vm_ip(&app.provisioner).await {
             Ok(ip) => normalize_api_url(&format!("http://{ip}:9080")),
             Err(_) => normalize_api_url(&args.api_url),
         }

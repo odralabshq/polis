@@ -17,7 +17,7 @@ pub async fn run(app: &impl App) -> Result<ExitCode> {
     let reporter = app.terminal_reporter();
     reporter.begin_stage("gathering status...");
 
-    let output = gather_status(&app.control_plane, mp).await;
+    let output = gather(app.provisioner()).await;
 
     reporter.complete_stage();
 

@@ -9,6 +9,7 @@
 #   - ANTHROPIC_API_KEY -> anthropic/claude-sonnet-4-20250514
 #   - OPENAI_API_KEY    -> openai/gpt-4o
 #   - OPENROUTER_API_KEY -> openrouter/anthropic/claude-sonnet-4-20250514
+#   - GOOGLE_API_KEY / GEMINI_API_KEY -> google/gemini-2.5-pro
 # =============================================================================
 set -euo pipefail
 
@@ -39,7 +40,8 @@ install_openclaw_wrapper() {
     local bin_dir="${1:?bin_dir required}"
     cat > "${bin_dir}/openclaw" << 'OCWRAPPER'
 #!/bin/bash
-# Intercept dashboard command to replace localhost with VM IP
+# Polis-aware openclaw CLI wrapper
+# Intercepts commands that conflict with polis-managed configuration.
 is_ipv4() {
     local candidate="${1:-}"
     local o1 o2 o3 o4
@@ -52,6 +54,90 @@ is_ipv4() {
     done
 }
 
+# --- Intercept: onboard ---
+# Native `openclaw onboard` overwrites openclaw.json and tries systemctl,
+# both of which break polis-managed config. We replace it with a direct
+# auth-profiles.json + .env writer.
+if [[ "${1:-}" == "onboard" ]]; then
+    CONFIG_DIR="/home/polis/.openclaw"
+    AUTH_FILE="${CONFIG_DIR}/agents/default/agent/auth-profiles.json"
+    ENV_FILE="${CONFIG_DIR}/.env"
+    mkdir -p "$(dirname "$AUTH_FILE")"
+
+    echo ""
+    echo "=== Polis Agent Key Setup ==="
+    echo ""
+    echo "Supported providers: anthropic, openai, google, openrouter"
+    echo ""
+    read -rp "Provider (anthropic/openai/google/openrouter): " provider
+    provider=$(echo "$provider" | tr '[:upper:]' '[:lower:]')
+    case "$provider" in
+        anthropic|openai|google|openrouter) ;;
+        gemini) provider="google" ;;
+        *)
+            echo "ERROR: Unknown provider '$provider'. Use: anthropic, openai, google, or openrouter" >&2
+            exit 1
+            ;;
+    esac
+    read -rsp "API Key: " api_key
+    echo ""
+    if [[ -z "$api_key" ]]; then
+        echo "ERROR: API key cannot be empty." >&2
+        exit 1
+    fi
+
+    # Merge into auth-profiles.json
+    existing=$(cat "$AUTH_FILE" 2>/dev/null || echo "{}")
+    if ! echo "$existing" | jq . >/dev/null 2>&1; then
+        existing="{}"
+    fi
+    updated=$(echo "$existing" | jq --arg p "$provider" --arg k "$api_key" \
+        '. + {($p): {"apiKey": $k}}')
+    echo "$updated" > "$AUTH_FILE"
+    chmod 600 "$AUTH_FILE"
+
+    # Update .env so key persists across restarts
+    env_var=""
+    case "$provider" in
+        anthropic)  env_var="ANTHROPIC_API_KEY" ;;
+        openai)     env_var="OPENAI_API_KEY" ;;
+        google)     env_var="GOOGLE_API_KEY" ;;
+        openrouter) env_var="OPENROUTER_API_KEY" ;;
+    esac
+    if [[ -n "$env_var" ]]; then
+        touch "$ENV_FILE"
+        sed -i "/^${env_var}=/d" "$ENV_FILE" 2>/dev/null || true
+        echo "${env_var}=${api_key}" >> "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+    fi
+
+    # Update model in openclaw.json if config exists
+    CONFIG_FILE="${CONFIG_DIR}/openclaw.json"
+    if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
+        model=""
+        case "$provider" in
+            anthropic)  model="anthropic/claude-sonnet-4-20250514" ;;
+            openai)     model="openai/gpt-5.1-codex-mini" ;;
+            google)     model="google/gemini-2.5-pro" ;;
+            openrouter) model="openrouter/anthropic/claude-sonnet-4-20250514" ;;
+        esac
+        if [[ -n "$model" ]]; then
+            jq --arg m "$model" '.agents.defaults.model.primary = $m' \
+                "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+            chmod 600 "$CONFIG_FILE"
+        fi
+    fi
+
+    echo ""
+    echo "[OK] API key for '$provider' saved."
+    echo ""
+    echo "Restart to apply:  sudo systemctl restart openclaw"
+    echo "  or from host:    polis exec openclaw cli gateway restart"
+    exit 0
+fi
+
+# --- Intercept: dashboard ---
+# Replace localhost with VM IP so the URL is accessible from the host.
 if [[ "${1:-}" == "dashboard" ]]; then
     VM_IP="${POLIS_VM_IP:-$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "")}"
     if is_ipv4 "$VM_IP"; then
@@ -366,6 +452,8 @@ detect_model() {
     local anthropic_key=$(get_container_env_early "ANTHROPIC_API_KEY")
     local openai_key=$(get_container_env_early "OPENAI_API_KEY")
     local openrouter_key=$(get_container_env_early "OPENROUTER_API_KEY")
+    local google_key=$(get_container_env_early "GOOGLE_API_KEY")
+    local gemini_key=$(get_container_env_early "GEMINI_API_KEY")
     
     if [[ -n "$anthropic_key" ]]; then
         echo "anthropic/claude-sonnet-4-20250514"
@@ -373,13 +461,16 @@ detect_model() {
     elif [[ -n "$openai_key" ]]; then
         echo "openai/gpt-5.1-codex-mini"
         echo "[openclaw-init] Detected OPENAI_API_KEY, using GPT-5.1-codex-mini" >&2
+    elif [[ -n "$google_key" || -n "$gemini_key" ]]; then
+        echo "google/gemini-2.5-pro"
+        echo "[openclaw-init] Detected Google/Gemini API key, using Gemini 2.5 Pro" >&2
     elif [[ -n "$openrouter_key" ]]; then
         echo "openrouter/anthropic/claude-sonnet-4-20250514"
         echo "[openclaw-init] Detected OPENROUTER_API_KEY, using OpenRouter" >&2
     else
         # Default fallback - user will need to configure manually
         echo "openai/gpt-4o"
-        echo "[openclaw-init] WARNING: No API key detected! Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY" >&2
+        echo "[openclaw-init] WARNING: No API key detected! Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, or OPENROUTER_API_KEY" >&2
     fi
 }
 
@@ -507,12 +598,26 @@ else
 
     # Always ensure controlUi settings for HTTP token access on non-loopback bind.
     # The gateway may rewrite config on startup, so unconditionally re-apply.
+    # Also restore polis-managed settings if openclaw's native onboarding or
+    # gateway process overwrote the config.
     if [[ -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
         # Build VM IP origin if available (set by polis CLI during start)
         VM_IP="${POLIS_VM_IP:-$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "")}"
         if ! is_ipv4 "$VM_IP"; then
             VM_IP=""
         fi
+
+        # Restore gateway token if it was lost during a config overwrite
+        if [[ -f "$TOKEN_FILE" ]]; then
+            SAVED_TOKEN=$(cat "$TOKEN_FILE")
+            CURRENT_TOKEN=$(jq -r '.gateway.auth.token // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
+            if [[ -n "$SAVED_TOKEN" && "$CURRENT_TOKEN" != "$SAVED_TOKEN" ]]; then
+                echo "[openclaw-init] Restoring gateway token (config was overwritten)"
+                jq --arg token "$SAVED_TOKEN" '.gateway.auth.mode = "token" | .gateway.auth.token = $token' \
+                    "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+            fi
+        fi
+
         jq --arg vm_ip "$VM_IP" '
             .gateway.controlUi.enabled = true
             | .gateway.controlUi.allowInsecureAuth = true
@@ -524,6 +629,7 @@ else
                 + (if $vm_ip == "" then [] else ["http://\($vm_ip):18789"] end)
                 | unique
             )
+            | .gateway.mode = "local"
             | .tools = ((.tools // {}) + {"profile":"coding"})
         ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
             && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
@@ -611,7 +717,14 @@ OPENCLAW_PORT=$(get_container_env "OPENCLAW_GATEWAY_PORT" "18789")
 ANTHROPIC_KEY=$(get_container_env "ANTHROPIC_API_KEY" "")
 OPENAI_KEY=$(get_container_env "OPENAI_API_KEY" "")
 OPENROUTER_KEY=$(get_container_env "OPENROUTER_API_KEY" "")
+GOOGLE_KEY=$(get_container_env "GOOGLE_API_KEY" "")
+GEMINI_KEY=$(get_container_env "GEMINI_API_KEY" "")
 BRAVE_KEY=$(get_container_env "BRAVE_SEARCH_API_KEY" "")
+
+# Normalize: treat GEMINI_API_KEY as GOOGLE_API_KEY if only Gemini is set
+if [[ -z "$GOOGLE_KEY" && -n "$GEMINI_KEY" ]]; then
+    GOOGLE_KEY="$GEMINI_KEY"
+fi
 
 # Debug: show what we found
 echo "[openclaw-init] Environment source check:"
@@ -635,6 +748,11 @@ if [[ -n "$OPENROUTER_KEY" ]]; then
 else
     echo "[openclaw-init]   - OPENROUTER_API_KEY: NOT found"
 fi
+if [[ -n "$GOOGLE_KEY" ]]; then
+    echo "[openclaw-init]   - GOOGLE_API_KEY: found (${GOOGLE_KEY:0:10}...)"
+else
+    echo "[openclaw-init]   - GOOGLE_API_KEY: NOT found"
+fi
 
 cat > "$ENV_FILE" << ENVEOF
 # OpenClaw Environment Variables (auto-generated by openclaw-init.sh)
@@ -643,6 +761,8 @@ OPENCLAW_GATEWAY_PORT=${OPENCLAW_PORT}
 ANTHROPIC_API_KEY=${ANTHROPIC_KEY}
 OPENAI_API_KEY=${OPENAI_KEY}
 OPENROUTER_API_KEY=${OPENROUTER_KEY}
+GOOGLE_API_KEY=${GOOGLE_KEY}
+GEMINI_API_KEY=${GEMINI_KEY}
 BRAVE_SEARCH_API_KEY=${BRAVE_KEY}
 HOME=/home/polis
 NODE_ENV=production
@@ -679,6 +799,16 @@ if [[ -n "$OPENAI_KEY" ]]; then
     echo "[openclaw-init] Added OpenAI API key to auth-profiles.json"
 fi
 
+if [[ -n "$GOOGLE_KEY" ]]; then
+    if [[ "$FIRST_KEY" == "false" ]]; then
+        AUTH_JSON="${AUTH_JSON},"
+    fi
+    AUTH_JSON="${AUTH_JSON}\"google\":{\"apiKey\":\"${GOOGLE_KEY}\"}"
+    FIRST_KEY=false
+    HAS_ENV_KEYS=true
+    echo "[openclaw-init] Added Google API key to auth-profiles.json"
+fi
+
 if [[ -n "$OPENROUTER_KEY" ]]; then
     if [[ "$FIRST_KEY" == "false" ]]; then
         AUTH_JSON="${AUTH_JSON},"
@@ -690,8 +820,21 @@ fi
 
 AUTH_JSON="${AUTH_JSON}}"
 
-if [[ "$HAS_ENV_KEYS" == "true" || ! -f "$DEFAULT_AUTH_FILE" ]]; then
-    echo "[openclaw-init] Writing auth-profiles.json from environment"
+if [[ "$HAS_ENV_KEYS" == "true" ]]; then
+    # Merge env-provided keys into existing auth-profiles.json so that
+    # keys added via onboarding (e.g. `openclaw onboard`) are preserved.
+    if [[ -f "$DEFAULT_AUTH_FILE" ]] && command -v jq &>/dev/null; then
+        EXISTING=$(cat "$DEFAULT_AUTH_FILE" 2>/dev/null || echo "{}")
+        MERGED=$(echo "$EXISTING" "$AUTH_JSON" | jq -s '.[0] * .[1]' 2>/dev/null || echo "$AUTH_JSON")
+        echo "$MERGED" > "$DEFAULT_AUTH_FILE"
+        echo "[openclaw-init] Merged env keys into existing auth-profiles.json"
+    else
+        echo "$AUTH_JSON" > "$DEFAULT_AUTH_FILE"
+        echo "[openclaw-init] Wrote auth-profiles.json from environment"
+    fi
+    chmod 600 "$DEFAULT_AUTH_FILE"
+elif [[ ! -f "$DEFAULT_AUTH_FILE" ]]; then
+    echo "[openclaw-init] Writing empty auth-profiles.json (no API keys in env)"
     echo "$AUTH_JSON" > "$DEFAULT_AUTH_FILE"
     chmod 600 "$DEFAULT_AUTH_FILE"
     echo "[openclaw-init] auth-profiles.json written to ${DEFAULT_AUTH_FILE}"

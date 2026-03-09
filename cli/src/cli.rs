@@ -121,7 +121,7 @@ impl Cli {
             Command::Start => commands::start::run(&app).await?,
             Command::Stop => commands::stop::run(&app).await?,
             Command::Delete(args) => commands::delete::run(&app, &args).await?,
-            Command::Status => commands::status::run(&app, &app.provisioner).await?,
+            Command::Status => commands::status::run(&app).await?,
             Command::Connect(args) => commands::connect::run(&app, &args).await?,
             #[cfg(feature = "dashboard")]
             Command::Dashboard(args) => commands::dashboard::run(&args, &app).await?,

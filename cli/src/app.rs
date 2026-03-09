@@ -137,7 +137,7 @@ impl AppContext {
     ///
     /// Returns an error if `StateManager::new()` fails (home directory not found).
     pub fn new(flags: &AppFlags) -> Result<Self> {
-        let config_store = YamlConfigStore;
+        let config_store = YamlConfigStore::new();
         let config = config_store.load()?;
         Self::build(
             flags,

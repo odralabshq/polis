@@ -35,7 +35,7 @@ use fred::{
 };
 use polis_common::{
     AutoApproveAction, BlockReason, BlockedRequest, RequestStatus, SecurityLevel, SecurityLogEntry,
-    approved_key, auto_approve_key, blocked_key,
+    approved_host_key, approved_key, auto_approve_key, blocked_key,
     redis_keys::{keys, ttl},
 };
 use sha2::{Digest, Sha256};
@@ -944,7 +944,9 @@ where
     async fn get_status(&self) -> AppResult<StatusResponse> {
         let security_level = self.get_security_level().await?.level;
         let pending_count = self.scan_count(&format!("{}:*", keys::BLOCKED)).await?;
-        let recent_approvals = self.scan_count(&format!("{}:*", keys::APPROVED)).await?;
+        let recent_approvals = self
+            .scan_count(&format!("{}:req-*", keys::APPROVED))
+            .await?;
         let events_count = self
             .client
             .zcard(keys::EVENT_LOG)
@@ -1019,6 +1021,26 @@ where
             .map_err(|error| {
                 Self::dependency_error("failed to create approved marker for request", &error)
             })?;
+
+        // Set host-based approval key so the DLP module allows retries
+        // for domain-policy blocks (new_domain_prompt / new_domain_blocked).
+        // This mirrors what blocked.sh and the sentinel RESPMOD OTT flow do.
+        if !blocked_request.destination.is_empty() {
+            self.client
+                .set_string_ex(
+                    &approved_host_key(&blocked_request.destination),
+                    "1",
+                    ttl::APPROVED_REQUEST_SECS,
+                )
+                .await
+                .map_err(|error| {
+                    Self::dependency_error(
+                        "failed to create host-based approval marker",
+                        &error,
+                    )
+                })?;
+        }
+
         self.client
             .del(&blocked_key(request_id))
             .await
@@ -1742,6 +1764,16 @@ mod tests {
                 .get(&approved_key("req-abc12345"))
                 .cloned(),
             Some("approved".to_string())
+        );
+        // Verify host-based approval key was set for the DLP module
+        assert_eq!(
+            client
+                .strings
+                .lock()
+                .expect("strings lock")
+                .get(&approved_host_key("https://a.example"))
+                .cloned(),
+            Some("1".to_string())
         );
         assert_eq!(
             client

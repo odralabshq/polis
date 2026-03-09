@@ -75,20 +75,21 @@ pub fn validate_config_key(key: &str) -> Result<()> {
 pub fn validate_config_value(key: &str, value: &str) -> Result<()> {
     match key {
         "security.level" => {
-            let _: SecurityLevel = value.parse().map_err(|_| {
-                ConfigError::InvalidValue {
+            if !matches!(value, "relaxed" | "balanced" | "strict") {
+                return Err(ConfigError::InvalidValue {
                     key: key.to_string(),
                     value: value.to_string(),
-                    reason: "must be one of: relaxed, balanced, strict".to_string(),
+                    valid: "relaxed, balanced, strict".to_string(),
                 }
-            })?;
+                .into());
+            }
         }
         "control_plane.url" => {
             if value.is_empty() {
                 return Err(ConfigError::InvalidValue {
                     key: key.to_string(),
                     value: value.to_string(),
-                    reason: "URL cannot be empty".to_string(),
+                    valid: "non-empty URL".to_string(),
                 }
                 .into());
             }

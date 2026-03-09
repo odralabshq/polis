@@ -145,7 +145,7 @@ async fn handle_approve(
     con: &mut redis::aio::MultiplexedConnection,
     request_id: &str,
 ) -> Result<()> {
-    let (blocked_key, _, _) = fetch_and_audit(con, request_id, "approved_via_cli").await?;
+    let (blocked_key, blocked_data, _) = fetch_and_audit(con, request_id, "approved_via_cli").await?;
     let approved_key = polis_common::approved_key(request_id);
 
     redis::pipe()
@@ -159,6 +159,23 @@ async fn handle_approve(
         .query_async::<Vec<redis::Value>>(con)
         .await
         .context("failed to atomically DEL blocked + SETEX approved")?;
+
+    // Set host-based approval key so the DLP module allows retries
+    // for domain-policy blocks (new_domain_prompt / new_domain_blocked).
+    if let Ok(blocked_request) =
+        serde_json::from_str::<polis_common::BlockedRequest>(&blocked_data)
+    {
+        if !blocked_request.destination.is_empty() {
+            let host_key = polis_common::approved_host_key(&blocked_request.destination);
+            con.set_ex::<_, _, ()>(
+                &host_key,
+                "1",
+                polis_common::ttl::APPROVED_REQUEST_SECS,
+            )
+            .await
+            .context("failed to SETEX host-based approval key")?;
+        }
+    }
 
     println!("approved {}", request_id);
     Ok(())

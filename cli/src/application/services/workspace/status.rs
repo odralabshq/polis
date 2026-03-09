@@ -23,6 +23,7 @@ pub async fn gather(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutp
         return StatusOutput {
             workspace: workspace_unknown(),
             agent: None,
+            containers: None,
             security: empty_security(),
             events: empty_events(),
         };
@@ -35,6 +36,7 @@ pub async fn gather(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutp
                 uptime_seconds: None,
             },
             agent: None,
+            containers: None,
             security: empty_security(),
             events: empty_events(),
         };
@@ -66,6 +68,7 @@ pub async fn gather(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutp
             uptime_seconds,
         },
         agent,
+        containers: None,
         security: SecurityStatus {
             traffic_inspection: containers.get("gate").is_some_and(|i| i.state == "running"),
             credential_protection: containers

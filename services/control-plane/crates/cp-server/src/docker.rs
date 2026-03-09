@@ -153,7 +153,7 @@ impl DockerClient {
         let summaries = self.list_polis_container_summaries().await?;
         let mut containers = Vec::with_capacity(summaries.len());
         let mut total_memory_usage_mb = 0_u64;
-        let mut total_memory_limit_mb = 0_u64;
+        let mut max_memory_limit_mb = 0_u64;
         let mut total_cpu_percent = 0.0_f64;
 
         for summary in summaries {
@@ -162,7 +162,12 @@ impl DockerClient {
             let stats = self.container_stats(&name).await?;
 
             total_memory_usage_mb += stats.resources.memory_usage_mb;
-            total_memory_limit_mb += stats.resources.memory_limit_mb;
+            // Use the max container limit as a proxy for the host's total RAM.
+            // Containers without explicit limits report the host's total memory,
+            // so the maximum across all containers equals the VM's actual RAM.
+            if stats.resources.memory_limit_mb > max_memory_limit_mb {
+                max_memory_limit_mb = stats.resources.memory_limit_mb;
+            }
             total_cpu_percent += stats.resources.cpu_percent;
 
             containers.push(ApiContainerMetrics {
@@ -185,7 +190,7 @@ impl DockerClient {
             timestamp: Utc::now(),
             system: ApiSystemMetrics {
                 total_memory_usage_mb,
-                total_memory_limit_mb,
+                total_memory_limit_mb: max_memory_limit_mb,
                 total_cpu_percent: ((total_cpu_percent * 100.0).round()) / 100.0,
                 container_count: containers.len(),
             },
@@ -731,10 +736,35 @@ fn parse_docker_log_line(service: &str, line: &str) -> Option<LogLine> {
 }
 
 fn detect_log_level(message: &str) -> &'static str {
+    // Check for explicit level markers first (e.g. "[INFO]", "level=warn").
+    // This avoids false positives from words like "NOERROR" or "warning-page".
     let lowered = message.to_ascii_lowercase();
-    if lowered.contains("error") || lowered.contains("fatal") || lowered.contains("panic") {
+    if lowered.contains("[error]")
+        || lowered.contains("level=error")
+        || lowered.contains("level=\"error\"")
+    {
+        return "error";
+    }
+    if lowered.contains("[warn]")
+        || lowered.contains("[warning]")
+        || lowered.contains("level=warn")
+        || lowered.contains("level=\"warn\"")
+    {
+        return "warn";
+    }
+    if lowered.contains("[info]")
+        || lowered.contains("[debug]")
+        || lowered.contains("level=info")
+        || lowered.contains("level=\"info\"")
+    {
+        return "info";
+    }
+
+    // Fallback: keyword scan, but filter out common false positives.
+    let cleaned = lowered.replace("noerror", "");
+    if cleaned.contains("error") || cleaned.contains("fatal") || cleaned.contains("panic") {
         "error"
-    } else if lowered.contains("warn") {
+    } else if cleaned.contains("warn") {
         "warn"
     } else {
         "info"
@@ -1210,6 +1240,18 @@ mod tests {
         assert_eq!(detect_log_level("WARN retrying socket"), "warn");
         assert_eq!(detect_log_level("ERROR failed to connect"), "error");
         assert_eq!(detect_log_level("panic in worker"), "error");
+
+        // Explicit markers take precedence.
+        assert_eq!(detect_log_level("[INFO] 10.10.1.3 - AAAA IN gate.msh."), "info");
+        assert_eq!(detect_log_level("[ERROR] connection refused"), "error");
+        assert_eq!(detect_log_level("[WARN] slow query"), "warn");
+
+        // "NOERROR" (DNS rcode) must NOT be classified as error.
+        assert_eq!(detect_log_level("rcode NOERROR answer 0"), "info");
+        assert_eq!(
+            detect_log_level("[INFO] query AAAA rcode NOERROR"),
+            "info"
+        );
     }
 
     #[test]

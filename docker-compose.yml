@@ -384,9 +384,9 @@ services:
         labels: "service"
     labels:
       service: "polis-workspace"
-      polis.agent.name: "${POLIS_AGENT_NAME:-openclaw}"
-      polis.agent.version: "${POLIS_AGENT_VERSION:-1.0.0}"
-      polis.agent.display_name: "${POLIS_AGENT_DISPLAY_NAME:-OpenClaw}"
+      polis.agent.name: "${POLIS_AGENT_NAME:-}"
+      polis.agent.version: "${POLIS_AGENT_VERSION:-}"
+      polis.agent.display_name: "${POLIS_AGENT_DISPLAY_NAME:-}"
 
   # =========================================================
   # HOST INIT (Host network setup for TPROXY)

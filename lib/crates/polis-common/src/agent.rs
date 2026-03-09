@@ -53,6 +53,7 @@ impl AgentMetadata {
                     "ANTHROPIC_API_KEY" => return "Anthropic".to_string(),
                     "OPENAI_API_KEY" => return "OpenAI".to_string(),
                     "OPENROUTER_API_KEY" => return "OpenRouter".to_string(),
+                    "GOOGLE_API_KEY" | "GEMINI_API_KEY" => return "Google".to_string(),
                     _ => {}
                 }
             }

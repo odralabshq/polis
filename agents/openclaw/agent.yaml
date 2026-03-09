@@ -59,6 +59,8 @@ spec:
       - ANTHROPIC_API_KEY
       - OPENAI_API_KEY
       - OPENROUTER_API_KEY
+      - GOOGLE_API_KEY
+      - GEMINI_API_KEY
     envOptional:
       - BRAVE_SEARCH_API_KEY
 
@@ -74,7 +76,7 @@ spec:
     dockerInDocker: false
 
   onboarding:
-    - title: "Run the onboarding wizard"
-      command: "openclaw onboard"
+    - title: "Connect to workspace and add your API key"
+      command: "polis connect  # then run: openclaw onboard"
 
   commands: commands.sh

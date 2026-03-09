@@ -157,10 +157,10 @@ where
                     auth::require_permission(request, next, Permission::ReadDashboard)
                 }))
                 .post(add_rule::<S>)
+                .delete(delete_rule::<S>)
                 .route_layer(middleware::from_fn(|request, next| {
                     auth::require_permission(request, next, Permission::MutateConfig)
-                }))
-                .delete(delete_rule::<S>),
+                })),
         )
         .merge(config_api::routes::<S>())
         .merge(observability_api::routes::<S>())

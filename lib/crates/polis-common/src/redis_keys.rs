@@ -95,6 +95,14 @@ pub fn blocked_key(request_id: &str) -> String {
 pub fn approved_key(request_id: &str) -> String {
     format!("{}:{}", keys::APPROVED, request_id)
 }
+/// Build the host-based approval key checked by the DLP module.
+/// Format: `polis:approved:host:{destination}`
+/// The DLP C module (`srv_polis_dlp.c`) checks this key before blocking
+/// domain-policy requests (`new_domain_prompt` / `new_domain_blocked`).
+#[must_use]
+pub fn approved_host_key(destination: &str) -> String {
+    format!("polis:approved:host:{}", destination)
+}
 
 #[must_use]
 pub fn auto_approve_key(pattern: &str) -> String {
@@ -155,6 +163,14 @@ mod tests {
     #[test]
     fn approved_key_format() {
         assert_eq!(approved_key("req-abc12345"), "polis:approved:req-abc12345");
+    }
+
+    #[test]
+    fn approved_host_key_format() {
+        assert_eq!(
+            approved_host_key("https://example.com"),
+            "polis:approved:host:https://example.com"
+        );
     }
 
     #[test]
