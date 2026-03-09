@@ -1,79 +1,81 @@
 //! `polis delete [--all]` — remove workspace.
 
-use anyhow::Result;
+use std::process::ExitCode;
 
-use crate::app::AppContext;
-use crate::application::services::cleanup_service;
-use crate::commands::DeleteArgs;
+use anyhow::Result;
+use clap::Args;
+
+use crate::app::App;
+use crate::application::services::workspace::{self as workspace_svc, DeleteOutcome};
+
+/// Arguments for the delete command.
+#[derive(Args)]
+pub struct DeleteArgs {
+    /// Remove everything including certificates, cache, and configuration
+    #[arg(long)]
+    pub all: bool,
+
+    /// Skip confirmation prompt
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
+    /// Skip workspace data backup before deletion
+    #[arg(long)]
+    pub no_backup: bool,
+}
 
 /// Run `polis delete [--all]`.
 ///
 /// # Errors
 ///
-/// This function will return an error if the underlying operations fail.
-pub async fn run(args: &DeleteArgs, app: &AppContext) -> Result<std::process::ExitCode> {
+/// Returns an error if the delete operation fails.
+pub async fn run(app: &impl App, args: &DeleteArgs) -> Result<ExitCode> {
     let confirmed = if args.all {
-        confirm_delete_all(args, app)?
+        args.yes || app.non_interactive() || app.confirm("Remove all data?", false)?
     } else {
-        confirm_delete_workspace(args, app)?
+        if !app.output().quiet {
+            app.output().info("This will remove your workspace.");
+            if args.no_backup {
+                app.output()
+                    .warn("Backup is disabled — workspace data will be permanently lost.");
+            } else {
+                app.output()
+                    .info("Workspace data will be backed up to ~/.polis/backups/ before removal.");
+            }
+            app.output()
+                .info("Configuration, certificates, and cached downloads will be preserved.");
+        }
+        args.yes || app.non_interactive() || app.confirm("Continue?", false)?
     };
 
     if !confirmed {
-        app.output.info("Cancelled.");
-        return Ok(std::process::ExitCode::SUCCESS);
+        app.output().info("Cancelled.");
+        return Ok(ExitCode::SUCCESS);
     }
 
-    if let Err(e) = execute_delete(args.all, args.no_backup, app).await {
-        app.output.error(&e.to_string());
-        return Ok(std::process::ExitCode::FAILURE);
-    }
-
-    Ok(std::process::ExitCode::SUCCESS)
-}
-
-fn confirm_delete_all(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
-    Ok(args.yes || app.confirm("Remove all data?", false)?)
-}
-
-fn confirm_delete_workspace(args: &DeleteArgs, app: &AppContext) -> Result<bool> {
-    if !app.output.quiet {
-        app.output.info("");
-        if args.no_backup {
-            app.output
-                .warn("Backup is disabled — workspace data will be permanently lost.");
-        } else {
-            app.output
-                .info("Workspace data will be backed up to ~/.polis/backups/ before removal.");
-        }
-        app.output
-            .info("Configuration, certificates, and cached downloads will be preserved.");
-        app.output.info("");
-    }
-    Ok(args.yes || app.confirm("Continue?", false)?)
-}
-
-async fn execute_delete(all: bool, no_backup: bool, app: &AppContext) -> Result<()> {
     let reporter = app.terminal_reporter();
-    if all {
-        cleanup_service::delete_all(
-            &app.provisioner,
-            &app.state_mgr,
-            &app.local_fs,
-            &app.local_fs,
-            &app.ssh,
-            &reporter,
-            no_backup,
-        )
-        .await
+    let outcome = if args.all {
+        let ctx = workspace_svc::CleanupContext {
+            provisioner: app.provisioner(),
+            state_store: app.state_store(),
+            local_fs: app.fs(),
+            paths: app.fs(),
+            ssh: app.ssh(),
+            reporter: &reporter,
+            skip_backup: args.no_backup,
+        };
+        workspace_svc::delete_all(&ctx).await?;
+        DeleteOutcome::Deleted
     } else {
-        cleanup_service::delete_workspace(
-            &app.provisioner,
-            &app.state_mgr,
-            &app.local_fs,
-            &app.local_fs,
+        workspace_svc::delete(
+            app.provisioner(),
+            app.state_store(),
             &reporter,
-            no_backup,
+            args.no_backup,
         )
-        .await
-    }
+        .await?
+    };
+
+    app.renderer().render_delete_outcome(&outcome, args.all)?;
+    Ok(ExitCode::SUCCESS)
 }

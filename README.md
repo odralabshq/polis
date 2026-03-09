@@ -101,13 +101,9 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | Command | Description |
 |---------|-------------|
 | `polis agent list` | List installed agents |
-| `polis agent add --path <folder>` | Install a new agent from a local folder |
-| `polis agent remove <name>` | Remove an agent |
-| `polis agent restart` | Restart the active agent's workspace |
-| `polis agent update` | Re-generate config and recreate workspace |
-| `polis agent shell` | Open an interactive shell in the workspace |
-| `polis agent exec <cmd>` | Run a command in the workspace container |
-| `polis agent cmd <args>` | Run an agent-specific command (defined in the agent's `commands.sh`) |
+| `polis agent install --path <folder>` | Install a new agent from a local folder |
+| `polis agent remove <name>` | Remove an installed agent |
+| `polis agent activate <name>` | Activate an agent on the running workspace |
 
 ---
 
@@ -149,8 +145,8 @@ Use the agent template to create your own:
 ```bash
 cp -r agents/_template agents/my-agent
 # Edit agents/my-agent/agent.yaml
-polis agent add --path agents/my-agent
-polis start --agent=my-agent
+polis agent install --path agents/my-agent
+polis agent activate my-agent
 ```
 
 ---

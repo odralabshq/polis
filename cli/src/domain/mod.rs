@@ -8,6 +8,10 @@ pub mod agent;
 pub mod config;
 pub mod error;
 pub mod health;
+pub mod process;
+pub mod security;
+pub mod ssh;
+pub mod util;
 pub mod workspace;
 
 #[allow(unused_imports)]
@@ -18,9 +22,8 @@ pub use config::{
 pub use error::{AgentError, ConfigError, WorkspaceError};
 #[allow(unused_imports)]
 pub use health::{
-    DoctorChecks, ImageCheckResult, NetworkChecks, PrerequisiteChecks, SecurityChecks,
-    WorkspaceChecks, collect_issues,
+    CertificateStatus, DiagnosticReport, ImageCheckResult, MalwareDbStatus, NetworkChecks,
+    PrerequisiteChecks, SecurityChecks, WorkspaceChecks, collect_issues,
 };
 #[allow(unused_imports)]
 pub use workspace::{WorkspaceState, check_architecture};
-pub mod ssh;

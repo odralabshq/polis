@@ -1,98 +1,84 @@
-//! `polis connect` — SSH config management.
+//! `polis connect` — open an SSH session to the workspace with self-healing.
 
-use anyhow::Result;
+use std::process::ExitCode;
+
+use anyhow::{Context, Result};
 use clap::Args;
+use std::process::Stdio;
 
-use crate::app::AppContext;
-use crate::application::ports::SshConfigurator;
-use crate::application::services::vm::lifecycle as vm;
+use crate::app::App;
+use crate::application::services::ssh::{self, SshProvisionOptions};
+use crate::application::vm::lifecycle::{self as vm, VmState};
+use crate::domain::error::WorkspaceError;
+use crate::domain::process::exit_code_from_status;
+use crate::output::models::ConnectionInfo;
 
 /// Arguments for the connect command.
 #[derive(Args)]
-pub struct ConnectArgs {}
+pub struct ConnectArgs {
+    /// Display IDE connection strings without opening an SSH session.
+    #[arg(long)]
+    pub info: bool,
+}
 
 /// Run `polis connect`.
 ///
-/// Sets up SSH config on first run, validates permissions, then prints
-/// connection instructions.
+/// Checks that the workspace is running, runs self-healing SSH provisioning,
+/// then either prints connection info (`--info`) or opens an interactive SSH
+/// session.
 ///
 /// # Errors
 ///
-/// Returns an error if SSH config setup fails or permissions are unsafe.
-pub async fn run(app: &AppContext, _args: ConnectArgs) -> Result<std::process::ExitCode> {
-    let ctx = &app.output;
-    let mp = &app.provisioner;
-    let already_configured = SshConfigurator::is_configured(&app.ssh).await?;
-    if already_configured {
-        // Refresh polis config to pick up any template changes (idempotent).
-        SshConfigurator::setup_config(&app.ssh).await?;
-    } else {
-        setup_ssh_config(app).await?;
+/// Returns an error if the VM is not running, SSH provisioning fails, or the
+/// SSH process cannot be spawned.
+pub async fn run(app: &impl App, args: &ConnectArgs) -> Result<ExitCode> {
+    // Req 8.5 — return WorkspaceError::NotRunning when VM is not Running.
+    let vm_state = vm::state(app.provisioner()).await?;
+    if vm_state != VmState::Running {
+        return Err(WorkspaceError::NotRunning.into());
     }
 
-    SshConfigurator::validate_permissions(&app.ssh).await?;
-
-    if !already_configured {
-        ctx.step("configuring access keys...");
+    // Req 8.3 — --info flag: display connection strings and return.
+    if args.info {
+        app.renderer()
+            .render_connection_info(&ConnectionInfo::default())?;
+        return Ok(ExitCode::SUCCESS);
     }
 
-    // Ensure a passphrase-free identity key exists and is installed in the workspace.
-    let pubkey = SshConfigurator::ensure_identity(&app.ssh).await?;
+    // Req 8.2 — self-healing SSH provisioning (consent always given for connect).
+    let reporter = app.terminal_reporter();
+    ssh::provision_ssh(
+        app.provisioner(),
+        app.ssh(),
+        SshProvisionOptions {
+            consent_given: true,
+        },
+        &reporter,
+    )
+    .await?;
 
-    // Install pubkey into the VM's ubuntu user so `polis _ssh-proxy` can SSH
-    // to the VM directly (bypasses multipass exec stdin bug on Windows).
-    crate::application::services::connect::install_vm_pubkey(mp, &pubkey).await?;
-
-    // Install pubkey into the workspace container's polis user.
-    crate::application::services::connect::install_pubkey(mp, &pubkey).await?;
-
-    if !already_configured {
-        ctx.step("pinning workspace identity...");
-    }
-
-    // Pin the workspace host key so StrictHostKeyChecking can verify it.
-    crate::application::services::connect::pin_host_key(mp, &app.ssh).await;
-
-    show_connection_options(ctx, already_configured);
-
-    // Show dashboard URL (best-effort)
-    if !ctx.quiet
-        && let Ok(ip) = vm::resolve_vm_ip(mp).await
-    {
-        ctx.kv("Control UI", &format!("http://{ip}:18789/overview"));
-    }
-
-    Ok(std::process::ExitCode::SUCCESS)
+    // Open interactive SSH session.
+    open_ssh_session().await
 }
 
+/// Open an interactive SSH session to the workspace (async).
+///
+/// Uses `ssh workspace` which resolves via the `~/.ssh/config` entry written
+/// by `provision_ssh`. Inherits stdin/stdout/stderr for a fully interactive
+/// terminal.
+///
 /// # Errors
 ///
-/// This function will return an error if the underlying operations fail.
-async fn setup_ssh_config(app: &AppContext) -> Result<()> {
-    let ctx = &app.output;
-    let confirmed = app.confirm("Add SSH configuration to ~/.ssh/config?", true)?;
+/// Returns an error if the `ssh` process cannot be spawned.
+async fn open_ssh_session() -> Result<ExitCode> {
+    let status = tokio::process::Command::new("ssh")
+        .arg("workspace")
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await
+        .context("failed to spawn ssh")?;
 
-    if !confirmed {
-        ctx.info("Skipped. You can set up SSH manually later.");
-        return Ok(());
-    }
-
-    ctx.step("configuring SSH...");
-    SshConfigurator::setup_config(&app.ssh).await?;
-    Ok(())
-}
-
-fn show_connection_options(ctx: &crate::output::OutputContext, already_configured: bool) {
-    if already_configured {
-        ctx.success("workspace ready to connect");
-    } else {
-        ctx.success("workspace connected");
-    }
-    ctx.blank();
-    ctx.kv("SSH     ", "ssh workspace");
-    ctx.kv("VS Code ", "code --remote ssh-remote+workspace /workspace");
-    ctx.kv(
-        "Cursor  ",
-        "cursor --remote ssh-remote+workspace /workspace",
-    );
+    Ok(exit_code_from_status(status))
 }
