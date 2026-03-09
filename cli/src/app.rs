@@ -20,6 +20,8 @@ use crate::infra::network::TokioNetworkProbe;
 use crate::infra::provisioner::MultipassProvisioner;
 use crate::infra::ssh::SshConfigManager;
 use crate::infra::state::StateManager;
+use console::Term;
+
 use crate::output::{HumanRenderer, JsonRenderer, OutputContext, Renderer};
 
 /// Output rendering mode.
@@ -104,8 +106,12 @@ impl AppContext {
             OutputMode::Human
         };
 
+        let is_tty = Term::stdout().is_term();
+        let env_no_color = std::env::var("NO_COLOR").is_ok();
+        let effective_no_color = flags.output.no_color || env_no_color;
+
         Ok(Self {
-            output: OutputContext::new(flags.output.no_color, flags.output.quiet),
+            output: OutputContext::new(effective_no_color, is_tty, flags.output.quiet),
             mode,
             provisioner: MultipassProvisioner::default_runner(),
             state_mgr: StateManager::new()?,
@@ -115,7 +121,7 @@ impl AppContext {
             cmd_runner: TokioCommandRunner::new(DEFAULT_CMD_TIMEOUT),
             network_probe: TokioNetworkProbe,
             local_fs: OsFs,
-            config_store: YamlConfigStore,
+            config_store: YamlConfigStore::new(),
         })
     }
 

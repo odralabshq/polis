@@ -1372,3 +1372,264 @@ fn naming_consistency_remove_not_delete() {
         violations.join("\n")
     );
 }
+
+// ── Tasks 9.1–9.5: Infra clean architecture invariants ───────────────────────
+
+/// Req 14.1, 14.5: `dirs::home_dir` must only appear in `polis_dir.rs`.
+///
+/// All home-directory resolution must go through `PolisDir::new()`.
+/// Other infra modules must accept a `PolisDir` instance instead.
+#[test]
+fn no_dirs_home_dir_outside_polis_dir() {
+    let infra_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infra");
+    let violations: Vec<String> = collect_rs_files(&infra_dir)
+        .into_iter()
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str()) != Some("polis_dir.rs")
+        })
+        .filter(|p| {
+            let content = std::fs::read_to_string(p).unwrap_or_default();
+            content.contains("dirs::home_dir")
+        })
+        .map(|p| {
+            p.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                .unwrap_or(&p)
+                .display()
+                .to_string()
+        })
+        .collect();
+
+    assert!(
+        violations.is_empty(),
+        "dirs::home_dir() found outside polis_dir.rs.\n\
+         Use PolisDir::new() to resolve the home directory and inject it via constructor.\n\
+         Violating files:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Req 14.2, 14.5: Inline `from_mode` permission code must only appear in `secure_fs.rs`.
+///
+/// All permission-setting logic must go through `SecureFs`. Other infra modules
+/// must call `SecureFs::set_permissions()` or `SecureFs::ensure_dir()` instead.
+/// Note: `#[cfg(test)]` blocks are excluded because tests legitimately use
+/// `from_mode` to set incorrect permissions for testing error paths.
+#[test]
+fn no_inline_permission_code_outside_secure_fs() {
+    let infra_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infra");
+    let mut violations: Vec<String> = Vec::new();
+
+    for path in collect_rs_files(&infra_dir) {
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if filename == "secure_fs.rs" {
+            continue;
+        }
+
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+
+        let rel = path
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+
+        let mut tracker = CfgTestTracker::new();
+        for (i, line) in content.lines().enumerate() {
+            let in_test = tracker.process_line(line);
+            if in_test {
+                continue;
+            }
+            if line.contains("from_mode") {
+                violations.push(format!("{rel}:{}: from_mode outside secure_fs.rs: {line}", i + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "from_mode (inline permission code) found outside secure_fs.rs.\n\
+         Use SecureFs::set_permissions() or SecureFs::ensure_dir() instead.\n\
+         Violating lines:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Req 14.3, 14.5: `fn hex_encode` must be defined exactly once, in `domain/util.rs`.
+///
+/// All callers must use `crate::domain::util::hex_encode` to avoid duplication.
+#[test]
+fn no_duplicate_hex_encode_definitions() {
+    let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut definitions: Vec<String> = Vec::new();
+
+    for path in collect_rs_files(&src_dir) {
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        if content.contains("fn hex_encode") {
+            let rel = path
+                .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            definitions.push(rel);
+        }
+    }
+
+    let expected = "src/domain/util.rs";
+    let non_canonical: Vec<&String> = definitions
+        .iter()
+        .filter(|p| !p.replace('\\', "/").ends_with(expected))
+        .collect();
+
+    assert!(
+        non_canonical.is_empty(),
+        "fn hex_encode defined outside domain/util.rs.\n\
+         Use `use crate::domain::util::hex_encode;` instead of redefining it.\n\
+         Extra definitions found in:\n{}",
+        non_canonical
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    assert!(
+        definitions.iter().any(|p| p.replace('\\', "/").ends_with(expected)),
+        "fn hex_encode not found in domain/util.rs — the canonical definition is missing"
+    );
+}
+
+/// Req 14.4, 14.5: Each `infra/ssh/*.rs` file (excluding `mod.rs`) must have
+/// fewer than 250 non-test lines.
+///
+/// Large SSH submodule files indicate that responsibilities have not been
+/// properly separated. Extract logic into smaller focused modules.
+#[test]
+fn ssh_submodule_files_under_250_lines() {
+    let ssh_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infra/ssh");
+    let mut violations: Vec<String> = Vec::new();
+
+    for path in collect_rs_files(&ssh_dir) {
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if filename == "mod.rs" {
+            continue;
+        }
+
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+
+        let line_count = count_non_test_lines(&content);
+        if line_count >= 250 {
+            let rel = path
+                .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            violations.push(format!("{rel}: {line_count} non-test lines (limit: 249)"));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "SSH submodule files must have fewer than 250 non-test lines.\n\
+         Extract logic into smaller focused modules to maintain single responsibility.\n\
+         Violating files:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Req 17.5: Foundation modules must respect the dependency order:
+/// `blocking.rs` → `polis_dir.rs` → `secure_fs.rs`.
+///
+/// - `blocking.rs` must have no `use crate::infra::` imports
+/// - `polis_dir.rs` must not import from infra modules other than `blocking`
+/// - `secure_fs.rs` must not import from infra modules other than `blocking` and `polis_dir`
+#[test]
+fn foundation_modules_no_forbidden_imports() {
+    let infra_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infra");
+
+    // blocking.rs: no crate::infra:: imports at all
+    {
+        let path = infra_dir.join("blocking.rs");
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("Could not read blocking.rs"));
+        let mut tracker = CfgTestTracker::new();
+        let mut violations: Vec<String> = Vec::new();
+        for (i, line) in content.lines().enumerate() {
+            let in_test = tracker.process_line(line);
+            if in_test {
+                continue;
+            }
+            if line.contains("use crate::infra::") {
+                violations.push(format!("blocking.rs:{}: {line}", i + 1));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "blocking.rs must have no crate::infra:: imports (it is the foundation layer).\n\
+             Violating lines:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    // polis_dir.rs: may only import from crate::infra::blocking (or no infra imports)
+    {
+        let path = infra_dir.join("polis_dir.rs");
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("Could not read polis_dir.rs"));
+        let mut tracker = CfgTestTracker::new();
+        let mut violations: Vec<String> = Vec::new();
+        for (i, line) in content.lines().enumerate() {
+            let in_test = tracker.process_line(line);
+            if in_test {
+                continue;
+            }
+            if line.contains("use crate::infra::") && !line.contains("use crate::infra::blocking") {
+                violations.push(format!("polis_dir.rs:{}: {line}", i + 1));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "polis_dir.rs may only import from crate::infra::blocking (dependency order: blocking → polis_dir).\n\
+             Violating lines:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    // secure_fs.rs: may only import from crate::infra::blocking or crate::infra::polis_dir
+    {
+        let path = infra_dir.join("secure_fs.rs");
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("Could not read secure_fs.rs"));
+        let mut tracker = CfgTestTracker::new();
+        let mut violations: Vec<String> = Vec::new();
+        for (i, line) in content.lines().enumerate() {
+            let in_test = tracker.process_line(line);
+            if in_test {
+                continue;
+            }
+            if line.contains("use crate::infra::")
+                && !line.contains("use crate::infra::blocking")
+                && !line.contains("use crate::infra::polis_dir")
+            {
+                violations.push(format!("secure_fs.rs:{}: {line}", i + 1));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "secure_fs.rs may only import from crate::infra::blocking and crate::infra::polis_dir\n\
+             (dependency order: blocking → polis_dir → secure_fs).\n\
+             Violating lines:\n{}",
+            violations.join("\n")
+        );
+    }
+}

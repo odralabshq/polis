@@ -85,7 +85,7 @@ impl MockAppContext {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            output: OutputContext::new(true, true), // no color, quiet
+            output: OutputContext::new(true, false, true), // no color, not tty, quiet
             mode: OutputMode::Human,
             provisioner: MockProvisioner::new(),
             state_store: MockStateStore::new(),

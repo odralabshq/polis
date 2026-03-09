@@ -7,6 +7,7 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 
 use crate::application::ports::{UpdateChecker, UpdateInfo, VerifiedAsset};
+use crate::domain::util::hex_encode;
 
 /// The base64-encoded ed25519 public key used to verify release signatures.
 pub const POLIS_PUBLIC_KEY_B64: &str = "jI42dOaR/5mN1T0hH+QeWc+L0aH9BwG1L7Yd/4O5QeQ=";
@@ -279,17 +280,6 @@ fn verify_embedded_signature(file: &mut (impl Read + Seek), download_url: &str) 
     }
 
     Ok(())
-}
-
-/// Encode bytes as lowercase hexadecimal.
-fn hex_encode(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
-            let _ = write!(acc, "{b:02x}");
-            acc
-        })
 }
 
 /// Extract the binary from a tar.gz or zip archive.

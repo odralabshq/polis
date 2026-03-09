@@ -51,7 +51,7 @@ impl<'a> HumanRenderer<'a> {
             self.ctx.kv("Uptime:", &format_uptime(uptime));
         }
 
-        println!();
+        self.ctx.blank();
         self.ctx.header("Security:");
 
         if status.security.traffic_inspection {
@@ -71,7 +71,7 @@ impl<'a> HumanRenderer<'a> {
         }
 
         if status.events.count > 0 {
-            println!();
+            self.ctx.blank();
             self.ctx
                 .warn(&format!("{} security events", status.events.count));
             self.ctx.info("Run: polis logs --security");
@@ -83,26 +83,30 @@ impl<'a> HumanRenderer<'a> {
         use owo_colors::OwoColorize;
 
         if agents.is_empty() {
-            if !self.ctx.quiet {
-                println!("No agents installed. Install one: polis agent install --path <folder>");
-            }
+            self.ctx
+                .write_raw("No agents installed. Install one: polis agent install --path <folder>");
             return;
         }
 
-        println!("Installed agents:\n");
+        self.ctx.write_raw("Installed agents:\n");
         for agent in agents {
             let name = &agent.name;
             let version = agent.version.as_deref().unwrap_or("");
             let desc = agent.description.as_deref().unwrap_or("");
             let marker = if agent.active { "  [active]" } else { "" };
-            println!("  {name:<16} {version:<10} {desc}{marker}");
+            self.ctx
+                .write_raw(&format!("  {name:<16} {version:<10} {desc}{marker}"));
 
             // Display warning if present (e.g., malformed manifest)
             if let Some(warning) = &agent.warning {
-                println!("    {} {warning}", "!".style(self.ctx.styles.warning));
+                self.ctx.write_raw(&format!(
+                    "    {} {warning}",
+                    "!".style(self.ctx.styles.warning)
+                ));
             }
         }
-        println!("\nActivate an agent: polis agent activate <name>");
+        self.ctx
+            .write_raw("\nActivate an agent: polis agent activate <name>");
     }
 
     /// Render agent activation outcome with optional onboarding steps.
@@ -159,50 +163,51 @@ impl<'a> HumanRenderer<'a> {
         &self,
         config: &crate::domain::config::PolisConfig,
         path: &std::path::Path,
+        config_env: &crate::output::ConfigEnv,
     ) {
-        println!();
-        println!(
-            "  {}",
-            format!("Configuration ({})", path.display()).style(self.ctx.styles.header)
-        );
-        println!();
-        println!("  {:<20} {}", "security.level:", config.security.level);
-        println!();
-        println!("  {}", "Environment:".style(self.ctx.styles.bold));
-        println!(
+        self.ctx.blank();
+        self.ctx.header(&format!("Configuration ({})", path.display()));
+        self.ctx.blank();
+        self.ctx
+            .write_raw(&format!("  {:<20} {}", "security.level:", config.security.level));
+        self.ctx.blank();
+        self.ctx
+            .write_raw(&format!("  {}", "Environment:".style(self.ctx.styles.bold)));
+        self.ctx.write_raw(&format!(
             "    {:<18} {}",
             "POLIS_CONFIG:",
-            std::env::var("POLIS_CONFIG").unwrap_or_else(|_| "(not set)".to_string())
-        );
-        println!(
+            config_env
+                .polis_config
+                .as_deref()
+                .unwrap_or("(not set)")
+        ));
+        self.ctx.write_raw(&format!(
             "    {:<18} {}",
             "NO_COLOR:",
-            std::env::var("NO_COLOR").unwrap_or_else(|_| "(not set)".to_string())
-        );
-        println!();
+            config_env.no_color.as_deref().unwrap_or("(not set)")
+        ));
+        self.ctx.blank();
     }
 
     /// Render diagnostic health check results.
     pub fn render_diagnostics(&self, checks: &DiagnosticReport, issues: &[String], verbose: bool) {
-        use owo_colors::OwoColorize;
-
-        println!();
-        println!("  {}", "Polis Health Check".style(self.ctx.styles.header));
-        println!();
+        self.ctx.blank();
+        self.ctx.header("Polis Health Check");
+        self.ctx.blank();
 
         // Prerequisites
         self.render_diagnostics_prerequisites(checks);
 
         // Workspace
-        println!("  Workspace:");
-        self.print_check(checks.workspace.ready, "Ready to start");
+        self.ctx.write_raw("  Workspace:");
+        self.ctx.write_check(checks.workspace.ready, "Ready to start");
         if checks.workspace.disk_space_ok {
-            self.print_check(
+            self.ctx.write_check(
                 true,
                 &format!("{} GB disk space available", checks.workspace.disk_space_gb),
             );
         } else {
-            self.print_check(
+            self.ctx.write_check(
                 false,
                 &format!(
                     "Low disk space ({} GB available, need 10 GB)",
@@ -212,86 +217,95 @@ impl<'a> HumanRenderer<'a> {
         }
         // Image cache status
         if let Some(ref override_val) = checks.workspace.image.polis_image_override {
-            self.print_check(true, &format!("Image override: {override_val}"));
+            self.ctx
+                .write_check(true, &format!("Image override: {override_val}"));
         } else {
-            self.print_check(checks.workspace.image.cached, "Image cached");
+            self.ctx.write_check(checks.workspace.image.cached, "Image cached");
         }
-        println!();
+        self.ctx.blank();
 
         // Network
-        println!("  Network:");
-        self.print_check(checks.network.internet, "Internet connectivity");
-        self.print_check(checks.network.dns, "DNS resolution working");
-        println!();
+        self.ctx.write_raw("  Network:");
+        self.ctx
+            .write_check(checks.network.internet, "Internet connectivity");
+        self.ctx
+            .write_check(checks.network.dns, "DNS resolution working");
+        self.ctx.blank();
 
         // Security
         self.render_diagnostics_security(checks);
 
         // Summary
-        println!();
+        self.ctx.blank();
         if issues.is_empty() {
-            println!(
+            self.ctx.write_raw(&format!(
                 "  {} Everything looks good!",
                 "\u{2713}".style(self.ctx.styles.success)
-            );
+            ));
         } else {
             let hint = if verbose {
                 ""
             } else {
                 " Run with --verbose for details."
             };
-            println!(
+            self.ctx.write_raw(&format!(
                 "  {} Found {} issues.{hint}",
                 "\u{2717}".style(self.ctx.styles.error),
                 issues.len(),
-            );
+            ));
             if verbose {
-                println!();
+                self.ctx.blank();
                 for issue in issues {
-                    println!("    {} {issue}", "\u{2717}".style(self.ctx.styles.error));
+                    self.ctx.write_raw(&format!(
+                        "    {} {issue}",
+                        "\u{2717}".style(self.ctx.styles.error)
+                    ));
                 }
             }
         }
 
-        println!();
+        self.ctx.blank();
     }
 
     fn render_diagnostics_prerequisites(&self, checks: &DiagnosticReport) {
-        println!("  Prerequisites:");
+        self.ctx.write_raw("  Prerequisites:");
         if checks.prerequisites.found {
             let ver = checks.prerequisites.version.as_deref().unwrap_or("unknown");
-            self.print_check(
+            self.ctx.write_check(
                 checks.prerequisites.version_ok,
                 &format!("Multipass {ver} (need \u{2265} 1.16.0)"),
             );
             if !checks.prerequisites.version_ok {
                 #[cfg(target_os = "linux")]
-                println!("      Update: sudo snap refresh multipass");
+                self.ctx
+                    .write_raw("      Update: sudo snap refresh multipass");
                 #[cfg(not(target_os = "linux"))]
-                println!("      Update: https://multipass.run/install");
+                self.ctx
+                    .write_raw("      Update: https://multipass.run/install");
             }
         } else {
-            self.print_check(false, "multipass not found");
+            self.ctx.write_check(false, "multipass not found");
             #[cfg(target_os = "linux")]
-            println!("      Install: sudo snap install multipass");
+            self.ctx
+                .write_raw("      Install: sudo snap install multipass");
             #[cfg(not(target_os = "linux"))]
-            println!("      Install: https://multipass.run/install");
+            self.ctx
+                .write_raw("      Install: https://multipass.run/install");
         }
-        println!();
+        self.ctx.blank();
     }
 
     fn render_diagnostics_security(&self, checks: &DiagnosticReport) {
-        use owo_colors::OwoColorize;
-        println!("  Security:");
-        self.print_check(
+        self.ctx.write_raw("  Security:");
+        self.ctx.write_check(
             checks.security.process_isolation,
             "process isolation active",
         );
-        self.print_check(
+        self.ctx.write_check(
             checks.security.traffic_inspection,
             "traffic inspection responding",
         );
-        self.print_check(
+        self.ctx.write_check(
             checks.security.malware_db.is_current,
             &format!(
                 "malware scanner database current (updated: {}h ago)",
@@ -300,24 +314,20 @@ impl<'a> HumanRenderer<'a> {
         );
         let expire_days = checks.security.certificates.expire_days;
         if expire_days > 30 {
-            self.print_check(true, "certificates valid (no immediate action required)");
+            self.ctx
+                .write_check(true, "certificates valid (no immediate action required)");
         } else if expire_days > 0 {
-            println!(
+            self.ctx.write_raw(&format!(
                 "    {} certificates expire soon",
                 "!".style(self.ctx.styles.warning)
-            );
+            ));
         } else {
-            self.print_check(false, "certificates expired");
+            self.ctx.write_check(false, "certificates expired");
         }
     }
 
     fn print_check(&self, ok: bool, msg: &str) {
-        use owo_colors::OwoColorize;
-        if ok {
-            println!("    {} {msg}", "\u{2713}".style(self.ctx.styles.success));
-        } else {
-            println!("    {} {msg}", "\u{2717}".style(self.ctx.styles.error));
-        }
+        self.ctx.write_check(ok, msg);
     }
 
     /// Render connection info (SSH, VS Code, Cursor).
@@ -652,5 +662,67 @@ mod tests {
         let json = serde_json::to_string(&status).expect("serialize");
         assert!(!json.contains("uptime_seconds"));
         assert!(!json.contains(r#""agent""#));
+    }
+
+    // ── HumanRenderer edge case tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_render_agent_list_empty_produces_no_agents_message() {
+        use crate::output::test_support::make_test_ctx;
+        let (ctx, stdout, _) = make_test_ctx(false);
+        let renderer = HumanRenderer::new(&ctx);
+        renderer.render_agent_list(&[]);
+        let out = crate::output::test_support::buf_to_string(&stdout);
+        assert!(out.contains("No agents installed"), "got: {out}");
+    }
+
+    #[test]
+    fn test_render_version_contains_version_and_date() {
+        use crate::output::test_support::make_test_ctx;
+        let (ctx, stdout, _) = make_test_ctx(false);
+        let renderer = HumanRenderer::new(&ctx);
+        renderer.render_version("1.2.3", "2024-06-01");
+        let out = crate::output::test_support::buf_to_string(&stdout);
+        assert!(out.contains("1.2.3"), "got: {out}");
+        assert!(out.contains("2024-06-01"), "got: {out}");
+    }
+
+    #[test]
+    fn test_render_config_none_polis_config_shows_not_set() {
+        use crate::output::test_support::make_test_ctx;
+        use crate::output::ConfigEnv;
+        use crate::domain::config::PolisConfig;
+        use std::path::Path;
+
+        let (ctx, stdout, _) = make_test_ctx(false);
+        let renderer = HumanRenderer::new(&ctx);
+        let config = PolisConfig::default();
+        let config_env = ConfigEnv {
+            polis_config: None,
+            no_color: None,
+        };
+        renderer.render_config(&config, Path::new("/etc/polis.yaml"), &config_env);
+        let out = crate::output::test_support::buf_to_string(&stdout);
+        assert!(out.contains("(not set)"), "got: {out}");
+    }
+
+    #[test]
+    fn test_render_config_with_values_displays_them() {
+        use crate::output::test_support::make_test_ctx;
+        use crate::output::ConfigEnv;
+        use crate::domain::config::PolisConfig;
+        use std::path::Path;
+
+        let (ctx, stdout, _) = make_test_ctx(false);
+        let renderer = HumanRenderer::new(&ctx);
+        let config = PolisConfig::default();
+        let config_env = ConfigEnv {
+            polis_config: Some("/custom/path.yaml".to_string()),
+            no_color: Some("1".to_string()),
+        };
+        renderer.render_config(&config, Path::new("/etc/polis.yaml"), &config_env);
+        let out = crate::output::test_support::buf_to_string(&stdout);
+        assert!(out.contains("/custom/path.yaml"), "got: {out}");
+        assert!(out.contains('1'), "got: {out}");
     }
 }

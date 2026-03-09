@@ -1,358 +1,40 @@
-//! SSH utilities — host key pinning (`KnownHostsManager`) and transport (`SshTransport`).
+//! SSH config file management — `SshConfigManager` and trait implementations.
+//!
+//! Manages the polis SSH config files (`~/.ssh/config.d/polis`) and the
+//! `Include` directive in `~/.ssh/config`. Also implements the
+//! [`SshConfigurator`](crate::application::ports::SshConfigurator) and
+//! [`HostKeyExtractor`](crate::application::ports::HostKeyExtractor) port traits.
 
-use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-/// Generates a passphrase-free ED25519 keypair at `~/.polis/id_ed25519` if it
-/// does not already exist.
-/// Returns the public key string (`ssh-ed25519 <material>`).
-/// # Errors
-/// Returns an error if key generation or file I/O fails.
-pub fn ensure_identity_key() -> Result<String> {
-    let home =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
-    let key_path = home.join(".polis").join("id_ed25519");
-    let pub_path = home.join(".polis").join("id_ed25519.pub");
+use anyhow::{Context, Result};
 
-    if !key_path.exists() {
-        if let Some(parent) = key_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create dir {}", parent.display()))?;
-            set_permissions(parent, 0o700)?;
-        }
-        let status = std::process::Command::new("ssh-keygen")
-            .args([
-                "-t",
-                "ed25519",
-                "-N",
-                "", // no passphrase
-                "-f",
-                key_path
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("non-UTF8 path"))?,
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .context("ssh-keygen not found")?;
-        anyhow::ensure!(status.success(), "ssh-keygen failed");
-        set_permissions(&key_path, 0o600)?;
-    }
-
-    let pubkey = std::fs::read_to_string(&pub_path)
-        .with_context(|| format!("read {}", pub_path.display()))?;
-    Ok(pubkey.trim().to_string())
-}
-
-/// Manages `~/.polis/known_hosts` for SSH host key pinning.
-pub struct KnownHostsManager {
-    path: PathBuf,
-}
-
-impl KnownHostsManager {
-    /// Creates a manager pointing at `~/.polis/known_hosts`.
-    /// # Errors
-    /// Returns an error if the home directory cannot be determined.
-    pub fn new() -> Result<Self> {
-        let home =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
-        Ok(Self::with_path(home.join(".polis").join("known_hosts")))
-    }
-
-    /// Creates a manager pointing at an arbitrary path (for testing).
-    #[must_use]
-    pub fn with_path(path: PathBuf) -> Self {
-        Self { path }
-    }
-
-    /// Writes `host_key_line` to the `known_hosts` file, creating parent dirs as needed.
-    /// Sets file permissions to 600 and parent directory to 700 on Unix.
-    /// # Errors
-    /// Returns an error if the file cannot be written or permissions cannot be set.
-    pub fn update(&self, host_key_line: &str) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create dir {}", parent.display()))?;
-            set_permissions(parent, 0o700)?;
-        }
-        std::fs::write(&self.path, host_key_line)
-            .with_context(|| format!("write {}", self.path.display()))?;
-        set_permissions(&self.path, 0o600)?;
-        Ok(())
-    }
-
-    /// Removes the `known_hosts` file if it exists.
-    /// # Errors
-    /// Returns an error if the file exists but cannot be removed.
-    pub fn remove(&self) -> Result<()> {
-        if self.path.exists() {
-            std::fs::remove_file(&self.path)
-                .with_context(|| format!("remove {}", self.path.display()))?;
-        }
-        Ok(())
-    }
-}
-
-/// # Errors
-/// This function will return an error if the underlying operations fail.
-#[cfg(unix)]
-fn set_permissions(path: &std::path::Path, mode: u32) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-        .with_context(|| format!("set permissions on {}", path.display()))
-}
-
-/// # Errors
-/// This function will return an error if the underlying operations fail.
-#[cfg(not(unix))]
-#[allow(clippy::unnecessary_wraps)]
-fn set_permissions(_path: &std::path::Path, _mode: u32) -> Result<()> {
-    Ok(())
-}
-
+use super::identity::{IdentityKeyProvider, OsIdentityKeyProvider};
+use super::known_hosts::{KnownHostsManager, KnownHostsOps};
+use super::sockets::{OsSocketsDir, SocketsDir};
+use crate::infra::blocking::spawn_blocking_io;
+use crate::infra::polis_dir::PolisDir;
+use crate::infra::secure_fs::SecureFs;
 // ---------------------------------------------------------------------------
-// SshTransport
+// SSH config templates
 // ---------------------------------------------------------------------------
 
-/// Encapsulates SSH command construction for VM access.
-///
-/// Handles:
-/// - Identity key path resolution
-/// - Host key checking configuration
-/// - Known hosts file path
-/// - Log level suppression
-/// - Batch mode for non-interactive use
-pub struct SshTransport {
-    identity_key: PathBuf,
-}
-
-impl SshTransport {
-    /// Create a new SSH transport using the default identity key location.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the home directory cannot be determined.
-    pub fn new() -> Result<Self> {
-        let home =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
-        Ok(Self {
-            identity_key: home.join(".polis").join("id_ed25519"),
-        })
-    }
-
-    /// Spawn an SSH process to the VM with inherited STDIO.
-    ///
-    /// Uses `tokio::process::Command` for async-safe process spawning.
-    ///
-    /// # Arguments
-    ///
-    /// * `vm_ip` - IP address of the VM
-    /// * `remote_command` - Command to execute on the VM
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The identity key path is not valid UTF-8
-    /// - The SSH process cannot be spawned
-    pub async fn spawn_inherited(
-        &self,
-        vm_ip: &str,
-        remote_command: &str,
-    ) -> Result<std::process::ExitStatus> {
-        let identity_key_str = self
-            .identity_key
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("SSH identity path is not valid UTF-8"))?;
-
-        #[cfg(windows)]
-        let devnull = "NUL";
-        #[cfg(not(windows))]
-        let devnull = "/dev/null";
-
-        let user_known_hosts = format!("UserKnownHostsFile={devnull}");
-        let user_host = format!("ubuntu@{vm_ip}");
-
-        tokio::process::Command::new("ssh")
-            .args([
-                "-i",
-                identity_key_str,
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                &user_known_hosts,
-                "-o",
-                "LogLevel=ERROR",
-                "-o",
-                "BatchMode=yes",
-                &user_host,
-                remote_command,
-            ])
-            .stdin(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status()
-            .await
-            .context("failed to spawn ssh")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    // ⚠️  Testability requirement: `KnownHostsManager` must expose a
-    // `with_path(path: PathBuf) -> Self` constructor so tests can inject a
-    // temp directory instead of relying on `$HOME`.  The production `new()`
-    // delegates to `with_path(home.join(".polis").join("known_hosts"))`.
-    //
-    // ⚠️  Testability requirement: extract a `pub fn validate_host_key(key: &str)
-    // -> Result<()>` from the inline check in `extract_from_multipass` /
-    // `extract_from_docker` so the validation logic can be unit-tested directly.
-    use super::*;
-
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
-
-    fn manager_in(dir: &tempfile::TempDir) -> KnownHostsManager {
-        KnownHostsManager::with_path(dir.path().join("known_hosts"))
-    }
-
-    const VALID_KEY: &str = "workspace ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyMaterialHere";
-
-    // -----------------------------------------------------------------------
-    // KnownHostsManager::update
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_known_hosts_manager_update_creates_file() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let path = dir.path().join("known_hosts");
-        assert!(!path.exists());
-        let mgr = manager_in(&dir);
-        mgr.update(VALID_KEY).expect("update should succeed");
-        assert!(path.exists());
-    }
-
-    #[test]
-    fn test_known_hosts_manager_update_creates_parent_directory() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let nested = dir.path().join("a").join("b");
-        let mgr = KnownHostsManager::with_path(nested.join("known_hosts"));
-        mgr.update(VALID_KEY)
-            .expect("update should create parent dirs");
-        assert!(nested.exists());
-    }
-
-    #[test]
-    fn test_known_hosts_manager_update_overwrites_existing_content() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let mgr = manager_in(&dir);
-        mgr.update("workspace ssh-ed25519 OldKey")
-            .expect("first update");
-        mgr.update(VALID_KEY).expect("second update");
-        let content =
-            std::fs::read_to_string(dir.path().join("known_hosts")).expect("file should exist");
-        assert_eq!(content, VALID_KEY);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_known_hosts_manager_update_sets_file_permissions_600() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let mgr = manager_in(&dir);
-        mgr.update(VALID_KEY).expect("update should succeed");
-        let mode = std::fs::metadata(dir.path().join("known_hosts"))
-            .expect("metadata")
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600, "file must be 600");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_known_hosts_manager_update_sets_parent_dir_permissions_700() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let parent = dir.path().join("polis_dir");
-        let mgr = KnownHostsManager::with_path(parent.join("known_hosts"));
-        mgr.update(VALID_KEY).expect("update should succeed");
-        let mode = std::fs::metadata(&parent)
-            .expect("metadata")
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o700, "directory must be 700");
-    }
-
-    // -----------------------------------------------------------------------
-    // KnownHostsManager::remove
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_known_hosts_manager_remove_deletes_existing_file() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let path = dir.path().join("known_hosts");
-        let mgr = manager_in(&dir);
-        mgr.update(VALID_KEY).expect("update should succeed");
-        mgr.remove().expect("remove should succeed");
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn test_known_hosts_manager_remove_is_idempotent_when_file_absent() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let mgr = manager_in(&dir);
-        // File never created — remove must not error.
-        let result = mgr.remove();
-        assert!(result.is_ok());
-    }
-}
-
-// ---------------------------------------------------------------------------
-// SocketsDir
-// ---------------------------------------------------------------------------
-
-/// Abstracts creation of the SSH control-socket directory.
-/// The production implementation ([`OsSocketsDir`]) creates the directory on
-/// the filesystem.  In tests a `MockSocketsDir` (generated by `mockall`) can
-/// be injected to verify call behaviour or simulate failures without touching
-/// the real filesystem.
-#[cfg_attr(test, mockall::automock)]
-pub trait SocketsDir {
-    /// Ensures the sockets directory exists with the correct permissions.
-    /// # Errors
-    /// Returns an error if the directory cannot be created or permissions set.
-    fn ensure_exists(&self) -> Result<()>;
-}
-
-/// OS-backed implementation of [`SocketsDir`].
-/// On Unix it creates `path` with permissions 700.  On Windows it is a no-op
-/// because `ControlMaster` is not supported by Windows OpenSSH.
-pub struct OsSocketsDir {
-    #[cfg_attr(windows, allow(dead_code))]
-    path: std::path::PathBuf,
-}
-
-impl OsSocketsDir {
-    /// Creates an [`OsSocketsDir`] pointing at `path`.
-    #[must_use]
-    pub fn new(path: std::path::PathBuf) -> Self {
-        Self { path }
-    }
-}
-
-impl SocketsDir for OsSocketsDir {
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    fn ensure_exists(&self) -> Result<()> {
-        #[cfg(not(windows))]
-        {
-            std::fs::create_dir_all(&self.path)
-                .with_context(|| format!("create dir {}", self.path.display()))?;
-            set_permissions(&self.path, 0o700)?;
-        }
-        Ok(())
-    }
-}
+#[cfg(not(windows))]
+const POLIS_SSH_CONFIG: &str = "\
+# ~/.ssh/config.d/polis (managed by polis — DO NOT EDIT)
+Host workspace
+    HostName workspace
+    User polis
+    ProxyCommand polis _ssh-proxy
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.polis/known_hosts
+    IdentityFile ~/.polis/id_ed25519
+    ControlMaster auto
+    ControlPath ~/.ssh/config.d/polis-sockets/%r@%h:%p
+    ControlPersist 30s
+    ForwardAgent no
+    IdentitiesOnly yes
+";
 
 // ---------------------------------------------------------------------------
 // SshConfigManager
@@ -362,7 +44,10 @@ impl SocketsDir for OsSocketsDir {
 pub struct SshConfigManager {
     polis_config_path: std::path::PathBuf,
     user_config_path: std::path::PathBuf,
+    polis_root: std::path::PathBuf,
     sockets_dir: Box<dyn SocketsDir>,
+    known_hosts: Box<dyn KnownHostsOps>,
+    identity_provider: Box<dyn IdentityKeyProvider>,
 }
 
 impl SshConfigManager {
@@ -370,28 +55,41 @@ impl SshConfigManager {
     /// # Errors
     /// Returns an error if the home directory cannot be determined.
     pub fn new() -> Result<Self> {
-        let home =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
-        Ok(Self::with_paths(
+        let polis_dir = PolisDir::new()?;
+        let home = polis_dir
+            .root()
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+            .to_path_buf();
+        Ok(Self::with_deps(
             home.join(".ssh").join("config.d").join("polis"),
             home.join(".ssh").join("config"),
+            polis_dir.root().to_path_buf(),
             Box::new(OsSocketsDir::new(
                 home.join(".ssh").join("config.d").join("polis-sockets"),
             )),
+            Box::new(KnownHostsManager::new()?),
+            Box::new(OsIdentityKeyProvider::new(&polis_dir)),
         ))
     }
 
-    /// Creates a manager with explicit paths (for testing).
+    /// Creates a manager with explicit paths and injected dependencies (for testing).
     #[must_use]
-    pub fn with_paths(
+    pub fn with_deps(
         polis_config_path: std::path::PathBuf,
         user_config_path: std::path::PathBuf,
+        polis_root: std::path::PathBuf,
         sockets_dir: Box<dyn SocketsDir>,
+        known_hosts: Box<dyn KnownHostsOps>,
+        identity_provider: Box<dyn IdentityKeyProvider>,
     ) -> Self {
         Self {
             polis_config_path,
             user_config_path,
+            polis_root,
             sockets_dir,
+            known_hosts,
+            identity_provider,
         }
     }
 
@@ -423,35 +121,10 @@ impl SshConfigManager {
         // are not supported by Windows OpenSSH — omit them on Windows.
         // Windows OpenSSH ProxyCommand requires absolute path to executable.
         #[cfg(not(windows))]
-        let config = "\
-# ~/.ssh/config.d/polis (managed by polis — DO NOT EDIT)
-Host workspace
-    HostName workspace
-    User polis
-    ProxyCommand polis _ssh-proxy
-    StrictHostKeyChecking yes
-    UserKnownHostsFile ~/.polis/known_hosts
-    IdentityFile ~/.polis/id_ed25519
-    ControlMaster auto
-    ControlPath ~/.ssh/config.d/polis-sockets/%r@%h:%p
-    ControlPersist 30s
-    ForwardAgent no
-    IdentitiesOnly yes
-";
+        let config = POLIS_SSH_CONFIG.to_owned();
         #[cfg(windows)]
         let config = format!(
-            "\
-# ~/.ssh/config.d/polis (managed by polis — DO NOT EDIT)
-Host workspace
-    HostName workspace
-    User polis
-    ProxyCommand \"{}\" _ssh-proxy
-    StrictHostKeyChecking yes
-    UserKnownHostsFile ~/.polis/known_hosts
-    IdentityFile ~/.polis/id_ed25519
-    ForwardAgent no
-    IdentitiesOnly yes
-",
+            "# ~/.ssh/config.d/polis (managed by polis — DO NOT EDIT)\nHost workspace\n    HostName workspace\n    User polis\n    ProxyCommand \"{}\" _ssh-proxy\n    StrictHostKeyChecking yes\n    UserKnownHostsFile ~/.polis/known_hosts\n    IdentityFile ~/.polis/id_ed25519\n    ForwardAgent no\n    IdentitiesOnly yes\n",
             std::env::current_exe()
                 .unwrap_or_else(|_| std::path::PathBuf::from("polis.exe"))
                 .display()
@@ -459,11 +132,11 @@ Host workspace
         if let Some(parent) = self.polis_config_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create dir {}", parent.display()))?;
-            set_permissions(parent, 0o700)?;
+            SecureFs::set_permissions(parent, 0o700)?;
         }
         std::fs::write(&self.polis_config_path, config)
             .with_context(|| format!("write {}", self.polis_config_path.display()))?;
-        set_permissions(&self.polis_config_path, 0o600)?;
+        SecureFs::set_permissions(&self.polis_config_path, 0o600)?;
         Ok(())
     }
 
@@ -476,7 +149,7 @@ Host workspace
         if let Some(parent) = self.user_config_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create dir {}", parent.display()))?;
-            set_permissions(parent, 0o700)?;
+            SecureFs::set_permissions(parent, 0o700)?;
         }
         if self.user_config_path.exists() {
             let content = std::fs::read_to_string(&self.user_config_path)
@@ -490,7 +163,7 @@ Host workspace
             std::fs::write(&self.user_config_path, INCLUDE)
                 .with_context(|| format!("write {}", self.user_config_path.display()))?;
         }
-        set_permissions(&self.user_config_path, 0o600)?;
+        SecureFs::set_permissions(&self.user_config_path, 0o600)?;
         Ok(())
     }
 
@@ -501,10 +174,7 @@ Host workspace
     /// Returns an error if the file cannot be removed or the user SSH config
     /// cannot be read or written.
     pub fn remove_legacy_config(&self) -> Result<()> {
-        let legacy_path = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
-            .join(".polis")
-            .join("ssh_config");
+        let legacy_path = self.polis_root.join("ssh_config");
 
         if legacy_path.exists() {
             std::fs::remove_file(&legacy_path)
@@ -562,6 +232,102 @@ Host workspace
     }
 }
 
+
+impl crate::application::ports::SshConfigurator for SshConfigManager {
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn ensure_identity(&self) -> Result<String> {
+        self.identity_provider.ensure_identity_key()
+    }
+
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn update_host_key(&self, host_key: &str) -> Result<()> {
+        self.known_hosts.update(host_key)
+    }
+
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn is_configured(&self) -> Result<bool> {
+        self.is_configured()
+    }
+
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn setup_config(&self) -> Result<()> {
+        self.remove_legacy_config()?;
+        self.create_polis_config()?;
+        self.add_include_directive()?;
+        self.create_sockets_dir()?;
+        Ok(())
+    }
+
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn validate_permissions(&self) -> Result<()> {
+        self.validate_permissions()
+    }
+
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn remove_config(&self) -> Result<()> {
+        let path = self.polis_config_path.clone();
+        spawn_blocking_io("ssh config remove", move || -> Result<()> {
+            if path.exists() {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("remove {}", path.display()))?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn remove_include_directive(&self) -> Result<()> {
+        let user_config_path = self.user_config_path.clone();
+        spawn_blocking_io("ssh include directive remove", move || -> Result<()> {
+            if user_config_path.exists() {
+                let content = std::fs::read_to_string(&user_config_path)
+                    .with_context(|| format!("read {}", user_config_path.display()))?;
+                let filtered: String = content
+                    .lines()
+                    .filter(|line| !line.contains("Include config.d/polis"))
+                    .fold(String::new(), |mut acc, line| {
+                        acc.push_str(line);
+                        acc.push('\n');
+                        acc
+                    });
+                if filtered != content {
+                    std::fs::write(&user_config_path, filtered)
+                        .with_context(|| format!("write {}", user_config_path.display()))?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+}
+
+impl crate::application::ports::HostKeyExtractor for SshConfigManager {
+    async fn extract_host_key(&self) -> Option<String> {
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("polis"));
+        let output = tokio::process::Command::new(exe)
+            .args(["_extract-host-key"])
+            .output()
+            .await
+            .ok()?;
+        if output.status.success() {
+            String::from_utf8(output.stdout)
+                .ok()
+                .map(|s| s.trim().to_owned())
+        } else {
+            None
+        }
+    }
+}
+
+
 // ---------------------------------------------------------------------------
 // SshConfigManager — RED tests (issue 13)
 // ---------------------------------------------------------------------------
@@ -572,17 +338,44 @@ Host workspace
 #[cfg(test)]
 mod ssh_config_manager_tests {
     use super::{OsSocketsDir, SshConfigManager};
+    use crate::application::ports::SshConfigurator;
+    use crate::infra::ssh::identity::IdentityKeyProvider;
+    use crate::infra::ssh::known_hosts::KnownHostsOps;
+
+    // -----------------------------------------------------------------------
+    // Stub implementations for DI
+    // -----------------------------------------------------------------------
+
+    struct StubIdentityProvider;
+    impl IdentityKeyProvider for StubIdentityProvider {
+        fn ensure_identity_key(&self) -> anyhow::Result<String> {
+            Ok("ssh-ed25519 AAAA stub@test".to_string())
+        }
+    }
+
+    struct StubKnownHosts;
+    impl KnownHostsOps for StubKnownHosts {
+        fn update(&self, _host_key_line: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn remove(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
 
     fn manager_in(dir: &tempfile::TempDir) -> SshConfigManager {
-        SshConfigManager::with_paths(
+        SshConfigManager::with_deps(
             dir.path().join("ssh").join("config.d").join("polis"),
             dir.path().join("ssh").join("config"),
+            dir.path().join(".polis"),
             Box::new(OsSocketsDir::new(
                 dir.path()
                     .join("ssh")
                     .join("config.d")
                     .join("polis-sockets"),
             )),
+            Box::new(StubKnownHosts),
+            Box::new(StubIdentityProvider),
         )
     }
 
@@ -824,6 +617,99 @@ mod ssh_config_manager_tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // DI delegation — ensure_identity & update_host_key
+    // -----------------------------------------------------------------------
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    struct TrackingIdentityProvider {
+        called: Arc<AtomicBool>,
+    }
+    impl IdentityKeyProvider for TrackingIdentityProvider {
+        fn ensure_identity_key(&self) -> anyhow::Result<String> {
+            self.called.store(true, Ordering::SeqCst);
+            Ok("ssh-ed25519 AAAA tracking@test".to_string())
+        }
+    }
+
+    struct TrackingKnownHosts {
+        update_called: Arc<AtomicBool>,
+    }
+    impl KnownHostsOps for TrackingKnownHosts {
+        fn update(&self, _host_key_line: &str) -> anyhow::Result<()> {
+            self.update_called.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn remove(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ensure_identity_delegates_to_injected_provider() {
+        let called = Arc::new(AtomicBool::new(false));
+        let provider = TrackingIdentityProvider {
+            called: called.clone(),
+        };
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = SshConfigManager::with_deps(
+            dir.path().join("ssh").join("config.d").join("polis"),
+            dir.path().join("ssh").join("config"),
+            dir.path().join(".polis"),
+            Box::new(OsSocketsDir::new(
+                dir.path()
+                    .join("ssh")
+                    .join("config.d")
+                    .join("polis-sockets"),
+            )),
+            Box::new(StubKnownHosts),
+            Box::new(provider),
+        );
+        let result = mgr.ensure_identity().await;
+        assert!(result.is_ok(), "ensure_identity should succeed");
+        assert_eq!(
+            result.expect("ensure_identity result"),
+            "ssh-ed25519 AAAA tracking@test",
+            "ensure_identity must return the value from the injected provider"
+        );
+        assert!(
+            called.load(Ordering::SeqCst),
+            "ensure_identity must delegate to the injected IdentityKeyProvider"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_host_key_delegates_to_injected_known_hosts() {
+        let update_called = Arc::new(AtomicBool::new(false));
+        let known_hosts = TrackingKnownHosts {
+            update_called: update_called.clone(),
+        };
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = SshConfigManager::with_deps(
+            dir.path().join("ssh").join("config.d").join("polis"),
+            dir.path().join("ssh").join("config"),
+            dir.path().join(".polis"),
+            Box::new(OsSocketsDir::new(
+                dir.path()
+                    .join("ssh")
+                    .join("config.d")
+                    .join("polis-sockets"),
+            )),
+            Box::new(known_hosts),
+            Box::new(StubIdentityProvider),
+        );
+        let result = mgr
+            .update_host_key("workspace ssh-ed25519 AAAA test-key")
+            .await;
+        assert!(result.is_ok(), "update_host_key should succeed");
+        assert!(
+            update_called.load(Ordering::SeqCst),
+            "update_host_key must delegate to the injected KnownHostsOps"
+        );
+    }
+
     // -------------------------------------------------------------------
     // Property 2 (Part A): Preservation — Unix SSH Config Unchanged
     //
@@ -885,104 +771,6 @@ mod ssh_config_manager_tests {
                 content.contains("User polis"),
                 "Unix config must include User polis"
             );
-        }
-    }
-}
-
-impl crate::application::ports::SshConfigurator for SshConfigManager {
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn ensure_identity(&self) -> Result<String> {
-        ensure_identity_key()
-    }
-
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn update_host_key(&self, host_key: &str) -> Result<()> {
-        KnownHostsManager::new()?.update(host_key)
-    }
-
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn is_configured(&self) -> Result<bool> {
-        self.is_configured()
-    }
-
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn setup_config(&self) -> Result<()> {
-        self.remove_legacy_config()?;
-        self.create_polis_config()?;
-        self.add_include_directive()?;
-        self.create_sockets_dir()?;
-        Ok(())
-    }
-
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn validate_permissions(&self) -> Result<()> {
-        self.validate_permissions()
-    }
-
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn remove_config(&self) -> Result<()> {
-        let path = self.polis_config_path.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            if path.exists() {
-                std::fs::remove_file(&path)
-                    .with_context(|| format!("remove {}", path.display()))?;
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("spawn_blocking panicked: {e}"))??;
-        Ok(())
-    }
-
-    /// # Errors
-    /// This function will return an error if the underlying operations fail.
-    async fn remove_include_directive(&self) -> Result<()> {
-        let user_config_path = self.user_config_path.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            if user_config_path.exists() {
-                let content = std::fs::read_to_string(&user_config_path)
-                    .with_context(|| format!("read {}", user_config_path.display()))?;
-                let filtered: String = content
-                    .lines()
-                    .filter(|line| !line.contains("Include config.d/polis"))
-                    .fold(String::new(), |mut acc, line| {
-                        acc.push_str(line);
-                        acc.push('\n');
-                        acc
-                    });
-                if filtered != content {
-                    std::fs::write(&user_config_path, filtered)
-                        .with_context(|| format!("write {}", user_config_path.display()))?;
-                }
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("spawn_blocking panicked: {e}"))??;
-        Ok(())
-    }
-}
-
-impl crate::application::ports::HostKeyExtractor for SshConfigManager {
-    async fn extract_host_key(&self) -> Option<String> {
-        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("polis"));
-        let output = tokio::process::Command::new(exe)
-            .args(["_extract-host-key"])
-            .output()
-            .await
-            .ok()?;
-        if output.status.success() {
-            String::from_utf8(output.stdout)
-                .ok()
-                .map(|s| s.trim().to_owned())
-        } else {
-            None
         }
     }
 }

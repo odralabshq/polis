@@ -1,6 +1,6 @@
 //! Infrastructure implementation of the `WorkspaceStateStore` port.
 //!
-//! `StateManager` provides async load/save using `tokio::task::spawn_blocking`
+//! `StateManager` provides async load/save using `spawn_blocking_io`
 //! with atomic write (temp file + rename) to prevent state corruption.
 
 use std::path::PathBuf;
@@ -9,6 +9,8 @@ use anyhow::{Context, Result};
 
 use crate::application::ports::WorkspaceStateStore;
 use crate::domain::workspace::WorkspaceState;
+use crate::infra::blocking::spawn_blocking_io;
+use crate::infra::secure_fs::SecureFs;
 
 /// State file manager — implements `WorkspaceStateStore` for the infra layer.
 pub struct StateManager {
@@ -22,9 +24,8 @@ impl StateManager {
     ///
     /// Returns an error if the home directory cannot be determined.
     pub fn new() -> Result<Self> {
-        let home =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
-        Ok(Self::with_path(home.join(".polis").join("state.json")))
+        let polis_dir = crate::infra::polis_dir::PolisDir::new()?;
+        Ok(Self::with_path(polis_dir.state_path()))
     }
 
     /// Create a state manager with an explicit path (used in tests).
@@ -84,12 +85,7 @@ impl StateManager {
         std::fs::write(&temp_path, &content)
             .with_context(|| format!("writing temp file {}", temp_path.display()))?;
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600))
-                .with_context(|| format!("setting permissions on {}", temp_path.display()))?;
-        }
+        SecureFs::set_permissions(&temp_path, 0o600)?;
 
         std::fs::rename(&temp_path, &self.path)
             .with_context(|| format!("finalizing state file {}", self.path.display()))?;
@@ -117,12 +113,11 @@ impl WorkspaceStateStore for StateManager {
     /// This function will return an error if the underlying operations fail.
     async fn load_async(&self) -> Result<Option<WorkspaceState>> {
         let path = self.path.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_io("state load", move || {
             let mgr = StateManager::with_path(path);
             mgr.load_sync()
         })
         .await
-        .context("state load task panicked")?
     }
 
     /// # Errors
@@ -131,12 +126,11 @@ impl WorkspaceStateStore for StateManager {
     async fn save_async(&self, state: &WorkspaceState) -> Result<()> {
         let path = self.path.clone();
         let state = state.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_io("state save", move || {
             let mgr = StateManager::with_path(path);
             mgr.save_sync(&state)
         })
         .await
-        .context("state save task panicked")?
     }
 
     /// # Errors
@@ -144,11 +138,10 @@ impl WorkspaceStateStore for StateManager {
     /// This function will return an error if the underlying operations fail.
     async fn clear_async(&self) -> Result<()> {
         let path = self.path.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_io("state clear", move || {
             let mgr = StateManager::with_path(path);
             mgr.clear()
         })
         .await
-        .context("state clear task panicked")?
     }
 }
