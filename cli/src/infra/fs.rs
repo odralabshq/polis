@@ -8,9 +8,9 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use crate::application::ports::LocalArtifactWriter;
+use crate::domain::util::hex_encode;
 use crate::infra::blocking::spawn_blocking_io;
 use crate::infra::secure_fs::SecureFs;
-use crate::domain::util::hex_encode;
 
 /// Production filesystem implementation combining `LocalArtifactWriter`, `FileHasher`,
 /// `LocalPaths`, and `LocalFs` in a single struct.
@@ -72,8 +72,7 @@ impl crate::application::ports::LocalPaths for OsFs {
     ///
     /// This function will return an error if the underlying operations fail.
     fn polis_dir(&self) -> Result<PathBuf> {
-        crate::infra::polis_dir::PolisDir::new()
-            .map(|pd| pd.root().to_path_buf())
+        crate::infra::polis_dir::PolisDir::new().map(|pd| pd.root().to_path_buf())
     }
 }
 

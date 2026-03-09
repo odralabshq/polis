@@ -37,7 +37,10 @@ impl<'a, E: ShellExecutor> ToolboxSecurityGateway<'a, E> {
 ///
 /// Returns an error if the toolbox container is not running, credentials are missing,
 /// the command fails, or the output contains invalid UTF-8.
-pub(super) async fn exec_in_toolbox(executor: &impl ShellExecutor, args: &[&str]) -> Result<String> {
+pub(super) async fn exec_in_toolbox(
+    executor: &impl ShellExecutor,
+    args: &[&str],
+) -> Result<String> {
     let pass_output = executor
         .exec(&[
             "docker",

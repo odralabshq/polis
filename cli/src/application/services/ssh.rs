@@ -180,18 +180,22 @@ pub(crate) async fn pin_host_key(mp: &impl ShellExecutor, ssh: &impl SshConfigur
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::process::Output;
-    use anyhow::Result;
     use super::*;
     use crate::application::ports::ShellExecutor;
     use crate::application::vm::test_support::{
-        impl_shell_executor_stubs, ok_output, fail_output, NoopReporter, SshConfiguratorStub,
+        NoopReporter, SshConfiguratorStub, fail_output, impl_shell_executor_stubs, ok_output,
     };
+    use anyhow::Result;
+    use std::process::Output;
 
     struct ShellStub(bool); // true = success
     impl ShellExecutor for ShellStub {
         async fn exec(&self, _: &[&str]) -> Result<Output> {
-            if self.0 { Ok(ok_output(b"")) } else { Ok(fail_output()) }
+            if self.0 {
+                Ok(ok_output(b""))
+            } else {
+                Ok(fail_output())
+            }
         }
         impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
     }
@@ -200,7 +204,16 @@ mod tests {
     async fn provision_ssh_already_configured_skips_first_setup() {
         let mp = ShellStub(true);
         let ssh = SshConfiguratorStub::configured();
-        let out = provision_ssh(&mp, &ssh, SshProvisionOptions { consent_given: true }, &NoopReporter).await.unwrap();
+        let out = provision_ssh(
+            &mp,
+            &ssh,
+            SshProvisionOptions {
+                consent_given: true,
+            },
+            &NoopReporter,
+        )
+        .await
+        .unwrap();
         assert!(!out.was_first_setup);
     }
 
@@ -208,7 +221,16 @@ mod tests {
     async fn provision_ssh_consent_false_returns_early() {
         let mp = ShellStub(true);
         let ssh = SshConfiguratorStub::unconfigured();
-        let out = provision_ssh(&mp, &ssh, SshProvisionOptions { consent_given: false }, &NoopReporter).await.unwrap();
+        let out = provision_ssh(
+            &mp,
+            &ssh,
+            SshProvisionOptions {
+                consent_given: false,
+            },
+            &NoopReporter,
+        )
+        .await
+        .unwrap();
         assert!(!out.was_first_setup);
     }
 
@@ -216,7 +238,16 @@ mod tests {
     async fn provision_ssh_full_setup_when_unconfigured_and_consent_given() {
         let mp = ShellStub(true);
         let ssh = SshConfiguratorStub::unconfigured();
-        let out = provision_ssh(&mp, &ssh, SshProvisionOptions { consent_given: true }, &NoopReporter).await.unwrap();
+        let out = provision_ssh(
+            &mp,
+            &ssh,
+            SshProvisionOptions {
+                consent_given: true,
+            },
+            &NoopReporter,
+        )
+        .await
+        .unwrap();
         assert!(out.was_first_setup);
     }
 
@@ -229,7 +260,11 @@ mod tests {
     #[tokio::test]
     async fn install_vm_pubkey_accepts_valid_key() {
         let mp = ShellStub(true);
-        assert!(install_vm_pubkey(&mp, "ssh-ed25519 AAAA test@host").await.is_ok());
+        assert!(
+            install_vm_pubkey(&mp, "ssh-ed25519 AAAA test@host")
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -242,6 +277,10 @@ mod tests {
     #[tokio::test]
     async fn write_host_key_accepts_valid_key() {
         let ssh = SshConfiguratorStub::configured();
-        assert!(write_host_key(&ssh, "ssh-ed25519 AAAA test@host").await.is_ok());
+        assert!(
+            write_host_key(&ssh, "ssh-ed25519 AAAA test@host")
+                .await
+                .is_ok()
+        );
     }
 }

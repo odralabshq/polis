@@ -77,7 +77,6 @@ impl IdentityKeyProvider for OsIdentityKeyProvider {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -406,7 +406,9 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_vm_ip_returns_first_ip() {
-        let mp = MultipassVmInfoStub(ok(br#"{"info":{"polis":{"state":"Running","ipv4":["10.0.0.1","10.0.0.2"]}}}"#));
+        let mp = MultipassVmInfoStub(ok(
+            br#"{"info":{"polis":{"state":"Running","ipv4":["10.0.0.1","10.0.0.2"]}}}"#,
+        ));
         assert_eq!(resolve_vm_ip(&mp).await.unwrap(), "10.0.0.1");
     }
 

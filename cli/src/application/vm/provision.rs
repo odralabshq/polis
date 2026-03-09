@@ -15,9 +15,7 @@ use crate::application::vm::lifecycle as vm;
 /// # Errors
 ///
 /// Returns an error if the VM IP cannot be resolved or the write commands fail.
-pub async fn persist_vm_ip(
-    mp: &(impl InstanceInspector + ShellExecutor),
-) -> Result<()> {
+pub async fn persist_vm_ip(mp: &(impl InstanceInspector + ShellExecutor)) -> Result<()> {
     let ip = vm::resolve_vm_ip(mp).await?;
     mp.exec(&[
         "bash",

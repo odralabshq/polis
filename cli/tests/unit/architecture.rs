@@ -1384,10 +1384,7 @@ fn no_dirs_home_dir_outside_polis_dir() {
     let infra_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infra");
     let violations: Vec<String> = collect_rs_files(&infra_dir)
         .into_iter()
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str()) != Some("polis_dir.rs")
-        })
+        .filter(|p| p.file_name().and_then(|n| n.to_str()) != Some("polis_dir.rs"))
         .filter(|p| {
             let content = std::fs::read_to_string(p).unwrap_or_default();
             content.contains("dirs::home_dir")
@@ -1421,10 +1418,7 @@ fn no_inline_permission_code_outside_secure_fs() {
     let mut violations: Vec<String> = Vec::new();
 
     for path in collect_rs_files(&infra_dir) {
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if filename == "secure_fs.rs" {
             continue;
         }
@@ -1446,7 +1440,10 @@ fn no_inline_permission_code_outside_secure_fs() {
                 continue;
             }
             if line.contains("from_mode") {
-                violations.push(format!("{rel}:{}: from_mode outside secure_fs.rs: {line}", i + 1));
+                violations.push(format!(
+                    "{rel}:{}: from_mode outside secure_fs.rs: {line}",
+                    i + 1
+                ));
             }
         }
     }
@@ -1499,7 +1496,9 @@ fn no_duplicate_hex_encode_definitions() {
     );
 
     assert!(
-        definitions.iter().any(|p| p.replace('\\', "/").ends_with(expected)),
+        definitions
+            .iter()
+            .any(|p| p.replace('\\', "/").ends_with(expected)),
         "fn hex_encode not found in domain/util.rs — the canonical definition is missing"
     );
 }
@@ -1515,10 +1514,7 @@ fn ssh_submodule_files_under_250_lines() {
     let mut violations: Vec<String> = Vec::new();
 
     for path in collect_rs_files(&ssh_dir) {
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if filename == "mod.rs" {
             continue;
         }
@@ -1560,8 +1556,8 @@ fn foundation_modules_no_forbidden_imports() {
     // blocking.rs: no crate::infra:: imports at all
     {
         let path = infra_dir.join("blocking.rs");
-        let content = std::fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("Could not read blocking.rs"));
+        let content =
+            std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("Could not read blocking.rs"));
         let mut tracker = CfgTestTracker::new();
         let mut violations: Vec<String> = Vec::new();
         for (i, line) in content.lines().enumerate() {

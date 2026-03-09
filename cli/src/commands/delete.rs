@@ -67,7 +67,13 @@ pub async fn run(app: &impl App, args: &DeleteArgs) -> Result<ExitCode> {
         workspace_svc::delete_all(&ctx).await?;
         DeleteOutcome::Deleted
     } else {
-        workspace_svc::delete(app.provisioner(), app.state_store(), &reporter, args.no_backup).await?
+        workspace_svc::delete(
+            app.provisioner(),
+            app.state_store(),
+            &reporter,
+            args.no_backup,
+        )
+        .await?
     };
 
     app.renderer().render_delete_outcome(&outcome, args.all)?;

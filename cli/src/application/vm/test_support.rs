@@ -81,7 +81,9 @@ use std::sync::Mutex;
 pub struct StateStoreStub(pub Mutex<Option<crate::domain::workspace::WorkspaceState>>);
 
 impl StateStoreStub {
-    pub fn empty() -> Self { Self(Mutex::new(None)) }
+    pub fn empty() -> Self {
+        Self(Mutex::new(None))
+    }
     pub fn with(state: crate::domain::workspace::WorkspaceState) -> Self {
         Self(Mutex::new(Some(state)))
     }
@@ -91,7 +93,10 @@ impl crate::application::ports::WorkspaceStateStore for StateStoreStub {
     async fn load_async(&self) -> anyhow::Result<Option<crate::domain::workspace::WorkspaceState>> {
         Ok(self.0.lock().expect("state store mutex poisoned").clone())
     }
-    async fn save_async(&self, state: &crate::domain::workspace::WorkspaceState) -> anyhow::Result<()> {
+    async fn save_async(
+        &self,
+        state: &crate::domain::workspace::WorkspaceState,
+    ) -> anyhow::Result<()> {
         *self.0.lock().expect("state store mutex poisoned") = Some(state.clone());
         Ok(())
     }
@@ -122,10 +127,16 @@ pub struct SshConfiguratorStub {
 
 impl SshConfiguratorStub {
     pub fn configured() -> Self {
-        Self { is_configured: true, pubkey: "ssh-ed25519 AAAA test@host".to_string() }
+        Self {
+            is_configured: true,
+            pubkey: "ssh-ed25519 AAAA test@host".to_string(),
+        }
     }
     pub fn unconfigured() -> Self {
-        Self { is_configured: false, pubkey: "ssh-ed25519 AAAA test@host".to_string() }
+        Self {
+            is_configured: false,
+            pubkey: "ssh-ed25519 AAAA test@host".to_string(),
+        }
     }
 }
 
@@ -133,12 +144,24 @@ impl crate::application::ports::SshConfigurator for SshConfiguratorStub {
     async fn ensure_identity(&self) -> anyhow::Result<String> {
         Ok(self.pubkey.clone())
     }
-    async fn update_host_key(&self, _: &str) -> anyhow::Result<()> { Ok(()) }
-    async fn is_configured(&self) -> anyhow::Result<bool> { Ok(self.is_configured) }
-    async fn setup_config(&self) -> anyhow::Result<()> { Ok(()) }
-    async fn validate_permissions(&self) -> anyhow::Result<()> { Ok(()) }
-    async fn remove_config(&self) -> anyhow::Result<()> { Ok(()) }
-    async fn remove_include_directive(&self) -> anyhow::Result<()> { Ok(()) }
+    async fn update_host_key(&self, _: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn is_configured(&self) -> anyhow::Result<bool> {
+        Ok(self.is_configured)
+    }
+    async fn setup_config(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn validate_permissions(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn remove_config(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn remove_include_directive(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 // ── ProcessLauncher stub ──────────────────────────────────────────────────────
@@ -176,7 +199,11 @@ pub struct LocalFsStub {
 
 impl LocalFsStub {
     pub fn new(existing: Vec<std::path::PathBuf>) -> Self {
-        Self { existing, written: Mutex::new(HashMap::new()), write_fails: false }
+        Self {
+            existing,
+            written: Mutex::new(HashMap::new()),
+            write_fails: false,
+        }
     }
 }
 
@@ -184,21 +211,37 @@ impl crate::application::ports::LocalFs for LocalFsStub {
     fn exists(&self, path: &std::path::Path) -> bool {
         self.existing.iter().any(|p| p == path)
     }
-    fn create_dir_all(&self, _: &std::path::Path) -> anyhow::Result<()> { Ok(()) }
-    fn remove_dir_all(&self, _: &std::path::Path) -> anyhow::Result<()> { Ok(()) }
-    fn remove_file(&self, _: &std::path::Path) -> anyhow::Result<()> { Ok(()) }
+    fn create_dir_all(&self, _: &std::path::Path) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn remove_dir_all(&self, _: &std::path::Path) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn remove_file(&self, _: &std::path::Path) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn write(&self, path: &std::path::Path, content: String) -> anyhow::Result<()> {
         if self.write_fails {
             anyhow::bail!("write failed")
         }
-        self.written.lock().expect("written mutex poisoned").insert(path.to_path_buf(), content);
+        self.written
+            .lock()
+            .expect("written mutex poisoned")
+            .insert(path.to_path_buf(), content);
         Ok(())
     }
     fn read_to_string(&self, path: &std::path::Path) -> anyhow::Result<String> {
-        self.written.lock().expect("written mutex poisoned").get(path)
+        self.written
+            .lock()
+            .expect("written mutex poisoned")
+            .get(path)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("file not found: {}", path.display()))
     }
-    fn set_permissions(&self, _: &std::path::Path, _: u32) -> anyhow::Result<()> { Ok(()) }
-    fn is_dir(&self, _: &std::path::Path) -> bool { false }
+    fn set_permissions(&self, _: &std::path::Path, _: u32) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn is_dir(&self, _: &std::path::Path) -> bool {
+        false
+    }
 }

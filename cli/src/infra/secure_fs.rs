@@ -116,7 +116,8 @@ mod tests {
         let file = tmp.path().join("test.txt");
         let content = b"hello world";
 
-        fs.write_secure(&file, content, 0o600).expect("write_secure");
+        fs.write_secure(&file, content, 0o600)
+            .expect("write_secure");
 
         assert_eq!(std::fs::read(&file).expect("read file"), content);
     }
@@ -127,10 +128,14 @@ mod tests {
         let fs = SecureFs::new();
         let file = tmp.path().join("test.txt");
 
-        fs.write_secure(&file, b"data", 0o600).expect("write_secure");
+        fs.write_secure(&file, b"data", 0o600)
+            .expect("write_secure");
 
         let tmp_file = file.with_extension("tmp");
-        assert!(!tmp_file.exists(), "temp file should be removed after rename");
+        assert!(
+            !tmp_file.exists(),
+            "temp file should be removed after rename"
+        );
     }
 
     #[test]
@@ -139,7 +144,8 @@ mod tests {
         let fs = SecureFs::new();
         let file = tmp.path().join("a").join("b").join("c.txt");
 
-        fs.write_secure(&file, b"nested", 0o600).expect("write_secure");
+        fs.write_secure(&file, b"nested", 0o600)
+            .expect("write_secure");
 
         assert_eq!(std::fs::read(&file).expect("read file"), b"nested");
     }
@@ -201,7 +207,8 @@ mod tests {
         let fs = SecureFs::new();
         let file = tmp.path().join("secure.txt");
 
-        fs.write_secure(&file, b"secret", 0o600).expect("write_secure");
+        fs.write_secure(&file, b"secret", 0o600)
+            .expect("write_secure");
 
         let perms = std::fs::metadata(&file).expect("metadata").permissions();
         assert_eq!(perms.mode() & 0o777, 0o600);

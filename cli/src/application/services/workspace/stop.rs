@@ -49,11 +49,15 @@ pub async fn stop(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::process::Output;
-    use anyhow::Result;
     use super::*;
-    use crate::application::ports::{InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor};
-    use crate::application::vm::test_support::{impl_shell_executor_stubs, ok_output, fail_output, NoopReporter};
+    use crate::application::ports::{
+        InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor,
+    };
+    use crate::application::vm::test_support::{
+        NoopReporter, fail_output, impl_shell_executor_stubs, ok_output,
+    };
+    use anyhow::Result;
+    use std::process::Output;
 
     struct StopStub {
         info_json: &'static [u8],
@@ -69,28 +73,51 @@ mod tests {
                 Ok(fail_output())
             }
         }
-        async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+        async fn version(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
     }
 
     impl InstanceLifecycle for StopStub {
-        async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> { anyhow::bail!("not expected") }
-        async fn start(&self) -> Result<Output> { anyhow::bail!("not expected") }
-        async fn stop(&self) -> Result<Output> {
-            if self.stop_fails { Ok(fail_output()) } else { Ok(ok_output(b"")) }
+        async fn launch(&self, _: &InstanceSpec<'_>) -> Result<Output> {
+            anyhow::bail!("not expected")
         }
-        async fn delete(&self) -> Result<Output> { anyhow::bail!("not expected") }
-        async fn purge(&self) -> Result<Output> { anyhow::bail!("not expected") }
+        async fn start(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
+        async fn stop(&self) -> Result<Output> {
+            if self.stop_fails {
+                Ok(fail_output())
+            } else {
+                Ok(ok_output(b""))
+            }
+        }
+        async fn delete(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
+        async fn purge(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
     }
 
     impl ShellExecutor for StopStub {
-        async fn exec(&self, _: &[&str]) -> Result<Output> { Ok(ok_output(b"")) }
+        async fn exec(&self, _: &[&str]) -> Result<Output> {
+            Ok(ok_output(b""))
+        }
         impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
     }
 
     #[tokio::test]
     async fn stop_not_found() {
-        let stub = StopStub { info_json: b"", info_success: false, stop_fails: false };
-        assert_eq!(stop(&stub, &NoopReporter).await.unwrap(), StopOutcome::NotFound);
+        let stub = StopStub {
+            info_json: b"",
+            info_success: false,
+            stop_fails: false,
+        };
+        assert_eq!(
+            stop(&stub, &NoopReporter).await.unwrap(),
+            StopOutcome::NotFound
+        );
     }
 
     #[tokio::test]
@@ -100,7 +127,10 @@ mod tests {
             info_success: true,
             stop_fails: false,
         };
-        assert_eq!(stop(&stub, &NoopReporter).await.unwrap(), StopOutcome::AlreadyStopped);
+        assert_eq!(
+            stop(&stub, &NoopReporter).await.unwrap(),
+            StopOutcome::AlreadyStopped
+        );
     }
 
     #[tokio::test]
@@ -110,7 +140,10 @@ mod tests {
             info_success: true,
             stop_fails: false,
         };
-        assert_eq!(stop(&stub, &NoopReporter).await.unwrap(), StopOutcome::Stopped);
+        assert_eq!(
+            stop(&stub, &NoopReporter).await.unwrap(),
+            StopOutcome::Stopped
+        );
     }
 
     #[tokio::test]

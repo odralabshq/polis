@@ -181,11 +181,11 @@ pub fn workspace_unknown() -> WorkspaceStatus {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::process::Output;
-    use anyhow::Result;
     use super::*;
     use crate::application::ports::{InstanceInspector, ShellExecutor};
-    use crate::application::vm::test_support::{impl_shell_executor_stubs, ok_output, fail_output};
+    use crate::application::vm::test_support::{fail_output, impl_shell_executor_stubs, ok_output};
+    use anyhow::Result;
+    use std::process::Output;
 
     // ── Combined stub (InstanceInspector + ShellExecutor) ─────────────────
 
@@ -213,7 +213,9 @@ mod tests {
         }
         fn running(exec_json: &[u8]) -> Self {
             Self {
-                info_out: ok_output(br#"{"info":{"polis":{"state":"Running","ipv4":["10.0.0.1"]}}}"#),
+                info_out: ok_output(
+                    br#"{"info":{"polis":{"state":"Running","ipv4":["10.0.0.1"]}}}"#,
+                ),
                 exec_out: ok_output(exec_json),
             }
         }
@@ -221,14 +223,24 @@ mod tests {
 
     impl InstanceInspector for StatusStub {
         async fn info(&self) -> Result<Output> {
-            Ok(Output { status: self.info_out.status, stdout: self.info_out.stdout.clone(), stderr: self.info_out.stderr.clone() })
+            Ok(Output {
+                status: self.info_out.status,
+                stdout: self.info_out.stdout.clone(),
+                stderr: self.info_out.stderr.clone(),
+            })
         }
-        async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+        async fn version(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
     }
 
     impl ShellExecutor for StatusStub {
         async fn exec(&self, _: &[&str]) -> Result<Output> {
-            Ok(Output { status: self.exec_out.status, stdout: self.exec_out.stdout.clone(), stderr: self.exec_out.stderr.clone() })
+            Ok(Output {
+                status: self.exec_out.status,
+                stdout: self.exec_out.stdout.clone(),
+                stderr: self.exec_out.stderr.clone(),
+            })
         }
         impl_shell_executor_stubs!(exec_with_stdin, exec_spawn, exec_status);
     }

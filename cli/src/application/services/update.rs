@@ -244,7 +244,9 @@ pub enum PostUpdateOutcome {
 /// # Errors
 ///
 /// Returns an error if the new binary cannot be executed.
-pub async fn run_post_update(launcher: &impl crate::application::ports::ProcessLauncher) -> Result<PostUpdateOutcome> {
+pub async fn run_post_update(
+    launcher: &impl crate::application::ports::ProcessLauncher,
+) -> Result<PostUpdateOutcome> {
     let exe = std::env::current_exe().context("resolving current executable path")?;
     let exe_str = exe.to_string_lossy();
     let status = launcher.launch(&exe_str, &["_post-update"]).await?;
@@ -302,23 +304,27 @@ mod tests {
 
     // ── update_vm_config tests ────────────────────────────────────────────
 
-    use std::process::Output;
-    use std::path::PathBuf;
-    use anyhow::Result;
     use crate::application::ports::{
         AssetExtractor, FileTransfer, InstanceInspector, ShellExecutor,
-    };    use crate::application::vm::test_support::{
-        impl_shell_executor_stubs, ok_output, NoopReporter,
-        FileHasherStub, ProcessLauncherStub,
     };
+    use crate::application::vm::test_support::{
+        FileHasherStub, NoopReporter, ProcessLauncherStub, impl_shell_executor_stubs, ok_output,
+    };
+    use anyhow::Result;
+    use std::path::PathBuf;
+    use std::process::Output;
 
     struct UpdateStub {
         hash_on_vm: &'static str,
     }
 
     impl InstanceInspector for UpdateStub {
-        async fn info(&self) -> Result<Output> { anyhow::bail!("not expected") }
-        async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+        async fn info(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
+        async fn version(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
     }
 
     impl ShellExecutor for UpdateStub {
@@ -333,10 +339,16 @@ mod tests {
     }
 
     impl FileTransfer for UpdateStub {
-            async fn transfer(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
-            async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
-            async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            Ok(ok_output(b""))
         }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+            Ok(ok_output(b""))
+        }
+        async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> {
+            Ok(ok_output(b""))
+        }
+    }
 
     struct NoopAssets;
     impl AssetExtractor for NoopAssets {
@@ -350,24 +362,39 @@ mod tests {
 
     #[tokio::test]
     async fn update_vm_config_hashes_match_returns_up_to_date() {
-        let mp = UpdateStub { hash_on_vm: "abc123" };
+        let mp = UpdateStub {
+            hash_on_vm: "abc123",
+        };
         let hasher = FileHasherStub("abc123".to_string());
         let assets_dir = PathBuf::from("/tmp/fake-assets");
-        let result = update_vm_config(&mp, &NoopAssets, &hasher, &NoopReporter, &assets_dir, "0.4.0").await.expect("update_vm_config failed");
+        let result = update_vm_config(
+            &mp,
+            &NoopAssets,
+            &hasher,
+            &NoopReporter,
+            &assets_dir,
+            "0.4.0",
+        )
+        .await
+        .expect("update_vm_config failed");
         assert!(matches!(result, UpdateVmConfigOutcome::UpToDate));
     }
 
     #[tokio::test]
     async fn run_post_update_success() {
         let launcher = ProcessLauncherStub(true);
-        let result = run_post_update(&launcher).await.expect("run_post_update failed");
+        let result = run_post_update(&launcher)
+            .await
+            .expect("run_post_update failed");
         assert!(matches!(result, PostUpdateOutcome::Success));
     }
 
     #[tokio::test]
     async fn run_post_update_non_zero_exit() {
         let launcher = ProcessLauncherStub(false);
-        let result = run_post_update(&launcher).await.expect("run_post_update failed");
+        let result = run_post_update(&launcher)
+            .await
+            .expect("run_post_update failed");
         assert!(matches!(result, PostUpdateOutcome::NonZeroExit));
     }
 }

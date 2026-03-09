@@ -67,7 +67,9 @@ pub async fn run(
         SecurityCommand::Approve { request_id } => approve::run(app, gateway, &request_id).await,
         SecurityCommand::Deny { request_id } => deny::run(app, gateway, &request_id).await,
         SecurityCommand::Log => log::run(app, gateway).await,
-        SecurityCommand::Rule { pattern, action } => rule::run(app, gateway, &pattern, action).await,
+        SecurityCommand::Rule { pattern, action } => {
+            rule::run(app, gateway, &pattern, action).await
+        }
         SecurityCommand::Level { level } => level::run(app, gateway, level).await,
     }
 }

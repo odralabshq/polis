@@ -16,7 +16,9 @@ impl YamlConfigStore {
     /// Create a new `YamlConfigStore` using the default path resolution (env var / home dir).
     #[must_use]
     pub fn new() -> Self {
-        Self { explicit_path: None }
+        Self {
+            explicit_path: None,
+        }
     }
 
     /// Create a `YamlConfigStore` with an explicit config file path.
@@ -25,7 +27,9 @@ impl YamlConfigStore {
     /// home-directory resolution. Intended for use in tests.
     #[must_use]
     pub fn with_path(path: PathBuf) -> Self {
-        Self { explicit_path: Some(path) }
+        Self {
+            explicit_path: Some(path),
+        }
     }
 }
 

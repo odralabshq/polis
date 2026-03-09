@@ -408,15 +408,15 @@ pub fn format_error(message: &str, code: &str) -> Result<String> {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::output::ConfigEnv;
     use crate::domain::config::PolisConfig;
+    use crate::output::ConfigEnv;
 
     // ── render_version_to_string ──────────────────────────────────────────────
 
     #[test]
     fn test_render_version_to_string_contains_fields() {
-        let result = JsonRenderer::render_version_to_string("1.2.3", "2024-06-01")
-            .expect("serialize");
+        let result =
+            JsonRenderer::render_version_to_string("1.2.3", "2024-06-01").expect("serialize");
         let val: serde_json::Value = serde_json::from_str(&result).expect("parse");
         assert_eq!(val["version"], "1.2.3");
         assert_eq!(val["build_date"], "2024-06-01");
@@ -424,8 +424,8 @@ mod tests {
 
     #[test]
     fn test_render_version_to_string_is_valid_json() {
-        let result = JsonRenderer::render_version_to_string("0.1.0", "2025-01-01")
-            .expect("serialize");
+        let result =
+            JsonRenderer::render_version_to_string("0.1.0", "2025-01-01").expect("serialize");
         assert!(serde_json::from_str::<serde_json::Value>(&result).is_ok());
     }
 
@@ -438,8 +438,8 @@ mod tests {
             polis_config: None,
             no_color: None,
         };
-        let result = JsonRenderer::render_config_to_string(&config, &config_env)
-            .expect("serialize");
+        let result =
+            JsonRenderer::render_config_to_string(&config, &config_env).expect("serialize");
         let val: serde_json::Value = serde_json::from_str(&result).expect("parse");
         assert!(val["environment"]["polis_config"].is_null());
         assert!(val["environment"]["no_color"].is_null());
@@ -452,8 +452,8 @@ mod tests {
             polis_config: Some("/path/to/config.yaml".to_string()),
             no_color: Some("1".to_string()),
         };
-        let result = JsonRenderer::render_config_to_string(&config, &config_env)
-            .expect("serialize");
+        let result =
+            JsonRenderer::render_config_to_string(&config, &config_env).expect("serialize");
         let val: serde_json::Value = serde_json::from_str(&result).expect("parse");
         assert_eq!(val["environment"]["polis_config"], "/path/to/config.yaml");
         assert_eq!(val["environment"]["no_color"], "1");
@@ -466,8 +466,8 @@ mod tests {
             polis_config: None,
             no_color: None,
         };
-        let result = JsonRenderer::render_config_to_string(&config, &config_env)
-            .expect("serialize");
+        let result =
+            JsonRenderer::render_config_to_string(&config, &config_env).expect("serialize");
         let val: serde_json::Value = serde_json::from_str(&result).expect("parse");
         // Default security level should be present
         assert!(!val["security"]["level"].is_null());

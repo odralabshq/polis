@@ -86,7 +86,6 @@ impl KnownHostsOps for KnownHostsManager {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     // ⚠️  Testability requirement: `KnownHostsManager` must expose a

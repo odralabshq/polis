@@ -12,7 +12,11 @@ use crate::application::services::security;
 /// # Errors
 ///
 /// Returns an error if the request ID is invalid or the gateway is unreachable.
-pub async fn run(app: &impl App, gateway: &impl SecurityGateway, request_id: &str) -> Result<ExitCode> {
+pub async fn run(
+    app: &impl App,
+    gateway: &impl SecurityGateway,
+    request_id: &str,
+) -> Result<ExitCode> {
     let msg = security::approve(gateway, request_id).await?;
     app.renderer().render_security_action(&msg)?;
     Ok(ExitCode::SUCCESS)

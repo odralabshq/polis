@@ -78,12 +78,13 @@ pub(crate) fn write_artifacts_to_dir(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::path::PathBuf;
     use super::*;
     use crate::application::vm::test_support::LocalFsStub;
+    use std::path::PathBuf;
 
     fn minimal_manifest() -> polis_common::agent::AgentManifest {
-        serde_yaml_ng::from_str(r#"
+        serde_yaml_ng::from_str(
+            r#"
 apiVersion: polis.dev/v1
 kind: AgentPlugin
 metadata:
@@ -98,7 +99,9 @@ spec:
     command: "/usr/bin/node dist/index.js"
     workdir: /app
     user: polis
-"#).unwrap()
+"#,
+        )
+        .unwrap()
     }
 
     #[test]

@@ -232,7 +232,6 @@ impl SshConfigManager {
     }
 }
 
-
 impl crate::application::ports::SshConfigurator for SshConfigManager {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
@@ -326,7 +325,6 @@ impl crate::application::ports::HostKeyExtractor for SshConfigManager {
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // SshConfigManager — RED tests (issue 13)
@@ -621,8 +619,8 @@ mod ssh_config_manager_tests {
     // DI delegation — ensure_identity & update_host_key
     // -----------------------------------------------------------------------
 
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct TrackingIdentityProvider {
         called: Arc<AtomicBool>,

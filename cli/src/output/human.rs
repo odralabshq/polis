@@ -166,20 +166,20 @@ impl<'a> HumanRenderer<'a> {
         config_env: &crate::output::ConfigEnv,
     ) {
         self.ctx.blank();
-        self.ctx.header(&format!("Configuration ({})", path.display()));
-        self.ctx.blank();
         self.ctx
-            .write_raw(&format!("  {:<20} {}", "security.level:", config.security.level));
+            .header(&format!("Configuration ({})", path.display()));
+        self.ctx.blank();
+        self.ctx.write_raw(&format!(
+            "  {:<20} {}",
+            "security.level:", config.security.level
+        ));
         self.ctx.blank();
         self.ctx
             .write_raw(&format!("  {}", "Environment:".style(self.ctx.styles.bold)));
         self.ctx.write_raw(&format!(
             "    {:<18} {}",
             "POLIS_CONFIG:",
-            config_env
-                .polis_config
-                .as_deref()
-                .unwrap_or("(not set)")
+            config_env.polis_config.as_deref().unwrap_or("(not set)")
         ));
         self.ctx.write_raw(&format!(
             "    {:<18} {}",
@@ -200,7 +200,8 @@ impl<'a> HumanRenderer<'a> {
 
         // Workspace
         self.ctx.write_raw("  Workspace:");
-        self.ctx.write_check(checks.workspace.ready, "Ready to start");
+        self.ctx
+            .write_check(checks.workspace.ready, "Ready to start");
         if checks.workspace.disk_space_ok {
             self.ctx.write_check(
                 true,
@@ -220,7 +221,8 @@ impl<'a> HumanRenderer<'a> {
             self.ctx
                 .write_check(true, &format!("Image override: {override_val}"));
         } else {
-            self.ctx.write_check(checks.workspace.image.cached, "Image cached");
+            self.ctx
+                .write_check(checks.workspace.image.cached, "Image cached");
         }
         self.ctx.blank();
 
@@ -689,9 +691,9 @@ mod tests {
 
     #[test]
     fn test_render_config_none_polis_config_shows_not_set() {
-        use crate::output::test_support::make_test_ctx;
-        use crate::output::ConfigEnv;
         use crate::domain::config::PolisConfig;
+        use crate::output::ConfigEnv;
+        use crate::output::test_support::make_test_ctx;
         use std::path::Path;
 
         let (ctx, stdout, _) = make_test_ctx(false);
@@ -708,9 +710,9 @@ mod tests {
 
     #[test]
     fn test_render_config_with_values_displays_them() {
-        use crate::output::test_support::make_test_ctx;
-        use crate::output::ConfigEnv;
         use crate::domain::config::PolisConfig;
+        use crate::output::ConfigEnv;
+        use crate::output::test_support::make_test_ctx;
         use std::path::Path;
 
         let (ctx, stdout, _) = make_test_ctx(false);

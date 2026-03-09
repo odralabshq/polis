@@ -174,14 +174,14 @@ fn generate_and_write_artifacts(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::process::Output;
-    use anyhow::Result;
     use super::*;
     use crate::application::ports::{FileTransfer, InstanceInspector, ShellExecutor};
     use crate::application::vm::test_support::{
-        impl_shell_executor_stubs, ok_output, fail_output, NoopReporter, LocalFsStub,
+        LocalFsStub, NoopReporter, fail_output, impl_shell_executor_stubs, ok_output,
     };
+    use anyhow::Result;
+    use std::path::PathBuf;
+    use std::process::Output;
 
     const MANIFEST_YAML: &str = r#"
 apiVersion: polis.dev/v1
@@ -209,18 +209,26 @@ spec:
     impl InstanceInspector for InstallStub {
         async fn info(&self) -> Result<Output> {
             if self.running {
-                Ok(ok_output(br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#))
+                Ok(ok_output(
+                    br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#,
+                ))
             } else {
                 Ok(fail_output())
             }
         }
-        async fn version(&self) -> Result<Output> { anyhow::bail!("not expected") }
+        async fn version(&self) -> Result<Output> {
+            anyhow::bail!("not expected")
+        }
     }
 
     impl ShellExecutor for InstallStub {
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             if args.first() == Some(&"test") {
-                return if self.already_installed { Ok(ok_output(b"")) } else { Ok(fail_output()) };
+                return if self.already_installed {
+                    Ok(ok_output(b""))
+                } else {
+                    Ok(fail_output())
+                };
             }
             Ok(ok_output(b"[]")) // rm -rf, cat agents.json
         }
@@ -231,63 +239,114 @@ spec:
     }
 
     impl FileTransfer for InstallStub {
-        async fn transfer(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
-        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
-            if self.transfer_fails { Ok(fail_output()) } else { Ok(ok_output(b"")) }
+        async fn transfer(&self, _: &str, _: &str) -> Result<Output> {
+            Ok(ok_output(b""))
         }
-        async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> { Ok(ok_output(b"")) }
+        async fn transfer_recursive(&self, _: &str, _: &str) -> Result<Output> {
+            if self.transfer_fails {
+                Ok(fail_output())
+            } else {
+                Ok(ok_output(b""))
+            }
+        }
+        async fn transfer_from(&self, _: &str, _: &str) -> Result<Output> {
+            Ok(ok_output(b""))
+        }
     }
 
     fn fs_with_manifest(path: &str) -> LocalFsStub {
         let manifest_path = PathBuf::from(path).join("agent.yaml");
         let fs = LocalFsStub::new(vec![PathBuf::from(path), manifest_path.clone()]);
-        fs.written.lock().expect("written mutex poisoned").insert(manifest_path, MANIFEST_YAML.to_string());
+        fs.written
+            .lock()
+            .expect("written mutex poisoned")
+            .insert(manifest_path, MANIFEST_YAML.to_string());
         fs
     }
 
     #[tokio::test]
     async fn install_agent_path_not_found() {
-        let stub = InstallStub { running: true, already_installed: false, transfer_fails: false };
+        let stub = InstallStub {
+            running: true,
+            already_installed: false,
+            transfer_fails: false,
+        };
         let fs = LocalFsStub::new(vec![]);
-        let err = install_agent(&stub, &fs, &NoopReporter, "/nonexistent").await.expect_err("should fail for missing path");
+        let err = install_agent(&stub, &fs, &NoopReporter, "/nonexistent")
+            .await
+            .expect_err("should fail for missing path");
         assert!(err.to_string().contains("Path not found"));
     }
 
     #[tokio::test]
     async fn install_agent_no_manifest() {
-        let stub = InstallStub { running: true, already_installed: false, transfer_fails: false };
+        let stub = InstallStub {
+            running: true,
+            already_installed: false,
+            transfer_fails: false,
+        };
         let fs = LocalFsStub::new(vec![PathBuf::from("/agents/myagent")]);
-        let err = install_agent(&stub, &fs, &NoopReporter, "/agents/myagent").await.expect_err("should fail for missing manifest");
+        let err = install_agent(&stub, &fs, &NoopReporter, "/agents/myagent")
+            .await
+            .expect_err("should fail for missing manifest");
         assert!(err.to_string().contains("No agent.yaml"));
     }
 
     #[tokio::test]
     async fn install_agent_vm_not_running() {
-        let stub = InstallStub { running: false, already_installed: false, transfer_fails: false };
+        let stub = InstallStub {
+            running: false,
+            already_installed: false,
+            transfer_fails: false,
+        };
         let fs = fs_with_manifest("/agents/test-agent");
-        assert!(install_agent(&stub, &fs, &NoopReporter, "/agents/test-agent").await.is_err());
+        assert!(
+            install_agent(&stub, &fs, &NoopReporter, "/agents/test-agent")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn install_agent_already_installed() {
-        let stub = InstallStub { running: true, already_installed: true, transfer_fails: false };
+        let stub = InstallStub {
+            running: true,
+            already_installed: true,
+            transfer_fails: false,
+        };
         let fs = fs_with_manifest("/agents/test-agent");
-        let err = install_agent(&stub, &fs, &NoopReporter, "/agents/test-agent").await.expect_err("should fail for already installed");
+        let err = install_agent(&stub, &fs, &NoopReporter, "/agents/test-agent")
+            .await
+            .expect_err("should fail for already installed");
         assert!(err.to_string().contains("already installed"));
     }
 
     #[tokio::test]
     async fn install_agent_success() {
-        let stub = InstallStub { running: true, already_installed: false, transfer_fails: false };
+        let stub = InstallStub {
+            running: true,
+            already_installed: false,
+            transfer_fails: false,
+        };
         let fs = fs_with_manifest("/agents/test-agent");
-        let name = install_agent(&stub, &fs, &NoopReporter, "/agents/test-agent").await.expect("install_agent failed");
+        let name = install_agent(&stub, &fs, &NoopReporter, "/agents/test-agent")
+            .await
+            .expect("install_agent failed");
         assert_eq!(name, "test-agent");
     }
 
     #[tokio::test]
     async fn install_agent_transfer_failure_returns_error() {
-        let stub = InstallStub { running: true, already_installed: false, transfer_fails: true };
+        let stub = InstallStub {
+            running: true,
+            already_installed: false,
+            transfer_fails: true,
+        };
         let fs = fs_with_manifest("/agents/test-agent");
-        assert!(install_agent(&stub, &fs, &NoopReporter, "/agents/test-agent").await.is_err());
+        assert!(
+            install_agent(&stub, &fs, &NoopReporter, "/agents/test-agent")
+                .await
+                .is_err()
+        );
     }
 }

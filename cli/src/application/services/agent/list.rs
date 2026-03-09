@@ -125,10 +125,12 @@ mod tests {
 
     // ── list_agents service tests ─────────────────────────────────────────
 
-    use std::process::Output;
     use crate::application::ports::{InstanceInspector, ShellExecutor};
-    use crate::application::vm::test_support::{impl_shell_executor_stubs, ok_output, fail_output, StateStoreStub};
+    use crate::application::vm::test_support::{
+        StateStoreStub, fail_output, impl_shell_executor_stubs, ok_output,
+    };
     use crate::domain::workspace::WorkspaceState;
+    use std::process::Output;
 
     struct ListStub {
         info_running: bool,
@@ -138,12 +140,16 @@ mod tests {
     impl InstanceInspector for ListStub {
         async fn info(&self) -> anyhow::Result<Output> {
             if self.info_running {
-                Ok(ok_output(br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#))
+                Ok(ok_output(
+                    br#"{"info":{"polis":{"state":"Running","ipv4":[]}}}"#,
+                ))
             } else {
                 Ok(fail_output())
             }
         }
-        async fn version(&self) -> anyhow::Result<Output> { anyhow::bail!("not expected") }
+        async fn version(&self) -> anyhow::Result<Output> {
+            anyhow::bail!("not expected")
+        }
     }
 
     impl ShellExecutor for ListStub {
@@ -155,16 +161,24 @@ mod tests {
 
     #[tokio::test]
     async fn list_agents_vm_not_running_returns_error() {
-        let stub = ListStub { info_running: false, registry_json: b"[]" };
+        let stub = ListStub {
+            info_running: false,
+            registry_json: b"[]",
+        };
         let store = StateStoreStub::empty();
         assert!(list_agents(&stub, &store).await.is_err());
     }
 
     #[tokio::test]
     async fn list_agents_empty_registry() {
-        let stub = ListStub { info_running: true, registry_json: b"[]" };
+        let stub = ListStub {
+            info_running: true,
+            registry_json: b"[]",
+        };
         let store = StateStoreStub::empty();
-        let agents = list_agents(&stub, &store).await.expect("list_agents failed");
+        let agents = list_agents(&stub, &store)
+            .await
+            .expect("list_agents failed");
         assert!(agents.is_empty());
     }
 
@@ -174,12 +188,29 @@ mod tests {
             info_running: true,
             registry_json: br#"[{"name":"openclaw","version":"1.0"},{"name":"other"}]"#,
         };
-        let state = WorkspaceState { active_agent: Some("openclaw".to_string()), ..WorkspaceState::default() };
+        let state = WorkspaceState {
+            active_agent: Some("openclaw".to_string()),
+            ..WorkspaceState::default()
+        };
         let store = StateStoreStub::with(state);
-        let agents = list_agents(&stub, &store).await.expect("list_agents failed");
+        let agents = list_agents(&stub, &store)
+            .await
+            .expect("list_agents failed");
         assert_eq!(agents.len(), 2);
-        assert!(agents.iter().find(|a| a.name == "openclaw").expect("openclaw not found").active);
-        assert!(!agents.iter().find(|a| a.name == "other").expect("other not found").active);
+        assert!(
+            agents
+                .iter()
+                .find(|a| a.name == "openclaw")
+                .expect("openclaw not found")
+                .active
+        );
+        assert!(
+            !agents
+                .iter()
+                .find(|a| a.name == "other")
+                .expect("other not found")
+                .active
+        );
     }
 
     #[tokio::test]
@@ -189,7 +220,9 @@ mod tests {
             registry_json: br#"[{"name":"good"},{"version":"no-name"}]"#,
         };
         let store = StateStoreStub::empty();
-        let agents = list_agents(&stub, &store).await.expect("list_agents failed");
+        let agents = list_agents(&stub, &store)
+            .await
+            .expect("list_agents failed");
         assert_eq!(agents.len(), 2);
         assert!(agents.iter().any(|a| a.warning.is_some()));
     }

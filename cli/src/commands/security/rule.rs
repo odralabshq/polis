@@ -13,7 +13,12 @@ use crate::domain::security::AllowAction;
 /// # Errors
 ///
 /// Returns an error if the gateway is unreachable or the rule cannot be added.
-pub async fn run(app: &impl App, gateway: &impl SecurityGateway, pattern: &str, action: AllowAction) -> Result<ExitCode> {
+pub async fn run(
+    app: &impl App,
+    gateway: &impl SecurityGateway,
+    pattern: &str,
+    action: AllowAction,
+) -> Result<ExitCode> {
     let msg = security::add_domain_rule(gateway, pattern, action).await?;
     app.renderer().render_security_action(&msg)?;
     Ok(ExitCode::SUCCESS)

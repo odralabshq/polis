@@ -24,8 +24,8 @@ impl PolisDir {
     ///
     /// Returns an error if the home directory cannot be determined.
     pub fn new() -> Result<Self> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+        let home =
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
         Ok(Self {
             root: home.join(".polis"),
         })
@@ -107,31 +107,46 @@ mod tests {
     #[test]
     fn config_path_is_under_root() {
         let dir = PolisDir::with_root(PathBuf::from("/tmp/test-polis"));
-        assert_eq!(dir.config_path(), PathBuf::from("/tmp/test-polis/config.yaml"));
+        assert_eq!(
+            dir.config_path(),
+            PathBuf::from("/tmp/test-polis/config.yaml")
+        );
     }
 
     #[test]
     fn state_path_is_under_root() {
         let dir = PolisDir::with_root(PathBuf::from("/tmp/test-polis"));
-        assert_eq!(dir.state_path(), PathBuf::from("/tmp/test-polis/state.json"));
+        assert_eq!(
+            dir.state_path(),
+            PathBuf::from("/tmp/test-polis/state.json")
+        );
     }
 
     #[test]
     fn known_hosts_path_is_under_root() {
         let dir = PolisDir::with_root(PathBuf::from("/tmp/test-polis"));
-        assert_eq!(dir.known_hosts_path(), PathBuf::from("/tmp/test-polis/known_hosts"));
+        assert_eq!(
+            dir.known_hosts_path(),
+            PathBuf::from("/tmp/test-polis/known_hosts")
+        );
     }
 
     #[test]
     fn identity_key_path_is_under_root() {
         let dir = PolisDir::with_root(PathBuf::from("/tmp/test-polis"));
-        assert_eq!(dir.identity_key_path(), PathBuf::from("/tmp/test-polis/id_ed25519"));
+        assert_eq!(
+            dir.identity_key_path(),
+            PathBuf::from("/tmp/test-polis/id_ed25519")
+        );
     }
 
     #[test]
     fn identity_pub_path_is_under_root() {
         let dir = PolisDir::with_root(PathBuf::from("/tmp/test-polis"));
-        assert_eq!(dir.identity_pub_path(), PathBuf::from("/tmp/test-polis/id_ed25519.pub"));
+        assert_eq!(
+            dir.identity_pub_path(),
+            PathBuf::from("/tmp/test-polis/id_ed25519.pub")
+        );
     }
 
     #[cfg(target_os = "linux")]

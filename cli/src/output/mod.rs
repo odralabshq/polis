@@ -387,7 +387,10 @@ impl OutputContext {
 
     /// Print an error message prefixed with `✗` to stderr. Never suppressed.
     pub fn error(&self, msg: &str) {
-        let mut w = self.err_writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut w = self
+            .err_writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let _ = writeln!(w, "  {} {msg}", "✗".style(self.styles.error));
     }
 
@@ -540,15 +543,24 @@ mod tests {
         ctx.guarantees();
         ctx.write_raw("raw");
         ctx.write_check(true, "check");
-        assert!(buf_to_string(&stdout).is_empty(), "stdout should be empty in quiet mode");
-        assert!(buf_to_string(&stderr).is_empty(), "stderr should be empty in quiet mode");
+        assert!(
+            buf_to_string(&stdout).is_empty(),
+            "stdout should be empty in quiet mode"
+        );
+        assert!(
+            buf_to_string(&stderr).is_empty(),
+            "stderr should be empty in quiet mode"
+        );
     }
 
     #[test]
     fn test_quiet_does_not_suppress_error() {
         let (ctx, _stdout, stderr) = make_test_ctx(true);
         ctx.error("something went wrong");
-        assert!(!buf_to_string(&stderr).is_empty(), "error should still write in quiet mode");
+        assert!(
+            !buf_to_string(&stderr).is_empty(),
+            "error should still write in quiet mode"
+        );
         assert!(buf_to_string(&stderr).contains("something went wrong"));
     }
 
@@ -577,8 +589,8 @@ mod tests {
         let ctx = OutputContext::with_writers(
             Box::new(std::io::sink()),
             Box::new(std::io::sink()),
-            true,  // no_color
-            true,  // is_tty
+            true, // no_color
+            true, // is_tty
             false,
         );
         // Default styles have no ANSI codes — format is empty string
