@@ -19,10 +19,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <ctype.h>
 
 /* Valkey/Redis client */
 #include <hiredis/hiredis.h>
 #include <hiredis/hiredis_ssl.h>
+#include <openssl/sha.h>
 
 /* Constants */
 #define MAX_PATTERNS    32
@@ -62,6 +64,7 @@ typedef struct {
     int ott_rewritten;          /* OTT substitution was performed */
     size_t ott_body_sent;       /* Bytes of OTT-rewritten body already sent */
     char request_id[16];        /* Generated request ID for blocked requests */
+    char fingerprint[17];       /* First 16 hex chars of SHA-256 match fingerprint */
 } dlp_req_data_t;
 
 /* Static pattern storage - loaded from config at service init */
@@ -109,6 +112,9 @@ static int ott_ttl_secs = 600;            /* OTT key TTL in Valkey */
 static redisContext *valkey_gov_ctx = NULL;/* governance-reqmod connection */
 static pthread_mutex_t gov_valkey_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* Forward declarations for helpers used before their definitions. */
+static int ensure_gov_valkey_connected(void);
+
 /* OTT generation constants */
 #define OTT_LEN         12        /* "ott-" + 8 alphanumeric chars */
 #define OTT_RANDOM_BYTES 8        /* Random bytes needed for 8 alphanumeric chars */
@@ -144,6 +150,188 @@ static void escape_json_string(const char *src, char *dst, size_t dst_size)
         dst[j++] = src[i];
     }
     dst[j] = '\0';
+}
+
+static void normalize_host_inplace(char *host)
+{
+    size_t len;
+    char *colon;
+    char *closing;
+    size_t i;
+
+    if (host == NULL || host[0] == '\0')
+        return;
+
+    len = strlen(host);
+    while (len > 0 && host[len - 1] == '.') {
+        host[--len] = '\0';
+    }
+
+    if (host[0] == '[') {
+        closing = strchr(host, ']');
+        if (closing != NULL && closing[1] == ':') {
+            char *port = closing + 2;
+            int digits_only = (*port != '\0');
+            while (*port != '\0') {
+                if (!isdigit((unsigned char)*port)) {
+                    digits_only = 0;
+                    break;
+                }
+                port++;
+            }
+            if (digits_only)
+                closing[1] = '\0';
+        }
+    } else {
+        colon = strrchr(host, ':');
+        if (colon != NULL && strchr(host, ':') == colon) {
+            char *port = colon + 1;
+            int digits_only = (*port != '\0');
+            while (*port != '\0') {
+                if (!isdigit((unsigned char)*port)) {
+                    digits_only = 0;
+                    break;
+                }
+                port++;
+            }
+            if (digits_only)
+                *colon = '\0';
+        }
+    }
+
+    len = strlen(host);
+    while (len > 0 && host[len - 1] == '.') {
+        host[--len] = '\0';
+    }
+
+    for (i = 0; host[i] != '\0'; i++) {
+        host[i] = (char)tolower((unsigned char)host[i]);
+    }
+}
+
+static void hex_encode_component(const char *src, char *dst, size_t dst_size)
+{
+    static const char HEX[] = "0123456789abcdef";
+    size_t i;
+    size_t j = 0;
+
+    if (dst_size == 0)
+        return;
+
+    for (i = 0; src[i] != '\0'; i++) {
+        unsigned char byte = (unsigned char)src[i];
+        if (j + 2 >= dst_size)
+            break;
+        dst[j++] = HEX[byte >> 4];
+        dst[j++] = HEX[byte & 0x0f];
+    }
+    dst[j] = '\0';
+}
+
+static void compute_fingerprint(const char *matched, size_t len,
+                                char *out, size_t out_size)
+{
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    size_t i;
+
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    if (matched == NULL || len == 0 || out_size < 17) {
+        return;
+    }
+
+    SHA256((const unsigned char *)matched, len, hash);
+    for (i = 0; i < 8; i++) {
+        snprintf(out + (i * 2), out_size - (i * 2), "%02x", hash[i]);
+    }
+    out[16] = '\0';
+}
+
+static void compute_match_fingerprint(const char *pattern_name,
+                                      const char *body,
+                                      const regmatch_t *match,
+                                      char *out,
+                                      size_t out_size)
+{
+    const char *matched;
+    size_t len;
+
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    if (body == NULL || match == NULL || match->rm_so < 0 ||
+        match->rm_eo <= match->rm_so) {
+        return;
+    }
+
+    matched = body + match->rm_so;
+    len = (size_t)(match->rm_eo - match->rm_so);
+
+    /*
+     * aws_secret matches include the field name plus separator. Hash only
+     * the trailing 40-character secret so retries stay stable across
+     * formatting differences like "=" vs ":" or extra whitespace.
+     */
+    if (pattern_name != NULL && strcmp(pattern_name, "aws_secret") == 0 &&
+        len >= 40) {
+        matched += len - 40;
+        len = 40;
+    }
+
+    compute_fingerprint(matched, len, out, out_size);
+}
+
+static int credential_approval_exists(const char *pattern, const char *host,
+                                      const char *fingerprint)
+{
+    char encoded_host[512];
+    char temp_key[768];
+    char allow_key[768];
+    redisReply *reply;
+    int allowed = 0;
+
+    if (pattern == NULL || pattern[0] == '\0' ||
+        host == NULL || host[0] == '\0' ||
+        fingerprint == NULL || fingerprint[0] == '\0') {
+        return 0;
+    }
+
+    if (!ensure_gov_valkey_connected()) {
+        return 0;
+    }
+
+    hex_encode_component(host, encoded_host, sizeof(encoded_host));
+    snprintf(temp_key, sizeof(temp_key), "polis:approved:fp:%s:%s:%s",
+             pattern, encoded_host, fingerprint);
+    snprintf(allow_key, sizeof(allow_key), "polis:credential_allow:%s:%s:%s",
+             pattern, encoded_host, fingerprint);
+
+    pthread_mutex_lock(&gov_valkey_mutex);
+    reply = redisCommand(valkey_gov_ctx, "EXISTS %s %s", temp_key, allow_key);
+    if (reply != NULL && reply->type == REDIS_REPLY_INTEGER && reply->integer > 0) {
+        allowed = 1;
+    }
+    if (reply)
+        freeReplyObject(reply);
+    pthread_mutex_unlock(&gov_valkey_mutex);
+
+    return allowed;
+}
+
+static const char *block_reason_for_pattern(const char *matched_pattern)
+{
+    if (matched_pattern != NULL) {
+        if (strcmp(matched_pattern, "new_domain_prompt") == 0)
+            return "new_domain_prompt";
+        if (strcmp(matched_pattern, "new_domain_blocked") == 0)
+            return "new_domain_blocked";
+    }
+    return "credential_detected";
 }
 
 /*
@@ -1343,6 +1531,7 @@ void *dlp_init_request_data(ci_request_t *req)
     data->error_page_sent = 0;
     data->ott_rewritten = 0;
     data->ott_body_sent = 0;
+    data->fingerprint[0] = '\0';
     memset(data->tail, 0, TAIL_SCAN_SIZE);
 
     /* Extract Host header from the HTTP request */
@@ -1350,6 +1539,7 @@ void *dlp_init_request_data(ci_request_t *req)
     if (host_hdr) {
         strncpy(data->host, host_hdr, sizeof(data->host) - 1);
         data->host[sizeof(data->host) - 1] = '\0';
+        normalize_host_inplace(data->host);
         ci_debug_printf(5, "polis_dlp: Request to host: %s\n",
                         data->host);
     } else {
@@ -1413,12 +1603,13 @@ static int check_patterns(const char *body, int body_len,
                           dlp_req_data_t *data)
 {
     int i;
+    regmatch_t match[1];
 
     (void)body_len; /* body is null-terminated from ci_membuf */
 
     for (i = 0; i < pattern_count; i++) {
         /* Test this pattern against the body */
-        if (regexec(&patterns[i].regex, body, 0, NULL, 0) != 0)
+        if (regexec(&patterns[i].regex, body, 1, match, 0) != 0)
             continue;
 
         /* Pattern matched - check blocking rules */
@@ -1427,6 +1618,7 @@ static int check_patterns(const char *body, int body_len,
 
         /* Always-block patterns (e.g., private keys) */
         if (patterns[i].always_block) {
+            data->fingerprint[0] = '\0';
             data->blocked = 1;
             strncpy(data->matched_pattern, patterns[i].name,
                     sizeof(data->matched_pattern) - 1);
@@ -1436,6 +1628,10 @@ static int check_patterns(const char *body, int body_len,
                                "pattern '%s'\n", patterns[i].name);
             return 1;
         }
+
+        compute_match_fingerprint(patterns[i].name, body, &match[0],
+                                  data->fingerprint,
+                                  sizeof(data->fingerprint));
 
         /* Pattern has a pre-compiled allow_domain - check host against it */
         if (patterns[i].allow_compiled) {
@@ -1448,27 +1644,23 @@ static int check_patterns(const char *body, int body_len,
                                patterns[i].name, data->host);
                 continue;
             }
-            /* Host does NOT match allow rule - block */
-            data->blocked = 1;
-            strncpy(data->matched_pattern, patterns[i].name,
-                    sizeof(data->matched_pattern) - 1);
-            data->matched_pattern[
-                sizeof(data->matched_pattern) - 1] = '\0';
-            ci_debug_printf(3, "polis_dlp: Blocked pattern '%s' - "
-                               "host '%s' not in allow list\n",
-                           patterns[i].name, data->host);
-            return 1;
         }
 
-        /* No allow_domain set and not always_block - block by default */
+        if (credential_approval_exists(patterns[i].name, data->host,
+                                       data->fingerprint)) {
+            ci_debug_printf(3, "polis_dlp: Pattern '%s' fingerprint '%s' "
+                               "approved for host '%s'\n",
+                           patterns[i].name, data->fingerprint, data->host);
+            continue;
+        }
+
         data->blocked = 1;
         strncpy(data->matched_pattern, patterns[i].name,
                 sizeof(data->matched_pattern) - 1);
         data->matched_pattern[
             sizeof(data->matched_pattern) - 1] = '\0';
-        ci_debug_printf(3, "polis_dlp: Blocked pattern '%s' - "
-                           "no allow rule configured\n",
-                       patterns[i].name);
+        ci_debug_printf(3, "polis_dlp: Blocked pattern '%s' for host '%s'\n",
+                        patterns[i].name, data->host);
         return 1;
     }
 
@@ -1617,6 +1809,7 @@ int dlp_process(ci_request_t *req)
         if (policy == 2 && data->blocked != 1) {
             /* STRICT: block new domain */
             data->blocked = 1;
+            data->fingerprint[0] = '\0';
             strncpy(data->matched_pattern, "new_domain_blocked",
                     sizeof(data->matched_pattern) - 1);
             data->matched_pattern[
@@ -1627,6 +1820,7 @@ int dlp_process(ci_request_t *req)
         } else if (policy == 1 && data->blocked != 1) {
             /* BALANCED: trigger HITL prompt for new domain */
             data->blocked = 1;
+            data->fingerprint[0] = '\0';
             strncpy(data->matched_pattern, "new_domain_prompt",
                     sizeof(data->matched_pattern) - 1);
             data->matched_pattern[
@@ -1638,9 +1832,9 @@ int dlp_process(ci_request_t *req)
     }
 
     /* If blocked by domain policy, check if destination has a recent
-     * host-based approval. Credential-based blocks are never cleared
-     * by host approval — only new_domain_prompt / new_domain_blocked
-     * are eligible (Requirement 2.4: credentials always blocked). */
+     * host-based approval. Credential-based blocks use fingerprint-
+     * scoped approvals inside check_patterns(); host approval remains
+     * limited to new_domain_prompt / new_domain_blocked. */
     if (data->blocked == 1 && data->host[0] != '\0' &&
         (strcmp(data->matched_pattern, "new_domain_prompt") == 0 ||
          strcmp(data->matched_pattern, "new_domain_blocked") == 0)) {
@@ -1663,6 +1857,7 @@ int dlp_process(ci_request_t *req)
                     data->host);
                 data->blocked = 0;
                 data->matched_pattern[0] = '\0';
+                data->fingerprint[0] = '\0';
             }
             if (approved_reply) freeReplyObject(approved_reply);
             pthread_mutex_unlock(&gov_valkey_mutex);
@@ -1693,31 +1888,50 @@ int dlp_process(ci_request_t *req)
         /* Store block in Valkey so it appears in list_pending immediately.
          * JSON matches the BlockedRequest schema used by the MCP toolbox. */
         if (data->request_id[0] != '\0' && ensure_gov_valkey_connected()) {
-            char json_buf[512];
+            char json_buf[1024];
+            const char *reason = block_reason_for_pattern(data->matched_pattern);
             time_t now = time(NULL);
             struct tm utc_tm;
             char ts_buf[32];
+            int json_len;
             gmtime_r(&now, &utc_tm);
             strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%SZ", &utc_tm);
 
             char escaped_host[256];
             escape_json_string(data->host, escaped_host, sizeof(escaped_host));
-            snprintf(json_buf, sizeof(json_buf),
-                "{\"request_id\":\"%s\",\"reason\":\"credential_detected\","
-                "\"destination\":\"%s\",\"pattern\":\"%s\","
-                "\"blocked_at\":\"%s\",\"status\":\"pending\"}",
-                data->request_id, escaped_host, data->matched_pattern,
-                ts_buf);
+            if (strcmp(reason, "credential_detected") == 0 &&
+                data->fingerprint[0] != '\0') {
+                json_len = snprintf(json_buf, sizeof(json_buf),
+                    "{\"request_id\":\"%s\",\"reason\":\"%s\","
+                    "\"destination\":\"%s\",\"pattern\":\"%s\","
+                    "\"fingerprint\":\"%s\","
+                    "\"blocked_at\":\"%s\",\"status\":\"pending\"}",
+                    data->request_id, reason, escaped_host,
+                    data->matched_pattern, data->fingerprint, ts_buf);
+            } else {
+                json_len = snprintf(json_buf, sizeof(json_buf),
+                    "{\"request_id\":\"%s\",\"reason\":\"%s\","
+                    "\"destination\":\"%s\",\"pattern\":\"%s\","
+                    "\"blocked_at\":\"%s\",\"status\":\"pending\"}",
+                    data->request_id, reason, escaped_host,
+                    data->matched_pattern, ts_buf);
+            }
 
-            pthread_mutex_lock(&gov_valkey_mutex);
-            redisReply *set_reply = redisCommand(valkey_gov_ctx,
-                "SETEX polis:blocked:%s 3600 %s",
-                data->request_id, json_buf);
-            if (set_reply) freeReplyObject(set_reply);
-            pthread_mutex_unlock(&gov_valkey_mutex);
+            if (json_len < 0 || (size_t)json_len >= sizeof(json_buf)) {
+                ci_debug_printf(1,
+                    "polis_dlp: Skipping Valkey block storage for %s due to JSON truncation\n",
+                    data->request_id);
+            } else {
+                pthread_mutex_lock(&gov_valkey_mutex);
+                redisReply *set_reply = redisCommand(valkey_gov_ctx,
+                    "SETEX polis:blocked:%s 3600 %s",
+                    data->request_id, json_buf);
+                if (set_reply) freeReplyObject(set_reply);
+                pthread_mutex_unlock(&gov_valkey_mutex);
 
-            ci_debug_printf(3, "polis_dlp: Stored block %s in Valkey\n",
-                           data->request_id);
+                ci_debug_printf(3, "polis_dlp: Stored block %s in Valkey\n",
+                               data->request_id);
+            }
         }
 
         /* Build HTML error page with request ID and approval hint */

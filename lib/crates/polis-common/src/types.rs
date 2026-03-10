@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum BlockReason {
     CredentialDetected,
+    NewDomainPrompt,
+    NewDomainBlocked,
     MalwareDomain,
     UrlBlocked,
     FileInfected,
@@ -98,6 +100,7 @@ pub struct BlockedRequest {
     pub reason: BlockReason,
     pub destination: String,
     pub pattern: Option<String>,
+    pub fingerprint: Option<String>,
     pub blocked_at: DateTime<Utc>,
     pub status: RequestStatus,
 }
@@ -332,6 +335,8 @@ mod tests {
     fn block_reason_serde_round_trip() {
         let variants = [
             (BlockReason::CredentialDetected, "\"credential_detected\""),
+            (BlockReason::NewDomainPrompt, "\"new_domain_prompt\""),
+            (BlockReason::NewDomainBlocked, "\"new_domain_blocked\""),
             (BlockReason::MalwareDomain, "\"malware_domain\""),
             (BlockReason::UrlBlocked, "\"url_blocked\""),
             (BlockReason::FileInfected, "\"file_infected\""),
@@ -477,6 +482,7 @@ mod tests {
             reason: BlockReason::CredentialDetected,
             destination: "https://example.com".to_string(),
             pattern: Some("password=.*".to_string()),
+            fingerprint: Some("0123456789abcdef".to_string()),
             blocked_at: Utc::now(),
             status: RequestStatus::Pending,
         };
@@ -486,6 +492,7 @@ mod tests {
         assert_eq!(deserialized.reason, req.reason);
         assert_eq!(deserialized.destination, req.destination);
         assert_eq!(deserialized.pattern, req.pattern);
+        assert_eq!(deserialized.fingerprint, req.fingerprint);
         assert_eq!(deserialized.blocked_at, req.blocked_at);
         assert_eq!(deserialized.status, req.status);
     }

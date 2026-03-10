@@ -22,10 +22,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use cp_api_types::{
     ActionResponse, AgentResponse, BlockedItem, BlockedListResponse, BypassListResponse,
-    ConfigAgentResponse, ConfigResponse, ContainersResponse, EventItem, EventsResponse,
-    LevelResponse, LogsResponse, MetricsHistoryResponse, MetricsResponse, RuleCreateRequest,
-    RuleItem, RulesResponse, SecurityConfigResponse, SecurityOverview, StatusResponse,
-    WorkspaceResponse,
+    ConfigAgentResponse, ConfigResponse, ContainersResponse, CredentialAllowItem,
+    CredentialAllowsResponse, EventItem, EventsResponse, LevelResponse, LogsResponse,
+    MetricsHistoryResponse, MetricsResponse, RuleCreateRequest, RuleItem, RulesResponse,
+    SecurityConfigResponse, SecurityOverview, StatusResponse, WorkspaceResponse,
 };
 use fred::types::scan::Scanner;
 use fred::{
@@ -35,7 +35,8 @@ use fred::{
 };
 use polis_common::{
     AutoApproveAction, BlockReason, BlockedRequest, RequestStatus, SecurityLevel, SecurityLogEntry,
-    approved_host_key, approved_key, auto_approve_key, blocked_key,
+    approved_fingerprint_key, approved_host_key, approved_key, auto_approve_key, blocked_key,
+    credential_allow_key, normalize_approval_host, parse_credential_allow_key,
     redis_keys::{keys, ttl},
 };
 use sha2::{Digest, Sha256};
@@ -88,6 +89,8 @@ pub trait GovernanceStore: Clone + Send + Sync + 'static {
     async fn get_status(&self) -> AppResult<StatusResponse>;
     async fn list_blocked(&self) -> AppResult<BlockedListResponse>;
     async fn approve(&self, request_id: &str) -> AppResult<ActionResponse>;
+    async fn allow_credential(&self, request_id: &str) -> AppResult<ActionResponse>;
+    async fn bypass_blocked_domain(&self, request_id: &str) -> AppResult<ActionResponse>;
     async fn deny(&self, request_id: &str) -> AppResult<ActionResponse>;
     async fn list_events(&self, limit: usize) -> AppResult<EventsResponse>;
     async fn get_security_level(&self) -> AppResult<LevelResponse>;
@@ -101,6 +104,13 @@ pub trait GovernanceStore: Clone + Send + Sync + 'static {
         self.add_rule(&request.pattern, &request.action).await
     }
     async fn delete_rule(&self, pattern: &str) -> AppResult<ActionResponse>;
+    async fn list_credential_allows(&self) -> AppResult<CredentialAllowsResponse>;
+    async fn delete_credential_allow(
+        &self,
+        pattern: &str,
+        host: &str,
+        fingerprint: &str,
+    ) -> AppResult<ActionResponse>;
 }
 
 #[async_trait]
@@ -643,6 +653,8 @@ where
     fn reason_to_string(reason: &BlockReason) -> String {
         match reason {
             BlockReason::CredentialDetected => "credential_detected".to_string(),
+            BlockReason::NewDomainPrompt => "new_domain_prompt".to_string(),
+            BlockReason::NewDomainBlocked => "new_domain_blocked".to_string(),
             BlockReason::MalwareDomain => "malware_domain".to_string(),
             BlockReason::UrlBlocked => "url_blocked".to_string(),
             BlockReason::FileInfected => "file_infected".to_string(),
@@ -657,11 +669,68 @@ where
         }
     }
 
+    fn is_credential_reason(reason: &BlockReason) -> bool {
+        matches!(reason, BlockReason::CredentialDetected)
+    }
+
+    fn is_domain_policy_reason(reason: &BlockReason) -> bool {
+        matches!(
+            reason,
+            BlockReason::NewDomainPrompt | BlockReason::NewDomainBlocked
+        )
+    }
+
+    fn blocked_request_host(request: &BlockedRequest) -> AppResult<String> {
+        normalize_approval_host(&request.destination)
+            .map_err(|message| AppError::Validation(message.to_string()))
+    }
+
+    fn blocked_request_credential_context(
+        request: &BlockedRequest,
+    ) -> AppResult<(&str, &str, String)> {
+        if !Self::is_credential_reason(&request.reason) {
+            return Err(AppError::Validation(
+                "blocked request is not a credential-detected item".to_string(),
+            ));
+        }
+
+        let pattern = request.pattern.as_deref().ok_or_else(|| {
+            AppError::Validation("blocked credential cannot be approved at runtime".to_string())
+        })?;
+        let fingerprint = request.fingerprint.as_deref().ok_or_else(|| {
+            AppError::Validation("blocked credential cannot be approved at runtime".to_string())
+        })?;
+        let host = Self::blocked_request_host(request)?;
+        Ok((pattern, fingerprint, host))
+    }
+
+    async fn delete_blocked_request(
+        &self,
+        request_id: &str,
+        operation: &'static str,
+    ) -> AppResult<()> {
+        self.client
+            .del(&blocked_key(request_id))
+            .await
+            .map_err(|error| Self::dependency_error(operation, &error))
+    }
+
+    async fn persist_bypass_domain(&self, domain: &str) -> AppResult<String> {
+        let normalized = Self::normalize_bypass_domain(domain)?;
+        self.client
+            .set_string(&Self::bypass_key(&normalized), "bypass")
+            .await
+            .map_err(|error| Self::dependency_error("failed to add bypass domain", &error))?;
+        Ok(Self::display_bypass_domain(&normalized))
+    }
+
     fn blocked_item_from_request(request: BlockedRequest) -> BlockedItem {
         BlockedItem {
             request_id: request.request_id,
             reason: Self::reason_to_string(&request.reason),
             destination: request.destination,
+            pattern: request.pattern,
+            fingerprint: request.fingerprint,
             blocked_at: request.blocked_at,
             status: Self::status_to_string(request.status),
         }
@@ -828,6 +897,37 @@ where
         Ok(domains)
     }
 
+    async fn list_credential_allow_items(&self) -> AppResult<Vec<CredentialAllowItem>> {
+        let mut items = self
+            .client
+            .scan_keys(&format!("{}:*", keys::CREDENTIAL_ALLOW))
+            .await
+            .map_err(|error| {
+                Self::dependency_error("failed to scan credential allow rules", &error)
+            })?
+            .into_iter()
+            .filter_map(|key| {
+                if let Some((pattern, host, fingerprint)) = parse_credential_allow_key(&key) {
+                    Some(CredentialAllowItem {
+                        pattern,
+                        host,
+                        fingerprint,
+                    })
+                } else {
+                    tracing::warn!(%key, "skipping malformed credential allow key");
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.pattern
+                .cmp(&right.pattern)
+                .then_with(|| left.host.cmp(&right.host))
+                .then_with(|| left.fingerprint.cmp(&right.fingerprint))
+        });
+        Ok(items)
+    }
+
     async fn register_auth_tokens(&self, tokens: &[(Role, String)]) -> AppResult<()> {
         for (role, token) in tokens {
             let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
@@ -905,12 +1005,7 @@ where
     }
 
     async fn add_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
-        let normalized = Self::normalize_bypass_domain(domain)?;
-        self.client
-            .set_string(&Self::bypass_key(&normalized), "bypass")
-            .await
-            .map_err(|error| Self::dependency_error("failed to add bypass domain", &error))?;
-        let display = Self::display_bypass_domain(&normalized);
+        let display = self.persist_bypass_domain(domain).await?;
         self.log_security_event("config_changed", format!("bypass domain added: {display}"))
             .await?;
         Ok(ActionResponse {
@@ -981,10 +1076,7 @@ where
             .into_iter()
             .flatten()
             .filter_map(|json| match serde_json::from_str::<BlockedRequest>(&json) {
-                Ok(mut request) => {
-                    request.pattern = None;
-                    Some(Self::blocked_item_from_request(request))
-                }
+                Ok(request) => Some(Self::blocked_item_from_request(request)),
                 Err(error) => {
                     tracing::warn!(%error, "skipping malformed blocked request");
                     None
@@ -1000,16 +1092,31 @@ where
     async fn approve(&self, request_id: &str) -> AppResult<ActionResponse> {
         let blocked_request = self.fetch_blocked_request(request_id).await?;
 
-        let entry = SecurityLogEntry {
-            timestamp: Utc::now(),
-            event_type: "approved_via_control_plane".to_string(),
-            request_id: Some(request_id.to_string()),
-            details: format!(
-                "Approved blocked request to {}",
-                blocked_request.destination
-            ),
+        let approval_target = if Self::is_credential_reason(&blocked_request.reason) {
+            let (pattern, fingerprint, host) =
+                Self::blocked_request_credential_context(&blocked_request)?;
+            Some((
+                approved_fingerprint_key(pattern, &host, fingerprint)
+                    .map_err(|message| AppError::Validation(message.to_string()))?,
+                "approved".to_string(),
+                "failed to create temporary credential approval marker",
+                "credential_approved_temp".to_string(),
+                format!("Temporarily approved {pattern} fingerprint {fingerprint} for {host}"),
+            ))
+        } else if Self::is_domain_policy_reason(&blocked_request.reason)
+            && !blocked_request.destination.is_empty()
+        {
+            let host = Self::blocked_request_host(&blocked_request)?;
+            Some((
+                approved_host_key(&host),
+                "1".to_string(),
+                "failed to create host-based approval marker",
+                "approved_via_control_plane".to_string(),
+                format!("Approved blocked request to {host}"),
+            ))
+        } else {
+            None
         };
-        self.append_event(&entry).await?;
 
         self.client
             .set_string_ex(
@@ -1022,34 +1129,97 @@ where
                 Self::dependency_error("failed to create approved marker for request", &error)
             })?;
 
-        // Set host-based approval key so the DLP module allows retries
-        // for domain-policy blocks (new_domain_prompt / new_domain_blocked).
-        // This mirrors what blocked.sh and the sentinel RESPMOD OTT flow do.
-        if !blocked_request.destination.is_empty() {
-            self.client
-                .set_string_ex(
-                    &approved_host_key(&blocked_request.destination),
-                    "1",
-                    ttl::APPROVED_REQUEST_SECS,
+        let (event_type, details) =
+            if let Some((approval_key, approval_value, operation, event_type, details)) =
+                approval_target
+            {
+                self.client
+                    .set_string_ex(&approval_key, &approval_value, ttl::APPROVED_REQUEST_SECS)
+                    .await
+                    .map_err(|error| Self::dependency_error(operation, &error))?;
+                (event_type, details)
+            } else {
+                (
+                    "approved_via_control_plane".to_string(),
+                    format!(
+                        "Approved blocked request to {}",
+                        blocked_request.destination
+                    ),
                 )
-                .await
-                .map_err(|error| {
-                    Self::dependency_error(
-                        "failed to create host-based approval marker",
-                        &error,
-                    )
-                })?;
-        }
+            };
 
-        self.client
-            .del(&blocked_key(request_id))
-            .await
-            .map_err(|error| {
-                Self::dependency_error("failed to remove blocked request after approval", &error)
-            })?;
+        self.append_event(&SecurityLogEntry {
+            timestamp: Utc::now(),
+            event_type,
+            request_id: Some(request_id.to_string()),
+            details,
+        })
+        .await?;
+
+        self.delete_blocked_request(
+            request_id,
+            "failed to remove blocked request after approval",
+        )
+        .await?;
 
         Ok(ActionResponse {
             message: format!("approved {request_id}"),
+        })
+    }
+
+    async fn allow_credential(&self, request_id: &str) -> AppResult<ActionResponse> {
+        let blocked_request = self.fetch_blocked_request(request_id).await?;
+        let (pattern, fingerprint, host) =
+            Self::blocked_request_credential_context(&blocked_request)?;
+        let key = credential_allow_key(pattern, &host, fingerprint)
+            .map_err(|message| AppError::Validation(message.to_string()))?;
+
+        self.client.set_string(&key, "1").await.map_err(|error| {
+            Self::dependency_error("failed to create credential allow rule", &error)
+        })?;
+
+        self.append_event(&SecurityLogEntry {
+            timestamp: Utc::now(),
+            event_type: "credential_allowed_permanent".to_string(),
+            request_id: Some(request_id.to_string()),
+            details: format!(
+                "Allowed {pattern} fingerprint {fingerprint} for {host} via control plane"
+            ),
+        })
+        .await?;
+
+        self.delete_blocked_request(
+            request_id,
+            "failed to remove blocked request after creating credential allow rule",
+        )
+        .await?;
+
+        Ok(ActionResponse {
+            message: format!("remembered credential allow for {pattern} on {host}"),
+        })
+    }
+
+    async fn bypass_blocked_domain(&self, request_id: &str) -> AppResult<ActionResponse> {
+        let blocked_request = self.fetch_blocked_request(request_id).await?;
+        let host = Self::blocked_request_host(&blocked_request)?;
+        let display = self.persist_bypass_domain(&host).await?;
+
+        self.append_event(&SecurityLogEntry {
+            timestamp: Utc::now(),
+            event_type: "bypass_domain_added".to_string(),
+            request_id: Some(request_id.to_string()),
+            details: format!("Added bypass domain {display} from blocked request"),
+        })
+        .await?;
+
+        self.delete_blocked_request(
+            request_id,
+            "failed to remove blocked request after adding bypass domain",
+        )
+        .await?;
+
+        Ok(ActionResponse {
+            message: format!("added bypass domain {display}"),
         })
     }
 
@@ -1064,12 +1234,8 @@ where
         };
         self.append_event(&entry).await?;
 
-        self.client
-            .del(&blocked_key(request_id))
-            .await
-            .map_err(|error| {
-                Self::dependency_error("failed to remove blocked request after denial", &error)
-            })?;
+        self.delete_blocked_request(request_id, "failed to remove blocked request after denial")
+            .await?;
 
         Ok(ActionResponse {
             message: format!("denied {request_id}"),
@@ -1231,6 +1397,50 @@ where
             message: format!("deleted auto-approve rule {pattern}"),
         })
     }
+
+    async fn list_credential_allows(&self) -> AppResult<CredentialAllowsResponse> {
+        Ok(CredentialAllowsResponse {
+            items: self.list_credential_allow_items().await?,
+        })
+    }
+
+    async fn delete_credential_allow(
+        &self,
+        pattern: &str,
+        host: &str,
+        fingerprint: &str,
+    ) -> AppResult<ActionResponse> {
+        let key = credential_allow_key(pattern, host, fingerprint)
+            .map_err(|message| AppError::Validation(message.to_string()))?;
+        let host = normalize_approval_host(host)
+            .map_err(|message| AppError::Validation(message.to_string()))?;
+
+        if !self.client.exists(&key).await.map_err(|error| {
+            Self::dependency_error("failed to verify credential allow rule", &error)
+        })? {
+            return Err(AppError::NotFound(format!(
+                "no credential allow rule found for {pattern} on {host}"
+            )));
+        }
+
+        self.client.del(&key).await.map_err(|error| {
+            Self::dependency_error("failed to delete credential allow rule", &error)
+        })?;
+
+        self.append_event(&SecurityLogEntry {
+            timestamp: Utc::now(),
+            event_type: "credential_allow_deleted".to_string(),
+            request_id: None,
+            details: format!(
+                "Deleted credential allow rule {pattern} fingerprint {fingerprint} for {host}"
+            ),
+        })
+        .await?;
+
+        Ok(ActionResponse {
+            message: format!("deleted credential allow for {pattern} on {host}"),
+        })
+    }
 }
 
 #[async_trait]
@@ -1248,6 +1458,14 @@ where
 
     async fn approve(&self, request_id: &str) -> AppResult<ActionResponse> {
         self.governance.approve(request_id).await
+    }
+
+    async fn allow_credential(&self, request_id: &str) -> AppResult<ActionResponse> {
+        self.governance.allow_credential(request_id).await
+    }
+
+    async fn bypass_blocked_domain(&self, request_id: &str) -> AppResult<ActionResponse> {
+        self.governance.bypass_blocked_domain(request_id).await
     }
 
     async fn deny(&self, request_id: &str) -> AppResult<ActionResponse> {
@@ -1283,6 +1501,21 @@ where
 
     async fn delete_rule(&self, pattern: &str) -> AppResult<ActionResponse> {
         self.governance.delete_rule(pattern).await
+    }
+
+    async fn list_credential_allows(&self) -> AppResult<CredentialAllowsResponse> {
+        self.governance.list_credential_allows().await
+    }
+
+    async fn delete_credential_allow(
+        &self,
+        pattern: &str,
+        host: &str,
+        fingerprint: &str,
+    ) -> AppResult<ActionResponse> {
+        self.governance
+            .delete_credential_allow(pattern, host, fingerprint)
+            .await
     }
 }
 
@@ -1695,12 +1928,20 @@ mod tests {
         }
     }
 
-    fn blocked_request(id: &str, destination: &str, minute: u32) -> BlockedRequest {
+    fn blocked_request(
+        id: &str,
+        destination: &str,
+        minute: u32,
+        reason: BlockReason,
+        pattern: Option<&str>,
+        fingerprint: Option<&str>,
+    ) -> BlockedRequest {
         BlockedRequest {
             request_id: id.to_string(),
-            reason: BlockReason::CredentialDetected,
+            reason,
             destination: destination.to_string(),
-            pattern: Some("*.example.com".to_string()),
+            pattern: pattern.map(ToString::to_string),
+            fingerprint: fingerprint.map(ToString::to_string),
             blocked_at: Utc
                 .with_ymd_and_hms(2026, 3, 5, 19, minute, 0)
                 .single()
@@ -1717,15 +1958,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_blocked_redacts_pattern_and_sorts_newest_first() {
+    async fn list_blocked_preserves_pattern_and_sorts_newest_first() {
         let client = FakeValkeyClient::default();
         store_with_blocked(
             &client,
-            &blocked_request("req-abc12345", "https://a.example", 1),
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
         );
         store_with_blocked(
             &client,
-            &blocked_request("req-def67890", "https://b.example", 2),
+            &blocked_request(
+                "req-def67890",
+                "b.example",
+                2,
+                BlockReason::CredentialDetected,
+                Some("openai"),
+                Some("fedcba9876543210"),
+            ),
         );
         let store = GovernanceState::new_with_client(client);
 
@@ -1734,15 +1989,27 @@ mod tests {
         assert_eq!(response.items.len(), 2);
         assert_eq!(response.items[0].request_id, "req-def67890");
         assert_eq!(response.items[0].reason, "credential_detected");
+        assert_eq!(response.items[0].pattern.as_deref(), Some("openai"));
+        assert_eq!(
+            response.items[0].fingerprint.as_deref(),
+            Some("fedcba9876543210")
+        );
         assert_eq!(response.items[0].status, "pending");
     }
 
     #[tokio::test]
-    async fn approve_moves_request_and_logs_event() {
+    async fn approve_credential_creates_fingerprint_marker_and_logs_event() {
         let client = FakeValkeyClient::default();
         store_with_blocked(
             &client,
-            &blocked_request("req-abc12345", "https://a.example", 1),
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
         );
         let store = GovernanceState::new_with_client(client.clone());
 
@@ -1765,15 +2032,17 @@ mod tests {
                 .cloned(),
             Some("approved".to_string())
         );
-        // Verify host-based approval key was set for the DLP module
         assert_eq!(
             client
                 .strings
                 .lock()
                 .expect("strings lock")
-                .get(&approved_host_key("https://a.example"))
+                .get(
+                    &approved_fingerprint_key("aws_access", "a.example", "0123456789abcdef")
+                        .expect("fingerprint approval key"),
+                )
                 .cloned(),
-            Some("1".to_string())
+            Some("approved".to_string())
         );
         assert_eq!(
             client
@@ -1781,6 +2050,36 @@ mod tests {
                 .await
                 .expect("zcard event log"),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn approve_domain_block_creates_host_marker() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "example.com",
+                1,
+                BlockReason::NewDomainPrompt,
+                Some("new_domain_prompt"),
+                None,
+            ),
+        );
+        let store = GovernanceState::new_with_client(client.clone());
+
+        let response = store.approve("req-abc12345").await.expect("approve");
+
+        assert_eq!(response.message, "approved req-abc12345");
+        assert_eq!(
+            client
+                .strings
+                .lock()
+                .expect("strings lock")
+                .get(&approved_host_key("example.com"))
+                .cloned(),
+            Some("1".to_string())
         );
     }
 
@@ -1800,7 +2099,14 @@ mod tests {
         let client = FakeValkeyClient::default();
         store_with_blocked(
             &client,
-            &blocked_request("req-abc12345", "https://a.example", 1),
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
         );
         let store = GovernanceState::new_with_client(client.clone());
 
@@ -1820,6 +2126,105 @@ mod tests {
                 .await
                 .expect("zcard event log"),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn allow_credential_creates_persistent_rule_and_removes_request() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "example.com",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
+        );
+        let store = GovernanceState::new_with_client(client.clone());
+
+        let response = store
+            .allow_credential("req-abc12345")
+            .await
+            .expect("allow credential");
+
+        assert!(response.message.contains("remembered credential allow"));
+        assert_eq!(
+            client
+                .strings
+                .lock()
+                .expect("strings lock")
+                .get(
+                    &credential_allow_key("aws_access", "example.com", "0123456789abcdef")
+                        .expect("credential allow key"),
+                )
+                .cloned(),
+            Some("1".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn list_and_delete_credential_allows_roundtrip() {
+        let client = FakeValkeyClient::default();
+        client.seed_string(
+            credential_allow_key("aws_access", "example.com", "0123456789abcdef")
+                .expect("credential allow key"),
+            "1",
+        );
+        let store = GovernanceState::new_with_client(client.clone());
+
+        let response = store
+            .list_credential_allows()
+            .await
+            .expect("list credential allows");
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].pattern, "aws_access");
+        assert_eq!(response.items[0].host, "example.com");
+
+        store
+            .delete_credential_allow("aws_access", "example.com", "0123456789abcdef")
+            .await
+            .expect("delete credential allow");
+        assert!(
+            !client.strings.lock().expect("strings lock").contains_key(
+                &credential_allow_key("aws_access", "example.com", "0123456789abcdef")
+                    .expect("credential allow key"),
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn bypass_blocked_domain_persists_runtime_bypass() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "example.com",
+                1,
+                BlockReason::NewDomainPrompt,
+                Some("new_domain_prompt"),
+                None,
+            ),
+        );
+        let store = GovernanceState::new_with_client(client.clone());
+
+        let response = store
+            .bypass_blocked_domain("req-abc12345")
+            .await
+            .expect("bypass domain");
+
+        assert_eq!(response.message, "added bypass domain example.com");
+        assert_eq!(
+            client
+                .strings
+                .lock()
+                .expect("strings lock")
+                .get("polis:config:bypass:example.com")
+                .cloned(),
+            Some("bypass".to_string())
         );
     }
 
@@ -1974,7 +2379,14 @@ mod tests {
                 "timestamp": 1_772_707_200_i64,
                 "event_type": "approved_via_cli",
                 "request_id": "req-def67890",
-                "blocked_request": serde_json::to_string(&blocked_request("req-def67890", "https://legacy.example", 1)).expect("serialize blocked request")
+                "blocked_request": serde_json::to_string(&blocked_request(
+                    "req-def67890",
+                    "legacy.example",
+                    1,
+                    BlockReason::CredentialDetected,
+                    Some("aws_access"),
+                    Some("0123456789abcdef"),
+                )).expect("serialize blocked request")
             })
             .to_string(),
         );
@@ -1993,7 +2405,14 @@ mod tests {
         let client = FakeValkeyClient::default();
         store_with_blocked(
             &client,
-            &blocked_request("req-abc12345", "https://a.example", 1),
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
         );
         client.seed_string(approved_key("req-def67890"), "approved");
         client.seed_event(
@@ -2031,7 +2450,14 @@ mod tests {
         let client = FakeValkeyClient::default();
         store_with_blocked(
             &client,
-            &blocked_request("req-abc12345", "https://a.example", 1),
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
         );
         client.seed_event(
             1.0,

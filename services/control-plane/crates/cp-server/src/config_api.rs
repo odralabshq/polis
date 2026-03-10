@@ -4,8 +4,8 @@ use axum::{
     routing::{get, post, put},
 };
 use cp_api_types::{
-    ActionResponse, BypassAddRequest, BypassListResponse, ConfigResponse, LevelRequest,
-    SecurityConfigResponse,
+    ActionResponse, BypassAddRequest, BypassListResponse, ConfigResponse, CredentialAllowsResponse,
+    LevelRequest, SecurityConfigResponse,
 };
 use serde::Deserialize;
 
@@ -13,12 +13,19 @@ use crate::{
     BroadcastMessage, HttpState,
     auth::{self, Permission},
     error::AppResult,
-    state::RuntimeConfigStore,
+    state::{GovernanceStore, RuntimeConfigStore},
 };
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeleteBypassQuery {
     pub domain: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteCredentialAllowQuery {
+    pub pattern: String,
+    pub host: String,
+    pub fingerprint: String,
 }
 
 /// Return the full runtime configuration snapshot.
@@ -130,9 +137,43 @@ where
     Ok(Json(response))
 }
 
+/// Return persistent credential allow rules.
+///
+/// # Errors
+///
+/// Returns an error when the governance store cannot list credential allow rules.
+pub async fn list_credential_allows<S>(
+    State(state): State<HttpState<S>>,
+) -> AppResult<Json<CredentialAllowsResponse>>
+where
+    S: GovernanceStore,
+{
+    Ok(Json(state.store.list_credential_allows().await?))
+}
+
+/// Delete a persistent credential allow rule.
+///
+/// # Errors
+///
+/// Returns an error when the rule cannot be deleted from the governance store.
+pub async fn delete_credential_allow<S>(
+    State(state): State<HttpState<S>>,
+    Query(query): Query<DeleteCredentialAllowQuery>,
+) -> AppResult<Json<ActionResponse>>
+where
+    S: GovernanceStore,
+{
+    let response = state
+        .store
+        .delete_credential_allow(&query.pattern, &query.host, &query.fingerprint)
+        .await?;
+    state.notify(BroadcastMessage::Full);
+    Ok(Json(response))
+}
+
 pub fn routes<S>() -> Router<HttpState<S>>
 where
-    S: RuntimeConfigStore + Clone + Send + Sync + 'static,
+    S: RuntimeConfigStore + GovernanceStore + Clone + Send + Sync + 'static,
 {
     let read_routes = Router::new()
         .route(
@@ -152,6 +193,12 @@ where
             get(list_bypass::<S>).route_layer(axum::middleware::from_fn(|request, next| {
                 auth::require_permission(request, next, Permission::ReadDashboard)
             })),
+        )
+        .route(
+            "/config/credential-allows",
+            get(list_credential_allows::<S>).route_layer(axum::middleware::from_fn(
+                |request, next| auth::require_permission(request, next, Permission::ReadDashboard),
+            )),
         );
 
     let mutate_routes = Router::new()
@@ -168,6 +215,14 @@ where
                 .route_layer(axum::middleware::from_fn(|request, next| {
                     auth::require_permission(request, next, Permission::MutateConfig)
                 })),
+        )
+        .route(
+            "/config/credential-allows",
+            axum::routing::delete(delete_credential_allow::<S>).route_layer(
+                axum::middleware::from_fn(|request, next| {
+                    auth::require_permission(request, next, Permission::MutateConfig)
+                }),
+            ),
         );
 
     read_routes.merge(mutate_routes)

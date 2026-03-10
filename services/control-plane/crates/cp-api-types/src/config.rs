@@ -41,6 +41,18 @@ pub struct BypassAddRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CredentialAllowItem {
+    pub pattern: String,
+    pub host: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CredentialAllowsResponse {
+    pub items: Vec<CredentialAllowItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConfigEvent {
     #[serde(rename = "type")]
     pub event_type: String,
@@ -104,6 +116,17 @@ mod tests {
         });
         assert_json_roundtrip(&BypassAddRequest {
             domain: "internal.corp.com".to_string(),
+        });
+    }
+
+    #[test]
+    fn credential_allow_types_roundtrip() {
+        assert_json_roundtrip(&CredentialAllowsResponse {
+            items: vec![CredentialAllowItem {
+                pattern: "aws_access".to_string(),
+                host: "generativelanguage.googleapis.com".to_string(),
+                fingerprint: "0123456789abcdef".to_string(),
+            }],
         });
     }
 

@@ -73,6 +73,27 @@ enum Commands {
         /// Action to take: allow, prompt, or block
         action: String,
     },
+    /// Persistently allow a credential fingerprint for the blocked request destination
+    AllowCredential {
+        /// The request ID to allow (format: req-[a-f0-9]{8})
+        request_id: String,
+    },
+    /// Add a runtime bypass domain based on a blocked request
+    BypassDomain {
+        /// The request ID whose destination should be bypassed
+        request_id: String,
+    },
+    /// List persistent credential allow rules
+    ListCredentialAllows,
+    /// Delete a persistent credential allow rule
+    DeleteCredentialAllow {
+        /// Credential pattern name (for example: aws_access)
+        pattern: String,
+        /// Host name used by the rule
+        host: String,
+        /// 16-hex credential fingerprint
+        fingerprint: String,
+    },
 }
 
 /// Parse a string into a [`SecurityLevel`], case-insensitive.
@@ -101,12 +122,35 @@ fn parse_auto_approve_action(s: &str) -> Result<AutoApproveAction> {
     }
 }
 
-/// Fetch blocked request data and write audit log entry.
+fn blocked_request_host(blocked_request: &polis_common::BlockedRequest) -> Result<String> {
+    polis_common::normalize_approval_host(&blocked_request.destination)
+        .map_err(|message| anyhow::anyhow!(message))
+}
+
+fn blocked_request_credential_context(
+    blocked_request: &polis_common::BlockedRequest,
+) -> Result<(String, String, String)> {
+    if blocked_request.reason != polis_common::BlockReason::CredentialDetected {
+        bail!("blocked request is not a credential-detected item");
+    }
+
+    let pattern = blocked_request
+        .pattern
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("blocked credential cannot be approved at runtime"))?;
+    let fingerprint = blocked_request
+        .fingerprint
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("blocked credential cannot be approved at runtime"))?;
+    let host = blocked_request_host(blocked_request)?;
+    Ok((pattern, fingerprint, host))
+}
+
+/// Fetch blocked request data after validating the request ID.
 /// Returns (blocked_key, blocked_data, timestamp) on success.
-async fn fetch_and_audit(
+async fn fetch_blocked(
     con: &mut redis::aio::MultiplexedConnection,
     request_id: &str,
-    event_type: &str,
 ) -> Result<(String, String, u64)> {
     polis_common::validate_request_id(request_id).map_err(|e| anyhow::anyhow!(e))?;
 
@@ -123,71 +167,181 @@ async fn fetch_and_audit(
         .context("system clock error")?
         .as_secs();
 
+    Ok((blocked_key, blocked_data, now))
+}
+
+fn queue_audit_entry(
+    pipeline: &mut redis::Pipeline,
+    event_type: &str,
+    request_id: &str,
+    blocked_data: &str,
+    timestamp: u64,
+) {
     let audit_entry = serde_json::json!({
         "event_type": event_type,
         "request_id": request_id,
-        "timestamp": now,
+        "timestamp": timestamp,
         "blocked_request": blocked_data,
     });
-    let _: () = con
-        .zadd(
-            polis_common::keys::EVENT_LOG,
-            audit_entry.to_string(),
-            now as f64,
-        )
-        .await
-        .context("failed to ZADD audit log entry")?;
-
-    Ok((blocked_key, blocked_data, now))
+    pipeline
+        .cmd("ZADD")
+        .arg(polis_common::keys::EVENT_LOG)
+        .arg(timestamp as f64)
+        .arg(audit_entry.to_string())
+        .ignore();
 }
 
 async fn handle_approve(
     con: &mut redis::aio::MultiplexedConnection,
     request_id: &str,
 ) -> Result<()> {
-    let (blocked_key, blocked_data, _) = fetch_and_audit(con, request_id, "approved_via_cli").await?;
+    let (blocked_key, blocked_data, now) = fetch_blocked(con, request_id).await?;
     let approved_key = polis_common::approved_key(request_id);
-
-    redis::pipe()
-        .atomic()
-        .del(&blocked_key)
-        .set_ex(
-            &approved_key,
-            "approved",
-            polis_common::ttl::APPROVED_REQUEST_SECS,
-        )
-        .query_async::<Vec<redis::Value>>(con)
-        .await
-        .context("failed to atomically DEL blocked + SETEX approved")?;
-
-    // Set host-based approval key so the DLP module allows retries
-    // for domain-policy blocks (new_domain_prompt / new_domain_blocked).
-    if let Ok(blocked_request) =
-        serde_json::from_str::<polis_common::BlockedRequest>(&blocked_data)
+    let blocked_request = serde_json::from_str::<polis_common::BlockedRequest>(&blocked_data)
+        .context("failed to parse blocked request")?;
+    let approval_target = if blocked_request.reason == polis_common::BlockReason::CredentialDetected
     {
-        if !blocked_request.destination.is_empty() {
-            let host_key = polis_common::approved_host_key(&blocked_request.destination);
-            con.set_ex::<_, _, ()>(
-                &host_key,
-                "1",
-                polis_common::ttl::APPROVED_REQUEST_SECS,
-            )
-            .await
-            .context("failed to SETEX host-based approval key")?;
-        }
+        let (pattern, fingerprint, host) = blocked_request_credential_context(&blocked_request)?;
+        Some((
+            polis_common::approved_fingerprint_key(&pattern, &host, &fingerprint)
+                .map_err(|message| anyhow::anyhow!(message))?,
+            "approved".to_string(),
+        ))
+    } else if !blocked_request.destination.is_empty() {
+        Some((
+            polis_common::approved_host_key(&blocked_request_host(&blocked_request)?),
+            "1".to_string(),
+        ))
+    } else {
+        None
+    };
+
+    let mut pipeline = redis::pipe();
+    pipeline
+        .atomic()
+        .cmd("DEL")
+        .arg(&blocked_key)
+        .ignore()
+        .cmd("SETEX")
+        .arg(&approved_key)
+        .arg(polis_common::ttl::APPROVED_REQUEST_SECS)
+        .arg("approved")
+        .ignore();
+    if let Some((key, value)) = approval_target {
+        pipeline
+            .cmd("SETEX")
+            .arg(&key)
+            .arg(polis_common::ttl::APPROVED_REQUEST_SECS)
+            .arg(value)
+            .ignore();
     }
+    queue_audit_entry(
+        &mut pipeline,
+        "approved_via_cli",
+        request_id,
+        &blocked_data,
+        now,
+    );
+    pipeline
+        .query_async::<()>(con)
+        .await
+        .context("failed to atomically approve blocked request")?;
 
     println!("approved {}", request_id);
     Ok(())
 }
 
-async fn handle_deny(con: &mut redis::aio::MultiplexedConnection, request_id: &str) -> Result<()> {
-    let (blocked_key, _, _) = fetch_and_audit(con, request_id, "denied_via_cli").await?;
+async fn handle_allow_credential(
+    con: &mut redis::aio::MultiplexedConnection,
+    request_id: &str,
+) -> Result<()> {
+    let (blocked_key, blocked_data, now) = fetch_blocked(con, request_id).await?;
+    let blocked_request = serde_json::from_str::<polis_common::BlockedRequest>(&blocked_data)
+        .context("failed to parse blocked request")?;
+    let (pattern, fingerprint, host) = blocked_request_credential_context(&blocked_request)?;
+    let allow_key = polis_common::credential_allow_key(&pattern, &host, &fingerprint)
+        .map_err(|message| anyhow::anyhow!(message))?;
 
-    let _: () = con
-        .del(&blocked_key)
+    let mut pipeline = redis::pipe();
+    pipeline
+        .atomic()
+        .cmd("DEL")
+        .arg(&blocked_key)
+        .ignore()
+        .cmd("SET")
+        .arg(&allow_key)
+        .arg("1")
+        .ignore();
+    queue_audit_entry(
+        &mut pipeline,
+        "credential_allowed_via_cli",
+        request_id,
+        &blocked_data,
+        now,
+    );
+    pipeline
+        .query_async::<()>(con)
         .await
-        .context("failed to DEL blocked key")?;
+        .context("failed to atomically create credential allow rule")?;
+
+    println!(
+        "remembered credential allow: {} {} {}",
+        pattern, host, fingerprint
+    );
+    Ok(())
+}
+
+async fn handle_bypass_domain(
+    con: &mut redis::aio::MultiplexedConnection,
+    request_id: &str,
+) -> Result<()> {
+    let (blocked_key, blocked_data, now) = fetch_blocked(con, request_id).await?;
+    let blocked_request = serde_json::from_str::<polis_common::BlockedRequest>(&blocked_data)
+        .context("failed to parse blocked request")?;
+    let host = blocked_request_host(&blocked_request)?;
+    let bypass_key = format!("polis:config:bypass:{host}");
+
+    let mut pipeline = redis::pipe();
+    pipeline
+        .atomic()
+        .cmd("DEL")
+        .arg(&blocked_key)
+        .ignore()
+        .cmd("SET")
+        .arg(&bypass_key)
+        .arg("bypass")
+        .ignore();
+    queue_audit_entry(
+        &mut pipeline,
+        "bypass_domain_via_cli",
+        request_id,
+        &blocked_data,
+        now,
+    );
+    pipeline
+        .query_async::<()>(con)
+        .await
+        .context("failed to atomically add bypass domain")?;
+
+    println!("added bypass domain {}", host);
+    Ok(())
+}
+
+async fn handle_deny(con: &mut redis::aio::MultiplexedConnection, request_id: &str) -> Result<()> {
+    let (blocked_key, blocked_data, now) = fetch_blocked(con, request_id).await?;
+    let mut pipeline = redis::pipe();
+    pipeline.atomic().cmd("DEL").arg(&blocked_key).ignore();
+    queue_audit_entry(
+        &mut pipeline,
+        "denied_via_cli",
+        request_id,
+        &blocked_data,
+        now,
+    );
+    pipeline
+        .query_async::<()>(con)
+        .await
+        .context("failed to atomically deny blocked request")?;
 
     println!("denied {}", request_id);
     Ok(())
@@ -232,6 +386,67 @@ async fn handle_list_pending(con: &mut redis::aio::MultiplexedConnection) -> Res
     Ok(())
 }
 
+async fn handle_list_credential_allows(con: &mut redis::aio::MultiplexedConnection) -> Result<()> {
+    let match_pattern = format!("{}:*", polis_common::keys::CREDENTIAL_ALLOW);
+    let mut cursor: u64 = 0;
+    let mut found = 0u64;
+
+    loop {
+        let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(&match_pattern)
+            .arg("COUNT")
+            .arg(100)
+            .query_async(con)
+            .await
+            .context("failed to SCAN credential allow keys")?;
+
+        for key in &batch {
+            if let Some((pattern, host, fingerprint)) =
+                polis_common::parse_credential_allow_key(key)
+            {
+                println!("{pattern}\t{host}\t{fingerprint}");
+                found += 1;
+            }
+        }
+
+        cursor = next_cursor;
+        if cursor == 0 {
+            break;
+        }
+    }
+
+    if found == 0 {
+        println!("no credential allow rules");
+    }
+    Ok(())
+}
+
+async fn handle_delete_credential_allow(
+    con: &mut redis::aio::MultiplexedConnection,
+    pattern: &str,
+    host: &str,
+    fingerprint: &str,
+) -> Result<()> {
+    let key = polis_common::credential_allow_key(pattern, host, fingerprint)
+        .map_err(|message| anyhow::anyhow!(message))?;
+    let deleted: i64 = con
+        .del(&key)
+        .await
+        .context("failed to DEL credential allow rule")?;
+    if deleted == 0 {
+        bail!("no credential allow rule found for {} on {}", pattern, host);
+    }
+    let normalized_host =
+        polis_common::normalize_approval_host(host).map_err(|message| anyhow::anyhow!(message))?;
+    println!(
+        "deleted credential allow: {} {} {}",
+        pattern, normalized_host, fingerprint
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut cli = Cli::parse();
@@ -258,8 +473,20 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Approve { ref request_id } => handle_approve(&mut con, request_id).await,
+        Commands::AllowCredential { ref request_id } => {
+            handle_allow_credential(&mut con, request_id).await
+        }
+        Commands::BypassDomain { ref request_id } => {
+            handle_bypass_domain(&mut con, request_id).await
+        }
         Commands::Deny { ref request_id } => handle_deny(&mut con, request_id).await,
         Commands::ListPending => handle_list_pending(&mut con).await,
+        Commands::ListCredentialAllows => handle_list_credential_allows(&mut con).await,
+        Commands::DeleteCredentialAllow {
+            ref pattern,
+            ref host,
+            ref fingerprint,
+        } => handle_delete_credential_allow(&mut con, pattern, host, fingerprint).await,
         Commands::SetSecurityLevel { ref level } => {
             let _level = parse_security_level(level)?;
             let level_str = level.to_lowercase();

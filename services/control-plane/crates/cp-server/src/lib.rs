@@ -134,6 +134,18 @@ where
             })),
         )
         .route(
+            "/blocked/{id}/allow-credential",
+            post(allow_credential::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::MutateGovernance)
+            })),
+        )
+        .route(
+            "/blocked/{id}/bypass-domain",
+            post(bypass_blocked_domain::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::MutateGovernance)
+            })),
+        )
+        .route(
             "/events",
             get(events::<S>).route_layer(middleware::from_fn(|request, next| {
                 auth::require_permission(request, next, Permission::ReadDashboard)
@@ -407,6 +419,30 @@ where
     S: GovernanceStore,
 {
     let response = state.store.deny(&id).await?;
+    state.notify(BroadcastMessage::Full);
+    Ok(Json(response))
+}
+
+async fn allow_credential<S>(
+    State(state): State<HttpState<S>>,
+    Path(id): Path<String>,
+) -> AppResult<Json<ActionResponse>>
+where
+    S: GovernanceStore,
+{
+    let response = state.store.allow_credential(&id).await?;
+    state.notify(BroadcastMessage::Full);
+    Ok(Json(response))
+}
+
+async fn bypass_blocked_domain<S>(
+    State(state): State<HttpState<S>>,
+    Path(id): Path<String>,
+) -> AppResult<Json<ActionResponse>>
+where
+    S: GovernanceStore,
+{
+    let response = state.store.bypass_blocked_domain(&id).await?;
     state.notify(BroadcastMessage::Full);
     Ok(Json(response))
 }

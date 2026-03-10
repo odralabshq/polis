@@ -15,9 +15,10 @@ use chrono::{TimeZone, Utc};
 use cp_api_types::{
     ActionResponse, AgentResponse, BlockedItem, BlockedListResponse, BypassListResponse,
     ConfigAgentResponse, ConfigResponse, ContainerInfo, ContainerSummary, ContainersResponse,
-    EventItem, EventsResponse, LevelResponse, LogLine, LogsResponse, MetricsHistoryResponse,
-    MetricsPoint, MetricsResponse, ResourceUsage, RuleCreateRequest, RuleItem, RulesResponse,
-    SecurityConfigResponse, StatusResponse, SystemMetrics, WorkspaceResponse,
+    CredentialAllowItem, CredentialAllowsResponse, EventItem, EventsResponse, LevelResponse,
+    LogLine, LogsResponse, MetricsHistoryResponse, MetricsPoint, MetricsResponse, ResourceUsage,
+    RuleCreateRequest, RuleItem, RulesResponse, SecurityConfigResponse, StatusResponse,
+    SystemMetrics, WorkspaceResponse,
 };
 use cp_server::{
     HttpState,
@@ -41,6 +42,7 @@ struct Fixture {
     level: String,
     blocked: Vec<BlockedItem>,
     rules: Vec<RuleItem>,
+    credential_allows: Vec<CredentialAllowItem>,
     events: Vec<EventItem>,
     bypass_domains: Vec<String>,
     fail_status: bool,
@@ -56,7 +58,9 @@ impl Default for Fixture {
             blocked: vec![BlockedItem {
                 request_id: "req-abc12345".to_string(),
                 reason: "credential_detected".to_string(),
-                destination: "https://example.com/api".to_string(),
+                destination: "example.com".to_string(),
+                pattern: Some("aws_access".to_string()),
+                fingerprint: Some("0123456789abcdef".to_string()),
                 blocked_at: Utc
                     .with_ymd_and_hms(2026, 3, 5, 19, 0, 0)
                     .single()
@@ -66,6 +70,11 @@ impl Default for Fixture {
             rules: vec![RuleItem {
                 pattern: "*.example.com/path".to_string(),
                 action: "allow".to_string(),
+            }],
+            credential_allows: vec![CredentialAllowItem {
+                pattern: "aws_access".to_string(),
+                host: "example.com".to_string(),
+                fingerprint: "0123456789abcdef".to_string(),
             }],
             events: vec![EventItem {
                 timestamp: Utc
@@ -132,25 +141,93 @@ impl GovernanceStore for TestStore {
 
     async fn approve(&self, request_id: &str) -> AppResult<ActionResponse> {
         let mut fixture = self.inner.lock().expect("fixture lock");
-        let before = fixture.blocked.len();
-        fixture.blocked.retain(|item| item.request_id != request_id);
-        if fixture.blocked.len() == before {
-            return Err(AppError::NotFound(format!(
-                "no blocked request found for {request_id}"
-            )));
-        }
+        let item = fixture
+            .blocked
+            .iter()
+            .find(|item| item.request_id == request_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::NotFound(format!("no blocked request found for {request_id}"))
+            })?;
+        fixture
+            .blocked
+            .retain(|blocked| blocked.request_id != request_id);
         fixture.approvals += 1;
         fixture.events.insert(
             0,
             EventItem {
                 timestamp: Utc::now(),
-                event_type: "approved_via_control_plane".to_string(),
+                event_type: if item.reason == "credential_detected" {
+                    "credential_approved_temp".to_string()
+                } else {
+                    "approved_via_control_plane".to_string()
+                },
                 request_id: Some(request_id.to_string()),
                 details: "Approved request".to_string(),
             },
         );
         Ok(ActionResponse {
             message: format!("approved {request_id}"),
+        })
+    }
+
+    async fn allow_credential(&self, request_id: &str) -> AppResult<ActionResponse> {
+        let mut fixture = self.inner.lock().expect("fixture lock");
+        let item = fixture
+            .blocked
+            .iter()
+            .find(|item| item.request_id == request_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::NotFound(format!("no blocked request found for {request_id}"))
+            })?;
+        fixture.credential_allows.push(CredentialAllowItem {
+            pattern: item.pattern.unwrap_or_default(),
+            host: item.destination.clone(),
+            fingerprint: item.fingerprint.unwrap_or_default(),
+        });
+        fixture.events.insert(
+            0,
+            EventItem {
+                timestamp: Utc::now(),
+                event_type: "credential_allowed_permanent".to_string(),
+                request_id: Some(request_id.to_string()),
+                details: "Remembered credential allow".to_string(),
+            },
+        );
+        fixture
+            .blocked
+            .retain(|blocked| blocked.request_id != request_id);
+        Ok(ActionResponse {
+            message: format!("remembered credential allow for request {request_id}"),
+        })
+    }
+
+    async fn bypass_blocked_domain(&self, request_id: &str) -> AppResult<ActionResponse> {
+        let mut fixture = self.inner.lock().expect("fixture lock");
+        let item = fixture
+            .blocked
+            .iter()
+            .find(|item| item.request_id == request_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::NotFound(format!("no blocked request found for {request_id}"))
+            })?;
+        fixture.bypass_domains.push(item.destination.clone());
+        fixture.events.insert(
+            0,
+            EventItem {
+                timestamp: Utc::now(),
+                event_type: "bypass_domain_added".to_string(),
+                request_id: Some(request_id.to_string()),
+                details: format!("Bypassed domain {}", item.destination),
+            },
+        );
+        fixture
+            .blocked
+            .retain(|blocked| blocked.request_id != request_id);
+        Ok(ActionResponse {
+            message: format!("added bypass domain {}", item.destination),
         })
     }
 
@@ -244,6 +321,35 @@ impl GovernanceStore for TestStore {
             .retain(|rule| rule.pattern != pattern);
         Ok(ActionResponse {
             message: format!("deleted auto-approve rule {pattern}"),
+        })
+    }
+
+    async fn list_credential_allows(&self) -> AppResult<CredentialAllowsResponse> {
+        Ok(CredentialAllowsResponse {
+            items: self
+                .inner
+                .lock()
+                .expect("fixture lock")
+                .credential_allows
+                .clone(),
+        })
+    }
+
+    async fn delete_credential_allow(
+        &self,
+        pattern: &str,
+        host: &str,
+        fingerprint: &str,
+    ) -> AppResult<ActionResponse> {
+        self.inner
+            .lock()
+            .expect("fixture lock")
+            .credential_allows
+            .retain(|item| {
+                item.pattern != pattern || item.host != host || item.fingerprint != fingerprint
+            });
+        Ok(ActionResponse {
+            message: format!("deleted credential allow for {pattern} on {host}"),
         })
     }
 }
@@ -705,6 +811,35 @@ async fn viewer_cannot_mutate_config_when_auth_is_enabled() {
 }
 
 #[tokio::test]
+async fn operator_can_bypass_blocked_domain_when_auth_is_enabled() {
+    let store = TestStore::new();
+    store.set_auth_enabled(true);
+    let router = store.router();
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/blocked/req-abc12345/bypass-domain")
+                .header(header::AUTHORIZATION, "Bearer polis_operator_token")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        store
+            .inner
+            .lock()
+            .expect("fixture lock")
+            .bypass_domains
+            .contains(&"example.com".to_string())
+    );
+}
+
+#[tokio::test]
 async fn sse_stream_sends_initial_snapshot() {
     let router = TestStore::new().router();
 
@@ -787,6 +922,108 @@ async fn sse_stream_broadcasts_after_mutation() {
         text.contains("approved_via_control_plane")
             || text.contains("\"pending_count\":0")
             || text.contains("event: blocked")
+    );
+}
+
+#[tokio::test]
+async fn credential_allow_routes_work() {
+    let store = TestStore::new();
+    store
+        .inner
+        .lock()
+        .expect("fixture lock")
+        .credential_allows
+        .clear();
+    let router = store.router();
+
+    let allow_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/blocked/req-abc12345/allow-credential")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("allow response");
+    assert_eq!(allow_response.status(), StatusCode::OK);
+
+    let list_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/config/credential-allows")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("list response");
+    assert_eq!(list_response.status(), StatusCode::OK);
+
+    let body = to_bytes(list_response.into_body(), usize::MAX)
+        .await
+        .expect("body bytes");
+    let response: CredentialAllowsResponse =
+        serde_json::from_slice(&body).expect("credential allows response");
+    assert_eq!(response.items.len(), 1);
+    assert_eq!(response.items[0].pattern, "aws_access");
+
+    let delete_response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(
+                    "/api/v1/config/credential-allows?pattern=aws_access&host=example.com&fingerprint=0123456789abcdef",
+                )
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("delete response");
+    assert_eq!(delete_response.status(), StatusCode::OK);
+    assert!(
+        store
+            .inner
+            .lock()
+            .expect("fixture lock")
+            .credential_allows
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn blocked_bypass_domain_route_works() {
+    let store = TestStore::new();
+    store.inner.lock().expect("fixture lock").blocked = vec![BlockedItem {
+        request_id: "req-bypass01".to_string(),
+        reason: "new_domain_prompt".to_string(),
+        destination: "unknown.example".to_string(),
+        pattern: Some("new_domain_prompt".to_string()),
+        fingerprint: None,
+        blocked_at: Utc::now(),
+        status: "pending".to_string(),
+    }];
+    let router = store.router();
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/blocked/req-bypass01/bypass-domain")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        store
+            .inner
+            .lock()
+            .expect("fixture lock")
+            .bypass_domains
+            .contains(&"unknown.example".to_string())
     );
 }
 

@@ -26,7 +26,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table, Tabs},
+    widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Table, Tabs},
 };
 use reqwest::Client;
 use tokio::{
@@ -162,10 +162,26 @@ enum DashboardServerEvent {
 #[derive(Debug, PartialEq, Eq)]
 enum UserAction {
     Approve(String),
+    AllowCredential(String),
+    BypassDomain(String),
     Deny(String),
     SetLevel(String),
     RefreshLogs,
     RefreshContainers,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingConfirmation {
+    AllowCredential {
+        request_id: String,
+        pattern: String,
+        destination: String,
+        fingerprint: String,
+    },
+    BypassDomain {
+        request_id: String,
+        destination: String,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -208,6 +224,7 @@ struct App {
     selected_index: usize,
     connection_state: ConnectionState,
     last_message: Option<FlashMessage>,
+    confirmation: Option<PendingConfirmation>,
     should_quit: bool,
 }
 
@@ -288,6 +305,7 @@ impl App {
             selected_index: 0,
             connection_state: ConnectionState::Connecting,
             last_message: None,
+            confirmation: None,
             should_quit: false,
         }
     }
@@ -319,6 +337,27 @@ impl App {
             return None;
         }
 
+        if let Some(pending) = self.confirmation.clone() {
+            return match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.confirmation = None;
+                    Some(match pending {
+                        PendingConfirmation::AllowCredential { request_id, .. } => {
+                            UserAction::AllowCredential(request_id)
+                        }
+                        PendingConfirmation::BypassDomain { request_id, .. } => {
+                            UserAction::BypassDomain(request_id)
+                        }
+                    })
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.confirmation = None;
+                    None
+                }
+                _ => None,
+            };
+        }
+
         match key.code {
             KeyCode::Char('q') => {
                 self.should_quit = true;
@@ -343,7 +382,27 @@ impl App {
                 None
             }
             KeyCode::Char('a') if self.current_tab == Tab::Blocked => {
-                self.selected_request_id().map(UserAction::Approve)
+                if self
+                    .selected_blocked_item()
+                    .is_some_and(|item| item.reason == "credential_detected")
+                    && !self.selected_blocked_supports_runtime_allow()
+                {
+                    self.flash(
+                        FlashKind::Error,
+                        "this blocked credential cannot be approved at runtime",
+                    );
+                    None
+                } else {
+                    self.selected_request_id().map(UserAction::Approve)
+                }
+            }
+            KeyCode::Char('r') if self.current_tab == Tab::Blocked => {
+                self.begin_allow_confirmation();
+                None
+            }
+            KeyCode::Char('b') if self.current_tab == Tab::Blocked => {
+                self.begin_bypass_confirmation();
+                None
             }
             KeyCode::Char('d') if self.current_tab == Tab::Blocked => {
                 self.selected_request_id().map(UserAction::Deny)
@@ -421,6 +480,65 @@ impl App {
         self.blocked
             .get(self.selected_index)
             .map(|item| item.request_id.clone())
+    }
+
+    fn selected_blocked_item(&self) -> Option<&BlockedItem> {
+        self.blocked.get(self.selected_index)
+    }
+
+    fn selected_blocked_supports_runtime_allow(&self) -> bool {
+        self.selected_blocked_item().is_some_and(|item| {
+            item.reason == "credential_detected"
+                && item.pattern.is_some()
+                && item.fingerprint.is_some()
+        })
+    }
+
+    fn begin_allow_confirmation(&mut self) {
+        let Some(item) = self.selected_blocked_item().cloned() else {
+            return;
+        };
+
+        if item.reason != "credential_detected" {
+            self.flash(
+                FlashKind::Error,
+                "remember allow is only available for credential-detected blocks",
+            );
+            return;
+        }
+
+        let Some(pattern) = item.pattern else {
+            self.flash(
+                FlashKind::Error,
+                "this blocked credential cannot be approved at runtime",
+            );
+            return;
+        };
+        let Some(fingerprint) = item.fingerprint else {
+            self.flash(
+                FlashKind::Error,
+                "this blocked credential cannot be approved at runtime",
+            );
+            return;
+        };
+
+        self.confirmation = Some(PendingConfirmation::AllowCredential {
+            request_id: item.request_id,
+            pattern,
+            destination: item.destination,
+            fingerprint,
+        });
+    }
+
+    fn begin_bypass_confirmation(&mut self) {
+        let Some(item) = self.selected_blocked_item().cloned() else {
+            return;
+        };
+
+        self.confirmation = Some(PendingConfirmation::BypassDomain {
+            request_id: item.request_id,
+            destination: item.destination,
+        });
     }
 
     fn set_connection_state(&mut self, state: ConnectionState) {
@@ -583,6 +701,89 @@ fn truncate_string(text: &str, max_len: usize) -> String {
     format!("{truncated}...")
 }
 
+fn fingerprint_label(value: Option<&str>) -> String {
+    value.map_or_else(
+        || "—".to_string(),
+        |fingerprint| format!("fp:{}", truncate_string(fingerprint, 8)),
+    )
+}
+
+fn blocked_footer_hint(app: &App) -> &'static str {
+    if app.confirmation.is_some() {
+        return "y confirm | n cancel";
+    }
+
+    match app.selected_blocked_item() {
+        Some(item)
+            if item.reason == "credential_detected"
+                && app.selected_blocked_supports_runtime_allow() =>
+        {
+            "a approve once | r remember allow | d deny | b bypass domain | j/k navigate | Tab switch | q quit"
+        }
+        Some(item) if item.reason == "credential_detected" => {
+            "d deny | b bypass domain | j/k navigate | Tab switch | q quit"
+        }
+        Some(_) => "a approve once | d deny | b bypass domain | j/k navigate | Tab switch | q quit",
+        None => "j/k navigate | Tab switch | q quit",
+    }
+}
+
+fn render_confirmation_dialog(frame: &mut Frame<'_>, confirmation: &PendingConfirmation) {
+    let area = centered_rect(60, 8, frame.area());
+    let (title, lines) = match confirmation {
+        PendingConfirmation::AllowCredential {
+            pattern,
+            destination,
+            fingerprint,
+            ..
+        } => (
+            "Remember Credential Allow",
+            vec![
+                format!(
+                    " Permanently allow {pattern} credentials ({}) to:",
+                    fingerprint_label(Some(fingerprint))
+                ),
+                format!(" {destination}"),
+                String::new(),
+                " Press Y to confirm, N to cancel.".to_string(),
+            ],
+        ),
+        PendingConfirmation::BypassDomain { destination, .. } => (
+            "Bypass Domain",
+            vec![
+                " Skip ALL security checks for:".to_string(),
+                format!(" {destination}"),
+                String::new(),
+                " Press Y to confirm, N to cancel.".to_string(),
+            ],
+        ),
+    };
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines.join("\n")).block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        ),
+        area,
+    );
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width.saturating_sub(2)).max(10);
+    let height = height.min(area.height.saturating_sub(2)).max(5);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
 fn level_badge(name: &str, current: &str) -> Span<'static> {
     let style = security_level_style(name);
     if name == current {
@@ -678,6 +879,9 @@ fn render(frame: &mut Frame<'_>, app: &App) {
         Tab::Logs => render_logs_tab(frame, outer[1], app),
     }
     render_footer(frame, outer[2], app);
+    if let Some(confirmation) = &app.confirmation {
+        render_confirmation_dialog(frame, confirmation);
+    }
 }
 
 fn odralabs_header_title() -> Line<'static> {
@@ -1001,6 +1205,8 @@ fn render_blocked_tab(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Cell::from("Request ID").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Destination").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Reason").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Pattern").style(Style::default().add_modifier(Modifier::BOLD)),
+        Cell::from("Fingerprint").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Status").style(Style::default().add_modifier(Modifier::BOLD)),
     ]);
     let inner_height = area.height.saturating_sub(3) as usize;
@@ -1022,6 +1228,8 @@ fn render_blocked_tab(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 Cell::from(truncate_string(&item.request_id, 16)),
                 Cell::from(truncate_string(&item.destination, 30)),
                 Cell::from(item.reason.clone()),
+                Cell::from(item.pattern.clone().unwrap_or_else(|| "—".to_string())),
+                Cell::from(fingerprint_label(item.fingerprint.as_deref())),
                 Cell::from(item.status.clone()),
             ])
             .style(style)
@@ -1033,7 +1241,9 @@ fn render_blocked_tab(frame: &mut Frame<'_>, area: Rect, app: &App) {
         [
             Constraint::Length(18),
             Constraint::Min(20),
-            Constraint::Length(24),
+            Constraint::Length(20),
+            Constraint::Length(16),
+            Constraint::Length(16),
             Constraint::Length(10),
         ],
     )
@@ -1385,7 +1595,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     let hints = match app.current_tab {
         Tab::Dashboard => "1 relaxed | 2 balanced | 3 strict | Tab switch | q quit",
-        Tab::Blocked => "a approve | d deny | j/k navigate | Tab switch | q quit",
+        Tab::Blocked => blocked_footer_hint(app),
         Tab::Events | Tab::Workspace => "j/k navigate | Tab switch | q quit",
         Tab::Logs => "f service | l level | r refresh | j/k scroll | Tab switch | q quit",
     };
@@ -1465,6 +1675,28 @@ async fn approve_request(client: &Client, api_url: &str, id: &str) -> Result<Act
     send_action(
         client
             .post(format!("{api_url}/api/v1/blocked/{id}/approve"))
+            .header(reqwest::header::CONTENT_TYPE, "application/json"),
+    )
+    .await
+}
+
+async fn allow_credential_request(
+    client: &Client,
+    api_url: &str,
+    id: &str,
+) -> Result<ActionResponse> {
+    send_action(
+        client
+            .post(format!("{api_url}/api/v1/blocked/{id}/allow-credential"))
+            .header(reqwest::header::CONTENT_TYPE, "application/json"),
+    )
+    .await
+}
+
+async fn bypass_domain_request(client: &Client, api_url: &str, id: &str) -> Result<ActionResponse> {
+    send_action(
+        client
+            .post(format!("{api_url}/api/v1/blocked/{id}/bypass-domain"))
             .header(reqwest::header::CONTENT_TYPE, "application/json"),
     )
     .await
@@ -1697,7 +1929,6 @@ pub async fn run(args: &DashboardArgs, app: &AppContext) -> Result<ExitCode> {
         bail!("dashboard does not support --json output");
     }
 
-
     // When the user hasn't overridden --api-url, resolve the Multipass VM IP
     // so the dashboard connects to the control-plane inside the VM rather than
     // assuming localhost (which only works when Docker Desktop forwards ports).
@@ -1753,6 +1984,12 @@ async fn run_dashboard_loop(
                         if let Some(action) = app.handle_key(key) {
                             let result = match action {
                                 UserAction::Approve(id) => approve_request(&client, &api_url, &id).await.map(Some),
+                                UserAction::AllowCredential(id) => {
+                                    allow_credential_request(&client, &api_url, &id).await.map(Some)
+                                }
+                                UserAction::BypassDomain(id) => {
+                                    bypass_domain_request(&client, &api_url, &id).await.map(Some)
+                                }
                                 UserAction::Deny(id) => deny_request(&client, &api_url, &id).await.map(Some),
                                 UserAction::SetLevel(level) => set_security_level(&client, &api_url, &level).await.map(Some),
                                 UserAction::RefreshLogs => {
@@ -1808,7 +2045,24 @@ mod tests {
         BlockedItem {
             request_id: id.to_string(),
             reason: "credential_detected".to_string(),
-            destination: "https://example.com".to_string(),
+            destination: "example.com".to_string(),
+            pattern: Some("aws_access".to_string()),
+            fingerprint: Some("0123456789abcdef".to_string()),
+            blocked_at: Utc
+                .with_ymd_and_hms(2026, 3, 6, 12, 0, 0)
+                .single()
+                .expect("timestamp"),
+            status: "pending".to_string(),
+        }
+    }
+
+    fn sample_domain_blocked(id: &str) -> BlockedItem {
+        BlockedItem {
+            request_id: id.to_string(),
+            reason: "new_domain_prompt".to_string(),
+            destination: "unknown.example".to_string(),
+            pattern: Some("new_domain_prompt".to_string()),
+            fingerprint: None,
             blocked_at: Utc
                 .with_ymd_and_hms(2026, 3, 6, 12, 0, 0)
                 .single()
@@ -2042,6 +2296,58 @@ mod tests {
 
         app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn blocked_confirmation_keys_work() {
+        let mut app = App::new();
+        app.current_tab = Tab::Blocked;
+        app.blocked = vec![sample_blocked("req-1")];
+
+        assert_eq!(
+            app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+            None
+        );
+        assert!(matches!(
+            app.confirmation,
+            Some(PendingConfirmation::AllowCredential { .. })
+        ));
+        assert_eq!(
+            app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)),
+            Some(UserAction::AllowCredential("req-1".to_string()))
+        );
+
+        assert_eq!(
+            app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)),
+            None
+        );
+        assert!(matches!(
+            app.confirmation,
+            Some(PendingConfirmation::BypassDomain { .. })
+        ));
+        assert_eq!(
+            app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            None
+        );
+        assert!(app.confirmation.is_none());
+    }
+
+    #[test]
+    fn domain_blocks_do_not_offer_remember_allow() {
+        let mut app = App::new();
+        app.current_tab = Tab::Blocked;
+        app.blocked = vec![sample_domain_blocked("req-1")];
+
+        assert_eq!(
+            app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+            None
+        );
+        assert!(app.confirmation.is_none());
+        assert!(app.last_message.is_some());
+        assert_eq!(
+            app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)),
+            Some(UserAction::Approve("req-1".to_string()))
+        );
     }
 
     #[test]

@@ -112,10 +112,13 @@ EOF
     run grep '^user cp-server .*~polis:auth:tokens:\*' "$TEST_DIR/valkey_users.acl"
     assert_success
 
+    run grep '^user cp-server .*~polis:credential_allow:\*' "$TEST_DIR/valkey_users.acl"
+    assert_success
+
     run grep '^user cp-server .*+INFO' "$TEST_DIR/valkey_users.acl"
     assert_success
 
-    run grep '^user dlp-reader .*~polis:config:bypass:\* .*+SCAN' "$TEST_DIR/valkey_users.acl"
+    run grep '^user dlp-reader .*~polis:approved:\* .*~polis:credential_allow:\* .*~polis:config:bypass:\* .*+EXISTS .*+SCAN' "$TEST_DIR/valkey_users.acl"
     assert_success
 }
 

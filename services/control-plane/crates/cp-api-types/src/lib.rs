@@ -11,7 +11,7 @@ mod workspace;
 
 pub use config::{
     BypassAddRequest, BypassListResponse, ConfigAgentResponse, ConfigEvent, ConfigResponse,
-    SecurityConfigResponse, SecurityOverview,
+    CredentialAllowItem, CredentialAllowsResponse, SecurityConfigResponse, SecurityOverview,
 };
 pub use observability::{
     ContainerMetrics, LogLine, LogsResponse, MetricsHistoryResponse, MetricsPoint, MetricsResponse,
@@ -35,6 +35,10 @@ pub struct BlockedItem {
     pub request_id: String,
     pub reason: String,
     pub destination: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
     pub blocked_at: DateTime<Utc>,
     pub status: String,
 }
@@ -134,6 +138,8 @@ mod tests {
             request_id: "req-abc12345".to_string(),
             reason: "credential_detected".to_string(),
             destination: "https://example.com/api".to_string(),
+            pattern: Some("aws_access".to_string()),
+            fingerprint: Some("0123456789abcdef".to_string()),
             blocked_at: sample_time(),
             status: "pending".to_string(),
         });
@@ -146,6 +152,8 @@ mod tests {
                 request_id: "req-abc12345".to_string(),
                 reason: "credential_detected".to_string(),
                 destination: "https://example.com/api".to_string(),
+                pattern: Some("aws_access".to_string()),
+                fingerprint: Some("0123456789abcdef".to_string()),
                 blocked_at: sample_time(),
                 status: "pending".to_string(),
             }],
@@ -245,6 +253,8 @@ mod tests {
                 request_id,
                 reason,
                 destination,
+                pattern: None,
+                fingerprint: None,
                 blocked_at: sample_time(),
                 status,
             }
