@@ -79,16 +79,7 @@ case "$SUBCMD" in
         esac
         ;;
     onboard)
-        # Onboarding requires interactive input (provider + API key prompt).
-        # `polis exec` pipes through docker exec which can't relay interactive
-        # stdin reliably. Run it inside the workspace instead.
-        echo ""
-        echo "Onboarding requires an interactive terminal."
-        echo ""
-        echo "Connect to the workspace and run it there:"
-        echo "  polis connect"
-        echo "  openclaw onboard"
-        echo ""
+        docker exec -it -u polis -w /app "$CONTAINER" node dist/index.js onboard
         ;;
     cli)
         if [[ $# -eq 0 ]]; then

@@ -398,11 +398,9 @@ where
 {
     reporter.begin_stage(&format!("setting up agent '{agent_name}'..."));
 
-    // Locate the agent directory relative to the polis project root.
-    let agent_dir = std::path::PathBuf::from(VM_ROOT)
-        .join("agents")
-        .join(agent_name);
-    let agent_dir_str = agent_dir.to_string_lossy().to_string();
+    // Use format! instead of PathBuf::join — PathBuf uses OS-native separators
+    // (backslash on Windows), which breaks when the path is sent to the Linux VM.
+    let agent_dir_str = format!("{VM_ROOT}/agents/{agent_name}");
 
     // Verify the agent directory exists in the VM.
     let exists = provisioner
