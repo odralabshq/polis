@@ -58,6 +58,7 @@ typedef struct {
     size_t total_body_len;      /* Total body length seen so far */
     char host[256];             /* Host header value from request */
     int blocked;                /* Whether this request was blocked */
+    int always_blocked;         /* 1 if blocked by always_block pattern (bypass cannot clear) */
     char matched_pattern[64];   /* Name of the pattern that matched */
     int eof;                    /* End of data received */
     size_t error_page_sent;     /* Bytes of error page already sent */
@@ -759,9 +760,14 @@ static void refresh_runtime_bypass_domains(void)
     redisReply *reply = NULL;
     size_t i;
 
+    ci_debug_printf(5, "polis_dlp: bypass refresh starting, "
+                       "valkey_level_ctx=%p\n", (void *)valkey_level_ctx);
+
     strcpy(cursor, "0");
 
     if (valkey_level_ctx == NULL) {
+        ci_debug_printf(5, "polis_dlp: bypass refresh: valkey_level_ctx "
+                           "is NULL, attempting init\n");
         if (dlp_valkey_init_locked() != 0)
             return;
     }
@@ -772,12 +778,23 @@ static void refresh_runtime_bypass_domains(void)
             "SCAN %s MATCH polis:config:bypass:* COUNT 200",
             cursor);
 
+        ci_debug_printf(5, "polis_dlp: bypass refresh SCAN reply=%p "
+                           "type=%d\n",
+                        (void *)reply,
+                        reply ? reply->type : -1);
+
         if (reply == NULL || reply->type == REDIS_REPLY_ERROR ||
             reply->type != REDIS_REPLY_ARRAY || reply->elements != 2 ||
             reply->element[0] == NULL || reply->element[1] == NULL ||
             reply->element[0]->str == NULL ||
             reply->element[1]->type != REDIS_REPLY_ARRAY) {
-            if (reply)
+            if (reply) {
+                ci_debug_printf(5, "polis_dlp: bypass refresh SCAN "
+                                   "error: type=%d elements=%zu str=%s\n",
+                                reply->type,
+                                reply->elements,
+                                reply->str ? reply->str : "(null)");
+            }
                 freeReplyObject(reply);
             if (valkey_level_ctx) {
                 redisFree(valkey_level_ctx);
@@ -798,6 +815,10 @@ static void refresh_runtime_bypass_domains(void)
         strncpy(next_cursor, reply->element[0]->str, sizeof(next_cursor) - 1);
         next_cursor[sizeof(next_cursor) - 1] = '\0';
 
+        ci_debug_printf(5, "polis_dlp: bypass refresh cursor='%s' "
+                           "keys_in_batch=%zu\n",
+                        next_cursor, reply->element[1]->elements);
+
         for (i = 0; i < reply->element[1]->elements; i++) {
             redisReply *key_reply = reply->element[1]->element[i];
             const char *key;
@@ -809,10 +830,17 @@ static void refresh_runtime_bypass_domains(void)
                 continue;
 
             key = key_reply->str;
-            if (strncmp(key, "polis:config:bypass:", 21) != 0)
+            if (strncmp(key, "polis:config:bypass:", 20) != 0) {
+                ci_debug_printf(5, "polis_dlp: bypass refresh "
+                                   "skipping key '%s' (no prefix match)\n",
+                                key);
                 continue;
+            }
 
-            domain = key + 21;
+            domain = key + 20;
+            ci_debug_printf(5, "polis_dlp: bypass refresh "
+                               "found domain '%s' from key '%s'\n",
+                            domain, key);
             resized = realloc(new_domains, sizeof(char *) * (new_count + 1));
             if (resized == NULL) {
                 freeReplyObject(reply);
@@ -1065,6 +1093,10 @@ static int apply_security_policy(const char *host, int has_credential)
     }
     level_snapshot = current_level;
     new_domain = is_new_domain_locked(host);
+    ci_debug_printf(5, "polis_dlp: policy check host='%s' new_domain=%d "
+                       "has_credential=%d bypass_count=%zu counter=%lu\n",
+                    host ? host : "(null)", new_domain, has_credential,
+                    runtime_bypass_count, request_counter);
     pthread_mutex_unlock(&valkey_mutex);
 
     /* Bypass domains skip ALL security checks including credentials.
@@ -1295,7 +1327,10 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
     ci_service_enable_204(srv_xdata);
 
     pattern_count = 0;
-    request_counter = 0;
+    /* Initialize counter so the first request triggers both security level
+     * and bypass cache refresh (counter++ makes it BYPASS_POLL_INTERVAL,
+     * which is divisible by both poll intervals). */
+    request_counter = BYPASS_POLL_INTERVAL - 1;
     current_level = LEVEL_BALANCED;
     current_poll_interval = LEVEL_POLL_INTERVAL;
     bypass_poll_interval = BYPASS_POLL_INTERVAL;
@@ -1332,7 +1367,7 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
                 continue;
             }
             if (regcomp(&patterns[pattern_count].regex, value,
-                        REG_EXTENDED | REG_NOSUB) != 0) {
+                        REG_EXTENDED) != 0) {
                 ci_debug_printf(1, "polis_dlp: ERROR: Failed to compile "
                                    "regex for pattern '%s'\n", name);
                 continue;
@@ -1529,6 +1564,7 @@ void *dlp_init_request_data(ci_request_t *req)
     data->total_body_len = 0;
     data->host[0] = '\0';
     data->blocked = 0;
+    data->always_blocked = 0;
     data->matched_pattern[0] = '\0';
     data->eof = 0;
     data->error_page_sent = 0;
@@ -1623,6 +1659,7 @@ static int check_patterns(const char *body, int body_len,
         if (patterns[i].always_block) {
             data->fingerprint[0] = '\0';
             data->blocked = 1;
+            data->always_blocked = 1;
             strncpy(data->matched_pattern, patterns[i].name,
                     sizeof(data->matched_pattern) - 1);
             data->matched_pattern[
@@ -1635,6 +1672,9 @@ static int check_patterns(const char *body, int body_len,
         compute_match_fingerprint(patterns[i].name, body, &match[0],
                                   data->fingerprint,
                                   sizeof(data->fingerprint));
+
+        ci_debug_printf(5, "polis_dlp: fingerprint computed for pattern '%s': %s\n",
+                        patterns[i].name, data->fingerprint);
 
         /* Pattern has a pre-compiled allow_domain - check host against it */
         if (patterns[i].allow_compiled) {
@@ -1831,6 +1871,21 @@ int dlp_process(ci_request_t *req)
             ci_debug_printf(3, "polis_dlp: PROMPT new domain "
                                "'%s' — security level BALANCED\n",
                            data->host);
+        } else if (policy == 0 && data->blocked == 1) {
+            /* Domain is bypassed/known — unblock credential detection,
+             * UNLESS the block was from an always_block pattern (e.g.,
+             * private keys). Those are never allowed regardless of domain. */
+            if (!data->always_blocked) {
+                data->blocked = 0;
+                data->matched_pattern[0] = '\0';
+                data->fingerprint[0] = '\0';
+                ci_debug_printf(3, "polis_dlp: Credential on bypassed/known "
+                                   "domain '%s' — allowing\n", data->host);
+            } else {
+                ci_debug_printf(3, "polis_dlp: always_block pattern on "
+                                   "bypassed domain '%s' — still blocking\n",
+                               data->host);
+            }
         }
     }
 
