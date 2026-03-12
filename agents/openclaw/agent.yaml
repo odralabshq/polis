@@ -76,7 +76,9 @@ spec:
     dockerInDocker: false
 
   onboarding:
-    - title: "Connect to workspace and add your API key"
-      command: "polis connect  # then run: openclaw onboard"
+    - title: "Add your API key"
+      command: "polis exec openclaw onboard"
+    - title: "Restart to apply changes"
+      command: "polis exec openclaw restart"
 
   commands: commands.sh

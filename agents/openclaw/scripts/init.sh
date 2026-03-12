@@ -131,8 +131,8 @@ if [[ "${1:-}" == "onboard" ]]; then
     echo ""
     echo "[OK] API key for '$provider' saved."
     echo ""
-    echo "Restart to apply:  sudo systemctl restart openclaw"
-    echo "  or from host:    polis exec openclaw cli gateway restart"
+    echo "Restart to apply (from host):"
+    echo "  polis exec openclaw restart"
     exit 0
 fi
 

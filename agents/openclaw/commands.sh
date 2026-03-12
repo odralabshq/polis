@@ -79,7 +79,30 @@ case "$SUBCMD" in
         esac
         ;;
     onboard)
-        docker exec -it -u polis -w /app "$CONTAINER" node dist/index.js onboard
+        # Use the polis-aware wrapper (installed by init.sh) instead of calling
+        # node directly.  The wrapper intercepts `onboard` to write keys into
+        # the correct auth-profiles.json / .env locations and shows accurate
+        # restart instructions.
+        docker exec -it -u polis "$CONTAINER" openclaw onboard
+        ;;
+    restart)
+        log_info "Restarting OpenClaw service..."
+        # In sysbox containers, systemctl restart can hang because systemd
+        # cannot send SIGTERM to the process.  Instead we kill the gateway
+        # process directly and let systemd's Restart=always bring it back.
+        docker exec "$CONTAINER" bash -c '
+            pid=$(systemctl show -p MainPID --value openclaw 2>/dev/null)
+            if [[ -n "$pid" && "$pid" != "0" ]]; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+            systemctl reset-failed openclaw 2>/dev/null || true
+            sleep 2
+            systemctl start openclaw
+        '
+        log_success "OpenClaw service restarted"
+        ;;
+    status)
+        docker exec "$CONTAINER" systemctl status openclaw --no-pager || true
         ;;
     cli)
         if [[ $# -eq 0 ]]; then
@@ -89,6 +112,6 @@ case "$SUBCMD" in
         docker exec -it -u polis -w /app "$CONTAINER" node dist/index.js "$@"
         ;;
     help|*)
-        echo "OpenClaw commands: token, devices, onboard, cli"
+        echo "OpenClaw commands: token, devices, onboard, restart, status, cli"
         ;;
 esac
