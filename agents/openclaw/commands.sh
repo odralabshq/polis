@@ -79,11 +79,9 @@ case "$SUBCMD" in
         esac
         ;;
     onboard)
-        # Use the polis-aware wrapper (installed by init.sh) instead of calling
-        # node directly.  The wrapper intercepts `onboard` to write keys into
-        # the correct auth-profiles.json / .env locations and shows accurate
-        # restart instructions.
-        docker exec -it -u polis "$CONTAINER" openclaw onboard
+        docker exec -it -u polis -w /app "$CONTAINER" node dist/index.js onboard
+        echo ""
+        echo "NOTE: To restart from host, run:  polis exec openclaw restart"
         ;;
     restart)
         log_info "Restarting OpenClaw service..."
