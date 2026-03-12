@@ -44,12 +44,13 @@ pub async fn gather(mp: &(impl InstanceInspector + ShellExecutor)) -> StatusOutp
 
     // VM is running, gather detailed status in a single consolidated call
     let (uptime_seconds, containers) = gather_remote_info(mp).await;
+    let agent_name = read_agent_name(mp).await;
 
     let workspace_info = containers.get("workspace");
     let is_workspace_running = workspace_info.is_some_and(|i| i.state == "running");
 
     let agent = workspace_info.map(|i| AgentStatus {
-        name: "workspace".to_string(),
+        name: agent_name.unwrap_or_else(|| "workspace".to_string()),
         status: match (i.state.as_str(), i.health.as_deref()) {
             ("running", Some("healthy")) => AgentHealth::Healthy,
             ("running", Some("unhealthy")) => AgentHealth::Unhealthy,
@@ -179,6 +180,25 @@ pub fn workspace_unknown() -> WorkspaceStatus {
         status: WorkspaceState::Error,
         uptime_seconds: None,
     }
+}
+
+/// Read the active agent name from the VM's `.env` file.
+///
+/// Returns `None` if the env var is not set or cannot be read.
+async fn read_agent_name(mp: &impl ShellExecutor) -> Option<String> {
+    let output = mp
+        .exec(&[
+            "bash",
+            "-c",
+            "grep '^POLIS_AGENT_NAME=' /opt/polis/.env 2>/dev/null | cut -d= -f2-",
+        ])
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
 }
 
 #[cfg(test)]

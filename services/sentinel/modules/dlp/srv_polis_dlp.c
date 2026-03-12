@@ -1067,13 +1067,16 @@ static int apply_security_policy(const char *host, int has_credential)
     new_domain = is_new_domain_locked(host);
     pthread_mutex_unlock(&valkey_mutex);
 
-    /* Credentials always trigger a HITL prompt at any level */
-    if (has_credential) {
-        return 1;  /* prompt */
+    /* Bypass domains skip ALL security checks including credentials.
+     * When a domain is explicitly bypassed, the user has decided to
+     * trust all traffic to that destination unconditionally. */
+    if (!new_domain) {
+        return 0;  /* known or bypassed domain → allow regardless of credentials */
     }
 
-    if (!new_domain) {
-        return 0;  /* known domain, no credential → allow */
+    /* Credentials on non-bypassed domains always trigger a HITL prompt */
+    if (has_credential) {
+        return 1;  /* prompt */
     }
 
     /* New domain: behavior depends on current security level */

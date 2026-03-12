@@ -149,6 +149,9 @@ where
     // Step 2: Set up new agent (generate artifacts, transfer to VM)
     setup_agent(provisioner, local_fs, new_name, &opts.envs, opts.reporter).await?;
 
+    // Write agent metadata env vars so Docker labels are populated
+    write_agent_env_vars(provisioner, new_name).await?;
+
     // Step 3: Set overlay to new agent artifacts
     set_active_overlay(provisioner, Some(&new_overlay)).await?;
 
@@ -325,6 +328,9 @@ where
             // Activate path (Req 14.1, 14.2)
             setup_agent(provisioner, local_fs, &agent, &opts.envs, opts.reporter).await?;
 
+            // Write agent metadata env vars so Docker labels are populated
+            write_agent_env_vars(provisioner, &agent).await?;
+
             let overlay = overlay_path(&agent);
             set_active_overlay(provisioner, Some(&overlay)).await?;
 
@@ -483,6 +489,51 @@ async fn start_compose(provisioner: &impl ShellExecutor, agent_name: &str) -> Re
         "Failed to start agent compose stack: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    Ok(())
+}
+
+/// Write agent metadata env vars (`POLIS_AGENT_NAME`, `POLIS_AGENT_VERSION`,
+/// `POLIS_AGENT_DISPLAY_NAME`) to the VM's `.env` file so Docker Compose
+/// labels are populated and the control-plane can detect the active agent.
+///
+/// Reads the agent manifest from the VM, strips any existing `POLIS_AGENT_*`
+/// lines from `.env`, then appends the new values.
+async fn write_agent_env_vars(provisioner: &impl ShellExecutor, agent_name: &str) -> Result<()> {
+    let manifest_path = format!("{VM_ROOT}/agents/{agent_name}/agent.yaml");
+    let cat_out = provisioner
+        .exec(&["cat", &manifest_path])
+        .await
+        .context("reading agent.yaml for env vars")?;
+
+    let (name, version, display_name) = if cat_out.status.success() {
+        let manifest_str =
+            String::from_utf8(cat_out.stdout).context("parsing agent.yaml as UTF-8")?;
+        if let Ok(manifest) =
+            serde_yaml_ng::from_str::<polis_common::agent::AgentManifest>(&manifest_str)
+        {
+            (
+                manifest.metadata.name,
+                manifest.metadata.version,
+                manifest.metadata.display_name,
+            )
+        } else {
+            (agent_name.to_string(), "1.0.0".to_string(), agent_name.to_string())
+        }
+    } else {
+        (agent_name.to_string(), "1.0.0".to_string(), agent_name.to_string())
+    };
+
+    let env_path = format!("{VM_ROOT}/.env");
+    // Remove existing POLIS_AGENT_* lines and append new ones
+    let script = format!(
+        "sed -i '/^POLIS_AGENT_NAME=/d;/^POLIS_AGENT_VERSION=/d;/^POLIS_AGENT_DISPLAY_NAME=/d' {env_path} && \
+         printf 'POLIS_AGENT_NAME={name}\\nPOLIS_AGENT_VERSION={version}\\nPOLIS_AGENT_DISPLAY_NAME={display_name}\\n' >> {env_path}"
+    );
+    provisioner
+        .exec(&["bash", "-c", &script])
+        .await
+        .context("writing agent metadata to .env")?;
+
     Ok(())
 }
 
