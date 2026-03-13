@@ -17,6 +17,8 @@ env:
     ghcr.io/odralabshq/polis-certgen-oss:latest
     ghcr.io/odralabshq/polis-sentinel-oss:latest
     ghcr.io/odralabshq/polis-scanner-oss:latest
+    ghcr.io/odralabshq/polis-state-oss:latest
+    ghcr.io/odralabshq/polis-init-oss:latest
     ghcr.io/odralabshq/polis-workspace-oss:latest
     ghcr.io/odralabshq/polis-toolbox-oss:latest
     ghcr.io/odralabshq/polis-control-plane-oss:latest
@@ -280,6 +282,8 @@ jobs:
           - polis-workspace-oss
           - polis-scanner-oss
           - polis-resolver-oss
+          - polis-state-oss
+          - polis-init-oss
           - polis-toolbox-oss
           - polis-control-plane-oss
     steps:
@@ -406,12 +410,31 @@ jobs:
       - name: Wait for healthy
         run: source ./scripts/ci-helpers.sh && wait_for_healthy
 
+      - name: Wait for httpbin
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec polis-gate nc -z 10.20.1.100 8080 2>/dev/null; then
+              echo "httpbin reachable"
+              exit 0
+            fi
+            echo "Waiting for httpbin... ($i/30)"
+            sleep 2
+          done
+          echo "httpbin not reachable after 60s"
+          docker ps -a --filter name=httpbin
+          exit 1
+
       - name: Run E2E tests
         run: ./tests/run-tests.sh --ci e2e
 
       - name: Show logs on failure
         if: failure()
-        run: source ./scripts/ci-helpers.sh && show_logs_on_failure
+        run: |
+          source ./scripts/ci-helpers.sh && show_logs_on_failure
+          echo "=== polis-httpbin ==="
+          docker logs polis-httpbin 2>&1 | tail -20 || true
+          echo "=== docker network inspect ==="
+          docker network inspect polis_external-bridge 2>/dev/null | head -40 || true
 
   # ── Security: Semgrep SAST ─────────────────────────────────────────
   security-semgrep:
