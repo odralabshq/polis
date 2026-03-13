@@ -123,9 +123,9 @@ setup() {
 @test "compose config: workspace has agent metadata labels" {
     run grep -A120 "^  workspace:" "$COMPOSE"
     assert_success
-    assert_output --partial 'polis.agent.name: "${POLIS_AGENT_NAME:-openclaw}"'
-    assert_output --partial 'polis.agent.version: "${POLIS_AGENT_VERSION:-1.0.0}"'
-    assert_output --partial 'polis.agent.display_name: "${POLIS_AGENT_DISPLAY_NAME:-OpenClaw}"'
+    assert_output --partial 'polis.agent.name: "${POLIS_AGENT_NAME:-}"'
+    assert_output --partial 'polis.agent.version: "${POLIS_AGENT_VERSION:-}"'
+    assert_output --partial 'polis.agent.display_name: "${POLIS_AGENT_DISPLAY_NAME:-}"'
 }
 
 @test "compose config: workspace DNS points to resolver" {
