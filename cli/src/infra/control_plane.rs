@@ -504,7 +504,7 @@ mod tests {
         let config = PolisConfig::default();
         let client = ControlPlaneClient::from_config(&config).expect("client");
 
-        assert_eq!(client.base_url.as_str(), "http://localhost:9080/");
+        assert_eq!(client.base_url.as_str(), "http://127.0.0.1:8090/");
         assert_eq!(client.token, None);
     }
 

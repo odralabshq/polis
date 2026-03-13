@@ -271,7 +271,13 @@ impl ReconnectBackoff {
     fn next_delay(&mut self) -> Duration {
         let current = self.next_secs;
         self.next_secs = (self.next_secs.saturating_mul(2)).min(30);
-        Duration::from_secs(current)
+        // Add sub-second jitter (0..250 ms) to prevent thundering herd on reconnect.
+        let jitter_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let jitter_ms = u64::from(jitter_nanos % 250);
+        Duration::from_millis(current * 1000 + jitter_ms)
     }
 
     fn reset(&mut self) {
@@ -339,7 +345,7 @@ impl App {
 
         if let Some(pending) = self.confirmation.clone() {
             return match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                KeyCode::Char('y' | 'Y') => {
                     self.confirmation = None;
                     Some(match pending {
                         PendingConfirmation::AllowCredential { request_id, .. } => {
@@ -350,7 +356,7 @@ impl App {
                         }
                     })
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                     self.confirmation = None;
                     None
                 }
@@ -2535,9 +2541,10 @@ mod tests {
         let mut backoff = ReconnectBackoff::default();
         let delays: Vec<u64> = (0..7).map(|_| backoff.next_delay().as_secs()).collect();
 
+        // With jitter, each delay is at least the base seconds (jitter only adds ms).
         assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30]);
         backoff.reset();
-        assert_eq!(backoff.next_delay(), Duration::from_secs(1));
+        assert!(backoff.next_delay().as_secs() >= 1);
     }
 
     #[test]

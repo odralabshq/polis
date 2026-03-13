@@ -84,10 +84,11 @@ pub async fn write_registry(
 
     // Use exec (not exec_with_stdin) — multipass exec with piped stdin hangs
     // on Windows/Hyper-V. Pass the JSON as a shell variable instead.
-    let script = format!("printf '%s' '{escaped}' > {registry_path}", escaped = json.replace('\'', "'\\''"));
-    let result = provisioner
-        .exec(&["bash", "-c", &script])
-        .await?;
+    let script = format!(
+        "printf '%s' '{escaped}' > {registry_path}",
+        escaped = json.replace('\'', "'\\''")
+    );
+    let result = provisioner.exec(&["bash", "-c", &script]).await?;
 
     anyhow::ensure!(
         result.status.success(),

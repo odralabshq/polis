@@ -517,10 +517,18 @@ async fn write_agent_env_vars(provisioner: &impl ShellExecutor, agent_name: &str
                 manifest.metadata.display_name,
             )
         } else {
-            (agent_name.to_string(), "1.0.0".to_string(), agent_name.to_string())
+            (
+                agent_name.to_string(),
+                "1.0.0".to_string(),
+                agent_name.to_string(),
+            )
         }
     } else {
-        (agent_name.to_string(), "1.0.0".to_string(), agent_name.to_string())
+        (
+            agent_name.to_string(),
+            "1.0.0".to_string(),
+            agent_name.to_string(),
+        )
     };
 
     let env_path = format!("{VM_ROOT}/.env");

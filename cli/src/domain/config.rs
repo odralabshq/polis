@@ -10,7 +10,8 @@ use crate::domain::security::SecurityLevel;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-pub const VALID_CONFIG_KEYS: &[&str] = &["security.level", "control_plane.url", "control_plane.token"];
+pub const VALID_CONFIG_KEYS: &[&str] =
+    &["security.level", "control_plane.url", "control_plane.token"];
 
 // ── Config schema ────────────────────────────────────────────────────────────
 

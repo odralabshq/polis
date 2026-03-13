@@ -86,6 +86,7 @@ impl<S> HttpState<S> {
 }
 
 /// Build the Phase 1 control-plane router.
+#[allow(clippy::too_many_lines)]
 pub fn build_router<S>(state: HttpState<S>) -> Router
 where
     S: GovernanceStore + WorkspaceStore + MetricsStore + LogsStore + RuntimeConfigStore + AuthStore,

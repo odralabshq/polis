@@ -352,7 +352,26 @@ mod tests {
     use super::*;
 
     use crate::domain::config::PolisConfig;
+    use crate::infra::ssh::IdentityKeyProvider;
+    use crate::infra::ssh::KnownHostsOps;
     use crate::infra::ssh::OsSocketsDir;
+
+    struct StubKnownHosts;
+    impl KnownHostsOps for StubKnownHosts {
+        fn update(&self, _host_key_line: &str) -> Result<()> {
+            Ok(())
+        }
+        fn remove(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct StubIdentityProvider;
+    impl IdentityKeyProvider for StubIdentityProvider {
+        fn ensure_identity_key(&self) -> Result<String> {
+            Ok("ssh-ed25519 AAAA stub@test".to_string())
+        }
+    }
 
     fn test_flags(json: bool) -> AppFlags {
         AppFlags {
@@ -368,19 +387,28 @@ mod tests {
     fn build_test_context(config: &PolisConfig, json: bool) -> AppContext {
         let temp = tempfile::TempDir::new().expect("tempdir");
         let state_mgr = StateManager::with_path(temp.path().join("state.json"));
-        let ssh = SshConfigManager::with_paths(
+        let ssh = SshConfigManager::with_deps(
             temp.path().join(".ssh").join("config.d").join("polis"),
             temp.path().join(".ssh").join("config"),
+            temp.path().to_path_buf(),
             Box::new(OsSocketsDir::new(
                 temp.path()
                     .join(".ssh")
                     .join("config.d")
                     .join("polis-sockets"),
             )),
+            Box::new(StubKnownHosts),
+            Box::new(StubIdentityProvider),
         );
 
-        AppContext::build(&test_flags(json), YamlConfigStore, config, state_mgr, ssh)
-            .expect("app context")
+        AppContext::build(
+            &test_flags(json),
+            YamlConfigStore::new(),
+            config,
+            state_mgr,
+            ssh,
+        )
+        .expect("app context")
     }
 
     #[test]
@@ -392,7 +420,7 @@ mod tests {
         assert!(!app.is_json());
         assert_eq!(
             app.control_plane.base_url().as_str(),
-            "http://localhost:9080/"
+            "http://127.0.0.1:8090/"
         );
         assert_eq!(app.control_plane.token(), None);
     }

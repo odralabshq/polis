@@ -466,6 +466,7 @@ mod tests {
             match program {
                 "multipass" => Ok(ok_output(b"multipass 1.16.1\nmultipassd 1.16.1\n")),
                 "df" => Ok(ok_output(b"Filesystem     1K-blocks      Used Available Use% Mounted on\n/dev/sda1      100000000  50000000  50000000  50% /\n")),
+                "powershell" => Ok(ok_output(b"50\n")),
                 _ => anyhow::bail!("unexpected program: {program}"),
             }
         }

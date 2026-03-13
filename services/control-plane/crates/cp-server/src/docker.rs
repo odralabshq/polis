@@ -508,7 +508,7 @@ fn strip_ansi_sequences(message: &str) -> String {
         if ch == '\u{1b}' {
             if matches!(chars.peek(), Some('[')) {
                 chars.next();
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     if ('@'..='~').contains(&next) {
                         break;
                     }
@@ -1242,16 +1242,16 @@ mod tests {
         assert_eq!(detect_log_level("panic in worker"), "error");
 
         // Explicit markers take precedence.
-        assert_eq!(detect_log_level("[INFO] 10.10.1.3 - AAAA IN gate.msh."), "info");
+        assert_eq!(
+            detect_log_level("[INFO] 10.10.1.3 - AAAA IN gate.msh."),
+            "info"
+        );
         assert_eq!(detect_log_level("[ERROR] connection refused"), "error");
         assert_eq!(detect_log_level("[WARN] slow query"), "warn");
 
         // "NOERROR" (DNS rcode) must NOT be classified as error.
         assert_eq!(detect_log_level("rcode NOERROR answer 0"), "info");
-        assert_eq!(
-            detect_log_level("[INFO] query AAAA rcode NOERROR"),
-            "info"
-        );
+        assert_eq!(detect_log_level("[INFO] query AAAA rcode NOERROR"), "info");
     }
 
     #[test]
