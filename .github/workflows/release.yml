@@ -90,17 +90,17 @@ jobs:
             -subj "/C=US/ST=Local/L=Local/O=Polis/OU=Gateway/CN=Polis CA"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Login to dhi.io
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: dhi.io
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -139,7 +139,7 @@ jobs:
           done
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
 
       - name: Sign images and generate digest manifest
         run: |
@@ -178,63 +178,63 @@ jobs:
           retention-days: 1
 
       - name: Generate SBOM for resolver image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-resolver-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-resolver.spdx.json
           output-file: .build/sbom-resolver.spdx.json
 
       - name: Generate SBOM for certgen image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-certgen-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-certgen.spdx.json
           output-file: .build/sbom-certgen.spdx.json
 
       - name: Generate SBOM for gate image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-gate-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-gate.spdx.json
           output-file: .build/sbom-gate.spdx.json
 
       - name: Generate SBOM for sentinel image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-sentinel-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-sentinel.spdx.json
           output-file: .build/sbom-sentinel.spdx.json
 
       - name: Generate SBOM for scanner image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-scanner-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-scanner.spdx.json
           output-file: .build/sbom-scanner.spdx.json
 
       - name: Generate SBOM for workspace image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-workspace-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-workspace.spdx.json
           output-file: .build/sbom-workspace.spdx.json
 
       - name: Generate SBOM for init image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-init-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-init.spdx.json
           output-file: .build/sbom-init.spdx.json
 
       - name: Generate SBOM for state image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-state-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-state.spdx.json
           output-file: .build/sbom-state.spdx.json
 
       - name: Generate SBOM for toolbox image
-        uses: anchore/sbom-action@17ae1740179002c89186b61233e0f892c3118b11 # v0.23.0
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-toolbox-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-toolbox.spdx.json
@@ -256,7 +256,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Download image-digests artifact
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: image-digests
           path: .build/
@@ -326,7 +326,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Download prepared assets
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: prepared-assets
           path: .build/assets/
@@ -465,20 +465,20 @@ jobs:
           fi
 
       - name: Download CLI artifacts
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: cli-*
           path: ./cli-bin
           merge-multiple: true
 
       - name: Download image-digests artifact
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: image-digests
           path: ./release-assets
 
       - name: Download SBOMs artifacts
-        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: sbom-*
           path: ./release-assets
