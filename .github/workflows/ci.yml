@@ -17,8 +17,6 @@ env:
     ghcr.io/odralabshq/polis-certgen-oss:latest
     ghcr.io/odralabshq/polis-sentinel-oss:latest
     ghcr.io/odralabshq/polis-scanner-oss:latest
-    ghcr.io/odralabshq/polis-state-oss:latest
-    ghcr.io/odralabshq/polis-init-oss:latest
     ghcr.io/odralabshq/polis-workspace-oss:latest
     ghcr.io/odralabshq/polis-toolbox-oss:latest
     ghcr.io/odralabshq/polis-control-plane-oss:latest
@@ -282,8 +280,6 @@ jobs:
           - polis-workspace-oss
           - polis-scanner-oss
           - polis-resolver-oss
-          - polis-state-oss
-          - polis-init-oss
           - polis-toolbox-oss
           - polis-control-plane-oss
     steps:
