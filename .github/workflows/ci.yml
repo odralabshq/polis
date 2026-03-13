@@ -404,7 +404,7 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.test.yml up -d httpbin
 
       - name: Wait for healthy
-        run: source ./scripts/ci-helpers.sh && wait_for_healthy
+        run: source ./scripts/ci-helpers.sh && wait_for_healthy 90
 
       - name: Wait for httpbin
         run: |
@@ -420,8 +420,25 @@ jobs:
           docker ps -a --filter name=httpbin
           exit 1
 
+      - name: Verify containers and warm up ICAP chain
+        run: |
+          echo "=== Container status ==="
+          docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+          echo ""
+          echo "=== Warming up ICAP chain ==="
+          for i in 1 2 3 4 5; do
+            if docker exec polis-workspace curl -sf -o /dev/null --connect-timeout 5 \
+                --proxy "http://10.10.1.10:8080" "http://10.20.1.100:8080/get" 2>/dev/null; then
+              echo "ICAP chain warm (attempt $i)"
+              break
+            fi
+            echo "ICAP warmup attempt $i failed, retrying..."
+            sleep 3
+          done
+
       - name: Run E2E tests
         run: ./tests/run-tests.sh --ci e2e
+        timeout-minutes: 15
 
       - name: Show logs on failure
         if: failure()
@@ -431,6 +448,12 @@ jobs:
           docker logs polis-httpbin 2>&1 | tail -20 || true
           echo "=== docker network inspect ==="
           docker network inspect polis_external-bridge 2>/dev/null | head -40 || true
+          echo "=== Container health details ==="
+          for c in polis-gate polis-sentinel polis-state polis-toolbox polis-control-plane polis-workspace; do
+            health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo "missing")
+            state=$(docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null || echo "missing")
+            echo "$c: state=$state health=$health"
+          done
 
   # ── Security: Semgrep SAST ─────────────────────────────────────────
   security-semgrep:
