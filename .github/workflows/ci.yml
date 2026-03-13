@@ -437,12 +437,25 @@ jobs:
           done
 
       - name: Run E2E tests
-        run: ./tests/run-tests.sh --ci e2e
+        run: |
+          mkdir -p /tmp/test-results
+          ./tests/run-tests.sh --ci e2e 2>&1 | tee /tmp/test-results/e2e-output.log
         timeout-minutes: 15
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: e2e-test-results
+          path: /tmp/test-results/
+          retention-days: 3
 
       - name: Show logs on failure
         if: failure()
         run: |
+          echo "=== E2E Test Output ==="
+          cat /tmp/test-results/e2e-output.log 2>/dev/null || echo "No test output captured"
+          echo ""
           source ./scripts/ci-helpers.sh && show_logs_on_failure
           echo "=== polis-httpbin ==="
           docker logs polis-httpbin 2>&1 | tail -20 || true
