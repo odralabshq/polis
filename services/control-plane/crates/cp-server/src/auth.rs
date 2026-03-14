@@ -104,6 +104,16 @@ impl AuthSession {
     }
 }
 
+/// Authentication middleware that validates Bearer tokens from the
+/// `Authorization` header or `?token=` query parameter.
+///
+/// # CSRF Resistance
+///
+/// This middleware intentionally uses Bearer tokens (not cookies) for
+/// authentication. Bearer tokens in `Authorization` headers are not
+/// automatically attached by browsers, making the API inherently resistant
+/// to CSRF attacks. If cookie-based authentication is ever added, explicit
+/// CSRF token validation must be implemented.
 pub async fn auth_middleware<S>(
     State(state): State<HttpState<S>>,
     mut request: Request<Body>,
@@ -207,6 +217,16 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// Extract a token from the `?token=` query parameter.
+///
+/// # Security Note
+///
+/// Query-string tokens are required for `EventSource` (SSE) connections
+/// which do not support custom headers. The dashboard JavaScript strips
+/// the token from the URL bar via `history.replaceState` immediately
+/// after reading it to prevent leaking in browser history and Referer
+/// headers. Server-side access logs should avoid recording full query
+/// strings when auth is enabled.
 fn query_token(query: Option<&str>) -> Option<String> {
     query.and_then(|query| {
         query

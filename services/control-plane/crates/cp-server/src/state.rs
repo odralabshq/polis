@@ -51,6 +51,10 @@ use crate::{
 const EVENT_LOG_MAX_ENTRIES: usize = 1_000;
 const AUTH_FAILURE_LIMIT: usize = 10;
 const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+/// Trigger a full sweep of stale auth-failure entries when the map exceeds
+/// this many tracked client IDs, bounding memory growth from distributed
+/// brute-force attempts.
+const AUTH_MAX_TRACKED_CLIENTS: usize = 10_000;
 const AUTH_TOKEN_PREFIX: &str = "polis:auth:tokens:";
 const RUNTIME_BYPASS_PREFIX: &str = "polis:config:bypass:";
 const DEFAULT_AGENT_NAME: &str = "openclaw";
@@ -401,6 +405,18 @@ impl AuthState {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
+
+        // Periodic cleanup: when the map grows beyond the threshold, sweep
+        // all entries and remove those with no recent failures. This bounds
+        // memory usage under distributed brute-force attacks where many
+        // unique client IPs each fail a small number of times.
+        if failures.len() > AUTH_MAX_TRACKED_CLIENTS {
+            failures.retain(|_, timestamps| {
+                timestamps.retain(|t| now.duration_since(*t) <= AUTH_FAILURE_WINDOW);
+                !timestamps.is_empty()
+            });
+        }
+
         let window = failures.entry(client_id.to_string()).or_default();
         window.retain(|timestamp| now.duration_since(*timestamp) <= AUTH_FAILURE_WINDOW);
         window.push(now);

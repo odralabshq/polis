@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
-umask 022
+# Restrictive umask: password files get chmod 600 explicitly, but this
+# ensures any other files created by the script default to owner-only.
+umask 077
 
 # =============================================================================
 # Valkey Secrets Generator
@@ -98,6 +100,11 @@ detect_docker_gid() {
     fi
 }
 
+# Valkey ACL requires passwords hashed as SHA-256 hex strings (the
+# "#<hash>" format). This is a single unsalted pass — weaker than
+# bcrypt/argon2 — but is the only format Valkey supports. The generated
+# passwords have ~192 bits of entropy (openssl rand -base64 32), making
+# offline brute-force infeasible even with fast SHA-256 cracking.
 hash_password() {
     echo -n "$1" | sha256sum | awk '{print $1}'
 }

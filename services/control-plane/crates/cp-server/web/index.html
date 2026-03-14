@@ -759,6 +759,17 @@
 
     <script>
       const authToken = new URLSearchParams(window.location.search).get("token") || "";
+
+      // Security: strip token from URL to prevent leaking in browser
+      // history, Referer headers, and shoulder-surfing. The token is
+      // kept in memory for API calls but removed from the address bar.
+      if (authToken) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("token");
+        const cleaned = cleanUrl.pathname + cleanUrl.search + cleanUrl.hash;
+        window.history.replaceState({}, document.title, cleaned || "/");
+      }
+
       const state = {
         status: null,
         blocked: [],
@@ -1231,61 +1242,78 @@
         const streamUrl = authToken
           ? `/api/v1/stream?token=${encodeURIComponent(authToken)}`
           : "/api/v1/stream";
-        const source = new EventSource(streamUrl);
 
-        source.addEventListener("open", () => setConnectionStatus(true));
-        source.addEventListener("error", () => setConnectionStatus(false));
+        let retryDelay = 1000;
+        const maxRetryDelay = 30000;
 
-        source.addEventListener("status", (event) => {
-          state.status = JSON.parse(event.data);
-          renderDashboard();
-          setLastUpdate();
-        });
+        function connect() {
+          const source = new EventSource(streamUrl);
 
-        source.addEventListener("blocked", (event) => {
-          state.blocked = JSON.parse(event.data).items;
-          renderBlockedRequests();
-          setLastUpdate();
-        });
+          source.addEventListener("open", () => {
+            setConnectionStatus(true);
+            retryDelay = 1000; // reset backoff on successful connection
+          });
 
-        source.addEventListener("event_log", (event) => {
-          state.events = JSON.parse(event.data).events;
-          renderEvents();
-          setLastUpdate();
-        });
+          source.addEventListener("error", () => {
+            setConnectionStatus(false);
+            source.close();
+            window.setTimeout(() => connect(), retryDelay);
+            retryDelay = Math.min(retryDelay * 2, maxRetryDelay);
+          });
 
-        source.addEventListener("rules", (event) => {
-          state.rules = JSON.parse(event.data).rules;
-          renderRules();
-          setLastUpdate();
-        });
+          source.addEventListener("status", (event) => {
+            state.status = JSON.parse(event.data);
+            renderDashboard();
+            setLastUpdate();
+          });
 
-        source.addEventListener("workspace", (event) => {
-          state.workspace = JSON.parse(event.data);
-          renderDashboard();
-          renderWorkspace();
-          setLastUpdate();
-        });
+          source.addEventListener("blocked", (event) => {
+            state.blocked = JSON.parse(event.data).items;
+            renderBlockedRequests();
+            setLastUpdate();
+          });
 
-        source.addEventListener("agent", (event) => {
-          state.agent = JSON.parse(event.data);
-          renderDashboard();
-          renderWorkspace();
-          setLastUpdate();
-        });
+          source.addEventListener("event_log", (event) => {
+            state.events = JSON.parse(event.data).events;
+            renderEvents();
+            setLastUpdate();
+          });
 
-        source.addEventListener("metrics", (event) => {
-          state.metrics = JSON.parse(event.data);
-          mergeContainerMetrics(state.metrics.containers || []);
-          renderDashboard();
-          renderWorkspace();
-          setLastUpdate();
-        });
+          source.addEventListener("rules", (event) => {
+            state.rules = JSON.parse(event.data).rules;
+            renderRules();
+            setLastUpdate();
+          });
 
-        source.addEventListener("config", (event) => {
-          const payload = JSON.parse(event.data);
-          showToast(`Config updated: ${payload.type}`, "success");
-        });
+          source.addEventListener("workspace", (event) => {
+            state.workspace = JSON.parse(event.data);
+            renderDashboard();
+            renderWorkspace();
+            setLastUpdate();
+          });
+
+          source.addEventListener("agent", (event) => {
+            state.agent = JSON.parse(event.data);
+            renderDashboard();
+            renderWorkspace();
+            setLastUpdate();
+          });
+
+          source.addEventListener("metrics", (event) => {
+            state.metrics = JSON.parse(event.data);
+            mergeContainerMetrics(state.metrics.containers || []);
+            renderDashboard();
+            renderWorkspace();
+            setLastUpdate();
+          });
+
+          source.addEventListener("config", (event) => {
+            const payload = JSON.parse(event.data);
+            showToast(`Config updated: ${payload.type}`, "success");
+          });
+        }
+
+        connect();
       }
 
       document.addEventListener("DOMContentLoaded", () => {

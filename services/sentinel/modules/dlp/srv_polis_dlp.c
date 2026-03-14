@@ -135,6 +135,14 @@ static const char OTT_CHARSET[] =
  * @param dst       Output buffer
  * @param dst_size  Size of output buffer (must be >= 1)
  */
+/*
+ * escape_json_string - Escape a string for safe embedding in JSON values.
+ *
+ * Control characters (< 0x20) are intentionally dropped rather than
+ * escaped as \uXXXX. This prevents injection but means values may not
+ * round-trip perfectly. Acceptable for diagnostic headers and Valkey
+ * payloads where fidelity of control chars is not required.
+ */
 static void escape_json_string(const char *src, char *dst, size_t dst_size)
 {
     size_t j = 0;
@@ -307,10 +315,28 @@ static int credential_approval_exists(const char *pattern, const char *host,
     }
 
     hex_encode_component(host, encoded_host, sizeof(encoded_host));
-    snprintf(temp_key, sizeof(temp_key), "polis:approved:fp:%s:%s:%s",
-             pattern, encoded_host, fingerprint);
-    snprintf(allow_key, sizeof(allow_key), "polis:credential_allow:%s:%s:%s",
-             pattern, encoded_host, fingerprint);
+
+    /* Fail-closed: if the Valkey key is truncated we might match the
+     * wrong entry (false approval) or miss a match (false block).
+     * Treat truncation as "not approved" to stay safe. */
+    if ((size_t)snprintf(temp_key, sizeof(temp_key),
+                         "polis:approved:fp:%s:%s:%s",
+                         pattern, encoded_host, fingerprint)
+        >= sizeof(temp_key)) {
+        ci_debug_printf(1, "polis_dlp: approval temp_key truncated "
+                           "for pattern=%s host=%s — denying\n",
+                        pattern, host);
+        return 0;
+    }
+    if ((size_t)snprintf(allow_key, sizeof(allow_key),
+                         "polis:credential_allow:%s:%s:%s",
+                         pattern, encoded_host, fingerprint)
+        >= sizeof(allow_key)) {
+        ci_debug_printf(1, "polis_dlp: allow_key truncated "
+                           "for pattern=%s host=%s — denying\n",
+                        pattern, host);
+        return 0;
+    }
 
     pthread_mutex_lock(&gov_valkey_mutex);
     reply = redisCommand(valkey_gov_ctx, "EXISTS %s %s", temp_key, allow_key);
@@ -1621,6 +1647,12 @@ void dlp_release_request_data(void *data)
 /*
  * check_patterns - Scan a body buffer against all loaded DLP patterns.
  *
+ * SECURITY NOTE: Patterns are compiled from polis_dlp.conf at service
+ * init time and run via POSIX regexec() against untrusted HTTP body
+ * content. All patterns MUST be reviewed for catastrophic backtracking
+ * (ReDoS) resistance before deployment. The MAX_BODY_SCAN limit (1 MB)
+ * provides a partial mitigation by capping input size.
+ *
  * Iterates through all loaded credential patterns and checks the body
  * for matches. For each match:
  *   - If always_block is set, the request is blocked immediately.
@@ -1898,27 +1930,32 @@ int dlp_process(ci_request_t *req)
          strcmp(data->matched_pattern, "new_domain_blocked") == 0)) {
         if (ensure_gov_valkey_connected()) {
             char host_key[320];
-            snprintf(host_key, sizeof(host_key),
-                     "polis:approved:host:%s", data->host);
+            if ((size_t)snprintf(host_key, sizeof(host_key),
+                                 "polis:approved:host:%s", data->host)
+                >= sizeof(host_key)) {
+                ci_debug_printf(1, "polis_dlp: host_key truncated "
+                                   "for host=%s — skipping approval check\n",
+                                data->host);
+            } else {
+                pthread_mutex_lock(&gov_valkey_mutex);
+                redisReply *approved_reply = redisCommand(
+                    valkey_gov_ctx, "EXISTS %s", host_key);
 
-            pthread_mutex_lock(&gov_valkey_mutex);
-            redisReply *approved_reply = redisCommand(
-                valkey_gov_ctx, "EXISTS %s", host_key);
-
-            if (approved_reply &&
-                approved_reply->type == REDIS_REPLY_INTEGER &&
-                approved_reply->integer == 1) {
-                /* Host has been recently approved — allow through */
-                ci_debug_printf(3, "polis_dlp: "
-                    "Host '%s' has active approval — "
-                    "allowing blocked request through\n",
-                    data->host);
-                data->blocked = 0;
-                data->matched_pattern[0] = '\0';
-                data->fingerprint[0] = '\0';
+                if (approved_reply &&
+                    approved_reply->type == REDIS_REPLY_INTEGER &&
+                    approved_reply->integer == 1) {
+                    /* Host has been recently approved — allow through */
+                    ci_debug_printf(3, "polis_dlp: "
+                        "Host '%s' has active approval — "
+                        "allowing blocked request through\n",
+                        data->host);
+                    data->blocked = 0;
+                    data->matched_pattern[0] = '\0';
+                    data->fingerprint[0] = '\0';
+                }
+                if (approved_reply) freeReplyObject(approved_reply);
+                pthread_mutex_unlock(&gov_valkey_mutex);
             }
-            if (approved_reply) freeReplyObject(approved_reply);
-            pthread_mutex_unlock(&gov_valkey_mutex);
         }
     }
 
