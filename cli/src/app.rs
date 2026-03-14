@@ -15,6 +15,7 @@ use crate::application::ports::{
 use crate::infra::assets::EmbeddedAssets;
 use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, TokioCommandRunner};
 use crate::infra::config::YamlConfigStore;
+use crate::infra::control_plane::ControlPlaneClient;
 use crate::infra::fs::OsFs;
 use crate::infra::network::TokioNetworkProbe;
 use crate::infra::provisioner::MultipassProvisioner;
@@ -88,17 +89,21 @@ pub struct AppContext {
     pub local_fs: OsFs,
     /// Configuration store.
     pub config_store: YamlConfigStore,
+    /// Control-plane HTTP client.
+    pub control_plane: ControlPlaneClient,
 }
 
 impl AppContext {
-    /// Construct an `AppContext` from top-level CLI flags.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `StateManager::new()` fails (home directory not found).
-    pub fn new(flags: &AppFlags) -> Result<Self> {
+    fn build(
+        flags: &AppFlags,
+        config_store: YamlConfigStore,
+        config: &crate::domain::config::PolisConfig,
+        state_mgr: StateManager,
+        ssh: SshConfigManager,
+    ) -> Result<Self> {
         let ci_env = std::env::var("CI").is_ok() || std::env::var("POLIS_YES").is_ok();
         let non_interactive = flags.behaviour.yes || ci_env;
+        let control_plane = ControlPlaneClient::from_config(config)?;
 
         let mode = if flags.output.json {
             OutputMode::Json
@@ -114,15 +119,33 @@ impl AppContext {
             output: OutputContext::new(effective_no_color, is_tty, flags.output.quiet),
             mode,
             provisioner: MultipassProvisioner::default_runner(),
-            state_mgr: StateManager::new()?,
+            state_mgr,
             assets: EmbeddedAssets,
-            ssh: SshConfigManager::new()?,
+            ssh,
             non_interactive,
             cmd_runner: TokioCommandRunner::new(DEFAULT_CMD_TIMEOUT),
             network_probe: TokioNetworkProbe,
             local_fs: OsFs,
-            config_store: YamlConfigStore::new(),
+            config_store,
+            control_plane,
         })
+    }
+
+    /// Construct an `AppContext` from top-level CLI flags.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `StateManager::new()` fails (home directory not found).
+    pub fn new(flags: &AppFlags) -> Result<Self> {
+        let config_store = YamlConfigStore::new();
+        let config = config_store.load()?;
+        Self::build(
+            flags,
+            config_store,
+            &config,
+            StateManager::new()?,
+            SshConfigManager::new()?,
+        )
     }
 
     /// Returns `true` when JSON output mode is active.
@@ -320,5 +343,102 @@ impl App for AppContext {
     }
     fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
         self.assets_dir()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    use crate::domain::config::PolisConfig;
+    use crate::infra::ssh::IdentityKeyProvider;
+    use crate::infra::ssh::KnownHostsOps;
+    use crate::infra::ssh::OsSocketsDir;
+
+    struct StubKnownHosts;
+    impl KnownHostsOps for StubKnownHosts {
+        fn update(&self, _host_key_line: &str) -> Result<()> {
+            Ok(())
+        }
+        fn remove(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct StubIdentityProvider;
+    impl IdentityKeyProvider for StubIdentityProvider {
+        fn ensure_identity_key(&self) -> Result<String> {
+            Ok("ssh-ed25519 AAAA stub@test".to_string())
+        }
+    }
+
+    fn test_flags(json: bool) -> AppFlags {
+        AppFlags {
+            output: OutputFlags {
+                no_color: true,
+                quiet: false,
+                json,
+            },
+            behaviour: BehaviourFlags { yes: false },
+        }
+    }
+
+    fn build_test_context(config: &PolisConfig, json: bool) -> AppContext {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let state_mgr = StateManager::with_path(temp.path().join("state.json"));
+        let ssh = SshConfigManager::with_deps(
+            temp.path().join(".ssh").join("config.d").join("polis"),
+            temp.path().join(".ssh").join("config"),
+            temp.path().to_path_buf(),
+            Box::new(OsSocketsDir::new(
+                temp.path()
+                    .join(".ssh")
+                    .join("config.d")
+                    .join("polis-sockets"),
+            )),
+            Box::new(StubKnownHosts),
+            Box::new(StubIdentityProvider),
+        );
+
+        AppContext::build(
+            &test_flags(json),
+            YamlConfigStore::new(),
+            config,
+            state_mgr,
+            ssh,
+        )
+        .expect("app context")
+    }
+
+    #[test]
+    fn build_uses_default_control_plane_config() {
+        let config = PolisConfig::default();
+        let app = build_test_context(&config, false);
+
+        assert_eq!(app.mode, OutputMode::Human);
+        assert!(!app.is_json());
+        assert_eq!(
+            app.control_plane.base_url().as_str(),
+            "http://127.0.0.1:8090/"
+        );
+        assert_eq!(app.control_plane.token(), None);
+    }
+
+    #[test]
+    fn build_honors_explicit_control_plane_config() {
+        let mut config = PolisConfig::default();
+        config.control_plane.url = "https://control.example.test:9443/api".to_string();
+        config.control_plane.token = Some("secret-token".to_string());
+
+        let app = build_test_context(&config, true);
+
+        assert_eq!(app.mode, OutputMode::Json);
+        assert!(app.is_json());
+        assert_eq!(
+            app.control_plane.base_url().as_str(),
+            "https://control.example.test:9443/api/"
+        );
+        assert_eq!(app.control_plane.token(), Some("secret-token"));
     }
 }

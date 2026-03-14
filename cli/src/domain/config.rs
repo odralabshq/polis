@@ -10,7 +10,8 @@ use crate::domain::security::SecurityLevel;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-pub const VALID_CONFIG_KEYS: &[&str] = &["security.level"];
+pub const VALID_CONFIG_KEYS: &[&str] =
+    &["security.level", "control_plane.url", "control_plane.token"];
 
 // ── Config schema ────────────────────────────────────────────────────────────
 
@@ -21,6 +22,9 @@ pub struct PolisConfig {
     /// Security settings.
     #[serde(default)]
     pub security: SecurityConfig,
+    /// Control-plane connection settings.
+    #[serde(default)]
+    pub control_plane: ControlPlaneConfig,
 }
 
 /// Security policy configuration.
@@ -29,6 +33,30 @@ pub struct SecurityConfig {
     /// Security level: relaxed, balanced (default), or strict.
     #[serde(default)]
     pub level: SecurityLevel,
+}
+
+/// Control-plane connection settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlPlaneConfig {
+    /// Base URL of the control-plane HTTP API (e.g. `http://10.30.1.2:8090`).
+    #[serde(default = "default_control_plane_url")]
+    pub url: String,
+    /// Optional bearer token for authenticated requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+impl Default for ControlPlaneConfig {
+    fn default() -> Self {
+        Self {
+            url: default_control_plane_url(),
+            token: None,
+        }
+    }
+}
+
+fn default_control_plane_url() -> String {
+    "http://127.0.0.1:8090".to_string()
 }
 
 // ── Validators ───────────────────────────────────────────────────────────────
@@ -45,6 +73,41 @@ pub fn validate_config_key(key: &str) -> Result<()> {
             valid: VALID_CONFIG_KEYS.join(", "),
         }
         .into());
+    }
+    Ok(())
+}
+
+/// Validates a configuration value for a given key.
+///
+/// # Errors
+///
+/// Returns an error if the value is not valid for the given key.
+pub fn validate_config_value(key: &str, value: &str) -> Result<()> {
+    match key {
+        "security.level" => {
+            if !matches!(value, "relaxed" | "balanced" | "strict") {
+                return Err(ConfigError::InvalidValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    valid: "relaxed, balanced, strict".to_string(),
+                }
+                .into());
+            }
+        }
+        "control_plane.url" => {
+            if value.is_empty() {
+                return Err(ConfigError::InvalidValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    valid: "non-empty URL".to_string(),
+                }
+                .into());
+            }
+        }
+        "control_plane.token" => { /* any non-empty string is valid */ }
+        _ => {
+            validate_config_key(key)?;
+        }
     }
     Ok(())
 }

@@ -59,6 +59,21 @@ valkey_cmd() {
     assert_output --partial "NOPERM"
 }
 
+@test "valkey-acl: cp-server denied unauthorized keys" {
+    run valkey_cmd cp-server valkey_cp_server_password "GET unauthorized:key"
+    assert_output --partial "NOPERM"
+}
+
+@test "valkey-acl: cp-server can manage auto-approve rules" {
+    run valkey_cmd cp-server valkey_cp_server_password "SET polis:config:auto_approve:integration-test allow"
+    assert_success
+    refute_output --partial "NOPERM"
+
+    run valkey_cmd cp-server valkey_cp_server_password "DEL polis:config:auto_approve:integration-test"
+    assert_success
+    refute_output --partial "NOPERM"
+}
+
 @test "valkey-acl: mcp-admin denied FLUSHALL" {
     run valkey_cmd mcp-admin valkey_mcp_admin_password "FLUSHALL"
     assert_output --partial "NOPERM"

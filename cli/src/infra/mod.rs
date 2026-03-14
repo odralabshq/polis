@@ -10,6 +10,7 @@ pub mod assets;
 pub mod blocking;
 pub mod command_runner;
 pub mod config;
+pub mod control_plane;
 pub mod fs;
 pub mod network;
 pub mod polis_dir;

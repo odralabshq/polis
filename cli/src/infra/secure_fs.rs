@@ -89,6 +89,7 @@ impl SecureFs {
         Self::set_permissions_inner(path, mode)
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn set_permissions_inner(path: &Path, mode: u32) -> Result<()> {
         #[cfg(unix)]
         {

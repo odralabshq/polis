@@ -19,6 +19,7 @@ pub fn exit_code_from_status(status: ExitStatus) -> ExitCode {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
     use proptest::prelude::*;

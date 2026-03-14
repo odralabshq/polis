@@ -177,7 +177,8 @@ pub fn generate_env_content(version: &str) -> String {
          POLIS_WORKSPACE_VERSION={tag}\n\
          POLIS_HOST_INIT_VERSION={tag}\n\
          POLIS_STATE_VERSION={tag}\n\
-         POLIS_TOOLBOX_VERSION={tag}\n"
+         POLIS_TOOLBOX_VERSION={tag}\n\
+         POLIS_CONTROL_PLANE_VERSION={tag}\n"
     )
 }
 
@@ -319,6 +320,7 @@ mod tests {
             "POLIS_HOST_INIT_VERSION",
             "POLIS_STATE_VERSION",
             "POLIS_TOOLBOX_VERSION",
+            "POLIS_CONTROL_PLANE_VERSION",
         ];
         for var in &expected_vars {
             assert!(content.contains(var), "missing {var} in .env content");
@@ -344,8 +346,8 @@ mod tests {
         let tag = "v0.4.0";
         let count = content.matches(&format!("={tag}")).count();
         assert_eq!(
-            count, 9,
-            "expected exactly 9 vars set to {tag}, got {count}"
+            count, 10,
+            "expected exactly 10 vars set to {tag}, got {count}"
         );
     }
 

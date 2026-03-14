@@ -32,7 +32,7 @@ setup_certs_and_secrets() {
 
 wait_for_healthy() {
     local timeout="${1:-60}"
-    local containers="polis-gate polis-sentinel polis-state polis-toolbox polis-workspace"
+    local containers="polis-gate polis-sentinel polis-state polis-toolbox polis-control-plane polis-workspace"
     
     for i in $(seq 1 "$timeout"); do
         local healthy
@@ -57,7 +57,7 @@ wait_for_healthy() {
 }
 
 show_logs_on_failure() {
-    for c in polis-gate polis-sentinel polis-scanner polis-state polis-toolbox polis-workspace; do
+    for c in polis-gate polis-sentinel polis-scanner polis-state polis-toolbox polis-control-plane polis-workspace; do
         echo "=== $c ==="
         docker logs "$c" 2>&1 | tail -30 || true
     done

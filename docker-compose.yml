@@ -273,11 +273,11 @@ services:
       - CLAMAV_NO_FRESHCLAMD=false
       - CLAMAV_NO_MILTERD=true
     healthcheck:
-      test: ["CMD", "clamdscan", "--ping", "3"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
+      test: ["CMD", "clamdscan", "--ping", "10"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 180s
     restart: unless-stopped
     logging:
       driver: json-file
@@ -384,6 +384,9 @@ services:
         labels: "service"
     labels:
       service: "polis-workspace"
+      polis.agent.name: "${POLIS_AGENT_NAME:-}"
+      polis.agent.version: "${POLIS_AGENT_VERSION:-}"
+      polis.agent.display_name: "${POLIS_AGENT_DISPLAY_NAME:-}"
 
   # =========================================================
   # HOST INIT (Host network setup for TPROXY)
@@ -487,6 +490,7 @@ services:
         uid: "65532"
         gid: "65532"
         mode: 0440
+      - valkey_cp_server_password
       - valkey_mcp_admin_password
       - valkey_mcp_agent_password
       - valkey_dlp_password
@@ -588,6 +592,78 @@ services:
     labels:
       service: "polis-toolbox"
 
+  # =========================================================
+  # CONTROL PLANE (Governance UI / REST API / SSE)
+  # =========================================================
+  control-plane:
+    build:
+      context: .
+      dockerfile: services/control-plane/Dockerfile
+    image: ghcr.io/odralabshq/polis-control-plane-oss:${POLIS_CONTROL_PLANE_VERSION:-latest}
+    container_name: polis-control-plane
+    user: "65532:65532"
+    group_add:
+      - "${DOCKER_GID:-999}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M,mode=1777
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./services/control-plane/config/seccomp.json
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.5"
+    networks:
+      host-bridge: {}
+      gateway-bridge:
+        ipv4_address: 10.30.1.30
+    ports:
+      - 127.0.0.1:9080:9080
+    environment:
+      - RUST_LOG=info
+      - POLIS_CP_LISTEN_ADDR=0.0.0.0:9080
+      - POLIS_CP_VALKEY_URL=rediss://valkey:6379
+      - POLIS_CP_VALKEY_USER=cp-server
+      - POLIS_CP_VALKEY_PASS_FILE=/run/secrets/valkey_cp_server_password
+      - POLIS_CP_DOCKER_ENABLED=true
+      - POLIS_CP_AUTH_ENABLED=false
+      - POLIS_CP_ADMIN_TOKEN_FILE=/run/secrets/cp_admin_token
+      - POLIS_CP_OPERATOR_TOKEN_FILE=/run/secrets/cp_operator_token
+      - POLIS_CP_VIEWER_TOKEN_FILE=/run/secrets/cp_viewer_token
+      - POLIS_CP_AGENT_TOKEN_FILE=/run/secrets/cp_agent_token
+    secrets:
+      - valkey_cp_server_password
+      # Optional auth tokens (disabled by default)
+      # - cp_admin_token
+      # - cp_operator_token
+      # - cp_viewer_token
+      # - cp_agent_token
+    volumes:
+      - ./certs/valkey:/etc/valkey/tls:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      state:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/cp-server", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service"
+    labels:
+      service: "polis-control-plane"
+
 
 
 networks:
@@ -623,6 +699,13 @@ networks:
     enable_ipv6: false
     driver: bridge
 
+  host-bridge:
+    enable_ipv6: false
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+
 volumes:
   scanner-db:
     name: polis-scanner-db
@@ -649,3 +732,5 @@ secrets:
     file: ./secrets/valkey_reqmod_password.txt
   valkey_respmod_password:
     file: ./secrets/valkey_respmod_password.txt
+  valkey_cp_server_password:
+    file: ./secrets/valkey_cp_server_password.txt

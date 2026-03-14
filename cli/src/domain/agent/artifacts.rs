@@ -206,7 +206,7 @@ pub fn systemd_unit(manifest: &AgentManifest) -> String {
     let _ = writeln!(out, "[Service]");
     let _ = writeln!(out, "Type=simple");
     let _ = writeln!(out, "User={}", runtime.user);
-    let _ = writeln!(out, "WorkingDirectory={}", runtime.workdir);
+    let _ = writeln!(out, "WorkingDirectory=-{}", runtime.workdir);
     let _ = writeln!(out);
     if let Some(env_file) = &runtime.env_file {
         let _ = writeln!(out, "EnvironmentFile=-{env_file}");
@@ -233,6 +233,14 @@ pub fn systemd_unit(manifest: &AgentManifest) -> String {
     }
 
     let _ = writeln!(out);
+    // Run install script before init (idempotent, creates workdir on first boot).
+    if spec.packaging == "script" && !spec.install.is_empty() {
+        let _ = writeln!(
+            out,
+            "ExecStartPre=+/bin/bash /opt/agents/{name}/{}",
+            spec.install
+        );
+    }
     if let Some(init) = &spec.init {
         let _ = writeln!(out, "ExecStartPre=+/bin/bash /opt/agents/{name}/{init}");
     }

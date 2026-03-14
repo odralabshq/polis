@@ -72,8 +72,11 @@ lint: lint-rust lint-c lint-shell
 
 lint-rust:
 	cargo fmt --all --check --manifest-path cli/Cargo.toml
+	cargo fmt --all --check --manifest-path services/control-plane/Cargo.toml
 	cargo fmt --all --check --manifest-path services/toolbox/Cargo.toml
+	cargo check --manifest-path cli/Cargo.toml --no-default-features
 	cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
+	cargo clippy --workspace --all-targets --manifest-path services/control-plane/Cargo.toml -- -D warnings
 	cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
 lint-c:
@@ -87,8 +90,10 @@ lint-shell:
 test: test-rust test-c test-unit
 
 test-rust:
+	cargo test --workspace --manifest-path cli/Cargo.toml --lib
 	cargo test --workspace --manifest-path cli/Cargo.toml --test unit -- --test-threads=1
 	cargo test --workspace --manifest-path cli/Cargo.toml --test integration
+	cargo test --workspace --manifest-path services/control-plane/Cargo.toml
 	cargo test --workspace --manifest-path services/toolbox/Cargo.toml
 	cargo test --manifest-path lib/crates/polis-common/Cargo.toml
 
@@ -130,6 +135,7 @@ test-clean: clean-all prepare-config build-docker setup up test-all
 # ── Format (auto-fix) ───────────────────────────────────────────────
 fmt:
 	cargo fmt --all --manifest-path cli/Cargo.toml
+	cargo fmt --all --manifest-path services/control-plane/Cargo.toml
 	cargo fmt --all --manifest-path services/toolbox/Cargo.toml
 
 # ── Build ───────────────────────────────────────────────────────────
@@ -146,6 +152,10 @@ prepare-config:
 		./scripts/generate-agent.sh "$name" agents
 	done
 	# Build config tarball (sudo needed to read keys owned by container uid 65532)
+	# NOTE: certs/ and secrets/ are intentionally excluded.
+	# The VM generates its own CA and secrets via generate_certs_and_secrets().
+	# Including pre-generated certs causes a CA mismatch (certgen signs with
+	# VM CA, but workspace trusts tarball CA → TLS failures).
 	sudo tar cf .build/assets/polis-setup.config.tar \
 		docker-compose.yml \
 		scripts/generate-ca.sh \
@@ -153,9 +163,7 @@ prepare-config:
 		scripts/polis-query.sh \
 		agents/ \
 		services/*/config/ \
-		services/*/scripts/ \
-		$([ -d certs ] && echo "certs/") \
-		$([ -d secrets ] && echo "secrets/")
+		services/*/scripts/
 	sudo chown "$(id -u):$(id -g)" .build/assets/polis-setup.config.tar
 	echo "✓ Built .build/assets/polis-setup.config.tar"
 	# Copy cloud-init.yaml

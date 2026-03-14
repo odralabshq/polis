@@ -15,14 +15,34 @@ echo "[openclaw-install] First boot — installing OpenClaw..."
 
 # Trust Polis CA for SSL connections (if present)
 # NODE_EXTRA_CA_CERTS is needed for corepack/pnpm which use Node.js fetch()
-if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]]; then
-    update-ca-certificates 2>/dev/null || true
-    export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/polis-ca.pem
-fi
+trust_polis_ca() {
+    if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]]; then
+        # Copy to /usr/share/ca-certificates/ so update-ca-certificates picks it up.
+        # The bind-mounted file at /usr/local/share may have non-root ownership
+        # which some Debian versions skip during auto-detection.
+        cp /usr/local/share/ca-certificates/polis-ca.crt \
+           /usr/share/ca-certificates/polis-ca.crt 2>/dev/null || true
+        grep -qxF 'polis-ca.crt' /etc/ca-certificates.conf 2>/dev/null || \
+            echo 'polis-ca.crt' >> /etc/ca-certificates.conf
+        update-ca-certificates 2>/dev/null || true
+        # Also append directly to the bundle as a fallback in case
+        # update-ca-certificates doesn't pick up the cert.
+        if ! grep -q "Polis CA" /etc/ssl/certs/ca-certificates.crt 2>/dev/null; then
+            cat /usr/local/share/ca-certificates/polis-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+        fi
+        export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+    fi
+}
+trust_polis_ca
 
 # Install build dependencies and Node.js 22
 apt-get update && apt-get install -y --no-install-recommends \
     gnupg unzip git build-essential python3 jq
+
+# Re-trust Polis CA after apt-get — installing/upgrading ca-certificates
+# regenerates the system bundle, wiping out the Polis CA we added above.
+trust_polis_ca
+
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
     | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg
@@ -35,6 +55,9 @@ corepack disable 2>/dev/null || true
 
 # Force Node.js to trust the full OS CA bundle (includes Polis CA)
 export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
+# Re-trust after nodejs install (apt may regenerate the bundle again)
+trust_polis_ca
 
 # Install pnpm globally via npm (more reliable than corepack through TPROXY).
 # Corepack's fetch() can get 403 from the ICAP pipeline during bootstrap.

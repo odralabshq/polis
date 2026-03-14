@@ -56,6 +56,10 @@ pub enum Command {
     /// Show connection options
     Connect(commands::connect::ConnectArgs),
 
+    /// Open the control-plane dashboard
+    #[cfg(feature = "dashboard")]
+    Dashboard(commands::dashboard::DashboardArgs),
+
     /// Diagnose issues
     Doctor(commands::doctor::DoctorArgs),
 
@@ -119,6 +123,8 @@ impl Cli {
             Command::Delete(args) => commands::delete::run(&app, &args).await?,
             Command::Status => commands::status::run(&app).await?,
             Command::Connect(args) => commands::connect::run(&app, &args).await?,
+            #[cfg(feature = "dashboard")]
+            Command::Dashboard(args) => commands::dashboard::run(&args, &app).await?,
             Command::Update(args) => {
                 commands::update::run(&app, &args, crate::infra::update::GithubUpdateChecker)
                     .await?

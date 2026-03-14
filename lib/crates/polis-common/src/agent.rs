@@ -53,6 +53,7 @@ impl AgentMetadata {
                     "ANTHROPIC_API_KEY" => return "Anthropic".to_string(),
                     "OPENAI_API_KEY" => return "OpenAI".to_string(),
                     "OPENROUTER_API_KEY" => return "OpenRouter".to_string(),
+                    "GOOGLE_API_KEY" | "GEMINI_API_KEY" => return "Google".to_string(),
                     _ => {}
                 }
             }
@@ -510,14 +511,22 @@ spec:
 
         assert_eq!(
             manifest.spec.onboarding.len(),
-            1,
-            "openclaw should have exactly one onboarding step"
+            2,
+            "openclaw should have exactly two onboarding steps"
+        );
+        assert_eq!(manifest.spec.onboarding[0].title, "Add your API key");
+        assert_eq!(
+            manifest.spec.onboarding[0].command,
+            "polis exec openclaw onboard"
         );
         assert_eq!(
-            manifest.spec.onboarding[0].title,
-            "Run the onboarding wizard"
+            manifest.spec.onboarding[1].title,
+            "Restart to apply changes"
         );
-        assert_eq!(manifest.spec.onboarding[0].command, "openclaw onboard");
+        assert_eq!(
+            manifest.spec.onboarding[1].command,
+            "polis exec openclaw restart"
+        );
     }
 
     #[test]
