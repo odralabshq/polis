@@ -163,7 +163,10 @@ enum DashboardServerEvent {
 enum UserAction {
     Approve(String),
     AllowCredential(String),
-    BypassDomain(String),
+    BypassDomain {
+        request_id: String,
+        destination: String,
+    },
     Deny(String),
     SetLevel(String),
     RefreshLogs,
@@ -351,9 +354,13 @@ impl App {
                         PendingConfirmation::AllowCredential { request_id, .. } => {
                             UserAction::AllowCredential(request_id)
                         }
-                        PendingConfirmation::BypassDomain { request_id, .. } => {
-                            UserAction::BypassDomain(request_id)
-                        }
+                        PendingConfirmation::BypassDomain {
+                            request_id,
+                            destination,
+                        } => UserAction::BypassDomain {
+                            request_id,
+                            destination,
+                        },
                     })
                 }
                 KeyCode::Char('n' | 'N') | KeyCode::Esc => {
@@ -1699,11 +1706,13 @@ async fn allow_credential_request(
     .await
 }
 
-async fn bypass_domain_request(client: &Client, api_url: &str, id: &str) -> Result<ActionResponse> {
+
+async fn add_config_bypass(client: &Client, api_url: &str, domain: &str) -> Result<ActionResponse> {
     send_action(
         client
-            .post(format!("{api_url}/api/v1/blocked/{id}/bypass-domain"))
-            .header(reqwest::header::CONTENT_TYPE, "application/json"),
+            .post(format!("{api_url}/api/v1/config/bypass"))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(&serde_json::json!({ "domain": domain })),
     )
     .await
 }
@@ -1993,8 +2002,18 @@ async fn run_dashboard_loop(
                                 UserAction::AllowCredential(id) => {
                                     allow_credential_request(&client, &api_url, &id).await.map(Some)
                                 }
-                                UserAction::BypassDomain(id) => {
-                                    bypass_domain_request(&client, &api_url, &id).await.map(Some)
+                                UserAction::BypassDomain { request_id, destination } => {
+                                    // Step 1: approve the request (creates temp approval key for immediate access)
+                                    let approve_result = approve_request(&client, &api_url, &request_id).await;
+                                    // Step 2: add permanent config bypass (control plane sends SIGHUP
+                                    // to sentinel automatically, forcing DLP cache refresh)
+                                    let bypass_result = add_config_bypass(&client, &api_url, &destination).await;
+                                    match (approve_result, bypass_result) {
+                                        (Ok(_), Ok(resp)) => Ok(Some(resp)),
+                                        (Err(_), Ok(resp)) => Ok(Some(resp)),
+                                        (Ok(resp), Err(_)) => Ok(Some(resp)),
+                                        (Err(e), Err(_)) => Err(e),
+                                    }
                                 }
                                 UserAction::Deny(id) => deny_request(&client, &api_url, &id).await.map(Some),
                                 UserAction::SetLevel(level) => set_security_level(&client, &api_url, &level).await.map(Some),

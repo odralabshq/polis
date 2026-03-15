@@ -98,10 +98,10 @@ setup() {
     done
 }
 
-@test "compose config: control-plane binds loopback on 9080" {
+@test "compose config: control-plane binds on 9080" {
     run grep -A30 "^  control-plane:" "$COMPOSE"
     assert_success
-    assert_output --partial "127.0.0.1:9080:9080"
+    assert_output --partial "0.0.0.0:9080:9080"
     assert_output --partial "host-bridge: {}"
     assert_output --partial "seccomp=./services/control-plane/config/seccomp.json"
 }

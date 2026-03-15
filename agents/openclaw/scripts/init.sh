@@ -533,6 +533,9 @@ else
                 echo "[openclaw-init] Restoring gateway token (config was overwritten)"
                 jq --arg token "$SAVED_TOKEN" '.gateway.auth.mode = "token" | .gateway.auth.token = $token' \
                     "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+                # Fix ownership immediately to prevent EACCES race with onboard wizard
+                chown polis:polis "$CONFIG_FILE" 2>/dev/null || true
+                chmod 600 "$CONFIG_FILE"
             fi
         fi
 
@@ -551,6 +554,8 @@ else
             | .tools = ((.tools // {}) + {"profile":"coding"})
         ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" \
             && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+        # Fix ownership immediately to prevent EACCES race with onboard wizard
+        chown polis:polis "$CONFIG_FILE" 2>/dev/null || true
         chmod 600 "$CONFIG_FILE"
         echo "[openclaw-init] Ensured controlUi HTTP token settings, origin policy, and coding tool profile"
     fi
@@ -563,6 +568,7 @@ else
             if [[ "$CURRENT_SEC" != "full" ]]; then
                 jq '.defaults.security = "full"' "$EXEC_APPROVALS_FILE" > "${EXEC_APPROVALS_FILE}.tmp" \
                     && mv "${EXEC_APPROVALS_FILE}.tmp" "$EXEC_APPROVALS_FILE"
+                chown polis:polis "$EXEC_APPROVALS_FILE" 2>/dev/null || true
                 chmod 600 "$EXEC_APPROVALS_FILE"
                 echo "[openclaw-init] Patched exec approvals: security=full"
             fi

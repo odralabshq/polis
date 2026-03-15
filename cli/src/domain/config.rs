@@ -38,7 +38,7 @@ pub struct SecurityConfig {
 /// Control-plane connection settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlPlaneConfig {
-    /// Base URL of the control-plane HTTP API (e.g. `http://10.30.1.2:8090`).
+    /// Base URL of the control-plane HTTP API (e.g. `http://10.30.1.2:9080`).
     #[serde(default = "default_control_plane_url")]
     pub url: String,
     /// Optional bearer token for authenticated requests.
@@ -56,7 +56,7 @@ impl Default for ControlPlaneConfig {
 }
 
 fn default_control_plane_url() -> String {
-    "http://127.0.0.1:8090".to_string()
+    "http://127.0.0.1:9080".to_string()
 }
 
 // ── Validators ───────────────────────────────────────────────────────────────

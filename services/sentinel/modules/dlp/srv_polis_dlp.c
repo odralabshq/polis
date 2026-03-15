@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <ctype.h>
+#include <signal.h>
+#include <time.h>
 
 /* Valkey/Redis client */
 #include <hiredis/hiredis.h>
@@ -85,7 +87,12 @@ typedef enum {
 /* Valkey polling constants */
 #define LEVEL_POLL_INTERVAL 1      /* Requests between Valkey polls */
 #define LEVEL_POLL_MAX      10000  /* Max backoff interval (requests) */
-#define BYPASS_POLL_INTERVAL 100   /* Requests between bypass cache refreshes */
+#define BYPASS_POLL_INTERVAL 5     /* Requests between bypass cache refreshes */
+
+/* Time-based refresh intervals (seconds) — used alongside request-count
+ * polling to guarantee cache freshness even under low traffic. */
+#define LEVEL_REFRESH_SECS   5     /* Check security level at most every 5s */
+#define BYPASS_REFRESH_SECS  30    /* Check bypass domains at most every 30s */
 
 /* Security level state — Valkey connection and polling */
 static redisContext *valkey_level_ctx = NULL;
@@ -95,6 +102,37 @@ static unsigned long current_poll_interval = LEVEL_POLL_INTERVAL;
 static char **runtime_bypass_domains = NULL;
 static size_t runtime_bypass_count = 0;
 static unsigned long bypass_poll_interval = BYPASS_POLL_INTERVAL;
+
+/* Time-based refresh tracking */
+static time_t last_level_refresh = 0;
+static time_t last_bypass_refresh = 0;
+
+/*
+ * SIGHUP reload flag — set by signal handler, consumed by
+ * apply_security_policy() to trigger immediate cache refresh.
+ * Uses sig_atomic_t for async-signal-safety.
+ */
+static volatile sig_atomic_t config_reload_requested = 0;
+
+/* Saved original SIGHUP handler (c-icap's reload handler) so we can chain */
+static struct sigaction original_sighup_action;
+
+static void sighup_handler(int sig)
+{
+    /* Set our flag so child processes refresh caches on next request */
+    config_reload_requested = 1;
+
+    /* Chain to c-icap's original SIGHUP handler (triggers full module reload,
+     * which kills children, reinitializes modules, and forks new children).
+     * This is essential because c-icap's MPMT model means our flag is only
+     * visible in the process that received the signal. The full reload
+     * ensures new child processes start with fresh state. */
+    if (original_sighup_action.sa_handler != SIG_DFL &&
+        original_sighup_action.sa_handler != SIG_IGN &&
+        original_sighup_action.sa_handler != NULL) {
+        original_sighup_action.sa_handler(sig);
+    }
+}
 
 /*
  * Mutex protecting all Valkey-related shared state:
@@ -1107,16 +1145,54 @@ static int apply_security_policy(const char *host, int has_credential)
 {
     int new_domain;
     security_level_t level_snapshot;
+    time_t now;
+    int need_level_refresh = 0;
+    int need_bypass_refresh = 0;
 
-    /* Lock: increment counter, poll if needed, snapshot level and bypass cache */
+    now = time(NULL);
+
+    /* Lock: check SIGHUP flag, time-based refresh, counter-based fallback */
     pthread_mutex_lock(&valkey_mutex);
     request_counter++;
-    if (request_counter % current_poll_interval == 0) {
+
+    /* SIGHUP: immediate reload of all caches */
+    if (config_reload_requested) {
+        config_reload_requested = 0;
+        need_level_refresh = 1;
+        need_bypass_refresh = 1;
+        ci_debug_printf(3, "polis_dlp: SIGHUP received, "
+                           "reloading all caches\n");
+    }
+
+    /* Time-based refresh: guarantees freshness even under low traffic */
+    if (!need_level_refresh &&
+        (now - last_level_refresh >= LEVEL_REFRESH_SECS)) {
+        need_level_refresh = 1;
+    }
+    if (!need_bypass_refresh &&
+        (now - last_bypass_refresh >= BYPASS_REFRESH_SECS)) {
+        need_bypass_refresh = 1;
+    }
+
+    /* Request-count-based refresh: original mechanism as additional fallback */
+    if (!need_level_refresh &&
+        (request_counter % current_poll_interval == 0)) {
+        need_level_refresh = 1;
+    }
+    if (!need_bypass_refresh &&
+        (request_counter % bypass_poll_interval == 0)) {
+        need_bypass_refresh = 1;
+    }
+
+    if (need_level_refresh) {
         refresh_security_level();
+        last_level_refresh = now;
     }
-    if (request_counter % bypass_poll_interval == 0) {
+    if (need_bypass_refresh) {
         refresh_runtime_bypass_domains();
+        last_bypass_refresh = now;
     }
+
     level_snapshot = current_level;
     new_domain = is_new_domain_locked(host);
     ci_debug_printf(5, "polis_dlp: policy check host='%s' new_domain=%d "
@@ -1360,6 +1436,9 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
     current_level = LEVEL_BALANCED;
     current_poll_interval = LEVEL_POLL_INTERVAL;
     bypass_poll_interval = BYPASS_POLL_INTERVAL;
+    last_level_refresh = 0;
+    last_bypass_refresh = 0;
+    config_reload_requested = 0;
     free_runtime_bypass_domains(runtime_bypass_domains, runtime_bypass_count);
     runtime_bypass_domains = NULL;
     runtime_bypass_count = 0;
@@ -1469,6 +1548,32 @@ int dlp_init_service(ci_service_xdata_t *srv_xdata,
      * fork because OpenSSL/TLS state is not fork-safe. */
     ci_debug_printf(3, "polis_dlp: Valkey connections will be "
                        "lazy-initialized on first use\n");
+
+    /* Register SIGHUP handler for config cache invalidation.
+     * The control plane sends SIGHUP after config mutations
+     * (bypass add/delete, security level change) so the DLP
+     * module refreshes its caches on the next request.
+     *
+     * We chain to c-icap's original SIGHUP handler so the full
+     * module reload still happens (kills children, reinitializes,
+     * forks new children with fresh state). Our handler additionally
+     * sets config_reload_requested so any surviving child process
+     * also refreshes on its next request. */
+    {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = sighup_handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = SA_RESTART;  /* Don't interrupt slow syscalls */
+        if (sigaction(SIGHUP, &sa, &original_sighup_action) == 0) {
+            ci_debug_printf(3, "polis_dlp: SIGHUP handler registered "
+                               "for config reload (chained to c-icap)\n");
+        } else {
+            ci_debug_printf(1, "polis_dlp: WARNING: Failed to register "
+                               "SIGHUP handler — config changes will "
+                               "rely on polling only\n");
+        }
+    }
 
     /* --- OTT rewrite initialization (Requirements 1.3, 1.9, 1.12) --- */
     

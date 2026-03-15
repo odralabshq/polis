@@ -40,19 +40,25 @@ pub async fn run(app: &impl App, name: &str, envs: Vec<String>) -> Result<ExitCo
         let swap_outcome =
             agent::swap_agent(app.provisioner(), app.state_store(), app.fs(), swap_opts).await?;
         app.renderer().render_activate_outcome(&swap_outcome);
-        show_dashboard_url(app).await;
+        show_dashboard_url(app, &requested).await;
     } else {
         app.renderer().render_activate_outcome(&outcome);
-        show_dashboard_url(app).await;
+        show_dashboard_url(app, name).await;
     }
     Ok(ExitCode::SUCCESS)
 }
 
-/// Show the agent dashboard URL (best-effort, no error on failure).
-async fn show_dashboard_url(app: &impl App) {
+/// Show the agent dashboard URL and token retrieval hint (best-effort, no error on failure).
+async fn show_dashboard_url(app: &impl App, agent_name: &str) {
     if let Ok(ip) = vm::resolve_vm_ip(app.provisioner()).await {
         app.output().blank();
         app.output()
             .kv("Control UI", &format!("http://{ip}:18789/overview"));
+        app.output().kv(
+            "Get token ",
+            &format!(
+                "polis agent exec {agent_name} token  (or  {agent_name} token  inside workspace)"
+            ),
+        );
     }
 }

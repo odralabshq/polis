@@ -536,6 +536,15 @@ impl<C> AppState<C> {
     pub fn auth(&self) -> &AuthState {
         &self.auth
     }
+
+    /// Send SIGHUP to sentinel so the DLP module reloads its caches.
+    /// Fire-and-forget: if Docker is unavailable or the signal fails,
+    /// time-based polling in the DLP module acts as a fallback.
+    async fn signal_sentinel_reload(&self) {
+        if let Some(docker) = self.docker.as_ref() {
+            docker.signal_sentinel_reload().await;
+        }
+    }
 }
 
 impl<C> GovernanceState<C>
@@ -1022,6 +1031,26 @@ where
 
     async fn add_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
         let display = self.persist_bypass_domain(domain).await?;
+
+        // Create a temporary host-based approval so the domain is
+        // immediately accessible while the DLP module picks up the
+        // permanent bypass key on its next poll cycle.
+        let normalized = Self::normalize_bypass_domain(domain)?;
+        let host = normalized.strip_prefix('.').unwrap_or(&normalized);
+        self.client
+            .set_string_ex(
+                &approved_host_key(host),
+                "1",
+                ttl::APPROVED_REQUEST_SECS,
+            )
+            .await
+            .map_err(|error| {
+                Self::dependency_error(
+                    "failed to create temporary host approval for bypass domain",
+                    &error,
+                )
+            })?;
+
         self.log_security_event("config_changed", format!("bypass domain added: {display}"))
             .await?;
         Ok(ActionResponse {
@@ -1219,6 +1248,23 @@ where
         let blocked_request = self.fetch_blocked_request(request_id).await?;
         let host = Self::blocked_request_host(&blocked_request)?;
         let display = self.persist_bypass_domain(&host).await?;
+
+        // Also create a temporary host-based approval so the domain is
+        // immediately accessible while the DLP module picks up the
+        // permanent bypass key on its next poll cycle.
+        self.client
+            .set_string_ex(
+                &approved_host_key(&host),
+                "1",
+                ttl::APPROVED_REQUEST_SECS,
+            )
+            .await
+            .map_err(|error| {
+                Self::dependency_error(
+                    "failed to create temporary host approval for bypass domain",
+                    &error,
+                )
+            })?;
 
         self.append_event(&SecurityLogEntry {
             timestamp: Utc::now(),
@@ -1481,7 +1527,9 @@ where
     }
 
     async fn bypass_blocked_domain(&self, request_id: &str) -> AppResult<ActionResponse> {
-        self.governance.bypass_blocked_domain(request_id).await
+        let result = self.governance.bypass_blocked_domain(request_id).await?;
+        self.signal_sentinel_reload().await;
+        Ok(result)
     }
 
     async fn deny(&self, request_id: &str) -> AppResult<ActionResponse> {
@@ -1497,7 +1545,9 @@ where
     }
 
     async fn set_security_level(&self, level: &str) -> AppResult<LevelResponse> {
-        self.governance.set_security_level(level).await
+        let result = self.governance.set_security_level(level).await?;
+        self.signal_sentinel_reload().await;
+        Ok(result)
     }
 
     async fn list_rules(&self) -> AppResult<RulesResponse> {
@@ -1655,7 +1705,9 @@ where
     }
 
     async fn set_security_level_via_config(&self, level: &str) -> AppResult<ActionResponse> {
-        self.governance.set_security_level_via_config(level).await
+        let result = self.governance.set_security_level_via_config(level).await?;
+        self.signal_sentinel_reload().await;
+        Ok(result)
     }
 
     async fn list_bypass_domains(&self) -> AppResult<BypassListResponse> {
@@ -1663,11 +1715,15 @@ where
     }
 
     async fn add_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
-        self.governance.add_bypass_domain(domain).await
+        let result = self.governance.add_bypass_domain(domain).await?;
+        self.signal_sentinel_reload().await;
+        Ok(result)
     }
 
     async fn delete_bypass_domain(&self, domain: &str) -> AppResult<ActionResponse> {
-        self.governance.delete_bypass_domain(domain).await
+        let result = self.governance.delete_bypass_domain(domain).await?;
+        self.signal_sentinel_reload().await;
+        Ok(result)
     }
 }
 

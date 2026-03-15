@@ -420,7 +420,7 @@ mod tests {
         assert!(!app.is_json());
         assert_eq!(
             app.control_plane.base_url().as_str(),
-            "http://127.0.0.1:8090/"
+            "http://127.0.0.1:9080/"
         );
         assert_eq!(app.control_plane.token(), None);
     }

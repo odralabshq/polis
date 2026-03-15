@@ -35,16 +35,21 @@ case "$SUBCMD" in
             echo "ERROR: Gateway token not found. OpenClaw may not be initialized yet." >&2
             exit 1
         fi
-        echo "=== OpenClaw Gateway Token ==="
-        echo ""
-        echo "Token: $token"
-        echo ""
-        # Use VM IP if available (set by polis CLI during start)
-        vm_ip=$(docker exec "$CONTAINER" printenv POLIS_VM_IP 2>/dev/null || head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "localhost")
+        vm_ip=$(docker exec "$CONTAINER" printenv POLIS_VM_IP 2>/dev/null || true)
+        if [[ -z "$vm_ip" ]] || ! is_ipv4 "$vm_ip"; then
+            vm_ip=$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "localhost")
+        fi
         if ! is_ipv4 "$vm_ip"; then
             vm_ip="localhost"
         fi
-        echo "Control UI: http://${vm_ip}:18789/overview"
+        echo ""
+        echo "=== OpenClaw Gateway ==="
+        echo ""
+        echo "  Token:      $token"
+        echo "  Control UI: http://${vm_ip}:18789/overview"
+        echo ""
+        echo "Paste the token into the Control UI login page to authenticate."
+        echo ""
         ;;
     devices)
         action="${1:-list}"
@@ -81,7 +86,66 @@ case "$SUBCMD" in
     onboard)
         docker exec -it -u polis -w /app "$CONTAINER" node dist/index.js onboard
         echo ""
-        echo "NOTE: To restart from host, run:  polis exec openclaw restart"
+        # Restore polis-managed gateway token after onboard (onboard may overwrite config)
+        docker exec -u polis "$CONTAINER" bash -c '
+            TOKEN_FILE="/home/polis/.openclaw/gateway-token.txt"
+            CONFIG_FILE="/home/polis/.openclaw/openclaw.json"
+            if [[ -f "$TOKEN_FILE" && -f "$CONFIG_FILE" ]] && command -v jq &>/dev/null; then
+                SAVED_TOKEN=$(cat "$TOKEN_FILE")
+                CURRENT_TOKEN=$(jq -r ".gateway.auth.token // empty" "$CONFIG_FILE" 2>/dev/null || echo "")
+                if [[ -n "$SAVED_TOKEN" && "$CURRENT_TOKEN" != "$SAVED_TOKEN" ]]; then
+                    jq --arg token "$SAVED_TOKEN" \
+                        ".gateway.auth.mode = \"token\" | .gateway.auth.token = \$token | .gateway.controlUi.enabled = true | .gateway.controlUi.allowInsecureAuth = true | .gateway.controlUi.dangerouslyDisableDeviceAuth = true | .gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true" \
+                        "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+                    chown polis:polis "$CONFIG_FILE" 2>/dev/null || true
+                    chmod 600 "$CONFIG_FILE"
+                    echo "[polis] Restored gateway token and Control UI settings after onboard"
+                fi
+            fi
+        ' 2>/dev/null || true
+        # Restart the gateway to pick up onboard changes
+        log_info "Restarting OpenClaw to apply changes..."
+        docker exec "$CONTAINER" bash -c '
+            pid=$(systemctl show -p MainPID --value openclaw 2>/dev/null)
+            if [[ -n "$pid" && "$pid" != "0" ]]; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+            systemctl reset-failed openclaw 2>/dev/null || true
+            sleep 2
+            systemctl start openclaw
+        '
+        # Wait for the gateway to become ready (init.sh + gateway startup can
+        # take 20-30 seconds). Poll the health endpoint instead of a fixed sleep.
+        log_info "Waiting for gateway to become ready..."
+        READY=false
+        for i in $(seq 1 30); do
+            HTTP_CODE=$(docker exec "$CONTAINER" curl -sf -o /dev/null -w '%{http_code}' --connect-timeout 1 http://127.0.0.1:18789/health 2>/dev/null || echo "000")
+            if [[ "$HTTP_CODE" == "200" ]]; then
+                READY=true
+                break
+            fi
+            sleep 1
+        done
+        if [[ "$READY" == "true" ]]; then
+            log_success "OpenClaw restarted with new configuration"
+        else
+            log_info "Gateway is still starting — it may take a few more seconds"
+        fi
+        # Show dashboard URL
+        vm_ip=$(docker exec "$CONTAINER" printenv POLIS_VM_IP 2>/dev/null || true)
+        if [[ -z "$vm_ip" ]] || ! is_ipv4 "$vm_ip"; then
+            vm_ip=$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "localhost")
+        fi
+        if ! is_ipv4 "$vm_ip"; then
+            vm_ip="localhost"
+        fi
+        token=$(docker exec "$CONTAINER" cat /home/polis/.openclaw/gateway-token.txt 2>/dev/null || true)
+        echo ""
+        log_success "OpenClaw is ready"
+        echo "  Control UI: http://${vm_ip}:18789/overview"
+        if [[ -n "$token" ]]; then
+            echo "  Token:      ${token}"
+        fi
         ;;
     restart)
         log_info "Restarting OpenClaw service..."
@@ -97,6 +161,15 @@ case "$SUBCMD" in
             sleep 2
             systemctl start openclaw
         '
+        # Wait for the gateway to become ready (can take 20-30s)
+        log_info "Waiting for gateway..."
+        for i in $(seq 1 30); do
+            HTTP_CODE=$(docker exec "$CONTAINER" curl -sf -o /dev/null -w '%{http_code}' --connect-timeout 1 http://127.0.0.1:18789/health 2>/dev/null || echo "000")
+            if [[ "$HTTP_CODE" == "200" ]]; then
+                break
+            fi
+            sleep 1
+        done
         log_success "OpenClaw service restarted"
         ;;
     status)

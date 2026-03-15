@@ -7,7 +7,7 @@ use std::{
 
 use bollard::{
     Docker,
-    container::{ListContainersOptions, LogOutput, LogsOptions, Stats, StatsOptions},
+    container::{KillContainerOptions, ListContainersOptions, LogOutput, LogsOptions, Stats, StatsOptions},
     errors::Error as BollardError,
     models::{ContainerInspectResponse, ContainerSummary, Network, NetworkSettings, Port},
     network::ListNetworksOptions,
@@ -81,6 +81,26 @@ impl DockerClient {
                 client: Arc::new(client),
                 stats_cache: Arc::new(RwLock::new(HashMap::new())),
             })
+    }
+
+    /// Send `SIGHUP` to the sentinel container so the DLP module reloads
+    /// its in-memory caches (bypass domains, security level) from Valkey.
+    ///
+    /// Fire-and-forget: errors are logged but never propagated because
+    /// time-based polling in the DLP module acts as a fallback.
+    pub async fn signal_sentinel_reload(&self) {
+        let opts = KillContainerOptions { signal: "SIGHUP" };
+        match self
+            .client
+            .kill_container("polis-sentinel", Some(opts))
+            .await
+        {
+            Ok(()) => tracing::debug!("sent SIGHUP to sentinel for config reload"),
+            Err(error) => {
+                tracing::warn!(%error, "failed to send SIGHUP to sentinel — \
+                    DLP cache will refresh via time-based polling");
+            }
+        }
     }
 
     /// Query the workspace aggregate status from Docker.

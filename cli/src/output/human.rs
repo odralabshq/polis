@@ -397,7 +397,7 @@ impl<'a> HumanRenderer<'a> {
     }
 
     /// Render start command outcome.
-    pub fn render_start_outcome(&self, outcome: &StartOutcome, onboarding: &[OnboardingStep]) {
+    pub fn render_start_outcome(&self, outcome: &StartOutcome, _onboarding: &[OnboardingStep]) {
         match outcome {
             StartOutcome::AlreadyRunning { active_agent } => {
                 let label = active_agent.as_ref().map_or_else(
@@ -406,30 +406,36 @@ impl<'a> HumanRenderer<'a> {
                 );
                 self.ctx.success(&label);
                 self.ctx.blank();
+                self.ctx.kv("Status ", "polis status");
                 self.ctx.kv("Connect", "polis connect");
-                self.ctx.kv("Status", "polis status");
             }
             StartOutcome::Created { .. } | StartOutcome::Restarted { .. } => {
                 self.ctx.blank();
                 self.ctx.header("Getting started");
-                let default_steps = [
-                    OnboardingStep {
-                        title: "Connect to workspace:".into(),
-                        command: "polis connect or ssh workspace".into(),
-                    },
-                    OnboardingStep {
-                        title: "Manage agents:".into(),
-                        command: "polis agent".into(),
-                    },
-                ];
-                for (i, step) in default_steps.iter().chain(onboarding.iter()).enumerate() {
-                    self.ctx.info(&format!(
-                        "{}. {}  {}",
-                        i + 1,
-                        step.title,
-                        step.command.style(self.ctx.styles.command)
-                    ));
-                }
+                self.ctx.info(&format!(
+                    "1. Check workspace status:  {}",
+                    "polis status".style(self.ctx.styles.command)
+                ));
+                self.ctx.info(&format!(
+                    "2. (Optional) Install and activate an AI agent:",
+                ));
+                self.ctx.info(&format!(
+                    "   List available agents:   {}",
+                    "polis agent list".style(self.ctx.styles.command)
+                ));
+                self.ctx.info(&format!(
+                    "   Install from path:       {}",
+                    "polis agent install --path <agent-path>".style(self.ctx.styles.command)
+                ));
+                self.ctx.info(&format!(
+                    "   Activate an agent:       {}",
+                    "polis agent activate <name> -e KEY=VAL".style(self.ctx.styles.command)
+                ));
+                self.ctx.info(&format!(
+                    "3. Connect to the workspace: {}",
+                    "polis connect".style(self.ctx.styles.command)
+                ));
+                self.ctx.info("   Shows available connection methods (SSH, VS Code, Cursor).");
             }
         }
     }
