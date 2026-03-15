@@ -7,7 +7,9 @@ use std::{
 
 use bollard::{
     Docker,
-    container::{KillContainerOptions, ListContainersOptions, LogOutput, LogsOptions, Stats, StatsOptions},
+    container::{
+        KillContainerOptions, ListContainersOptions, LogOutput, LogsOptions, Stats, StatsOptions,
+    },
     errors::Error as BollardError,
     models::{ContainerInspectResponse, ContainerSummary, Network, NetworkSettings, Port},
     network::ListNetworksOptions,

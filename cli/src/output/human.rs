@@ -416,9 +416,8 @@ impl<'a> HumanRenderer<'a> {
                     "1. Check workspace status:  {}",
                     "polis status".style(self.ctx.styles.command)
                 ));
-                self.ctx.info(&format!(
-                    "2. (Optional) Install and activate an AI agent:",
-                ));
+                self.ctx
+                    .info("2. (Optional) Install and activate an AI agent:");
                 self.ctx.info(&format!(
                     "   List available agents:   {}",
                     "polis agent list".style(self.ctx.styles.command)
@@ -435,7 +434,8 @@ impl<'a> HumanRenderer<'a> {
                     "3. Connect to the workspace: {}",
                     "polis connect".style(self.ctx.styles.command)
                 ));
-                self.ctx.info("   Shows available connection methods (SSH, VS Code, Cursor).");
+                self.ctx
+                    .info("   Shows available connection methods (SSH, VS Code, Cursor).");
             }
         }
     }

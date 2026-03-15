@@ -514,19 +514,16 @@ spec:
             2,
             "openclaw should have exactly two onboarding steps"
         );
-        assert_eq!(manifest.spec.onboarding[0].title, "Add your API key");
         assert_eq!(
-            manifest.spec.onboarding[0].command,
-            "polis exec openclaw onboard"
+            manifest.spec.onboarding[0].title,
+            "Connect to workspace via SSH"
         );
+        assert_eq!(manifest.spec.onboarding[0].command, "ssh workspace");
         assert_eq!(
             manifest.spec.onboarding[1].title,
-            "Restart to apply changes"
+            "Run the onboarding wizard inside the workspace"
         );
-        assert_eq!(
-            manifest.spec.onboarding[1].command,
-            "polis exec openclaw restart"
-        );
+        assert_eq!(manifest.spec.onboarding[1].command, "openclaw onboard");
     }
 
     #[test]

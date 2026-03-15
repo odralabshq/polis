@@ -55,10 +55,6 @@ pub async fn run(app: &impl App, cmd: AgentCommand) -> Result<ExitCode> {
         AgentCommand::Install { path } => install::run(app, &path).await,
         AgentCommand::Remove { name } => remove::run(app, &name).await,
         AgentCommand::Activate { name, envs } => activate::run(app, &name, envs).await,
-        AgentCommand::Exec {
-            name,
-            subcmd,
-            args,
-        } => exec::run(app, &name, &subcmd, &args).await,
+        AgentCommand::Exec { name, subcmd, args } => exec::run(app, &name, &subcmd, &args).await,
     }
 }

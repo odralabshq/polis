@@ -1038,11 +1038,7 @@ where
         let normalized = Self::normalize_bypass_domain(domain)?;
         let host = normalized.strip_prefix('.').unwrap_or(&normalized);
         self.client
-            .set_string_ex(
-                &approved_host_key(host),
-                "1",
-                ttl::APPROVED_REQUEST_SECS,
-            )
+            .set_string_ex(&approved_host_key(host), "1", ttl::APPROVED_REQUEST_SECS)
             .await
             .map_err(|error| {
                 Self::dependency_error(
@@ -1253,11 +1249,7 @@ where
         // immediately accessible while the DLP module picks up the
         // permanent bypass key on its next poll cycle.
         self.client
-            .set_string_ex(
-                &approved_host_key(&host),
-                "1",
-                ttl::APPROVED_REQUEST_SECS,
-            )
+            .set_string_ex(&approved_host_key(&host), "1", ttl::APPROVED_REQUEST_SECS)
             .await
             .map_err(|error| {
                 Self::dependency_error(

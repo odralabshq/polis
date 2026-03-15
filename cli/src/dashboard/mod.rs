@@ -1706,7 +1706,6 @@ async fn allow_credential_request(
     .await
 }
 
-
 async fn add_config_bypass(client: &Client, api_url: &str, domain: &str) -> Result<ActionResponse> {
     send_action(
         client
@@ -2009,9 +2008,8 @@ async fn run_dashboard_loop(
                                     // to sentinel automatically, forcing DLP cache refresh)
                                     let bypass_result = add_config_bypass(&client, &api_url, &destination).await;
                                     match (approve_result, bypass_result) {
-                                        (Ok(_), Ok(resp)) => Ok(Some(resp)),
-                                        (Err(_), Ok(resp)) => Ok(Some(resp)),
-                                        (Ok(resp), Err(_)) => Ok(Some(resp)),
+                                        (Ok(_) | Err(_), Ok(resp))
+                                        | (Ok(resp), Err(_)) => Ok(Some(resp)),
                                         (Err(e), Err(_)) => Err(e),
                                     }
                                 }
