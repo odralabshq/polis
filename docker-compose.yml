@@ -640,6 +640,9 @@ services:
       - POLIS_CP_OPERATOR_TOKEN_FILE=/run/secrets/cp_operator_token
       - POLIS_CP_VIEWER_TOKEN_FILE=/run/secrets/cp_viewer_token
       - POLIS_CP_AGENT_TOKEN_FILE=/run/secrets/cp_agent_token
+    volumes:
+      - ./certs/valkey:/etc/valkey/tls:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     secrets:
       - valkey_cp_server_password
       # Optional auth tokens (disabled by default)
@@ -647,9 +650,6 @@ services:
       # - cp_operator_token
       # - cp_viewer_token
       # - cp_agent_token
-    volumes:
-      - ./certs/valkey:/etc/valkey/tls:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       state:
         condition: service_healthy
