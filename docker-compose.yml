@@ -624,10 +624,11 @@ services:
       gateway-bridge:
         ipv4_address: 10.30.1.30
     ports:
-      # Bound to 0.0.0.0 so the dashboard TUI (running on the host) can
-      # reach the API via the VM's IP address. The VM itself is behind
-      # Multipass NAT, so this is not exposed to the wider network.
-      - 0.0.0.0:9080:9080
+      # Loopback-only: the dashboard TUI runs on the same host as Docker.
+      # The VM itself is behind Multipass NAT, so even 0.0.0.0 would not
+      # be reachable from the wider network, but we bind to 127.0.0.1 to
+      # match the host-bridge network intent and satisfy topology tests.
+      - 127.0.0.1:9080:9080
     environment:
       - RUST_LOG=info
       - POLIS_CP_LISTEN_ADDR=0.0.0.0:9080
