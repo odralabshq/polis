@@ -2599,4 +2599,18 @@ mod tests {
         assert!(app_state.docker().is_none());
         assert!(app_state.metrics().current_snapshot().await.is_none());
     }
+
+    #[test]
+    fn compiled_bypass_domains_returns_known_entries() {
+        let domains = GovernanceState::<FakeValkeyClient>::compiled_bypass_domains();
+        assert!(
+            !domains.is_empty(),
+            "compiled_bypass_domains() returned an empty list — the C source parser may be broken"
+        );
+        // Verify at least one well-known domain is present.
+        assert!(
+            domains.iter().any(|d| d.contains("github.com")),
+            "expected *.github.com in compiled bypass domains, got: {domains:?}"
+        );
+    }
 }

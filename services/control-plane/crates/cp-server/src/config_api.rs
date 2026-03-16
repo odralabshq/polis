@@ -70,12 +70,13 @@ where
         .store
         .set_security_level_via_config(&request.level)
         .await?;
+    // Broadcast order: Full first, then Config — matches lib.rs::set_security_level
+    state.notify(BroadcastMessage::Full);
     state.notify(BroadcastMessage::Config(cp_api_types::ConfigEvent {
         event_type: "level_changed".to_string(),
         level: Some(request.level.to_ascii_lowercase()),
         domain: None,
     }));
-    state.notify(BroadcastMessage::Full);
     Ok(Json(response))
 }
 

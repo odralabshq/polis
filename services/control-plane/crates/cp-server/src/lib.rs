@@ -17,14 +17,15 @@ use anyhow::{Context, Result, bail};
 use async_stream::stream;
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Path, Query, State},
-    http::{HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
+    http::{HeaderValue, Method, Request, StatusCode, header::CONTENT_TYPE},
     middleware,
     response::{
-        Html,
+        Html, IntoResponse,
         sse::{Event, KeepAlive, Sse},
     },
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use cp_api_types::{
     ActionResponse, BlockedListResponse, EventsResponse, LevelRequest, LevelResponse,
@@ -54,6 +55,60 @@ const DEFAULT_EVENT_LIMIT: usize = 50;
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const HEALTHCHECK_TIMEOUT: Duration = Duration::from_secs(2);
 const WORKSPACE_POLL_TICKS: u64 = 5;
+/// Maximum mutation requests per second across all clients.
+/// Prevents rapid-fire approve/deny/bypass when auth is disabled.
+const MUTATION_RATE_LIMIT: u64 = 30;
+
+/// Simple token-bucket rate limiter for mutation endpoints.
+#[derive(Clone)]
+struct MutationRateLimiter {
+    tokens: Arc<tokio::sync::Mutex<(u64, tokio::time::Instant)>>,
+    max_tokens: u64,
+}
+
+impl MutationRateLimiter {
+    fn new(max_per_second: u64) -> Self {
+        Self {
+            tokens: Arc::new(tokio::sync::Mutex::new((
+                max_per_second,
+                tokio::time::Instant::now(),
+            ))),
+            max_tokens: max_per_second,
+        }
+    }
+
+    async fn try_acquire(&self) -> bool {
+        let mut guard = self.tokens.lock().await;
+        let (ref mut tokens, ref mut last_refill) = *guard;
+        let elapsed = last_refill.elapsed();
+        if elapsed >= Duration::from_secs(1) {
+            *tokens = self.max_tokens;
+            *last_refill = tokio::time::Instant::now();
+        }
+        if *tokens > 0 {
+            *tokens -= 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+async fn mutation_rate_limit_middleware(
+    State(limiter): State<MutationRateLimiter>,
+    request: Request<Body>,
+    next: middleware::Next,
+) -> impl IntoResponse {
+    if limiter.try_acquire().await {
+        next.run(request).await.into_response()
+    } else {
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            "mutation rate limit exceeded",
+        )
+            .into_response()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BroadcastMessage {
@@ -91,7 +146,8 @@ pub fn build_router<S>(state: HttpState<S>) -> Router
 where
     S: GovernanceStore + WorkspaceStore + MetricsStore + LogsStore + RuntimeConfigStore + AuthStore,
 {
-    let api: Router<HttpState<S>> = Router::new()
+    // ── Read-only routes ────────────────────────────────────────────
+    let read_routes: Router<HttpState<S>> = Router::new()
         .route(
             "/status",
             get(status::<S>).route_layer(middleware::from_fn(|request, next| {
@@ -123,6 +179,34 @@ where
             })),
         )
         .route(
+            "/events",
+            get(events::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadDashboard)
+            })),
+        )
+        .route(
+            "/config/level",
+            get(get_security_level::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadLevel)
+            })),
+        )
+        .route(
+            "/config/rules",
+            get(list_rules::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadDashboard)
+            })),
+        )
+        .route(
+            "/stream",
+            get(stream_events::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::ReadDashboard)
+            })),
+        );
+
+    // ── Mutation routes (rate-limited) ──────────────────────────────
+    let rate_limiter = MutationRateLimiter::new(MUTATION_RATE_LIMIT);
+    let mutation_routes: Router<HttpState<S>> = Router::new()
+        .route(
             "/blocked/{id}/approve",
             post(approve::<S>).route_layer(middleware::from_fn(|request, next| {
                 auth::require_permission(request, next, Permission::MutateGovernance)
@@ -147,42 +231,28 @@ where
             })),
         )
         .route(
-            "/events",
-            get(events::<S>).route_layer(middleware::from_fn(|request, next| {
-                auth::require_permission(request, next, Permission::ReadDashboard)
+            "/config/level",
+            put(set_security_level::<S>).route_layer(middleware::from_fn(|request, next| {
+                auth::require_permission(request, next, Permission::MutateConfig)
             })),
         )
         .route(
-            "/config/level",
-            get(get_security_level::<S>)
-                .route_layer(middleware::from_fn(|request, next| {
-                    auth::require_permission(request, next, Permission::ReadLevel)
-                }))
-                .put(set_security_level::<S>)
-                .route_layer(middleware::from_fn(|request, next| {
-                    auth::require_permission(request, next, Permission::MutateConfig)
-                })),
-        )
-        .route(
             "/config/rules",
-            get(list_rules::<S>)
-                .route_layer(middleware::from_fn(|request, next| {
-                    auth::require_permission(request, next, Permission::ReadDashboard)
-                }))
-                .post(add_rule::<S>)
+            post(add_rule::<S>)
                 .delete(delete_rule::<S>)
                 .route_layer(middleware::from_fn(|request, next| {
                     auth::require_permission(request, next, Permission::MutateConfig)
                 })),
         )
+        .layer(middleware::from_fn_with_state(
+            rate_limiter,
+            mutation_rate_limit_middleware,
+        ));
+
+    let api: Router<HttpState<S>> = read_routes
+        .merge(mutation_routes)
         .merge(config_api::routes::<S>())
         .merge(observability_api::routes::<S>())
-        .route(
-            "/stream",
-            get(stream_events::<S>).route_layer(middleware::from_fn(|request, next| {
-                auth::require_permission(request, next, Permission::ReadDashboard)
-            })),
-        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware::<S>,
