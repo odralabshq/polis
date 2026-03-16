@@ -133,7 +133,10 @@ where
     let client_id = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map_or_else(|| "unknown".to_string(), |ConnectInfo(addr)| addr.ip().to_string());
+        .map_or_else(
+            || "unknown".to_string(),
+            |ConnectInfo(addr)| addr.ip().to_string(),
+        );
     let token = bearer_token(request.headers()).or_else(|| query_token(request.uri().query()));
     let Some(token) = token else {
         return auth_failure_response(
