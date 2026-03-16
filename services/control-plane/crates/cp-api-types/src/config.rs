@@ -12,6 +12,14 @@ pub struct SecurityOverview {
 pub struct ConfigAgentResponse {
     pub name: String,
     pub version: String,
+    /// Whether the agent was detected from Docker introspection (`true`)
+    /// or populated with defaults (`false`).
+    #[serde(default = "default_detected")]
+    pub detected: bool,
+}
+
+fn default_detected() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -92,6 +100,7 @@ mod tests {
             agent: ConfigAgentResponse {
                 name: "openclaw".to_string(),
                 version: "1.0.0".to_string(),
+                detected: true,
             },
         });
     }

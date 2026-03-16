@@ -288,6 +288,16 @@ impl ReconnectBackoff {
     }
 }
 
+/// Guard that aborts a spawned task when dropped, ensuring cleanup on all
+/// exit paths (normal return, `?` early return, or panic).
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 fn empty_status() -> StatusResponse {
     StatusResponse {
         security_level: UNKNOWN_VALUE.to_string(),
@@ -1915,7 +1925,9 @@ async fn connect_sse(
                                 continue;
                             }
 
-                            if let Some(event) = parse_dashboard_event(&frame)? {
+                            // Skip unknown event types and parse failures silently —
+                            // the dashboard renders gracefully with missing data.
+                            if let Ok(Some(event)) = parse_dashboard_event(&frame) {
                                 let _ = sender.send(DashboardUpdate::Server(event));
                             }
                         }
@@ -1972,7 +1984,7 @@ async fn run_dashboard_loop(
     api_url: String,
 ) -> Result<()> {
     let (sender, mut receiver) = mpsc::unbounded_channel();
-    let sse_task = spawn_sse_task(client.clone(), api_url.clone(), sender);
+    let _sse_guard = AbortOnDrop(spawn_sse_task(client.clone(), api_url.clone(), sender));
     let mut app = App::new();
     let mut key_events = EventStream::new();
     let mut render_tick = interval(RENDER_INTERVAL);
@@ -2008,8 +2020,13 @@ async fn run_dashboard_loop(
                                     // to sentinel automatically, forcing DLP cache refresh)
                                     let bypass_result = add_config_bypass(&client, &api_url, &destination).await;
                                     match (approve_result, bypass_result) {
-                                        (Ok(_) | Err(_), Ok(resp))
-                                        | (Ok(resp), Err(_)) => Ok(Some(resp)),
+                                        (Ok(_), Ok(resp)) => Ok(Some(resp)),
+                                        (Ok(_), Err(e)) => Err(anyhow::anyhow!(
+                                            "Request approved but bypass failed: {e}. Domain will be blocked again next time."
+                                        )),
+                                        (Err(e), Ok(_)) => Err(anyhow::anyhow!(
+                                            "Bypass saved but approval failed: {e}. The current request may still be pending."
+                                        )),
                                         (Err(e), Err(_)) => Err(e),
                                     }
                                 }
@@ -2054,7 +2071,7 @@ async fn run_dashboard_loop(
         }
     }
 
-    sse_task.abort();
+    // SSE task is automatically aborted when _sse_guard is dropped
     Ok(())
 }
 

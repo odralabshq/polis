@@ -110,8 +110,15 @@ impl TestStore {
     }
 
     fn router(&self) -> axum::Router {
+        let auth_enabled = self.inner.lock().expect("fixture lock").auth_enabled;
         let (sender, _) = tokio::sync::broadcast::channel(32);
-        build_router(HttpState::new(Arc::new(self.clone()), sender))
+        build_router(HttpState::new(Arc::new(self.clone()), sender).with_cors(
+            vec![
+                axum::http::HeaderValue::from_static("http://localhost:9080"),
+                axum::http::HeaderValue::from_static("http://127.0.0.1:9080"),
+            ],
+            auth_enabled,
+        ))
     }
 }
 
@@ -481,6 +488,7 @@ impl RuntimeConfigStore for TestStore {
             agent: ConfigAgentResponse {
                 name: "openclaw".to_string(),
                 version: "1.0.0".to_string(),
+                detected: false,
             },
         })
     }

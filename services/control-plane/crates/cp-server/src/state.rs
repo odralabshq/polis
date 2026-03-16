@@ -1313,7 +1313,10 @@ where
                 if let Some(event) = Self::parse_event_item(&raw) {
                     Some(event)
                 } else {
-                    tracing::warn!("skipping malformed event log entry");
+                    tracing::warn!(
+                        entry = %raw.chars().take(200).collect::<String>(),
+                        "skipping malformed event log entry"
+                    );
                     None
                 }
             })
@@ -1682,8 +1685,12 @@ where
                 Ok(agent) => ConfigAgentResponse {
                     name: agent.name,
                     version: agent.version,
+                    detected: true,
                 },
-                Err(_) => default_config_agent(),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to detect agent from Docker — using defaults");
+                    default_config_agent()
+                }
             }
         } else {
             default_config_agent()
@@ -1773,6 +1780,7 @@ fn default_config_agent() -> ConfigAgentResponse {
     ConfigAgentResponse {
         name: DEFAULT_AGENT_NAME.to_string(),
         version: DEFAULT_AGENT_VERSION.to_string(),
+        detected: false,
     }
 }
 

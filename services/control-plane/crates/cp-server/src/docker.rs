@@ -73,8 +73,7 @@ impl DockerClient {
     /// Returns an error if the client cannot be initialized or the daemon
     /// cannot be reached.
     pub async fn new() -> anyhow::Result<Self> {
-        let client =
-            Docker::connect_with_socket_defaults().map_err(|error| anyhow::anyhow!(error))?;
+        let client = Docker::connect_with_defaults().map_err(|error| anyhow::anyhow!(error))?;
         client
             .ping()
             .await

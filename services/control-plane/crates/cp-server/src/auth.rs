@@ -5,7 +5,7 @@
 use axum::{
     Json,
     body::Body,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{
         Request, StatusCode,
         header::{AUTHORIZATION, HeaderMap},
@@ -15,6 +15,7 @@ use axum::{
 };
 use cp_api_types::ErrorResponse;
 use serde::Serialize;
+use std::net::SocketAddr;
 use std::str::FromStr;
 
 use crate::{HttpState, state::AuthStore};
@@ -129,7 +130,10 @@ where
         return next.run(request).await;
     }
 
-    let client_id = client_id(request.headers());
+    let client_id = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map_or_else(|| "unknown".to_string(), |ConnectInfo(addr)| addr.ip().to_string());
     let token = bearer_token(request.headers()).or_else(|| query_token(request.uri().query()));
     let Some(token) = token else {
         return auth_failure_response(
@@ -185,7 +189,10 @@ where
     let rate_limited = store
         .register_auth_failure(client_id, reason)
         .await
-        .unwrap_or(false);
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, %client_id, "failed to record auth failure — rate-limiting by default");
+            true
+        });
     let status = if rate_limited {
         StatusCode::TOO_MANY_REQUESTS
     } else {
@@ -233,13 +240,6 @@ fn query_token(query: Option<&str>) -> Option<String> {
             .split('&')
             .find_map(|segment| segment.strip_prefix("token=").map(ToString::to_string))
     })
-}
-
-fn client_id(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .map_or_else(|| "127.0.0.1".to_string(), ToString::to_string)
 }
 
 #[cfg(test)]

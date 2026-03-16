@@ -175,14 +175,14 @@ prepare-config:
 		echo "✓ Created stub image-digests.json"
 	fi
 
-build: prepare-config build-cli build-docker save-docker-images
+build: prepare-config build-cli build-docker pull-images save-docker-images
 
 # Windows-only: Prepare config assets (no sudo, PowerShell tar)
 prepare-config-windows:
 	powershell -NoProfile -ExecutionPolicy Bypass scripts/prepare-config-windows.ps1
 
 # Windows-only: Build all components
-build-windows: prepare-config-windows build-cli build-docker save-docker-images-windows
+build-windows: prepare-config-windows build-cli build-docker pull-images save-docker-images-windows
 
 # Quick build — skips asset preparation
 build-quick: build-cli
@@ -194,6 +194,10 @@ build-cli:
 # Build Docker images
 build-docker:
 	docker compose build
+
+# Pull third-party images not built locally (e.g. socket-proxy)
+pull-images:
+	docker compose pull --ignore-buildable
 
 # Save all Docker images as a compressed tarball for dev VM loading
 save-docker-images:

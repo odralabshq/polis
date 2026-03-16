@@ -106,18 +106,34 @@ setup() {
     assert_output --partial "seccomp=./services/control-plane/config/seccomp.json"
 }
 
-@test "compose config: control-plane has docker socket integration" {
+@test "compose config: control-plane has docker proxy integration" {
     run grep -A50 "^  control-plane:" "$COMPOSE"
     assert_success
-    assert_output --partial '/var/run/docker.sock:/var/run/docker.sock:ro'
+    assert_output --partial 'DOCKER_HOST=tcp://docker-proxy:2375'
     assert_output --partial 'POLIS_CP_DOCKER_ENABLED=true'
     assert_output --partial 'POLIS_CP_AUTH_ENABLED=false'
     assert_output --partial 'POLIS_CP_ADMIN_TOKEN_FILE=/run/secrets/cp_admin_token'
     assert_output --partial 'POLIS_CP_OPERATOR_TOKEN_FILE=/run/secrets/cp_operator_token'
     assert_output --partial 'POLIS_CP_VIEWER_TOKEN_FILE=/run/secrets/cp_viewer_token'
     assert_output --partial 'POLIS_CP_AGENT_TOKEN_FILE=/run/secrets/cp_agent_token'
-    assert_output --partial '${DOCKER_GID:-999}'
     assert_output --partial 'memory: 384M'
+}
+
+@test "compose config: docker-proxy restricts socket access" {
+    run grep -A60 "^  docker-proxy:" "$COMPOSE"
+    assert_success
+    assert_output --partial 'lscr.io/linuxserver/socket-proxy'
+    assert_output --partial 'POST=0'
+    assert_output --partial 'ALLOW_RESTARTS=1'
+    assert_output --partial 'CONTAINERS=1'
+    assert_output --partial 'EXEC=0'
+    assert_output --partial '/var/run/docker.sock:/var/run/docker.sock:ro'
+}
+
+@test "compose config: control-plane does not mount docker socket directly" {
+    # Extract only the control-plane service block (up to next top-level service)
+    run bash -c "sed -n '/^  control-plane:/,/^  [a-z]/p' '$COMPOSE' | grep 'docker.sock'"
+    assert_failure
 }
 
 @test "compose config: workspace has agent metadata labels" {

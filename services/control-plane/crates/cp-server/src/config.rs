@@ -18,6 +18,7 @@ const DEFAULT_ADMIN_TOKEN_FILE: &str = "/run/secrets/cp_admin_token";
 const DEFAULT_OPERATOR_TOKEN_FILE: &str = "/run/secrets/cp_operator_token";
 const DEFAULT_VIEWER_TOKEN_FILE: &str = "/run/secrets/cp_viewer_token";
 const DEFAULT_AGENT_TOKEN_FILE: &str = "/run/secrets/cp_agent_token";
+const DEFAULT_CORS_ORIGINS: &str = "http://localhost:9080,http://127.0.0.1:9080";
 
 /// Control-plane server configuration loaded from `POLIS_CP_*` env vars.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -48,6 +49,8 @@ pub struct Config {
     pub viewer_token_file: String,
     #[serde(default = "default_agent_token_file")]
     pub agent_token_file: String,
+    #[serde(default = "default_cors_origins")]
+    pub cors_origins: String,
 }
 
 impl Config {
@@ -155,6 +158,10 @@ fn default_agent_token_file() -> String {
     DEFAULT_AGENT_TOKEN_FILE.to_string()
 }
 
+fn default_cors_origins() -> String {
+    DEFAULT_CORS_ORIGINS.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::Config;
@@ -179,6 +186,10 @@ mod tests {
         assert_eq!(config.operator_token_file, "/run/secrets/cp_operator_token");
         assert_eq!(config.viewer_token_file, "/run/secrets/cp_viewer_token");
         assert_eq!(config.agent_token_file, "/run/secrets/cp_agent_token");
+        assert_eq!(
+            config.cors_origins,
+            "http://localhost:9080,http://127.0.0.1:9080"
+        );
     }
 
     #[test]
@@ -197,6 +208,10 @@ mod tests {
             ("POLIS_CP_OPERATOR_TOKEN_FILE", "/tmp/operator.token"),
             ("POLIS_CP_VIEWER_TOKEN_FILE", "/tmp/viewer.token"),
             ("POLIS_CP_AGENT_TOKEN_FILE", "/tmp/agent.token"),
+            (
+                "POLIS_CP_CORS_ORIGINS",
+                "https://dashboard.example.com,https://admin.example.com",
+            ),
         ])
         .expect("explicit env parses");
 
@@ -213,5 +228,9 @@ mod tests {
         assert_eq!(config.operator_token_file, "/tmp/operator.token");
         assert_eq!(config.viewer_token_file, "/tmp/viewer.token");
         assert_eq!(config.agent_token_file, "/tmp/agent.token");
+        assert_eq!(
+            config.cors_origins,
+            "https://dashboard.example.com,https://admin.example.com"
+        );
     }
 }

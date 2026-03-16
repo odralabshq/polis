@@ -595,6 +595,70 @@ services:
       service: "polis-toolbox"
 
   # =========================================================
+  # DOCKER PROXY (Socket API Filter)
+  # Restricts Docker API access for control-plane.
+  # Only read operations + SIGHUP signal are permitted.
+  # =========================================================
+  docker-proxy:
+    image: lscr.io/linuxserver/socket-proxy:latest
+    container_name: polis-docker-proxy
+    read_only: true
+    tmpfs:
+      - /run
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+    networks:
+      gateway-bridge:
+        ipv4_address: 10.30.1.31
+    environment:
+      # Read-only by default — block all POST operations
+      - POST=0
+      # Allow kill/stop/restart (needed for SIGHUP to sentinel)
+      - ALLOW_RESTARTS=1
+      # Endpoint access (minimum required)
+      - CONTAINERS=1
+      - NETWORKS=1
+      - PING=1
+      # Explicitly deny everything else
+      - AUTH=0
+      - BUILD=0
+      - COMMIT=0
+      - CONFIGS=0
+      - DISTRIBUTION=0
+      - EVENTS=0
+      - EXEC=0
+      - IMAGES=0
+      - INFO=0
+      - NODES=0
+      - PLUGINS=0
+      - SECRETS=0
+      - SERVICES=0
+      - SESSION=0
+      - SWARM=0
+      - SYSTEM=0
+      - TASKS=0
+      - VERSION=0
+      - VOLUMES=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service"
+    labels:
+      service: "polis-docker-proxy"
+
+  # =========================================================
   # CONTROL PLANE (Governance UI / REST API / SSE)
   # =========================================================
   control-plane:
@@ -604,8 +668,6 @@ services:
     image: ghcr.io/odralabshq/polis-control-plane-oss:${POLIS_CONTROL_PLANE_VERSION:-latest}
     container_name: polis-control-plane
     user: "65532:65532"
-    group_add:
-      - "${DOCKER_GID:-999}"
     read_only: true
     tmpfs:
       - /tmp:size=10M,mode=1777
@@ -637,9 +699,9 @@ services:
       - POLIS_CP_OPERATOR_TOKEN_FILE=/run/secrets/cp_operator_token
       - POLIS_CP_VIEWER_TOKEN_FILE=/run/secrets/cp_viewer_token
       - POLIS_CP_AGENT_TOKEN_FILE=/run/secrets/cp_agent_token
+      - DOCKER_HOST=tcp://docker-proxy:2375
     volumes:
       - ./certs/valkey:/etc/valkey/tls:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     secrets:
       - valkey_cp_server_password
       # Optional auth tokens (disabled by default)
@@ -650,6 +712,8 @@ services:
     depends_on:
       state:
         condition: service_healthy
+      docker-proxy:
+        condition: service_started
     healthcheck:
       test: ["CMD", "/usr/local/bin/cp-server", "--healthcheck"]
       interval: 10s

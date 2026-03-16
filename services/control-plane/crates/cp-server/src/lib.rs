@@ -11,7 +11,7 @@ pub mod observability_api;
 pub mod state;
 pub mod workspace_api;
 
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use async_stream::stream;
@@ -127,12 +127,29 @@ pub enum BroadcastMessage {
 pub struct HttpState<S> {
     store: Arc<S>,
     broadcaster: broadcast::Sender<BroadcastMessage>,
+    cors_origins: Vec<HeaderValue>,
+    auth_enabled: bool,
 }
 
 impl<S> HttpState<S> {
     #[must_use]
     pub fn new(store: Arc<S>, broadcaster: broadcast::Sender<BroadcastMessage>) -> Self {
-        Self { store, broadcaster }
+        Self {
+            store,
+            broadcaster,
+            cors_origins: vec![
+                HeaderValue::from_static("http://localhost:9080"),
+                HeaderValue::from_static("http://127.0.0.1:9080"),
+            ],
+            auth_enabled: false,
+        }
+    }
+
+    #[must_use]
+    pub fn with_cors(mut self, origins: Vec<HeaderValue>, auth_enabled: bool) -> Self {
+        self.cors_origins = origins;
+        self.auth_enabled = auth_enabled;
+        self
     }
 
     fn notify(&self, message: BroadcastMessage) {
@@ -198,9 +215,11 @@ where
         )
         .route(
             "/stream",
-            get(stream_events::<S>).route_layer(middleware::from_fn(|request, next| {
-                auth::require_permission(request, next, Permission::ReadDashboard)
-            })),
+            get(stream_events::<S>)
+                .route_layer(tower::limit::ConcurrencyLimitLayer::new(30))
+                .route_layer(middleware::from_fn(|request, next| {
+                    auth::require_permission(request, next, Permission::ReadDashboard)
+                })),
         );
 
     // ── Mutation routes (rate-limited) ──────────────────────────────
@@ -263,8 +282,16 @@ where
         .route("/", get(index))
         .route("/health", get(health))
         .nest("/api/v1", api)
-        .layer(build_cors(state.store.auth_enabled()))
-        .layer(TraceLayer::new_for_http())
+        .layer(build_cors(&state.cors_origins, state.auth_enabled))
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<Body>| {
+                tracing::info_span!(
+                    "http",
+                    method = %request.method(),
+                    path = %request.uri().path(),
+                )
+            }),
+        )
         .with_state(state)
 }
 
@@ -281,9 +308,22 @@ pub async fn run() -> Result<()> {
         .try_init();
 
     let config = Config::from_env()?;
+
+    if !config.auth_enabled {
+        tracing::warn!(
+            "authentication is DISABLED — all API requests have admin privileges. \
+             Set POLIS_CP_AUTH_ENABLED=true and configure token secrets for production use."
+        );
+    }
+
     let state = Arc::new(AppState::new(&config).await?);
     let (sender, _) = broadcast::channel(64);
-    let http_state = HttpState::new(state, sender);
+    let cors_origins: Vec<HeaderValue> = config
+        .cors_origins
+        .split(',')
+        .filter_map(|o| HeaderValue::from_str(o.trim()).ok())
+        .collect();
+    let http_state = HttpState::new(state, sender).with_cors(cors_origins, config.auth_enabled);
     let _poller = spawn_poller(http_state.clone());
     let router = build_router(http_state);
 
@@ -292,10 +332,13 @@ pub async fn run() -> Result<()> {
         .await
         .with_context(|| format!("failed to bind {}", config.listen_addr))?;
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("control-plane HTTP server failed")?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("control-plane HTTP server failed")?;
 
     Ok(())
 }
@@ -715,7 +758,7 @@ where
     }
 }
 
-fn build_cors(auth_enabled: bool) -> CorsLayer {
+fn build_cors(origins: &[HeaderValue], auth_enabled: bool) -> CorsLayer {
     let allow_headers = if auth_enabled {
         vec![CONTENT_TYPE, axum::http::header::AUTHORIZATION]
     } else {
@@ -723,10 +766,7 @@ fn build_cors(auth_enabled: bool) -> CorsLayer {
     };
 
     CorsLayer::new()
-        .allow_origin([
-            HeaderValue::from_static("http://localhost:9080"),
-            HeaderValue::from_static("http://127.0.0.1:9080"),
-        ])
+        .allow_origin(origins.to_vec())
         .allow_methods([
             Method::GET,
             Method::POST,
