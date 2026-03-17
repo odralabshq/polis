@@ -87,7 +87,6 @@ pub struct SecurityStatusOutput {
 #[derive(Debug, Clone, Serialize)]
 pub struct PendingApprovalsOutput {
     /// Blocked requests awaiting approval.
-    /// The `pattern` field is set to `None` on every entry (CWE-200).
     pub pending: Vec<BlockedRequest>,
 }
 

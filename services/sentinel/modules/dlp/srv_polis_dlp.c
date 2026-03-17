@@ -2122,15 +2122,48 @@ int dlp_process(ci_request_t *req)
                     "polis_dlp: Skipping Valkey block storage for %s due to JSON truncation\n",
                     data->request_id);
             } else {
-                pthread_mutex_lock(&gov_valkey_mutex);
-                redisReply *set_reply = redisCommand(valkey_gov_ctx,
-                    "SETEX polis:blocked:%s 3600 %s",
-                    data->request_id, json_buf);
-                if (set_reply) freeReplyObject(set_reply);
-                pthread_mutex_unlock(&gov_valkey_mutex);
+                /* Dedup: avoid flooding the blocked list with duplicate
+                 * entries for the same destination+pattern combination.
+                 * Check if a recent block already exists; if so, skip
+                 * creating another entry but still return 403. */
+                char dedup_key[512];
+                int skip_store = 0;
+                snprintf(dedup_key, sizeof(dedup_key),
+                         "polis:blocked:dedup:%s:%s",
+                         data->host, data->matched_pattern);
 
-                ci_debug_printf(3, "polis_dlp: Stored block %s in Valkey\n",
-                               data->request_id);
+                pthread_mutex_lock(&gov_valkey_mutex);
+
+                redisReply *dedup_reply = redisCommand(valkey_gov_ctx,
+                    "EXISTS %s", dedup_key);
+                if (dedup_reply &&
+                    dedup_reply->type == REDIS_REPLY_INTEGER &&
+                    dedup_reply->integer == 1) {
+                    skip_store = 1;
+                    ci_debug_printf(5, "polis_dlp: Dedup hit for %s:%s "
+                                       "— skipping blocked entry\n",
+                                   data->host, data->matched_pattern);
+                }
+                if (dedup_reply) freeReplyObject(dedup_reply);
+
+                if (!skip_store) {
+                    /* Store the blocked entry */
+                    redisReply *set_reply = redisCommand(valkey_gov_ctx,
+                        "SETEX polis:blocked:%s 3600 %s",
+                        data->request_id, json_buf);
+                    if (set_reply) freeReplyObject(set_reply);
+
+                    /* Set dedup marker with same TTL */
+                    redisReply *dedup_set = redisCommand(valkey_gov_ctx,
+                        "SETEX %s 3600 %s",
+                        dedup_key, data->request_id);
+                    if (dedup_set) freeReplyObject(dedup_set);
+
+                    ci_debug_printf(3, "polis_dlp: Stored block %s in Valkey\n",
+                                   data->request_id);
+                }
+
+                pthread_mutex_unlock(&gov_valkey_mutex);
             }
         }
 

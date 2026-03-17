@@ -1170,6 +1170,8 @@ where
                 Self::dependency_error("failed to create approved marker for request", &error)
             })?;
 
+        let is_credential = Self::is_credential_reason(&blocked_request.reason);
+
         let (event_type, details) =
             if let Some((approval_key, approval_value, operation, event_type, details)) =
                 approval_target
@@ -1178,6 +1180,28 @@ where
                     .set_string_ex(&approval_key, &approval_value, ttl::APPROVED_REQUEST_SECS)
                     .await
                     .map_err(|error| Self::dependency_error(operation, &error))?;
+
+                // Compound approval: when approving a credential block, also
+                // create a temporary host approval so the user doesn't need to
+                // approve the same destination twice (credential + new domain).
+                if is_credential && !blocked_request.destination.is_empty() {
+                    let host = Self::blocked_request_host(&blocked_request)
+                        .unwrap_or_else(|_| blocked_request.destination.clone());
+                    let host_key = approved_host_key(&host);
+                    // Best-effort: don't fail the whole approval if this fails
+                    if let Err(e) = self
+                        .client
+                        .set_string_ex(&host_key, "1", ttl::APPROVED_REQUEST_SECS)
+                        .await
+                    {
+                        tracing::warn!(
+                            host = %host,
+                            error = %e,
+                            "compound approval: failed to create host marker (non-fatal)"
+                        );
+                    }
+                }
+
                 (event_type, details)
             } else {
                 (
