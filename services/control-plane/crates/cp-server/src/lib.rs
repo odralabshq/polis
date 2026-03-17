@@ -138,8 +138,8 @@ impl<S> HttpState<S> {
             store,
             broadcaster,
             cors_origins: vec![
-                HeaderValue::from_static("http://localhost:9080"),
-                HeaderValue::from_static("http://127.0.0.1:9080"),
+                HeaderValue::from_static("http://localhost:9080"), // NOSONAR — loopback-only defaults
+                HeaderValue::from_static("http://127.0.0.1:9080"), // NOSONAR — loopback-only defaults
             ],
             auth_enabled: false,
         }
@@ -356,7 +356,7 @@ pub async fn run_healthcheck() -> Result<()> {
         .map(|(_, port)| port)
         .filter(|port| !port.is_empty())
         .context("control-plane listen address must include a port")?;
-    let target = format!("127.0.0.1:{port}");
+    let target = format!("127.0.0.1:{port}"); // NOSONAR — healthcheck always targets loopback
 
     let response = tokio::time::timeout(HEALTHCHECK_TIMEOUT, async {
         let mut stream = TcpStream::connect(&target)

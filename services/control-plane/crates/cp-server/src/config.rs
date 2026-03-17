@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:9080";
+const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:9080"; // NOSONAR — container-internal bind; host exposure controlled by Docker port mapping
 const DEFAULT_VALKEY_URL: &str = "rediss://valkey:6379";
 const DEFAULT_VALKEY_USER: &str = "cp-server";
 const DEFAULT_VALKEY_PASS_FILE: &str = "/run/secrets/valkey_cp_server_password";
@@ -18,7 +18,7 @@ const DEFAULT_ADMIN_TOKEN_FILE: &str = "/run/secrets/cp_admin_token";
 const DEFAULT_OPERATOR_TOKEN_FILE: &str = "/run/secrets/cp_operator_token";
 const DEFAULT_VIEWER_TOKEN_FILE: &str = "/run/secrets/cp_viewer_token";
 const DEFAULT_AGENT_TOKEN_FILE: &str = "/run/secrets/cp_agent_token";
-const DEFAULT_CORS_ORIGINS: &str = "http://localhost:9080,http://127.0.0.1:9080";
+const DEFAULT_CORS_ORIGINS: &str = "http://localhost:9080,http://127.0.0.1:9080"; // NOSONAR — loopback-only defaults; production overrides via POLIS_CP_CORS_ORIGINS
 
 /// Control-plane server configuration loaded from `POLIS_CP_*` env vars.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

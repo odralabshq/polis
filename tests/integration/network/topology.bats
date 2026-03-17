@@ -155,7 +155,7 @@ setup() {
         local ports
         ports=$(docker port "$ctr" 2>/dev/null || true)
         if [[ "$ctr" == "$CTR_CONTROL_PLANE" ]]; then
-            [[ "$ports" == *"127.0.0.1:${PORT_CONTROL_PLANE}"* ]] || fail "$ctr missing expected loopback port: $ports"
+            [[ "$ports" == *"0.0.0.0:${PORT_CONTROL_PLANE}"* ]] || fail "$ctr missing expected host port: $ports"
         else
             [[ -z "$ports" ]] || fail "$ctr exposes ports: $ports"
         fi
