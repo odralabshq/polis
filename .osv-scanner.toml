@@ -8,3 +8,15 @@ reason = "number_prefix: no fix available upstream (transitive dep via indicatif
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0134"
 reason = "rustls-pemfile: no fix available upstream"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0002"
+reason = "lru: unsoundness in IterMut (CVSS 2.7 Low), transitive dep from ratatui — not exploitable in CLI widget caching context. Fix requires ratatui 0.30 upgrade."
+
+[[IgnoredVulns]]
+id = "GHSA-rhfx-m35p-ff5j"
+reason = "lru: same as RUSTSEC-2026-0002 (GitHub alias)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "paste: unmaintained crate (not a security vuln), transitive dep from ratatui — no fix available"

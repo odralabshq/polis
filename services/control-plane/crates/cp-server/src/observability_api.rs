@@ -186,7 +186,7 @@ fn validate_logs_query(query: LogsQuery) -> AppResult<ValidatedLogsQuery> {
     }
 
     Ok(ValidatedLogsQuery {
-        lines: query.lines,
+        lines: query.lines.min(MAX_LOG_LINES),
         since: query.since,
         level,
     })
