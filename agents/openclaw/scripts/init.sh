@@ -408,6 +408,20 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
     # Detect which model to use based on available API keys
     DEFAULT_MODEL=$(detect_model)
     
+    # Resolve VM IP so the Control UI is accessible from the host browser.
+    # Without the VM IP in allowedOrigins, the gateway rejects WebSocket
+    # upgrades from the host because the Origin header doesn't match.
+    VM_IP="${POLIS_VM_IP:-$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "")}"
+    if ! is_ipv4 "$VM_IP"; then
+        VM_IP=""
+    fi
+
+    # Build allowedOrigins array
+    ALLOWED_ORIGINS='"http://localhost:18789", "http://127.0.0.1:18789"'
+    if [[ -n "$VM_IP" ]]; then
+        ALLOWED_ORIGINS="${ALLOWED_ORIGINS}, \"http://${VM_IP}:18789\""
+    fi
+
     # Create OpenClaw configuration with the token
     # Note: allowInsecureAuth enables token-only auth for HTTP access (no device identity)
     # This is required for Docker container access where HTTPS is not available
@@ -428,7 +442,8 @@ if [[ ! -f "$FIRST_RUN_MARKER" ]]; then
       "enabled": true,
       "allowInsecureAuth": true,
       "dangerouslyDisableDeviceAuth": true,
-      "dangerouslyAllowHostHeaderOriginFallback": true
+      "dangerouslyAllowHostHeaderOriginFallback": true,
+      "allowedOrigins": [${ALLOWED_ORIGINS}]
     },
     "http": {
       "endpoints": {
