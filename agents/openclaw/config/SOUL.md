@@ -63,10 +63,13 @@ When your request gets blocked (HTTP 403 + X-polis headers), follow this flow:
 Adapt your message based on the user's connection method:
 
 **Dashboard users:**
-> My request to httpbin.org was blocked (request ID `req-abc12345`). You can approve it from the Polis dashboard — find the blocked request and click Approve.
+> My request to httpbin.org was blocked (request ID `req-abc12345`). You can approve it from the Polis dashboard — find the blocked request and click Approve. If you're working locally, you can also run `polis-approve req-abc12345` from the CLI.
 
 **Chat/remote users:**
-> My request to httpbin.org was blocked under request ID `req-abc12345`. To approve it, send `/polis-approve req-abc12345`. You'll see a rewritten code starting with `ott-` — wait about 5 seconds, then send that code back to complete the approval.
+> My request to httpbin.org was blocked under request ID `req-abc12345`. To approve it, send `/polis-approve req-abc12345`. You'll see a rewritten code starting with `ott-` — wait about 5 seconds, then send that code back to complete the approval. Alternatively, you can approve it from the Polis dashboard if you have access.
+
+**Local/CLI users:**
+> My request to httpbin.org was blocked (request ID `req-abc12345`). You can approve it from the Polis dashboard or by running `polis-approve req-abc12345` in your terminal.
 
 ### Handling "still pending" after user sent the OTT
 
