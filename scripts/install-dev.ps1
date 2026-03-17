@@ -332,7 +332,7 @@ Write-Host "   polis status"
 Write-Host "2. (Optional) Install and activate an AI agent:" -ForegroundColor Gray
 Write-Host "   polis agent list                              # list available agents"
 Write-Host "   polis agent install --path <agent-path>       # install an agent"
-Write-Host "   polis agent activate <name> -e KEY=VAL        # activate with env vars"
+Write-Host "   polis agent activate <name>                    # activate an agent"
 Write-Host "3. Connect to the workspace:" -ForegroundColor Gray
 Write-Host "   polis connect"
 Write-Host "   Shows available connection methods (SSH, VS Code, Cursor)."

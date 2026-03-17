@@ -428,7 +428,7 @@ impl<'a> HumanRenderer<'a> {
                 ));
                 self.ctx.info(&format!(
                     "   Activate an agent:       {}",
-                    "polis agent activate <name> -e KEY=VAL".style(self.ctx.styles.command)
+                    "polis agent activate <name>".style(self.ctx.styles.command)
                 ));
                 self.ctx.info(&format!(
                     "3. Connect to the workspace: {}",
