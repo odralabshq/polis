@@ -276,6 +276,15 @@ function Invoke-PolisInit {
     } else {
         Write-Warn "Workspace did not become healthy within 120s — check with: polis status"
     }
+
+    # ── Step 7: Persist VM IP for container access ────────────────────────
+    Write-Info "Persisting VM IP..."
+    $vmIp = (multipass info polis --format json 2>$null | ConvertFrom-Json).info.polis.ipv4[0]
+    if ($vmIp) {
+        & multipass exec polis -- bash -c "printf '%s\n' '$vmIp' > /opt/polis/.vm-ip"
+        & multipass exec polis -- bash -c "sed -i '/^POLIS_VM_IP=/d' /opt/polis/.env; printf '%s\n' 'POLIS_VM_IP=$vmIp' >> /opt/polis/.env"
+        Write-Ok "VM IP persisted: $vmIp"
+    }
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -318,11 +327,13 @@ Write-Host ""
 Write-Ok "Polis (dev build) installed successfully!"
 Write-Host ""
 Write-Host "NEXT STEPS:" -ForegroundColor Yellow
-Write-Host "1. Verify status:" -ForegroundColor Gray
+Write-Host "1. Check workspace status:" -ForegroundColor Gray
 Write-Host "   polis status"
-Write-Host "2. Start an AI agent (pass your provider API key directly):" -ForegroundColor Gray
-Write-Host "   polis start --agent openclaw -e OPENAI_API_KEY=sk-..."
-Write-Host "   Note: agent initialization may take several minutes depending on the selected agent."
-Write-Host "3. Connect to the dashboard:" -ForegroundColor Gray
+Write-Host "2. (Optional) Install and activate an AI agent:" -ForegroundColor Gray
+Write-Host "   polis agent list                              # list available agents"
+Write-Host "   polis agent install --path <agent-path>       # install an agent"
+Write-Host "   polis agent activate <name>                    # activate an agent"
+Write-Host "3. Connect to the workspace:" -ForegroundColor Gray
 Write-Host "   polis connect"
+Write-Host "   Shows available connection methods (SSH, VS Code, Cursor)."
 Write-Host ""

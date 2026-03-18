@@ -12,7 +12,7 @@ setup() {
 }
 
 @test "acl: defines expected users" {
-    for user in mcp-agent mcp-admin log-writer healthcheck dlp-reader; do
+    for user in mcp-agent mcp-admin log-writer healthcheck dlp-reader cp-server; do
         run grep "^user ${user} " "$ACL_FILE"
         assert_success
     done

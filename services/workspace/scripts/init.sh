@@ -14,6 +14,11 @@ if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]]; then
         echo 'polis-ca.crt' >> /etc/ca-certificates.conf
 fi
 update-ca-certificates 2>/dev/null || true
+# Fallback: append directly if update-ca-certificates didn't include it.
+if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]] && \
+   ! grep -q "Polis CA" /etc/ssl/certs/ca-certificates.crt 2>/dev/null; then
+    cat /usr/local/share/ca-certificates/polis-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+fi
 
 # Source shared network helpers
 SCRIPT_DIR="$(dirname "$0")"

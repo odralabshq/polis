@@ -50,6 +50,15 @@ impl<'a> HumanRenderer<'a> {
         if let Some(uptime) = status.workspace.uptime_seconds {
             self.ctx.kv("Uptime:", &format_uptime(uptime));
         }
+        if let Some(containers) = &status.containers {
+            self.ctx.kv(
+                "Containers:",
+                &format!(
+                    "{}/{} healthy ({} unhealthy, {} starting)",
+                    containers.healthy, containers.total, containers.unhealthy, containers.starting
+                ),
+            );
+        }
 
         self.ctx.blank();
         self.ctx.header("Security:");
@@ -172,6 +181,19 @@ impl<'a> HumanRenderer<'a> {
         self.ctx.write_raw(&format!(
             "  {:<20} {}",
             "security.level:", config.security.level
+        ));
+        self.ctx.write_raw(&format!(
+            "  {:<20} {}",
+            "control_plane.url:", config.control_plane.url
+        ));
+        self.ctx.write_raw(&format!(
+            "  {:<20} {}",
+            "control_plane.token:",
+            if config.control_plane.token.is_some() {
+                "(configured)"
+            } else {
+                "(not set)"
+            }
         ));
         self.ctx.blank();
         self.ctx
@@ -375,7 +397,7 @@ impl<'a> HumanRenderer<'a> {
     }
 
     /// Render start command outcome.
-    pub fn render_start_outcome(&self, outcome: &StartOutcome, onboarding: &[OnboardingStep]) {
+    pub fn render_start_outcome(&self, outcome: &StartOutcome, _onboarding: &[OnboardingStep]) {
         match outcome {
             StartOutcome::AlreadyRunning { active_agent } => {
                 let label = active_agent.as_ref().map_or_else(
@@ -384,30 +406,36 @@ impl<'a> HumanRenderer<'a> {
                 );
                 self.ctx.success(&label);
                 self.ctx.blank();
+                self.ctx.kv("Status ", "polis status");
                 self.ctx.kv("Connect", "polis connect");
-                self.ctx.kv("Status", "polis status");
             }
             StartOutcome::Created { .. } | StartOutcome::Restarted { .. } => {
                 self.ctx.blank();
                 self.ctx.header("Getting started");
-                let default_steps = [
-                    OnboardingStep {
-                        title: "Connect to workspace:".into(),
-                        command: "polis connect or ssh workspace".into(),
-                    },
-                    OnboardingStep {
-                        title: "Manage agents:".into(),
-                        command: "polis agent".into(),
-                    },
-                ];
-                for (i, step) in default_steps.iter().chain(onboarding.iter()).enumerate() {
-                    self.ctx.info(&format!(
-                        "{}. {}  {}",
-                        i + 1,
-                        step.title,
-                        step.command.style(self.ctx.styles.command)
-                    ));
-                }
+                self.ctx.info(&format!(
+                    "1. Check workspace status:  {}",
+                    "polis status".style(self.ctx.styles.command)
+                ));
+                self.ctx
+                    .info("2. (Optional) Install and activate an AI agent:");
+                self.ctx.info(&format!(
+                    "   List available agents:   {}",
+                    "polis agent list".style(self.ctx.styles.command)
+                ));
+                self.ctx.info(&format!(
+                    "   Install from path:       {}",
+                    "polis agent install --path <agent-path>".style(self.ctx.styles.command)
+                ));
+                self.ctx.info(&format!(
+                    "   Activate an agent:       {}",
+                    "polis agent activate <name>".style(self.ctx.styles.command)
+                ));
+                self.ctx.info(&format!(
+                    "3. Connect to the workspace: {}",
+                    "polis connect".style(self.ctx.styles.command)
+                ));
+                self.ctx
+                    .info("   Shows available connection methods (SSH, VS Code, Cursor).");
             }
         }
     }
@@ -541,8 +569,8 @@ mod tests {
     use super::*;
     use crate::application::services::workspace::workspace_unknown;
     use polis_common::types::{
-        AgentHealth, AgentStatus, EventSeverity, SecurityEvents, SecurityStatus, StatusOutput,
-        WorkspaceState, WorkspaceStatus,
+        AgentHealth, AgentStatus, ContainerHealthSummary, EventSeverity, SecurityEvents,
+        SecurityStatus, StatusOutput, WorkspaceState, WorkspaceStatus,
     };
 
     #[test]
@@ -622,6 +650,12 @@ mod tests {
                 name: "claude-dev".to_string(),
                 status: AgentHealth::Healthy,
             }),
+            containers: Some(ContainerHealthSummary {
+                total: 6,
+                healthy: 5,
+                unhealthy: 1,
+                starting: 0,
+            }),
             security: SecurityStatus {
                 traffic_inspection: true,
                 credential_protection: true,
@@ -651,6 +685,7 @@ mod tests {
                 uptime_seconds: None,
             },
             agent: None,
+            containers: None,
             security: SecurityStatus {
                 traffic_inspection: false,
                 credential_protection: false,
@@ -664,6 +699,7 @@ mod tests {
         let json = serde_json::to_string(&status).expect("serialize");
         assert!(!json.contains("uptime_seconds"));
         assert!(!json.contains(r#""agent""#));
+        assert!(!json.contains(r#""containers""#));
     }
 
     // ── HumanRenderer edge case tests ─────────────────────────────────────────

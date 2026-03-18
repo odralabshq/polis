@@ -19,6 +19,7 @@ env:
     ghcr.io/odralabshq/polis-scanner-oss:latest
     ghcr.io/odralabshq/polis-workspace-oss:latest
     ghcr.io/odralabshq/polis-toolbox-oss:latest
+    ghcr.io/odralabshq/polis-control-plane-oss:latest
 
 jobs:
   # ── Stage 1a: Lint Rust ───────────────────────────────────────────
@@ -42,11 +43,16 @@ jobs:
       - name: Check formatting
         run: |
           cargo fmt --all --manifest-path cli/Cargo.toml -- --check
+          cargo fmt --all --manifest-path services/control-plane/Cargo.toml -- --check
           cargo fmt --all --manifest-path services/toolbox/Cargo.toml -- --check
+
+      - name: Check CLI without dashboard feature
+        run: cargo check --manifest-path cli/Cargo.toml --no-default-features
 
       - name: Clippy
         run: |
           cargo clippy --workspace --all-targets --manifest-path cli/Cargo.toml -- -D warnings -A dead-code
+          cargo clippy --workspace --all-targets --manifest-path services/control-plane/Cargo.toml -- -D warnings
           cargo clippy --workspace --all-targets --manifest-path services/toolbox/Cargo.toml -- -D warnings
 
   # ── Stage 1b: Lint C ──────────────────────────────────────────────
@@ -99,6 +105,9 @@ jobs:
 
       - name: Test CLI (skip proptests)
         run: cargo test --workspace --manifest-path cli/Cargo.toml -- --skip proptests
+
+      - name: Test control-plane
+        run: cargo test --workspace --manifest-path services/control-plane/Cargo.toml
 
       - name: Test Toolbox
         run: cargo test --workspace --manifest-path services/toolbox/Cargo.toml
@@ -220,6 +229,42 @@ jobs:
       - name: Run unit tests
         run: ./tests/run-tests.sh unit
 
+  # ── Stage 3d: Container structure tests ─────────────────────────────────
+  container-structure-tests:
+    runs-on: ubuntu-24.04
+    needs: build-containers
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install container-structure-test
+        run: |
+          curl -fsSL -o /tmp/container-structure-test https://github.com/GoogleContainerTools/container-structure-test/releases/download/v1.19.3/container-structure-test-linux-amd64
+          sudo install -m 755 /tmp/container-structure-test /usr/local/bin/container-structure-test
+          rm /tmp/container-structure-test
+
+      - name: Download image artifact
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: polis-images
+
+      - name: Load images
+        run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
+
+      - name: Run container structure tests
+        run: |
+          container-structure-test test --image ghcr.io/odralabshq/polis-certgen-oss:latest --config tests/container-structure/certgen.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-gate-oss:latest --config tests/container-structure/gate.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-resolver-oss:latest --config tests/container-structure/resolver.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-scanner-oss:latest --config tests/container-structure/scanner.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-sentinel-oss:latest --config tests/container-structure/sentinel.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-toolbox-oss:latest --config tests/container-structure/toolbox.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-control-plane-oss:latest --config tests/container-structure/control-plane.yaml
+          container-structure-test test --image ghcr.io/odralabshq/polis-workspace-oss:latest --config tests/container-structure/workspace.yaml
+
   # ── Stage 3c: Scan images (Trivy) ─────────────────────────────────
   scan-images:
     runs-on: ubuntu-24.04
@@ -236,6 +281,7 @@ jobs:
           - polis-scanner-oss
           - polis-resolver-oss
           - polis-toolbox-oss
+          - polis-control-plane-oss
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -358,14 +404,69 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.test.yml up -d httpbin
 
       - name: Wait for healthy
-        run: source ./scripts/ci-helpers.sh && wait_for_healthy
+        run: source ./scripts/ci-helpers.sh && wait_for_healthy 90
+
+      - name: Wait for httpbin
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec polis-gate nc -z 10.20.1.100 8080 2>/dev/null; then
+              echo "httpbin reachable"
+              exit 0
+            fi
+            echo "Waiting for httpbin... ($i/30)"
+            sleep 2
+          done
+          echo "httpbin not reachable after 60s"
+          docker ps -a --filter name=httpbin
+          exit 1
+
+      - name: Verify containers and warm up ICAP chain
+        run: |
+          echo "=== Container status ==="
+          docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+          echo ""
+          echo "=== Warming up ICAP chain ==="
+          for i in 1 2 3 4 5; do
+            if docker exec polis-workspace curl -sf -o /dev/null --connect-timeout 5 \
+                --proxy "http://10.10.1.10:8080" "http://10.20.1.100:8080/get" 2>/dev/null; then
+              echo "ICAP chain warm (attempt $i)"
+              break
+            fi
+            echo "ICAP warmup attempt $i failed, retrying..."
+            sleep 3
+          done
 
       - name: Run E2E tests
-        run: ./tests/run-tests.sh --ci e2e
+        run: |
+          mkdir -p /tmp/test-results
+          ./tests/run-tests.sh --ci e2e 2>&1 | tee /tmp/test-results/e2e-output.log
+        timeout-minutes: 15
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: e2e-test-results
+          path: /tmp/test-results/
+          retention-days: 3
 
       - name: Show logs on failure
         if: failure()
-        run: source ./scripts/ci-helpers.sh && show_logs_on_failure
+        run: |
+          echo "=== E2E Test Output ==="
+          cat /tmp/test-results/e2e-output.log 2>/dev/null || echo "No test output captured"
+          echo ""
+          source ./scripts/ci-helpers.sh && show_logs_on_failure
+          echo "=== polis-httpbin ==="
+          docker logs polis-httpbin 2>&1 | tail -20 || true
+          echo "=== docker network inspect ==="
+          docker network inspect polis_external-bridge 2>/dev/null | head -40 || true
+          echo "=== Container health details ==="
+          for c in polis-gate polis-sentinel polis-state polis-toolbox polis-control-plane polis-workspace; do
+            health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo "missing")
+            state=$(docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null || echo "missing")
+            echo "$c: state=$state health=$health"
+          done
 
   # ── Security: Semgrep SAST ─────────────────────────────────────────
   security-semgrep:

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum BlockReason {
     CredentialDetected,
+    NewDomainPrompt,
+    NewDomainBlocked,
     MalwareDomain,
     UrlBlocked,
     FileInfected,
@@ -98,6 +100,7 @@ pub struct BlockedRequest {
     pub reason: BlockReason,
     pub destination: String,
     pub pattern: Option<String>,
+    pub fingerprint: Option<String>,
     pub blocked_at: DateTime<Utc>,
     pub status: RequestStatus,
 }
@@ -231,6 +234,8 @@ pub struct StatusOutput {
     pub workspace: WorkspaceStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub containers: Option<ContainerHealthSummary>,
     pub security: SecurityStatus,
     pub events: SecurityEvents,
 }
@@ -276,6 +281,19 @@ pub struct AgentStatus {
     pub status: AgentHealth,
 }
 
+/// Container health summary for CLI status output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerHealthSummary {
+    /// Total observed containers in the workspace.
+    pub total: usize,
+    /// Healthy containers.
+    pub healthy: usize,
+    /// Unhealthy containers.
+    pub unhealthy: usize,
+    /// Containers that are still starting.
+    pub starting: usize,
+}
+
 /// Security status for CLI display and JSON output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityStatus {
@@ -317,6 +335,8 @@ mod tests {
     fn block_reason_serde_round_trip() {
         let variants = [
             (BlockReason::CredentialDetected, "\"credential_detected\""),
+            (BlockReason::NewDomainPrompt, "\"new_domain_prompt\""),
+            (BlockReason::NewDomainBlocked, "\"new_domain_blocked\""),
             (BlockReason::MalwareDomain, "\"malware_domain\""),
             (BlockReason::UrlBlocked, "\"url_blocked\""),
             (BlockReason::FileInfected, "\"file_infected\""),
@@ -462,6 +482,7 @@ mod tests {
             reason: BlockReason::CredentialDetected,
             destination: "https://example.com".to_string(),
             pattern: Some("password=.*".to_string()),
+            fingerprint: Some("0123456789abcdef".to_string()),
             blocked_at: Utc::now(),
             status: RequestStatus::Pending,
         };
@@ -471,6 +492,7 @@ mod tests {
         assert_eq!(deserialized.reason, req.reason);
         assert_eq!(deserialized.destination, req.destination);
         assert_eq!(deserialized.pattern, req.pattern);
+        assert_eq!(deserialized.fingerprint, req.fingerprint);
         assert_eq!(deserialized.blocked_at, req.blocked_at);
         assert_eq!(deserialized.status, req.status);
     }
@@ -550,6 +572,12 @@ mod tests {
             agent: Some(AgentStatus {
                 name: "claude-dev".to_string(),
                 status: AgentHealth::Healthy,
+            }),
+            containers: Some(ContainerHealthSummary {
+                total: 5,
+                healthy: 4,
+                unhealthy: 1,
+                starting: 0,
             }),
             security: SecurityStatus {
                 traffic_inspection: true,

@@ -11,19 +11,23 @@ setup() {
     [ -f "$COMPOSE" ]
 }
 
-@test "compose config: all 3 networks defined" {
+@test "compose config: all required networks defined" {
     run grep "internal-bridge:" "$COMPOSE"
     assert_success
     run grep "gateway-bridge:" "$COMPOSE"
     assert_success
     run grep "external-bridge:" "$COMPOSE"
     assert_success
+    run grep "internet:" "$COMPOSE"
+    assert_success
+    run grep "host-bridge:" "$COMPOSE"
+    assert_success
 }
 
 @test "compose config: all networks have IPv6 disabled" {
     local count
     count=$(grep -c "enable_ipv6: false" "$COMPOSE")
-    [ "$count" -ge 3 ]
+    [ "$count" -ge 5 ]
 }
 
 @test "compose config: internal-bridge is internal" {
@@ -85,13 +89,59 @@ setup() {
     assert_success
 }
 
-@test "compose config: secrets section defines all 8 secrets" {
+@test "compose config: secrets section defines all 9 secrets" {
     for s in valkey_password valkey_acl valkey_dlp_password valkey_mcp_agent_password \
              valkey_mcp_admin_password valkey_log_writer_password valkey_reqmod_password \
-             valkey_respmod_password; do
+             valkey_respmod_password valkey_cp_server_password; do
         run grep "^  ${s}:" "$COMPOSE"
         assert_success
     done
+}
+
+@test "compose config: control-plane binds on 9080" {
+    run grep -A30 "^  control-plane:" "$COMPOSE"
+    assert_success
+    assert_output --partial "0.0.0.0:9080:9080"
+    assert_output --partial "host-bridge: {}"
+    assert_output --partial "seccomp=./services/control-plane/config/seccomp.json"
+}
+
+@test "compose config: control-plane has docker proxy integration" {
+    run grep -A50 "^  control-plane:" "$COMPOSE"
+    assert_success
+    assert_output --partial 'DOCKER_HOST=tcp://docker-proxy:2375'
+    assert_output --partial 'POLIS_CP_DOCKER_ENABLED=true'
+    assert_output --partial 'POLIS_CP_AUTH_ENABLED=false'
+    assert_output --partial 'POLIS_CP_ADMIN_TOKEN_FILE=/run/secrets/cp_admin_token'
+    assert_output --partial 'POLIS_CP_OPERATOR_TOKEN_FILE=/run/secrets/cp_operator_token'
+    assert_output --partial 'POLIS_CP_VIEWER_TOKEN_FILE=/run/secrets/cp_viewer_token'
+    assert_output --partial 'POLIS_CP_AGENT_TOKEN_FILE=/run/secrets/cp_agent_token'
+    assert_output --partial 'memory: 384M'
+}
+
+@test "compose config: docker-proxy restricts socket access" {
+    run grep -A60 "^  docker-proxy:" "$COMPOSE"
+    assert_success
+    assert_output --partial 'lscr.io/linuxserver/socket-proxy'
+    assert_output --partial 'POST=0'
+    assert_output --partial 'ALLOW_RESTARTS=1'
+    assert_output --partial 'CONTAINERS=1'
+    assert_output --partial 'EXEC=0'
+    assert_output --partial '/var/run/docker.sock:/var/run/docker.sock:ro'
+}
+
+@test "compose config: control-plane does not mount docker socket directly" {
+    # Extract only the control-plane service block (up to next top-level service)
+    run bash -c "sed -n '/^  control-plane:/,/^  [a-z]/p' '$COMPOSE' | grep 'docker.sock'"
+    assert_failure
+}
+
+@test "compose config: workspace has agent metadata labels" {
+    run grep -A120 "^  workspace:" "$COMPOSE"
+    assert_success
+    assert_output --partial 'polis.agent.name: "${POLIS_AGENT_NAME:-}"'
+    assert_output --partial 'polis.agent.version: "${POLIS_AGENT_VERSION:-}"'
+    assert_output --partial 'polis.agent.display_name: "${POLIS_AGENT_DISPLAY_NAME:-}"'
 }
 
 @test "compose config: workspace DNS points to resolver" {

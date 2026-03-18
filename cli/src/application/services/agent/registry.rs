@@ -69,7 +69,8 @@ pub async fn read_registry(provisioner: &impl ShellExecutor) -> Result<RegistryR
 /// Write the agent registry to the VM.
 ///
 /// Serializes `entries` as pretty-printed JSON and writes it to
-/// `{VM_ROOT}/agents/agents.json` via stdin to avoid shell-escaping issues.
+/// `{VM_ROOT}/agents/agents.json` via a shell heredoc to avoid the
+/// `multipass exec` stdin-piping hang on Windows/Hyper-V.
 ///
 /// # Errors
 ///
@@ -81,9 +82,13 @@ pub async fn write_registry(
     let registry_path = format!("{VM_ROOT}/agents/agents.json");
     let json = serde_json::to_string_pretty(entries).context("serializing registry")?;
 
-    let result = provisioner
-        .exec_with_stdin(&["tee", &registry_path], json.as_bytes())
-        .await?;
+    // Use exec (not exec_with_stdin) — multipass exec with piped stdin hangs
+    // on Windows/Hyper-V. Pass the JSON as a shell variable instead.
+    let script = format!(
+        "printf '%s' '{escaped}' > {registry_path}",
+        escaped = json.replace('\'', "'\\''")
+    );
+    let result = provisioner.exec(&["bash", "-c", &script]).await?;
 
     anyhow::ensure!(
         result.status.success(),

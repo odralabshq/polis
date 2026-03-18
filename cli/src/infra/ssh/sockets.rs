@@ -1,6 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 
+#[cfg(not(windows))]
 use crate::infra::secure_fs::SecureFs;
+#[cfg(not(windows))]
+use anyhow::Context;
 
 /// Abstracts creation of the SSH control-socket directory.
 /// The production implementation ([`OsSocketsDir`]) creates the directory on

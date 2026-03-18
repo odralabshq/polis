@@ -8,6 +8,7 @@ use clap::Subcommand;
 use crate::app::App;
 
 mod activate;
+mod exec;
 mod install;
 mod list;
 mod remove;
@@ -30,6 +31,17 @@ pub enum AgentCommand {
         #[arg(short = 'e', long = "env")]
         envs: Vec<String>,
     },
+    /// Run an agent-specific command (e.g. token, onboard, devices)
+    #[command(trailing_var_arg = true)]
+    Exec {
+        /// Agent name
+        name: String,
+        /// Subcommand to run
+        subcmd: String,
+        /// Additional arguments
+        #[arg(allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 /// Run an agent command.
@@ -43,5 +55,6 @@ pub async fn run(app: &impl App, cmd: AgentCommand) -> Result<ExitCode> {
         AgentCommand::Install { path } => install::run(app, &path).await,
         AgentCommand::Remove { name } => remove::run(app, &name).await,
         AgentCommand::Activate { name, envs } => activate::run(app, &name, envs).await,
+        AgentCommand::Exec { name, subcmd, args } => exec::run(app, &name, &subcmd, &args).await,
     }
 }

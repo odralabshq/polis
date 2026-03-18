@@ -66,7 +66,10 @@ pub async fn wait_ready(
         reporter.fail_stage();
     }
     anyhow::bail!(
-        "Workspace did not start properly.\n\nDiagnose: polis doctor\nView logs: polis logs"
+        "Workspace did not start properly.\n\n\
+         Diagnose:  polis doctor\n\
+         Container: polis exec docker compose -f /opt/polis/docker-compose.yml ps\n\
+         Logs:      polis exec docker compose -f /opt/polis/docker-compose.yml logs --tail 50"
     )
 }
 

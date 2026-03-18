@@ -161,8 +161,7 @@ impl AppState {
         for (i, value) in values.into_iter().enumerate() {
             if let Some(json) = value.as_str() {
                 match serde_json::from_str::<BlockedRequest>(&json) {
-                    Ok(mut req) => {
-                        req.pattern = None;
+                    Ok(req) => {
                         results.push(req);
                     }
                     Err(e) => {

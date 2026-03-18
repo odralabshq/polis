@@ -1,84 +1,78 @@
-//! `polis connect` — open an SSH session to the workspace with self-healing.
+//! `polis connect` — SSH config management and connection options.
 
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Args;
-use std::process::Stdio;
 
 use crate::app::App;
+use crate::application::ports::SshConfigurator;
 use crate::application::services::ssh::{self, SshProvisionOptions};
 use crate::application::vm::lifecycle::{self as vm, VmState};
 use crate::domain::error::WorkspaceError;
-use crate::domain::process::exit_code_from_status;
 use crate::output::models::ConnectionInfo;
 
 /// Arguments for the connect command.
 #[derive(Args)]
 pub struct ConnectArgs {
-    /// Display IDE connection strings without opening an SSH session.
+    /// Display connection strings as JSON.
     #[arg(long)]
     pub info: bool,
 }
 
 /// Run `polis connect`.
 ///
-/// Checks that the workspace is running, runs self-healing SSH provisioning,
-/// then either prints connection info (`--info`) or opens an interactive SSH
-/// session.
+/// Ensures SSH is configured, validates permissions, provisions keys,
+/// then prints connection options (SSH, VS Code, Cursor).
 ///
 /// # Errors
 ///
-/// Returns an error if the VM is not running, SSH provisioning fails, or the
-/// SSH process cannot be spawned.
+/// Returns an error if the VM is not running, SSH config setup fails,
+/// or permissions are unsafe.
 pub async fn run(app: &impl App, args: &ConnectArgs) -> Result<ExitCode> {
-    // Req 8.5 — return WorkspaceError::NotRunning when VM is not Running.
+    // Ensure the workspace is running.
     let vm_state = vm::state(app.provisioner()).await?;
     if vm_state != VmState::Running {
         return Err(WorkspaceError::NotRunning.into());
     }
 
-    // Req 8.3 — --info flag: display connection strings and return.
-    if args.info {
-        app.renderer()
-            .render_connection_info(&ConnectionInfo::default())?;
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    // Req 8.2 — self-healing SSH provisioning (consent always given for connect).
+    // Self-healing SSH provisioning.
     let reporter = app.terminal_reporter();
+    let ssh_configured = app.ssh().is_configured().await?;
+
+    let consent = if ssh_configured {
+        true
+    } else {
+        app.confirm("Add SSH configuration to ~/.ssh/config?", true)?
+    };
+
     ssh::provision_ssh(
         app.provisioner(),
         app.ssh(),
         SshProvisionOptions {
-            consent_given: true,
+            consent_given: consent,
         },
         &reporter,
     )
     .await?;
 
-    // Open interactive SSH session.
-    open_ssh_session().await
-}
+    // Show connection options.
+    let info = ConnectionInfo::default();
 
-/// Open an interactive SSH session to the workspace (async).
-///
-/// Uses `ssh workspace` which resolves via the `~/.ssh/config` entry written
-/// by `provision_ssh`. Inherits stdin/stdout/stderr for a fully interactive
-/// terminal.
-///
-/// # Errors
-///
-/// Returns an error if the `ssh` process cannot be spawned.
-async fn open_ssh_session() -> Result<ExitCode> {
-    let status = tokio::process::Command::new("ssh")
-        .arg("workspace")
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .await
-        .context("failed to spawn ssh")?;
+    if args.info {
+        app.renderer().render_connection_info(&info)?;
+    } else {
+        let ctx = app.output();
+        if ssh_configured {
+            ctx.success("workspace ready to connect");
+        } else {
+            ctx.success("workspace connected");
+        }
+        ctx.blank();
+        ctx.kv("SSH     ", &info.ssh);
+        ctx.kv("VS Code ", &info.vscode);
+        ctx.kv("Cursor  ", &info.cursor);
+    }
 
-    Ok(exit_code_from_status(status))
+    Ok(ExitCode::SUCCESS)
 }

@@ -53,6 +53,7 @@ impl AgentMetadata {
                     "ANTHROPIC_API_KEY" => return "Anthropic".to_string(),
                     "OPENAI_API_KEY" => return "OpenAI".to_string(),
                     "OPENROUTER_API_KEY" => return "OpenRouter".to_string(),
+                    "GOOGLE_API_KEY" | "GEMINI_API_KEY" => return "Google".to_string(),
                     _ => {}
                 }
             }
@@ -510,14 +511,19 @@ spec:
 
         assert_eq!(
             manifest.spec.onboarding.len(),
-            1,
-            "openclaw should have exactly one onboarding step"
+            2,
+            "openclaw should have exactly two onboarding steps"
         );
         assert_eq!(
             manifest.spec.onboarding[0].title,
-            "Run the onboarding wizard"
+            "Connect to workspace via SSH"
         );
-        assert_eq!(manifest.spec.onboarding[0].command, "openclaw onboard");
+        assert_eq!(manifest.spec.onboarding[0].command, "ssh workspace");
+        assert_eq!(
+            manifest.spec.onboarding[1].title,
+            "Run the onboarding wizard inside the workspace"
+        );
+        assert_eq!(manifest.spec.onboarding[1].command, "openclaw onboard");
     }
 
     #[test]

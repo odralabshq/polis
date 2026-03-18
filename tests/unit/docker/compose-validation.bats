@@ -31,7 +31,7 @@ setup() {
 # ── Service definitions ───────────────────────────────────────────────────
 
 @test "compose: all required services defined" {
-    for svc in resolver gate certgen sentinel scanner state toolbox workspace; do
+    for svc in resolver gate certgen sentinel scanner state toolbox workspace control-plane; do
         run grep -E "^  ${svc}:" "$COMPOSE_FILE"
         assert_success "Service '$svc' not defined"
     done
@@ -46,7 +46,7 @@ setup() {
 # ── Network definitions ───────────────────────────────────────────────────
 
 @test "compose: all required networks defined" {
-    for net in internal-bridge gateway-bridge external-bridge; do
+    for net in internal-bridge gateway-bridge external-bridge internet host-bridge; do
         run grep -E "^  ${net}:" "$COMPOSE_FILE"
         assert_success "Network '$net' not defined"
     done
