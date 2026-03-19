@@ -168,12 +168,13 @@ pub async fn require_permission(
     next: Next,
     permission: Permission,
 ) -> Response {
-    let role = request
-        .extensions()
-        .get::<AuthSession>()
-        .copied()
-        .unwrap_or_else(|| AuthSession::new(Role::Admin))
-        .role();
+    let Some(session) = request.extensions().get::<AuthSession>().copied() else {
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "authentication middleware not applied to this route",
+        );
+    };
+    let role = session.role();
 
     if role.allows(permission) {
         next.run(request).await

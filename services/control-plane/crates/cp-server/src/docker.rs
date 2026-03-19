@@ -150,11 +150,13 @@ impl DockerClient {
     /// Returns an error if Docker metadata cannot be read.
     pub async fn container_details(&self) -> AppResult<Vec<ContainerInfo>> {
         let summaries = self.list_polis_container_summaries().await?;
-        let mut containers = Vec::with_capacity(summaries.len());
-
-        for summary in summaries {
-            containers.push(self.enrich_container(summary).await?);
-        }
+        let futures = summaries
+            .into_iter()
+            .map(|summary| self.enrich_container(summary));
+        let mut containers = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<AppResult<Vec<_>>>()?;
 
         containers.sort_by(|left, right| {
             compare_resource_desc(left.memory_usage_mb, right.memory_usage_mb)
@@ -172,15 +174,20 @@ impl DockerClient {
     /// Returns an error if Docker metadata cannot be read.
     pub async fn metrics_snapshot(&self) -> AppResult<MetricsResponse> {
         let summaries = self.list_polis_container_summaries().await?;
-        let mut containers = Vec::with_capacity(summaries.len());
         let mut total_memory_usage_mb = 0_u64;
         let mut max_memory_limit_mb = 0_u64;
         let mut total_cpu_percent = 0.0_f64;
 
-        for summary in summaries {
+        let futures = summaries.into_iter().map(|summary| async {
             let name = container_name(&summary);
             let inspect = self.inspect_container(&name).await?;
             let stats = self.container_stats(&name).await?;
+            Ok::<_, AppError>((summary, name, inspect, stats))
+        });
+
+        let mut containers = Vec::new();
+        for result in join_all(futures).await {
+            let (summary, name, inspect, stats) = result?;
 
             total_memory_usage_mb += stats.resources.memory_usage_mb;
             // Use the max container limit as a proxy for the host's total RAM.
