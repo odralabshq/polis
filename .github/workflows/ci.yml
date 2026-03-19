@@ -240,11 +240,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install container-structure-test
-        run: |
-          curl -fsSL -o /tmp/container-structure-test https://github.com/GoogleContainerTools/container-structure-test/releases/download/v1.19.3/container-structure-test-linux-amd64
-          sudo install -m 755 /tmp/container-structure-test /usr/local/bin/container-structure-test
-          rm /tmp/container-structure-test
+      - name: Pull container-structure-test image
+        run: docker pull ghcr.io/googlecontainertools/container-structure-test:v1.19.3
 
       - name: Download image artifact
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
@@ -256,14 +253,15 @@ jobs:
 
       - name: Run container structure tests
         run: |
-          container-structure-test test --image ghcr.io/odralabshq/polis-certgen-oss:latest --config tests/container-structure/certgen.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-gate-oss:latest --config tests/container-structure/gate.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-resolver-oss:latest --config tests/container-structure/resolver.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-scanner-oss:latest --config tests/container-structure/scanner.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-sentinel-oss:latest --config tests/container-structure/sentinel.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-toolbox-oss:latest --config tests/container-structure/toolbox.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-control-plane-oss:latest --config tests/container-structure/control-plane.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-workspace-oss:latest --config tests/container-structure/workspace.yaml
+          CST="docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v ${{ github.workspace }}/tests:/tests ghcr.io/googlecontainertools/container-structure-test:v1.19.3 test"
+          $CST --image ghcr.io/odralabshq/polis-certgen-oss:latest --config /tests/container-structure/certgen.yaml
+          $CST --image ghcr.io/odralabshq/polis-gate-oss:latest --config /tests/container-structure/gate.yaml
+          $CST --image ghcr.io/odralabshq/polis-resolver-oss:latest --config /tests/container-structure/resolver.yaml
+          $CST --image ghcr.io/odralabshq/polis-scanner-oss:latest --config /tests/container-structure/scanner.yaml
+          $CST --image ghcr.io/odralabshq/polis-sentinel-oss:latest --config /tests/container-structure/sentinel.yaml
+          $CST --image ghcr.io/odralabshq/polis-toolbox-oss:latest --config /tests/container-structure/toolbox.yaml
+          $CST --image ghcr.io/odralabshq/polis-control-plane-oss:latest --config /tests/container-structure/control-plane.yaml
+          $CST --image ghcr.io/odralabshq/polis-workspace-oss:latest --config /tests/container-structure/workspace.yaml
 
   # ── Stage 3c: Scan images (Trivy) ─────────────────────────────────
   scan-images:
