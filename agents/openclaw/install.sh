@@ -32,8 +32,8 @@ trust_polis_ca() {
         fi
         export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
     fi
+    return 0
 }
-trust_polis_ca
 
 # Install build dependencies and Node.js 22
 apt-get update && apt-get install -y --no-install-recommends \

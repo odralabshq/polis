@@ -24,13 +24,13 @@ echo "[openclaw-init] Starting initialization..."
 is_ipv4() {
     local candidate="${1:-}"
     local o1 o2 o3 o4
-    local IFS=.
 
     [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
-    read -r o1 o2 o3 o4 <<< "$candidate"
+    IFS=. read -r o1 o2 o3 o4 <<< "$candidate"
     for octet in "$o1" "$o2" "$o3" "$o4"; do
         (( octet >= 0 && octet <= 255 )) || return 1
     done
+    return 0
 }
 
 # =============================================================================
@@ -45,13 +45,13 @@ install_openclaw_wrapper() {
 is_ipv4() {
     local candidate="${1:-}"
     local o1 o2 o3 o4
-    local IFS=.
 
     [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
-    read -r o1 o2 o3 o4 <<< "$candidate"
+    IFS=. read -r o1 o2 o3 o4 <<< "$candidate"
     for octet in "$o1" "$o2" "$o3" "$o4"; do
         (( octet >= 0 && octet <= 255 )) || return 1
     done
+    return 0
 }
 
 # --- Intercept: dashboard ---
@@ -72,6 +72,7 @@ OCWRAPPER
     cp "${bin_dir}/openclaw" /usr/local/bin/openclaw
     chmod 755 /usr/local/bin/openclaw
     echo "[openclaw-init] Installed openclaw CLI wrapper to ${bin_dir}/openclaw and /usr/local/bin/openclaw"
+    return 0
 }
 
 # =============================================================================
@@ -91,6 +92,7 @@ install_polis_security_wrappers() {
         done
         echo "[openclaw-init] Installed polis security CLI wrappers to ${bin_dir}"
     fi
+    return 0
 }
 
 # =============================================================================

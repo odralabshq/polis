@@ -16,16 +16,18 @@ NC='\033[0m'
 log_info() { echo -e "${CYAN}[INFO]${NC} $*"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $*"; }
+LOCALHOST="localhost"
+
 is_ipv4() {
     local candidate="${1:-}"
     local o1 o2 o3 o4
-    local IFS=.
 
     [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
-    read -r o1 o2 o3 o4 <<< "$candidate"
+    IFS=. read -r o1 o2 o3 o4 <<< "$candidate"
     for octet in "$o1" "$o2" "$o3" "$o4"; do
         (( octet >= 0 && octet <= 255 )) || return 1
     done
+    return 0
 }
 
 case "$SUBCMD" in
@@ -37,10 +39,10 @@ case "$SUBCMD" in
         fi
         vm_ip=$(docker exec "$CONTAINER" printenv POLIS_VM_IP 2>/dev/null || true)
         if [[ -z "$vm_ip" ]] || ! is_ipv4 "$vm_ip"; then
-            vm_ip=$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "localhost")
+            vm_ip=$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "$LOCALHOST")
         fi
         if ! is_ipv4 "$vm_ip"; then
-            vm_ip="localhost"
+            vm_ip="$LOCALHOST"
         fi
         echo ""
         echo "=== OpenClaw Gateway ==="
@@ -134,10 +136,10 @@ case "$SUBCMD" in
         # Show dashboard URL
         vm_ip=$(docker exec "$CONTAINER" printenv POLIS_VM_IP 2>/dev/null || true)
         if [[ -z "$vm_ip" ]] || ! is_ipv4 "$vm_ip"; then
-            vm_ip=$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "localhost")
+            vm_ip=$(head -n1 /opt/polis/.vm-ip 2>/dev/null || echo "$LOCALHOST")
         fi
         if ! is_ipv4 "$vm_ip"; then
-            vm_ip="localhost"
+            vm_ip="$LOCALHOST"
         fi
         token=$(docker exec "$CONTAINER" cat /home/polis/.openclaw/gateway-token.txt 2>/dev/null || true)
         echo ""

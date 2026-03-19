@@ -23,11 +23,13 @@ mkdir -p "${OUTPUT_DIR}"
 
 generate_password() {
     openssl rand -base64 32 | tr -d '/+=' | head -c 32
+    return 0
 }
 
 generate_token() {
     local prefix="$1"
     printf '%s_%s' "${prefix}" "$(openssl rand -hex 16)"
+    return 0
 }
 
 ensure_password_file() {
@@ -42,6 +44,7 @@ ensure_password_file() {
         chmod 600 "${path}" 2>/dev/null || true
         printf '%s' "${password}"
     fi
+    return 0
 }
 
 ensure_token_file() {
@@ -57,6 +60,7 @@ ensure_token_file() {
         chmod 600 "${path}" 2>/dev/null || true
         printf '%s' "${token}"
     fi
+    return 0
 }
 
 ensure_output_file_path() {
@@ -68,6 +72,7 @@ ensure_output_file_path() {
         fi
         rmdir "${path}"
     fi
+    return 0
 }
 
 upsert_env_var() {
@@ -91,6 +96,8 @@ detect_docker_gid() {
         MINGW*|MSYS*|CYGWIN*)
             echo "0"
             return
+            ;;
+        *)
             ;;
     esac
     if [[ -S /var/run/docker.sock ]]; then

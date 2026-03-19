@@ -1264,10 +1264,12 @@ fn app_context_accessors_return_trait_references() {
         let trimmed = line.trim();
 
         // Detect accessor method signatures
-        if trimmed.starts_with("pub fn provisioner(")
-            || trimmed.starts_with("pub fn state_store(")
-            || trimmed.starts_with("pub fn local_fs(")
-        {
+        let accessor_prefixes = [
+            "pub fn provisioner(",
+            "pub fn state_store(",
+            "pub fn local_fs(",
+        ];
+        if accessor_prefixes.iter().any(|p| trimmed.starts_with(p)) {
             in_accessor = true;
         }
 
@@ -1345,12 +1347,12 @@ fn naming_consistency_remove_not_delete() {
         let lines = read_non_comment_lines(file);
         for (i, line) in lines.iter().enumerate() {
             let lower = line.to_lowercase();
-            // Check for "delete" in agent-related contexts
-            if lower.contains("delete") && lower.contains("agent") {
-                // Exception: VM deletion references are allowed
-                if lower.contains("vm") || lower.contains("workspace") {
-                    continue;
-                }
+            // Check for "delete" in agent-related contexts (excluding VM/workspace refs)
+            let is_agent_delete = lower.contains("delete")
+                && lower.contains("agent")
+                && !lower.contains("vm")
+                && !lower.contains("workspace");
+            if is_agent_delete {
                 violations.push(format!(
                     "{rel}:{}: found 'delete' in agent context — use 'remove': {line}",
                     i + 1
@@ -1553,79 +1555,59 @@ fn ssh_submodule_files_under_250_lines() {
 fn foundation_modules_no_forbidden_imports() {
     let infra_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infra");
 
-    // blocking.rs: no crate::infra:: imports at all
-    {
-        let path = infra_dir.join("blocking.rs");
+    fn collect_forbidden_imports(
+        path: &std::path::Path,
+        is_forbidden: impl Fn(&str) -> bool,
+    ) -> Vec<String> {
+        let name = path.file_name().unwrap().to_str().unwrap();
         let content =
-            std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("Could not read blocking.rs"));
+            std::fs::read_to_string(path).unwrap_or_else(|_| panic!("Could not read {name}"));
         let mut tracker = CfgTestTracker::new();
-        let mut violations: Vec<String> = Vec::new();
+        let mut violations = Vec::new();
         for (i, line) in content.lines().enumerate() {
-            let in_test = tracker.process_line(line);
-            if in_test {
+            if tracker.process_line(line) {
                 continue;
             }
-            if line.contains("use crate::infra::") {
-                violations.push(format!("blocking.rs:{}: {line}", i + 1));
+            if is_forbidden(line) {
+                violations.push(format!("{name}:{}: {line}", i + 1));
             }
         }
-        assert!(
-            violations.is_empty(),
-            "blocking.rs must have no crate::infra:: imports (it is the foundation layer).\n\
-             Violating lines:\n{}",
-            violations.join("\n")
-        );
+        violations
     }
+
+    // blocking.rs: no crate::infra:: imports at all
+    let violations = collect_forbidden_imports(&infra_dir.join("blocking.rs"), |line| {
+        line.contains("use crate::infra::")
+    });
+    assert!(
+        violations.is_empty(),
+        "blocking.rs must have no crate::infra:: imports (it is the foundation layer).\n\
+         Violating lines:\n{}",
+        violations.join("\n")
+    );
 
     // polis_dir.rs: may only import from crate::infra::blocking (or no infra imports)
-    {
-        let path = infra_dir.join("polis_dir.rs");
-        let content = std::fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("Could not read polis_dir.rs"));
-        let mut tracker = CfgTestTracker::new();
-        let mut violations: Vec<String> = Vec::new();
-        for (i, line) in content.lines().enumerate() {
-            let in_test = tracker.process_line(line);
-            if in_test {
-                continue;
-            }
-            if line.contains("use crate::infra::") && !line.contains("use crate::infra::blocking") {
-                violations.push(format!("polis_dir.rs:{}: {line}", i + 1));
-            }
-        }
-        assert!(
-            violations.is_empty(),
-            "polis_dir.rs may only import from crate::infra::blocking (dependency order: blocking → polis_dir).\n\
-             Violating lines:\n{}",
-            violations.join("\n")
-        );
-    }
+    let violations = collect_forbidden_imports(&infra_dir.join("polis_dir.rs"), |line| {
+        line.contains("use crate::infra::") && !line.contains("use crate::infra::blocking")
+    });
+    assert!(
+        violations.is_empty(),
+        "polis_dir.rs may only import from crate::infra::blocking (dependency order: blocking → polis_dir).\n\
+         Violating lines:\n{}",
+        violations.join("\n")
+    );
 
     // secure_fs.rs: may only import from crate::infra::blocking or crate::infra::polis_dir
-    {
-        let path = infra_dir.join("secure_fs.rs");
-        let content = std::fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("Could not read secure_fs.rs"));
-        let mut tracker = CfgTestTracker::new();
-        let mut violations: Vec<String> = Vec::new();
-        for (i, line) in content.lines().enumerate() {
-            let in_test = tracker.process_line(line);
-            if in_test {
-                continue;
-            }
-            if line.contains("use crate::infra::")
-                && !line.contains("use crate::infra::blocking")
-                && !line.contains("use crate::infra::polis_dir")
-            {
-                violations.push(format!("secure_fs.rs:{}: {line}", i + 1));
-            }
-        }
-        assert!(
-            violations.is_empty(),
-            "secure_fs.rs may only import from crate::infra::blocking and crate::infra::polis_dir\n\
-             (dependency order: blocking → polis_dir → secure_fs).\n\
-             Violating lines:\n{}",
-            violations.join("\n")
-        );
-    }
+    let violations = collect_forbidden_imports(&infra_dir.join("secure_fs.rs"), |line| {
+        line.contains("use crate::infra::")
+            && !line.contains("use crate::infra::blocking")
+            && !line.contains("use crate::infra::polis_dir")
+    });
+    assert!(
+        violations.is_empty(),
+        "secure_fs.rs may only import from crate::infra::blocking and crate::infra::polis_dir\n\
+         (dependency order: blocking → polis_dir → secure_fs).\n\
+         Violating lines:\n{}",
+        violations.join("\n")
+    );
 }
