@@ -1796,43 +1796,38 @@ async fn parse_error_response(response: reqwest::Response) -> Result<String> {
     }
 }
 
-async fn fetch_status(client: &Client, api_url: &str) -> Result<StatusResponse> {
+async fn fetch_json<T: serde::de::DeserializeOwned>(
+    client: &Client,
+    url: &str,
+    label: &str,
+) -> Result<T> {
     client
-        .get(format!("{api_url}/api/v1/status"))
+        .get(url)
         .send()
         .await
-        .context("failed to fetch status")?
+        .with_context(|| format!("failed to fetch {label}"))?
         .error_for_status()
-        .context("status endpoint returned error")?
-        .json::<StatusResponse>()
+        .with_context(|| format!("{label} endpoint returned error"))?
+        .json::<T>()
         .await
-        .context("failed to decode status")
+        .with_context(|| format!("failed to decode {label}"))
+}
+
+async fn fetch_status(client: &Client, api_url: &str) -> Result<StatusResponse> {
+    fetch_json(client, &format!("{api_url}/api/v1/status"), "status").await
 }
 
 async fn fetch_rules(client: &Client, api_url: &str) -> Result<RulesResponse> {
-    client
-        .get(format!("{api_url}/api/v1/config/rules"))
-        .send()
-        .await
-        .context("failed to fetch rules")?
-        .error_for_status()
-        .context("rules endpoint returned error")?
-        .json::<RulesResponse>()
-        .await
-        .context("failed to decode rules")
+    fetch_json(client, &format!("{api_url}/api/v1/config/rules"), "rules").await
 }
 
 async fn fetch_containers(client: &Client, api_url: &str) -> Result<ContainersResponse> {
-    client
-        .get(format!("{api_url}/api/v1/containers"))
-        .send()
-        .await
-        .context("failed to fetch containers")?
-        .error_for_status()
-        .context("containers endpoint returned error")?
-        .json::<ContainersResponse>()
-        .await
-        .context("failed to decode containers")
+    fetch_json(
+        client,
+        &format!("{api_url}/api/v1/containers"),
+        "containers",
+    )
+    .await
 }
 
 async fn fetch_logs(client: &Client, api_url: &str, filter: &LogFilter) -> Result<LogsResponse> {
