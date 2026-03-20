@@ -511,19 +511,24 @@ spec:
 
         assert_eq!(
             manifest.spec.onboarding.len(),
-            2,
-            "openclaw should have exactly two onboarding steps"
+            3,
+            "openclaw should have exactly three onboarding steps"
         );
         assert_eq!(
             manifest.spec.onboarding[0].title,
-            "Connect to workspace via SSH"
+            "Set up connection to workspace"
         );
-        assert_eq!(manifest.spec.onboarding[0].command, "ssh workspace");
+        assert_eq!(manifest.spec.onboarding[0].command, "polis connect");
         assert_eq!(
             manifest.spec.onboarding[1].title,
+            "Connect to workspace via SSH"
+        );
+        assert_eq!(manifest.spec.onboarding[1].command, "ssh workspace");
+        assert_eq!(
+            manifest.spec.onboarding[2].title,
             "Run the onboarding wizard inside the workspace"
         );
-        assert_eq!(manifest.spec.onboarding[1].command, "openclaw onboard");
+        assert_eq!(manifest.spec.onboarding[2].command, "openclaw onboard");
     }
 
     #[test]

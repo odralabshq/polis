@@ -42,7 +42,7 @@ spec:
       - /home/polis/.openclaw
     noNewPrivileges: true
     privateTmp: true
-    memoryMax: 2G
+    memoryMax: 4G
     cpuQuota: "100%"
 
   ports:
@@ -76,6 +76,8 @@ spec:
     dockerInDocker: false
 
   onboarding:
+    - title: "Set up connection to workspace"
+      command: "polis connect"
     - title: "Connect to workspace via SSH"
       command: "ssh workspace"
     - title: "Run the onboarding wizard inside the workspace"
