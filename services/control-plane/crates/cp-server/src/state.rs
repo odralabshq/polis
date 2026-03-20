@@ -1074,7 +1074,10 @@ where
 {
     async fn get_status(&self) -> AppResult<StatusResponse> {
         let security_level = self.get_security_level().await?.level;
-        let pending_count = self.scan_count(&format!("{}:*", keys::BLOCKED)).await?;
+        // Scope to req-* to exclude dedup marker keys (polis:blocked:dedup:*)
+        let pending_count = self
+            .scan_count(&format!("{}:req-*", keys::BLOCKED))
+            .await?;
         let recent_approvals = self
             .scan_count(&format!("{}:req-*", keys::APPROVED))
             .await?;
@@ -1094,11 +1097,14 @@ where
     }
 
     async fn list_blocked(&self) -> AppResult<BlockedListResponse> {
-        let keys = self
+        let keys: Vec<String> = self
             .client
             .scan_keys(&format!("{}:*", keys::BLOCKED))
             .await
-            .map_err(|error| Self::dependency_error("failed to scan blocked requests", &error))?;
+            .map_err(|error| Self::dependency_error("failed to scan blocked requests", &error))?
+            .into_iter()
+            .filter(|k| !k.contains(":dedup:"))
+            .collect();
         if keys.is_empty() {
             return Ok(BlockedListResponse { items: Vec::new() });
         }

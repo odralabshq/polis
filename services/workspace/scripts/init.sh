@@ -20,6 +20,33 @@ if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]] && \
     cat /usr/local/share/ca-certificates/polis-ca.crt >> /etc/ssl/certs/ca-certificates.crt
 fi
 
+# Export SSL/TLS env vars so all runtimes (Python requests/certifi, Node.js,
+# curl, etc.) trust the Polis CA without per-tool configuration.
+# /etc/environment is read by PAM/systemd for all processes.
+# /etc/profile.d/ covers interactive shells (SSH, agent terminals).
+CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+{
+    echo "REQUESTS_CA_BUNDLE=${CA_BUNDLE}"
+    echo "SSL_CERT_FILE=${CA_BUNDLE}"
+    echo "CURL_CA_BUNDLE=${CA_BUNDLE}"
+    echo "NODE_EXTRA_CA_CERTS=${CA_BUNDLE}"
+} >> /etc/environment
+
+cat > /etc/profile.d/polis-ca.sh <<ENVEOF
+export REQUESTS_CA_BUNDLE="${CA_BUNDLE}"
+export SSL_CERT_FILE="${CA_BUNDLE}"
+export CURL_CA_BUNDLE="${CA_BUNDLE}"
+export NODE_EXTRA_CA_CERTS="${CA_BUNDLE}"
+ENVEOF
+chmod 644 /etc/profile.d/polis-ca.sh
+
+# Also export into the current init process so agent install scripts
+# (which run later in this same script) inherit the vars.
+export REQUESTS_CA_BUNDLE="${CA_BUNDLE}"
+export SSL_CERT_FILE="${CA_BUNDLE}"
+export CURL_CA_BUNDLE="${CA_BUNDLE}"
+export NODE_EXTRA_CA_CERTS="${CA_BUNDLE}"
+
 # Source shared network helpers
 SCRIPT_DIR="$(dirname "$0")"
 if [[ -f "$SCRIPT_DIR/network-helpers.sh" ]]; then
