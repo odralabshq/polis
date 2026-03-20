@@ -133,10 +133,10 @@ AUTH_ENABLED="$(printf '%s' "${AUTH_ENABLED}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${AUTH_ENABLED}" == "true" ]]; then
     echo ""
     echo "--- Ensuring control-plane auth token files ---"
-    CP_ADMIN_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_admin_token.txt" "polis_admin")"
-    CP_OPERATOR_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_operator_token.txt" "polis_operator")"
-    CP_VIEWER_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_viewer_token.txt" "polis_viewer")"
-    CP_AGENT_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_agent_token.txt" "polis_agent")"
+    ensure_token_file "${OUTPUT_DIR}/cp_admin_token.txt" "polis_admin" > /dev/null
+    ensure_token_file "${OUTPUT_DIR}/cp_operator_token.txt" "polis_operator" > /dev/null
+    ensure_token_file "${OUTPUT_DIR}/cp_viewer_token.txt" "polis_viewer" > /dev/null
+    ensure_token_file "${OUTPUT_DIR}/cp_agent_token.txt" "polis_agent" > /dev/null
     echo "Auth token files are present for enabled control-plane auth."
 fi
 

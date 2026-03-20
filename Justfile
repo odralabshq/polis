@@ -245,6 +245,8 @@ setup-valkey:
 	./services/state/scripts/generate-certs.sh ./certs/valkey &>/dev/null
 	./services/state/scripts/generate-secrets.sh ./secrets . &>/dev/null
 	sudo chown 65532:65532 ./certs/valkey/server.key ./certs/valkey/client.key
+	sudo chown 65532:$(id -g) ./secrets/*
+	sudo chmod 440 ./secrets/*
 	echo "✓ Valkey certs and secrets ready"
 
 setup-toolbox:
