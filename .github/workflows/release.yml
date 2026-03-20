@@ -109,7 +109,7 @@ jobs:
       - name: Build all images
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX; do
+          for svc in RESOLVER CERTGEN GATE SENTINEL SCANNER WORKSPACE HOST_INIT STATE TOOLBOX CONTROL_PLANE; do
             export "POLIS_${svc}_VERSION=${VERSION}"
           done
           docker buildx bake \
@@ -239,6 +239,13 @@ jobs:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-toolbox-oss:${{ needs.validate.outputs.version }}
           artifact-name: sbom-toolbox.spdx.json
           output-file: .build/sbom-toolbox.spdx.json
+
+      - name: Generate SBOM for control-plane image
+        uses: anchore/sbom-action@57aae528053a48a3f6235f2d9461b05fbcb7366d # v0.23.1
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-control-plane-oss:${{ needs.validate.outputs.version }}
+          artifact-name: sbom-control-plane.spdx.json
+          output-file: .build/sbom-control-plane.spdx.json
 
   # =========================================================
   # Prepare embedded assets for CLI compilation:
