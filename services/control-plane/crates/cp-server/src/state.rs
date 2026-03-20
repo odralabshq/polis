@@ -11,8 +11,6 @@
 
 use std::{
     collections::HashMap,
-    fs::File,
-    io::BufReader,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -39,6 +37,7 @@ use polis_common::{
     credential_allow_key, normalize_approval_host, parse_credential_allow_key,
     redis_keys::{keys, ttl},
 };
+use rustls_pki_types::pem::PemObject;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -187,13 +186,11 @@ impl FredValkeyClient {
     pub async fn connect(config: &Config) -> Result<Self> {
         let password = config.read_password()?;
 
-        let mut ca_reader = BufReader::new(
-            File::open(&config.valkey_ca)
-                .with_context(|| format!("failed to open {}", config.valkey_ca))?,
-        );
-        let ca_certs = rustls_pemfile::certs(&mut ca_reader)
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to parse Valkey CA certificate")?;
+        let ca_certs: Vec<rustls_pki_types::CertificateDer<'static>> =
+            rustls_pki_types::CertificateDer::pem_file_iter(&config.valkey_ca)
+                .with_context(|| format!("failed to open {}", config.valkey_ca))?
+                .collect::<Result<Vec<_>, _>>()
+                .context("failed to parse Valkey CA certificate")?;
 
         let mut root_store = rustls::RootCertStore::empty();
         for cert in ca_certs {
@@ -202,21 +199,19 @@ impl FredValkeyClient {
                 .context("failed to add CA certificate to root store")?;
         }
 
-        let mut cert_reader = BufReader::new(
-            File::open(&config.valkey_client_cert)
-                .with_context(|| format!("failed to open {}", config.valkey_client_cert))?,
-        );
-        let client_certs = rustls_pemfile::certs(&mut cert_reader)
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .context("failed to parse Valkey client certificate")?;
+        let client_certs: Vec<rustls_pki_types::CertificateDer<'static>> =
+            rustls_pki_types::CertificateDer::pem_file_iter(&config.valkey_client_cert)
+                .with_context(|| format!("failed to open {}", config.valkey_client_cert))?
+                .collect::<Result<Vec<_>, _>>()
+                .context("failed to parse Valkey client certificate")?;
 
-        let mut key_reader = BufReader::new(
-            File::open(&config.valkey_client_key)
-                .with_context(|| format!("failed to open {}", config.valkey_client_key))?,
-        );
-        let client_key = rustls_pemfile::private_key(&mut key_reader)
-            .context("failed to parse Valkey client key")?
-            .context("no private key found in Valkey client key file")?;
+        let client_key = rustls_pki_types::PrivateKeyDer::from_pem_file(&config.valkey_client_key)
+            .with_context(|| {
+                format!(
+                    "failed to parse private key from {}",
+                    config.valkey_client_key
+                )
+            })?;
 
         let tls_config = rustls::ClientConfig::builder()
             .with_root_certificates(root_store)

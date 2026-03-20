@@ -1553,13 +1553,14 @@ fn ssh_submodule_files_under_250_lines() {
 /// - `secure_fs.rs` must not import from infra modules other than `blocking` and `polis_dir`
 #[test]
 fn foundation_modules_no_forbidden_imports() {
-    let infra_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infra");
-
     fn collect_forbidden_imports(
         path: &std::path::Path,
         is_forbidden: impl Fn(&str) -> bool,
     ) -> Vec<String> {
-        let name = path.file_name().unwrap().to_str().unwrap();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("<unknown>");
         let content =
             std::fs::read_to_string(path).unwrap_or_else(|_| panic!("Could not read {name}"));
         let mut tracker = CfgTestTracker::new();
@@ -1574,6 +1575,8 @@ fn foundation_modules_no_forbidden_imports() {
         }
         violations
     }
+
+    let infra_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/infra");
 
     // blocking.rs: no crate::infra:: imports at all
     let violations = collect_forbidden_imports(&infra_dir.join("blocking.rs"), |line| {
