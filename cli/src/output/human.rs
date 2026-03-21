@@ -430,12 +430,16 @@ impl<'a> HumanRenderer<'a> {
                     "   Activate an agent:       {}",
                     "polis agent activate <name>".style(self.ctx.styles.command)
                 ));
+                self.ctx.info("3. Connect to the workspace:");
                 self.ctx.info(&format!(
-                    "3. Connect to the workspace: {}",
+                    "   SSH:                     {}",
                     "polis connect".style(self.ctx.styles.command)
                 ));
-                self.ctx
-                    .info("   Shows available connection methods (SSH, VS Code, Cursor).");
+                self.ctx.info(&format!(
+                    "   VS Code:                 {}",
+                    "code --remote ssh-remote+workspace /workspace"
+                        .style(self.ctx.styles.command)
+                ));
             }
         }
     }

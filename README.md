@@ -49,7 +49,7 @@ Once installed:
 
 ```bash
 polis status                   # Show workspace and agent status
-polis connect                  # Connect to workspace via SSH or IDE
+polis connect                  # SSH into the workspace
 polis start --agent=openclaw   # Start Polis with pre-configured openclaw agent
 ```
 
@@ -74,7 +74,7 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | `polis delete` | Remove workspace |
 | `polis delete --all` | Remove workspace, certs, config, and cached images |
 | `polis status` | Show workspace and agent status |
-| `polis connect` | Show connection options (SSH, IDE) |
+| `polis connect` | Open an SSH session to the workspace |
 | `polis exec <cmd>` | Run a command inside the workspace |
 | `polis doctor` | Diagnose issues (workspace, network, image) |
 | `polis update` | Update Polis to the latest signed release |

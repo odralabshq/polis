@@ -53,7 +53,7 @@ pub enum Command {
     /// Show workspace status
     Status,
 
-    /// Show connection options
+    /// Open an SSH session to the workspace
     Connect(commands::connect::ConnectArgs),
 
     /// Open the control-plane dashboard
