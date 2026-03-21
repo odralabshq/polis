@@ -14,6 +14,10 @@ use crate::application::services::security;
 /// Returns an error if the gateway is unreachable or the query fails.
 pub async fn run(app: &impl App, gateway: &impl SecurityGateway) -> Result<ExitCode> {
     let lines = security::list_bypass_domains(gateway).await?;
-    app.renderer().render_security_list("Bypass Domains", "No bypass domains configured.", &lines)?;
+    app.renderer().render_security_list(
+        "Bypass Domains",
+        "No bypass domains configured.",
+        &lines,
+    )?;
     Ok(ExitCode::SUCCESS)
 }

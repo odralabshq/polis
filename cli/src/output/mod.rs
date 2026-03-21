@@ -303,7 +303,12 @@ impl Renderer<'_> {
     /// # Errors
     ///
     /// Returns an error if JSON serialization fails.
-    pub fn render_security_list(&self, title: &str, empty_msg: &str, items: &[String]) -> Result<()> {
+    pub fn render_security_list(
+        &self,
+        title: &str,
+        empty_msg: &str,
+        items: &[String],
+    ) -> Result<()> {
         match self {
             Renderer::Human(r) => {
                 r.render_security_list(title, empty_msg, items);

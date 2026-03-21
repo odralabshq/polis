@@ -102,14 +102,10 @@ pub async fn run(
             rule::run(app, gateway, &pattern, action).await
         }
         SecurityCommand::Rules => rules::run(app, gateway).await,
-        SecurityCommand::RuleRemove { pattern } => {
-            rule_remove::run(app, gateway, &pattern).await
-        }
+        SecurityCommand::RuleRemove { pattern } => rule_remove::run(app, gateway, &pattern).await,
         SecurityCommand::Level { level } => level::run(app, gateway, level).await,
         SecurityCommand::Bypass => bypass::run(app, gateway).await,
-        SecurityCommand::BypassRemove { domain } => {
-            bypass_remove::run(app, gateway, &domain).await
-        }
+        SecurityCommand::BypassRemove { domain } => bypass_remove::run(app, gateway, &domain).await,
         SecurityCommand::Credentials => credentials::run(app, gateway).await,
         SecurityCommand::CredentialRemove {
             pattern,

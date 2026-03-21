@@ -447,10 +447,7 @@ async fn handle_list_credential_allows(con: &mut redis::aio::MultiplexedConnecti
     Ok(())
 }
 
-async fn handle_list_events(
-    con: &mut redis::aio::MultiplexedConnection,
-    limit: i64,
-) -> Result<()> {
+async fn handle_list_events(con: &mut redis::aio::MultiplexedConnection, limit: i64) -> Result<()> {
     let entries: Vec<String> = redis::cmd("ZREVRANGE")
         .arg(polis_common::keys::EVENT_LOG)
         .arg(0)
@@ -510,10 +507,7 @@ async fn handle_delete_bypass_domain(
     domain: &str,
 ) -> Result<()> {
     let key = format!("polis:config:bypass:{}", domain);
-    let deleted: i64 = con
-        .del(&key)
-        .await
-        .context("failed to DEL bypass domain")?;
+    let deleted: i64 = con.del(&key).await.context("failed to DEL bypass domain")?;
     if deleted == 0 {
         bail!("no bypass domain rule found for {}", domain);
     }
@@ -538,7 +532,9 @@ async fn handle_list_rules(con: &mut redis::aio::MultiplexedConnection) -> Resul
             .context("failed to SCAN auto-approve keys")?;
 
         for key in &batch {
-            if let Some(pattern) = key.strip_prefix(&format!("{}:", polis_common::keys::AUTO_APPROVE)) {
+            if let Some(pattern) =
+                key.strip_prefix(&format!("{}:", polis_common::keys::AUTO_APPROVE))
+            {
                 let action: Option<String> = con
                     .get(key)
                     .await

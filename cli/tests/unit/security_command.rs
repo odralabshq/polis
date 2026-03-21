@@ -67,7 +67,12 @@ impl SecurityGateway for MockGateway {
     async fn list_credential_allows(&self) -> Result<Vec<String>> {
         Ok(vec![])
     }
-    async fn remove_credential_allow(&self, _pattern: &str, _host: &str, _fingerprint: &str) -> Result<String> {
+    async fn remove_credential_allow(
+        &self,
+        _pattern: &str,
+        _host: &str,
+        _fingerprint: &str,
+    ) -> Result<String> {
         Ok("credential allow removed".into())
     }
 }

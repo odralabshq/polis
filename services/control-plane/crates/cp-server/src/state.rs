@@ -1075,9 +1075,7 @@ where
     async fn get_status(&self) -> AppResult<StatusResponse> {
         let security_level = self.get_security_level().await?.level;
         // Scope to req-* to exclude dedup marker keys (polis:blocked:dedup:*)
-        let pending_count = self
-            .scan_count(&format!("{}:req-*", keys::BLOCKED))
-            .await?;
+        let pending_count = self.scan_count(&format!("{}:req-*", keys::BLOCKED)).await?;
         let recent_approvals = self
             .scan_count(&format!("{}:req-*", keys::APPROVED))
             .await?;

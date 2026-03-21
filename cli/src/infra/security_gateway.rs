@@ -134,8 +134,8 @@ impl<E: ShellExecutor> SecurityGateway for ToolboxSecurityGateway<'_, E> {
 
     async fn add_domain_rule(&self, pattern: &str, action: AllowAction) -> Result<String> {
         let action_str = action.to_string();
-        let output = exec_in_toolbox(self.executor, &["auto-approve", pattern, &action_str])
-            .await?;
+        let output =
+            exec_in_toolbox(self.executor, &["auto-approve", pattern, &action_str]).await?;
         Ok(output.trim().to_string())
     }
 

@@ -12,11 +12,7 @@ use crate::application::services::security;
 /// # Errors
 ///
 /// Returns an error if the gateway is unreachable or the domain doesn't exist.
-pub async fn run(
-    app: &impl App,
-    gateway: &impl SecurityGateway,
-    domain: &str,
-) -> Result<ExitCode> {
+pub async fn run(app: &impl App, gateway: &impl SecurityGateway, domain: &str) -> Result<ExitCode> {
     let msg = security::remove_bypass_domain(gateway, domain).await?;
     app.renderer().render_security_action(&msg)?;
     Ok(ExitCode::SUCCESS)

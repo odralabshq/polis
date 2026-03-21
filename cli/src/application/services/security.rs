@@ -176,7 +176,9 @@ pub async fn remove_credential_allow(
     host: &str,
     fingerprint: &str,
 ) -> Result<String> {
-    gateway.remove_credential_allow(pattern, host, fingerprint).await
+    gateway
+        .remove_credential_allow(pattern, host, fingerprint)
+        .await
 }
 
 // ── Unit tests ───────────────────────────────────────────────────────────────
@@ -258,7 +260,12 @@ mod tests {
         async fn list_credential_allows(&self) -> Result<Vec<String>> {
             Ok(vec![])
         }
-        async fn remove_credential_allow(&self, _pattern: &str, _host: &str, _fingerprint: &str) -> Result<String> {
+        async fn remove_credential_allow(
+            &self,
+            _pattern: &str,
+            _host: &str,
+            _fingerprint: &str,
+        ) -> Result<String> {
             Ok("credential allow removed".to_string())
         }
     }
@@ -299,7 +306,12 @@ mod tests {
         async fn list_credential_allows(&self) -> Result<Vec<String>> {
             anyhow::bail!("toolbox not available")
         }
-        async fn remove_credential_allow(&self, _pattern: &str, _host: &str, _fingerprint: &str) -> Result<String> {
+        async fn remove_credential_allow(
+            &self,
+            _pattern: &str,
+            _host: &str,
+            _fingerprint: &str,
+        ) -> Result<String> {
             anyhow::bail!("toolbox not available")
         }
     }
