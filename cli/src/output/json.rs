@@ -388,6 +388,20 @@ impl JsonRenderer {
         println!("{}", Self::render_security_action_to_string(message)?);
         Ok(())
     }
+
+    /// Render a generic security list as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_list(title: &str, items: &[String]) -> Result<()> {
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "title": title,
+            "items": items
+        }))?;
+        println!("{json}");
+        Ok(())
+    }
 }
 
 /// Format a JSON error object per the spec error schema (issue 18 §2.7).

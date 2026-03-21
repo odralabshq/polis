@@ -149,4 +149,61 @@ impl<E: ShellExecutor> SecurityGateway for ToolboxSecurityGateway<'_, E> {
 
         Ok(trimmed.lines().map(ToString::to_string).collect())
     }
+
+    async fn list_rules(&self) -> Result<Vec<String>> {
+        let output = exec_in_toolbox(self.executor, &["list-rules"]).await?;
+        let trimmed = output.trim();
+
+        if trimmed == "no auto-approve rules" || trimmed.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(trimmed.lines().map(ToString::to_string).collect())
+    }
+
+    async fn remove_rule(&self, pattern: &str) -> Result<String> {
+        let output = exec_in_toolbox(self.executor, &["delete-rule", pattern]).await?;
+        Ok(output.trim().to_string())
+    }
+
+    async fn list_bypass_domains(&self) -> Result<Vec<String>> {
+        let output = exec_in_toolbox(self.executor, &["list-bypass-domains"]).await?;
+        let trimmed = output.trim();
+
+        if trimmed == "no bypass domains" || trimmed.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(trimmed.lines().map(ToString::to_string).collect())
+    }
+
+    async fn remove_bypass_domain(&self, domain: &str) -> Result<String> {
+        let output = exec_in_toolbox(self.executor, &["delete-bypass-domain", domain]).await?;
+        Ok(output.trim().to_string())
+    }
+
+    async fn list_credential_allows(&self) -> Result<Vec<String>> {
+        let output = exec_in_toolbox(self.executor, &["list-credential-allows"]).await?;
+        let trimmed = output.trim();
+
+        if trimmed == "no credential allow rules" || trimmed.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(trimmed.lines().map(ToString::to_string).collect())
+    }
+
+    async fn remove_credential_allow(
+        &self,
+        pattern: &str,
+        host: &str,
+        fingerprint: &str,
+    ) -> Result<String> {
+        let output = exec_in_toolbox(
+            self.executor,
+            &["delete-credential-allow", pattern, host, fingerprint],
+        )
+        .await?;
+        Ok(output.trim().to_string())
+    }
 }

@@ -120,6 +120,65 @@ pub async fn set_level(
     Ok(msg)
 }
 
+/// List all auto-approve rules. Returns tab-separated "pattern\taction" lines.
+///
+/// # Errors
+///
+/// Returns an error if the toolbox container is unreachable.
+pub async fn list_rules(gateway: &impl SecurityGateway) -> Result<Vec<String>> {
+    gateway.list_rules().await
+}
+
+/// Remove an auto-approve rule by pattern. Returns confirmation message.
+///
+/// # Errors
+///
+/// Returns an error if the toolbox container is unreachable or the rule doesn't exist.
+pub async fn remove_rule(gateway: &impl SecurityGateway, pattern: &str) -> Result<String> {
+    gateway.remove_rule(pattern).await
+}
+
+/// List all bypass domains. Returns one domain per line.
+///
+/// # Errors
+///
+/// Returns an error if the toolbox container is unreachable.
+pub async fn list_bypass_domains(gateway: &impl SecurityGateway) -> Result<Vec<String>> {
+    gateway.list_bypass_domains().await
+}
+
+/// Remove a bypass domain. Returns confirmation message.
+///
+/// # Errors
+///
+/// Returns an error if the toolbox container is unreachable or the domain doesn't exist.
+pub async fn remove_bypass_domain(gateway: &impl SecurityGateway, domain: &str) -> Result<String> {
+    gateway.remove_bypass_domain(domain).await
+}
+
+/// List all persistent credential allow rules. Returns tab-separated lines.
+///
+/// # Errors
+///
+/// Returns an error if the toolbox container is unreachable.
+pub async fn list_credential_allows(gateway: &impl SecurityGateway) -> Result<Vec<String>> {
+    gateway.list_credential_allows().await
+}
+
+/// Remove a persistent credential allow rule. Returns confirmation message.
+///
+/// # Errors
+///
+/// Returns an error if the toolbox container is unreachable or the rule doesn't exist.
+pub async fn remove_credential_allow(
+    gateway: &impl SecurityGateway,
+    pattern: &str,
+    host: &str,
+    fingerprint: &str,
+) -> Result<String> {
+    gateway.remove_credential_allow(pattern, host, fingerprint).await
+}
+
 // ── Unit tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -184,6 +243,24 @@ mod tests {
         async fn get_log(&self) -> Result<Vec<String>> {
             Ok(self.log_events.clone())
         }
+        async fn list_rules(&self) -> Result<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn remove_rule(&self, _pattern: &str) -> Result<String> {
+            Ok("rule removed".to_string())
+        }
+        async fn list_bypass_domains(&self) -> Result<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn remove_bypass_domain(&self, _domain: &str) -> Result<String> {
+            Ok("bypass removed".to_string())
+        }
+        async fn list_credential_allows(&self) -> Result<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn remove_credential_allow(&self, _pattern: &str, _host: &str, _fingerprint: &str) -> Result<String> {
+            Ok("credential allow removed".to_string())
+        }
     }
 
     struct SecurityGatewayFailStub;
@@ -205,6 +282,24 @@ mod tests {
             anyhow::bail!("toolbox not available")
         }
         async fn get_log(&self) -> Result<Vec<String>> {
+            anyhow::bail!("toolbox not available")
+        }
+        async fn list_rules(&self) -> Result<Vec<String>> {
+            anyhow::bail!("toolbox not available")
+        }
+        async fn remove_rule(&self, _pattern: &str) -> Result<String> {
+            anyhow::bail!("toolbox not available")
+        }
+        async fn list_bypass_domains(&self) -> Result<Vec<String>> {
+            anyhow::bail!("toolbox not available")
+        }
+        async fn remove_bypass_domain(&self, _domain: &str) -> Result<String> {
+            anyhow::bail!("toolbox not available")
+        }
+        async fn list_credential_allows(&self) -> Result<Vec<String>> {
+            anyhow::bail!("toolbox not available")
+        }
+        async fn remove_credential_allow(&self, _pattern: &str, _host: &str, _fingerprint: &str) -> Result<String> {
             anyhow::bail!("toolbox not available")
         }
     }

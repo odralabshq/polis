@@ -95,6 +95,12 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | `polis security allow <domain>` | Auto-approve a domain pattern |
 | `polis security allow <domain> --action block` | Block a domain pattern |
 | `polis security level <level>` | Set security level (relaxed, balanced, strict) |
+| `polis security rules` | List all auto-approve/block rules |
+| `polis security rule-remove <pattern>` | Remove an auto-approve/block rule |
+| `polis security bypass` | List all bypass domains |
+| `polis security bypass-remove <domain>` | Remove a bypass domain |
+| `polis security credentials` | List all credential allow rules |
+| `polis security credential-remove <pattern> <host> <fingerprint>` | Remove a credential allow rule |
 
 ### Agent Management
 
@@ -212,6 +218,17 @@ To change the security level:
 polis security level relaxed    # Auto-allow unknown domains, still scan for credentials
 polis security level balanced   # Default — unknown domains prompt for approval
 polis security level strict     # All domains require explicit approval
+```
+
+To view and manage rules, bypass domains, and credential allows:
+
+```bash
+polis security rules                                    # List auto-approve/block rules
+polis security rule-remove "*.example.com"              # Remove a rule
+polis security bypass                                   # List bypass domains
+polis security bypass-remove en.wikipedia.org           # Remove a bypass domain
+polis security credentials                              # List credential allow rules
+polis security credential-remove <pattern> <host> <fp>  # Remove a credential allow
 ```
 
 ### Default bypass domains

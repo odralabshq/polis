@@ -513,6 +513,18 @@ impl<'a> HumanRenderer<'a> {
     pub fn render_security_action(&self, message: &str) {
         self.ctx.success(message);
     }
+
+    /// Render a generic security list (rules, bypass domains, credentials).
+    pub fn render_security_list(&self, title: &str, empty_msg: &str, items: &[String]) {
+        self.ctx.header(title);
+        if items.is_empty() {
+            self.ctx.info(empty_msg);
+        } else {
+            for item in items {
+                self.ctx.info(&format!("   - {item}"));
+            }
+        }
+    }
 }
 
 // ── Display helpers (used by tests and output layer) ─────────────────────────

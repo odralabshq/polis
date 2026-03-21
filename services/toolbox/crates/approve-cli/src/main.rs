@@ -107,6 +107,13 @@ enum Commands {
         /// The domain to remove from the bypass list
         domain: String,
     },
+    /// List all auto-approve rules
+    ListRules,
+    /// Delete an auto-approve rule
+    DeleteRule {
+        /// The destination pattern to remove (e.g., "*.example.com")
+        pattern: String,
+    },
 }
 
 /// Parse a string into a [`SecurityLevel`], case-insensitive.
@@ -514,6 +521,63 @@ async fn handle_delete_bypass_domain(
     Ok(())
 }
 
+async fn handle_list_rules(con: &mut redis::aio::MultiplexedConnection) -> Result<()> {
+    let match_pattern = format!("{}:*", polis_common::keys::AUTO_APPROVE);
+    let mut cursor: u64 = 0;
+    let mut found = 0u64;
+
+    loop {
+        let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(&match_pattern)
+            .arg("COUNT")
+            .arg(100)
+            .query_async(con)
+            .await
+            .context("failed to SCAN auto-approve keys")?;
+
+        for key in &batch {
+            if let Some(pattern) = key.strip_prefix(&format!("{}:", polis_common::keys::AUTO_APPROVE)) {
+                let action: Option<String> = con
+                    .get(key)
+                    .await
+                    .context("failed to GET auto-approve rule")?;
+                if let Some(action) = action {
+                    println!("{}\t{}", pattern, action);
+                    found += 1;
+                }
+            }
+        }
+
+        cursor = next_cursor;
+        if cursor == 0 {
+            break;
+        }
+    }
+
+    if found == 0 {
+        println!("no auto-approve rules");
+    }
+    Ok(())
+}
+
+async fn handle_delete_rule(
+    con: &mut redis::aio::MultiplexedConnection,
+    pattern: &str,
+) -> Result<()> {
+    let key = polis_common::auto_approve_key(pattern);
+    let deleted: i64 = con
+        .del(&key)
+        .await
+        .context("failed to DEL auto-approve rule")?;
+    if deleted == 0 {
+        bail!("no auto-approve rule found for {}", pattern);
+    }
+    println!("deleted auto-approve rule: {}", pattern);
+    Ok(())
+}
+
 async fn handle_delete_credential_allow(
     con: &mut redis::aio::MultiplexedConnection,
     pattern: &str,
@@ -599,6 +663,8 @@ async fn main() -> Result<()> {
         Commands::DeleteBypassDomain { ref domain } => {
             handle_delete_bypass_domain(&mut con, domain).await
         }
+        Commands::ListRules => handle_list_rules(&mut con).await,
+        Commands::DeleteRule { ref pattern } => handle_delete_rule(&mut con, pattern).await,
         Commands::AutoApprove {
             ref pattern,
             ref action,

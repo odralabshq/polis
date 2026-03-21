@@ -297,6 +297,21 @@ impl Renderer<'_> {
             Renderer::Json(_) => JsonRenderer::render_security_action(message),
         }
     }
+
+    /// Render a generic security list (rules, bypass domains, credentials).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    pub fn render_security_list(&self, title: &str, empty_msg: &str, items: &[String]) -> Result<()> {
+        match self {
+            Renderer::Human(r) => {
+                r.render_security_list(title, empty_msg, items);
+                Ok(())
+            }
+            Renderer::Json(_) => JsonRenderer::render_security_list(title, items),
+        }
+    }
 }
 
 /// Output context carrying styling and terminal state.
