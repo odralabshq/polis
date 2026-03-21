@@ -335,6 +335,67 @@ multipass list   # Find the polis VM IP
 # Open http://<vm-ip>:18789 in your browser
 ```
 
+**Windows: `polis start` times out / Multipass shows N/A for IPv4:**
+
+This is a known Hyper-V Default Switch issue where the ICS (Internet Connection Sharing)
+DNS server accumulates stale hostname entries. Multipass resolves `polis.mshome.net` to a
+dead IP and SSH times out.
+
+Symptoms:
+
+- `multipass list` shows `N/A` or `--` for IPv4
+- `polis start` fails with `Timed out waiting for instance launch`
+- `multipass info polis` fails with `Timeout connecting to polis.mshome.net`
+
+Step 1 — Confirm the VM is actually running:
+
+```powershell
+# Check the ARP table for VMs on the Hyper-V subnet
+arp -a | findstr 172.
+
+# Test SSH port on candidate IPs (replace with IPs from arp output)
+Test-NetConnection -ComputerName 172.31.x.x -Port 22
+```
+
+Step 2 — Clean the ICS hosts file (requires admin PowerShell):
+
+```powershell
+# Open the ICS hosts file — this is the DNS source of truth for the Default Switch
+notepad C:\Windows\System32\drivers\etc\hosts.ics
+
+# Remove ALL lines containing "polis" (both polis.mshome.net and polis-vm.mshome.net)
+# Save the file, then flush DNS:
+ipconfig /flushdns
+```
+
+Step 3 — Verify and retry:
+
+```powershell
+multipass list       # Should now show the IPv4 address
+polis start          # Should succeed
+```
+
+If Step 2 doesn't work — reset the Default Switch (requires admin PowerShell + reboot):
+
+```powershell
+Get-HNSNetwork | ? Name -Like "Default Switch" | Remove-HNSNetwork
+Restart-Computer
+# Hyper-V recreates the Default Switch on boot. Then run polis start again.
+```
+
+Optional — override DNS via the regular hosts file:
+
+```powershell
+# Find the VM IP from the arp table, then add it to the hosts file
+# (admin PowerShell)
+Add-Content C:\Windows\System32\drivers\etc\hosts "172.31.x.x polis.mshome.net"
+ipconfig /flushdns
+```
+
+> **Tip:** Disable VPN software during VM creation. VPNs can interfere with the
+> Hyper-V Default Switch DHCP/DNS. Anti-virus software (Symantec, ESET, Kaspersky,
+> Malwarebytes) can also block VM networking.
+
 **Workspace won't start:**
 
 ```bash
