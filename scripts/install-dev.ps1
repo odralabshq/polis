@@ -334,6 +334,6 @@ Write-Host "   polis agent list                              # list available ag
 Write-Host "   polis agent install --path <agent-path>       # install an agent"
 Write-Host "   polis agent activate <name>                    # activate an agent"
 Write-Host "3. Connect to the workspace:" -ForegroundColor Gray
-Write-Host "   polis connect"
-Write-Host "   Shows available connection methods (SSH, VS Code, Cursor)."
+Write-Host "   SSH:      polis connect"
+Write-Host "   VS Code:  code --remote ssh-remote+workspace /workspace"
 Write-Host ""
