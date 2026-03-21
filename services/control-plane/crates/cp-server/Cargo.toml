@@ -3,6 +3,7 @@ name = "cp-server"
 version = "0.1.0"
 edition = "2024"
 description = "Polis control-plane server"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 anyhow = "1.0"

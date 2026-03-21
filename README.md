@@ -1,6 +1,6 @@
 # Polis — Secure Workspace for AI Coding Agents
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.4.0-orange.svg)](https://github.com/OdraLabsHQ/polis/releases)
 
 > **⚠️ Experimental Preview** — Polis is under active development This platform in not yet recommended for production use.
@@ -432,7 +432,7 @@ polis start          # Fresh install
 
 ## 📄 License
 
-Apache 2.0 — See [LICENSE](LICENSE) for details.
+AGPL-3.0-or-later — See [LICENSE](LICENSE) for details.
 
 ## ⚠️ Disclaimer
 
