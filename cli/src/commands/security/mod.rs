@@ -73,7 +73,7 @@ pub enum SecurityCommand {
     Credentials,
     /// Remove a persistent credential allow rule
     CredentialRemove {
-        /// Credential pattern name (e.g. aws_access)
+        /// Credential pattern name (e.g. `aws_access`)
         pattern: String,
         /// Host name used by the rule
         host: String,
