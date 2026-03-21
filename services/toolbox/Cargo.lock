@@ -1245,6 +1245,7 @@ dependencies = [
  "polis-common",
  "predicates",
  "redis",
+ "rustls",
  "serde_json",
  "tokio",
 ]
@@ -1584,6 +1585,7 @@ dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",

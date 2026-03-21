@@ -26,7 +26,7 @@ impl<'a, E: ShellExecutor> ToolboxSecurityGateway<'a, E> {
 /// Executes arbitrary commands in the toolbox container.
 ///
 /// Reads the mcp-admin password from the mounted Docker secret and injects it
-/// as `VALKEY_MCP_ADMIN_PASSWORD` so `polis-approve` can authenticate to Valkey.
+/// as `polis_VALKEY_PASS` so `polis-approve` can authenticate to Valkey.
 ///
 /// Memory efficiency:
 /// - Password bytes are formatted directly into the env var string (single allocation)
@@ -69,7 +69,7 @@ pub(super) async fn exec_in_toolbox(
         .context("non-UTF-8 output from polis-approve: password contains invalid UTF-8")?;
 
     // Format env var as single string: one allocation, not three
-    let pass_env = format!("VALKEY_MCP_ADMIN_PASSWORD={}", password.trim());
+    let pass_env = format!("polis_VALKEY_PASS={}", password.trim());
 
     let mut cmd: Vec<&str> = vec![
         "docker",
@@ -105,7 +105,7 @@ pub(super) async fn exec_in_toolbox(
 
 impl<E: ShellExecutor> SecurityGateway for ToolboxSecurityGateway<'_, E> {
     async fn list_pending(&self) -> Result<Vec<String>> {
-        let output = exec_in_toolbox(self.executor, &["list"]).await?;
+        let output = exec_in_toolbox(self.executor, &["list-pending"]).await?;
         let trimmed = output.trim();
 
         // Handle toolbox sentinel value for empty queue (Req 28.1, 28.2)
@@ -128,17 +128,14 @@ impl<E: ShellExecutor> SecurityGateway for ToolboxSecurityGateway<'_, E> {
 
     async fn set_level(&self, level: SecurityLevel) -> Result<String> {
         let level_str = level.to_string();
-        let output = exec_in_toolbox(self.executor, &["set-level", &level_str]).await?;
+        let output = exec_in_toolbox(self.executor, &["set-security-level", &level_str]).await?;
         Ok(output.trim().to_string())
     }
 
     async fn add_domain_rule(&self, pattern: &str, action: AllowAction) -> Result<String> {
         let action_str = action.to_string();
-        let output = exec_in_toolbox(
-            self.executor,
-            &["add-rule", pattern, "--action", &action_str],
-        )
-        .await?;
+        let output = exec_in_toolbox(self.executor, &["auto-approve", pattern, &action_str])
+            .await?;
         Ok(output.trim().to_string())
     }
 

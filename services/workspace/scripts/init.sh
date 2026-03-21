@@ -20,32 +20,164 @@ if [[ -f /usr/local/share/ca-certificates/polis-ca.crt ]] && \
     cat /usr/local/share/ca-certificates/polis-ca.crt >> /etc/ssl/certs/ca-certificates.crt
 fi
 
-# Export SSL/TLS env vars so all runtimes (Python requests/certifi, Node.js,
-# curl, etc.) trust the Polis CA without per-tool configuration.
-# /etc/environment is read by PAM/systemd for all processes.
-# /etc/profile.d/ covers interactive shells (SSH, agent terminals).
+# =============================================================================
+# SSL/TLS CA Trust — make ALL runtimes trust the Polis CA.
+#
+# The transparent proxy (g3proxy) terminates TLS and re-signs with the Polis
+# CA. Different languages use different trust stores:
+#
+#   System CA store (/etc/ssl/certs/)  → Go, .NET, curl, wget, git, apt, dpkg
+#   SSL_CERT_FILE env var              → OpenSSL-linked tools: Ruby, Perl, C
+#   REQUESTS_CA_BUNDLE env var         → Python requests, pip, httpx
+#   CURL_CA_BUNDLE env var             → curl, libcurl-based tools
+#   NODE_EXTRA_CA_CERTS env var        → Node.js (https, fetch, npm)
+#   HTTPS_CA_FILE env var              → Perl LWP::UserAgent
+#   GIT_SSL_CAINFO env var             → git (fallback if system store fails)
+#   openssl.cafile / curl.cainfo       → PHP (via php.ini)
+#   Java cacerts keystore              → JVM (keytool import required)
+#   Python certifi-system-store        → Patches certifi to use system store
+#
+# update-ca-certificates (above) handles the system store. Everything below
+# handles the per-runtime overrides.
+# =============================================================================
 CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
-{
-    echo "REQUESTS_CA_BUNDLE=${CA_BUNDLE}"
-    echo "SSL_CERT_FILE=${CA_BUNDLE}"
-    echo "CURL_CA_BUNDLE=${CA_BUNDLE}"
-    echo "NODE_EXTRA_CA_CERTS=${CA_BUNDLE}"
-} >> /etc/environment
+CA_CERT="/usr/local/share/ca-certificates/polis-ca.crt"
 
-cat > /etc/profile.d/polis-ca.sh <<ENVEOF
-export REQUESTS_CA_BUNDLE="${CA_BUNDLE}"
-export SSL_CERT_FILE="${CA_BUNDLE}"
-export CURL_CA_BUNDLE="${CA_BUNDLE}"
-export NODE_EXTRA_CA_CERTS="${CA_BUNDLE}"
-ENVEOF
+# --- Environment variables (covers ~80% of tools) ---
+# /etc/environment is read by PAM/systemd for all login sessions.
+# /etc/profile.d/ covers interactive shells (SSH, agent terminals).
+ENV_VARS=(
+    "REQUESTS_CA_BUNDLE=${CA_BUNDLE}"   # Python requests, pip, httpx
+    "SSL_CERT_FILE=${CA_BUNDLE}"        # OpenSSL: Ruby, Perl, generic
+    "SSL_CERT_DIR=/etc/ssl/certs"       # OpenSSL: directory-based lookup
+    "CURL_CA_BUNDLE=${CA_BUNDLE}"       # curl, libcurl
+    "NODE_EXTRA_CA_CERTS=${CA_BUNDLE}"  # Node.js
+    "HTTPS_CA_FILE=${CA_BUNDLE}"        # Perl LWP::UserAgent
+    "GIT_SSL_CAINFO=${CA_BUNDLE}"       # git (explicit override)
+)
+
+for var in "${ENV_VARS[@]}"; do
+    echo "$var" >> /etc/environment
+done
+
+{
+    echo '# Polis CA trust — auto-generated, do not edit'
+    for var in "${ENV_VARS[@]}"; do
+        echo "export ${var}"
+    done
+} > /etc/profile.d/polis-ca.sh
 chmod 644 /etc/profile.d/polis-ca.sh
 
-# Also export into the current init process so agent install scripts
-# (which run later in this same script) inherit the vars.
-export REQUESTS_CA_BUNDLE="${CA_BUNDLE}"
-export SSL_CERT_FILE="${CA_BUNDLE}"
-export CURL_CA_BUNDLE="${CA_BUNDLE}"
-export NODE_EXTRA_CA_CERTS="${CA_BUNDLE}"
+# Export into the current init process so agent install scripts inherit them.
+for var in "${ENV_VARS[@]}"; do
+    export "${var?}"
+done
+
+# --- Java: import Polis CA into every JVM's cacerts keystore ---
+# Java uses its own trust store (PKCS12/JKS), completely ignoring the OS.
+# We must use keytool to inject the CA into each installed JVM.
+import_java_ca() {
+    local ca_cert="$1"
+    local imported=0
+
+    # Find all cacerts files across all Java installations
+    for cacerts in \
+        /usr/lib/jvm/*/lib/security/cacerts \
+        /usr/lib/jvm/*/jre/lib/security/cacerts \
+        /usr/java/*/lib/security/cacerts \
+        /usr/java/*/jre/lib/security/cacerts \
+        /opt/java/*/lib/security/cacerts; do
+        [[ -f "$cacerts" ]] || continue
+
+        # Find keytool in the same JVM
+        local jvm_dir
+        jvm_dir=$(echo "$cacerts" | sed 's|/lib/security/cacerts||;s|/jre/lib/security/cacerts||')
+        local keytool="${jvm_dir}/bin/keytool"
+        [[ -x "$keytool" ]] || keytool=$(command -v keytool 2>/dev/null || true)
+        [[ -n "$keytool" ]] || continue
+
+        # Skip if already imported
+        if "$keytool" -list -keystore "$cacerts" -storepass changeit \
+                -alias polis-ca &>/dev/null; then
+            echo "[workspace] Java: Polis CA already in ${cacerts}"
+            imported=$((imported + 1))
+            continue
+        fi
+
+        echo "[workspace] Java: importing Polis CA into ${cacerts}..."
+        if "$keytool" -importcert -noprompt -trustcacerts \
+                -alias polis-ca \
+                -file "$ca_cert" \
+                -keystore "$cacerts" \
+                -storepass changeit 2>/dev/null; then
+            echo "[workspace] Java: imported into ${cacerts}"
+            imported=$((imported + 1))
+        else
+            echo "[workspace] Java: WARNING — failed to import into ${cacerts}"
+        fi
+    done
+
+    # Also set JAVA_TOOL_OPTIONS as a fallback for JVMs we didn't find.
+    # javax.net.ssl.trustStoreType=PKCS12 is the default since Java 9+.
+    if [[ $imported -eq 0 ]] && command -v java &>/dev/null; then
+        echo "[workspace] Java: no cacerts found, setting JAVA_TOOL_OPTIONS fallback"
+        echo "JAVA_TOOL_OPTIONS=-Djavax.net.ssl.trustStore=${CA_BUNDLE}" >> /etc/environment
+        echo "export JAVA_TOOL_OPTIONS=\"-Djavax.net.ssl.trustStore=${CA_BUNDLE}\"" \
+            >> /etc/profile.d/polis-ca.sh
+    fi
+
+    return 0
+}
+
+if [[ -f "$CA_CERT" ]]; then
+    import_java_ca "$CA_CERT"
+else
+    echo "[workspace] CA trust: no Polis CA cert found, skipping Java import"
+fi
+
+# --- PHP: configure openssl.cafile and curl.cainfo ---
+# PHP uses its own OpenSSL config (php.ini), not the env vars.
+for ini_dir in /etc/php/*/cli/conf.d /etc/php/*/fpm/conf.d /etc/php/*/apache2/conf.d; do
+    [[ -d "$ini_dir" ]] || continue
+    cat > "${ini_dir}/99-polis-ca.ini" <<PHPEOF
+; Polis CA trust — auto-generated
+openssl.cafile=${CA_BUNDLE}
+curl.cainfo=${CA_BUNDLE}
+PHPEOF
+    echo "[workspace] PHP: configured ${ini_dir}/99-polis-ca.ini"
+done
+# Fallback: if no versioned dirs exist, try the main php.ini locations
+for ini_file in /etc/php.ini /usr/local/etc/php/php.ini; do
+    [[ -f "$ini_file" ]] || continue
+    if ! grep -q "polis-ca" "$ini_file" 2>/dev/null; then
+        {
+            echo ""
+            echo "; Polis CA trust — auto-generated"
+            echo "openssl.cafile=${CA_BUNDLE}"
+            echo "curl.cainfo=${CA_BUNDLE}"
+        } >> "$ini_file"
+        echo "[workspace] PHP: appended CA config to ${ini_file}"
+    fi
+done
+
+# --- Python: install certifi-system-store if certifi is present ---
+# certifi bundles Mozilla's CAs and ignores the system store. The
+# REQUESTS_CA_BUNDLE env var overrides it, but certifi-system-store
+# patches certifi.where() itself so even code that reads the path
+# directly (without checking env vars) gets the system bundle.
+if command -v pip3 &>/dev/null; then
+    if pip3 show certifi &>/dev/null 2>&1; then
+        if ! pip3 show certifi-system-store &>/dev/null 2>&1; then
+            echo "[workspace] Python: installing certifi-system-store..."
+            pip3 install --quiet --break-system-packages \
+                certifi-system-store 2>/dev/null || \
+            pip3 install --quiet certifi-system-store 2>/dev/null || \
+                echo "[workspace] Python: WARNING — certifi-system-store install failed"
+        fi
+    fi
+fi
+
+echo "[workspace] CA trust configuration complete"
 
 # Source shared network helpers
 SCRIPT_DIR="$(dirname "$0")"

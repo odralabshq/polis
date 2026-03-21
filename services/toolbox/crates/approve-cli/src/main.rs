@@ -94,6 +94,19 @@ enum Commands {
         /// 16-hex credential fingerprint
         fingerprint: String,
     },
+    /// List recent security events from the event log
+    ListEvents {
+        /// Maximum number of events to return (default: 50)
+        #[arg(long, default_value = "50")]
+        limit: i64,
+    },
+    /// List all bypass domain rules
+    ListBypassDomains,
+    /// Delete a bypass domain rule
+    DeleteBypassDomain {
+        /// The domain to remove from the bypass list
+        domain: String,
+    },
 }
 
 /// Parse a string into a [`SecurityLevel`], case-insensitive.
@@ -364,6 +377,10 @@ async fn handle_list_pending(con: &mut redis::aio::MultiplexedConnection) -> Res
             .context("failed to SCAN blocked keys")?;
 
         for key in &batch {
+            // Skip dedup sentinel keys (polis:blocked:dedup:*)
+            if key.contains(":dedup:") {
+                continue;
+            }
             if let Some(data) = con
                 .get::<_, Option<String>>(key)
                 .await
@@ -423,6 +440,80 @@ async fn handle_list_credential_allows(con: &mut redis::aio::MultiplexedConnecti
     Ok(())
 }
 
+async fn handle_list_events(
+    con: &mut redis::aio::MultiplexedConnection,
+    limit: i64,
+) -> Result<()> {
+    let entries: Vec<String> = redis::cmd("ZREVRANGE")
+        .arg(polis_common::keys::EVENT_LOG)
+        .arg(0)
+        .arg(limit - 1)
+        .query_async(con)
+        .await
+        .context("failed to ZREVRANGE event log")?;
+
+    if entries.is_empty() {
+        println!("no events");
+        return Ok(());
+    }
+
+    for entry in &entries {
+        println!("{}", entry);
+    }
+    Ok(())
+}
+
+async fn handle_list_bypass_domains(con: &mut redis::aio::MultiplexedConnection) -> Result<()> {
+    let match_pattern = "polis:config:bypass:*";
+    let mut cursor: u64 = 0;
+    let mut found = 0u64;
+
+    loop {
+        let (next_cursor, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(match_pattern)
+            .arg("COUNT")
+            .arg(100)
+            .query_async(con)
+            .await
+            .context("failed to SCAN bypass domain keys")?;
+
+        for key in &batch {
+            if let Some(domain) = key.strip_prefix("polis:config:bypass:") {
+                println!("{}", domain);
+                found += 1;
+            }
+        }
+
+        cursor = next_cursor;
+        if cursor == 0 {
+            break;
+        }
+    }
+
+    if found == 0 {
+        println!("no bypass domains");
+    }
+    Ok(())
+}
+
+async fn handle_delete_bypass_domain(
+    con: &mut redis::aio::MultiplexedConnection,
+    domain: &str,
+) -> Result<()> {
+    let key = format!("polis:config:bypass:{}", domain);
+    let deleted: i64 = con
+        .del(&key)
+        .await
+        .context("failed to DEL bypass domain")?;
+    if deleted == 0 {
+        bail!("no bypass domain rule found for {}", domain);
+    }
+    println!("deleted bypass domain: {}", domain);
+    Ok(())
+}
+
 async fn handle_delete_credential_allow(
     con: &mut redis::aio::MultiplexedConnection,
     pattern: &str,
@@ -449,6 +540,12 @@ async fn handle_delete_credential_allow(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the ring crypto provider before any TLS connections.
+    // Required because rustls 0.23+ no longer auto-selects a provider.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install default CryptoProvider");
+
     let mut cli = Cli::parse();
 
     // Load Valkey password from environment variable only (CWE-214).
@@ -496,6 +593,11 @@ async fn main() -> Result<()> {
                 .context("failed to SET security level")?;
             println!("security level set to {}", level_str);
             Ok(())
+        }
+        Commands::ListEvents { limit } => handle_list_events(&mut con, limit).await,
+        Commands::ListBypassDomains => handle_list_bypass_domains(&mut con).await,
+        Commands::DeleteBypassDomain { ref domain } => {
+            handle_delete_bypass_domain(&mut con, domain).await
         }
         Commands::AutoApprove {
             ref pattern,
