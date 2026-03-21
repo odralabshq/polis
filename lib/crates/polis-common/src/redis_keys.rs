@@ -285,6 +285,17 @@ pub fn ott_key(ott_code: &str) -> String {
     format!("{}:{}", keys::OTT_MAPPING, ott_code)
 }
 
+/// Build the dedup sentinel key used by the DLP C module to prevent
+/// duplicate blocked entries for the same destination+pattern combination.
+/// Format: `polis:blocked:dedup:{host}:{pattern}`
+/// The sentinel sets this with a 3600s TTL when creating a blocked entry.
+/// Callers should DEL this key when approving/denying/bypassing a request
+/// so the same destination can be blocked again immediately.
+#[must_use]
+pub fn blocked_dedup_key(host: &str, pattern: &str) -> String {
+    format!("polis:blocked:dedup:{host}:{pattern}")
+}
+
 /// Validate that a request_id matches the expected format: req-[a-f0-9]{8}
 /// Returns Ok(()) if valid, Err with description if invalid.
 /// SECURITY: Always call before constructing Redis keys from untrusted input.
@@ -342,6 +353,14 @@ mod tests {
         assert_eq!(
             approved_host_key("https://example.com"),
             "polis:approved:host:https://example.com"
+        );
+    }
+
+    #[test]
+    fn blocked_dedup_key_format() {
+        assert_eq!(
+            blocked_dedup_key("en.wikipedia.org", "new_domain_prompt"),
+            "polis:blocked:dedup:en.wikipedia.org:new_domain_prompt"
         );
     }
 

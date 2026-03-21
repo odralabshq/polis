@@ -33,8 +33,8 @@ use fred::{
 };
 use polis_common::{
     AutoApproveAction, BlockReason, BlockedRequest, RequestStatus, SecurityLevel, SecurityLogEntry,
-    approved_fingerprint_key, approved_host_key, approved_key, auto_approve_key, blocked_key,
-    credential_allow_key, normalize_approval_host, parse_credential_allow_key,
+    approved_fingerprint_key, approved_host_key, approved_key, auto_approve_key, blocked_dedup_key,
+    blocked_key, credential_allow_key, normalize_approval_host, parse_credential_allow_key,
     redis_keys::{keys, ttl},
 };
 use rustls_pki_types::pem::PemObject;
@@ -735,6 +735,22 @@ where
             .map_err(|error| Self::dependency_error(operation, &error))
     }
 
+    /// Best-effort cleanup of the DLP dedup sentinel key so the same
+    /// destination+pattern combination can create a new pending entry
+    /// immediately after approval/denial/bypass.
+    async fn cleanup_dedup_key(&self, request: &BlockedRequest) {
+        if let Some(pattern) = request.pattern.as_deref() {
+            let key = blocked_dedup_key(&request.destination, pattern);
+            if let Err(e) = self.client.del(&key).await {
+                tracing::warn!(
+                    key = %key,
+                    error = %e,
+                    "failed to delete dedup sentinel key (non-fatal)"
+                );
+            }
+        }
+    }
+
     async fn persist_bypass_domain(&self, domain: &str) -> AppResult<String> {
         let normalized = Self::normalize_bypass_domain(domain)?;
         self.client
@@ -1226,6 +1242,8 @@ where
         )
         .await?;
 
+        self.cleanup_dedup_key(&blocked_request).await;
+
         Ok(ActionResponse {
             message: format!("approved {request_id}"),
         })
@@ -1257,6 +1275,8 @@ where
             "failed to remove blocked request after creating credential allow rule",
         )
         .await?;
+
+        self.cleanup_dedup_key(&blocked_request).await;
 
         Ok(ActionResponse {
             message: format!("remembered credential allow for {pattern} on {host}"),
@@ -1295,6 +1315,8 @@ where
         )
         .await?;
 
+        self.cleanup_dedup_key(&blocked_request).await;
+
         Ok(ActionResponse {
             message: format!("added bypass domain {display}"),
         })
@@ -1313,6 +1335,8 @@ where
 
         self.delete_blocked_request(request_id, "failed to remove blocked request after denial")
             .await?;
+
+        self.cleanup_dedup_key(&blocked_request).await;
 
         Ok(ActionResponse {
             message: format!("denied {request_id}"),

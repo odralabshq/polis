@@ -262,6 +262,15 @@ async fn handle_approve(
         &blocked_data,
         now,
     );
+    // Clean up the dedup sentinel key so the same destination+pattern can
+    // create a new pending entry immediately after approval.
+    if let Some(pattern) = blocked_request.pattern.as_deref() {
+        pipeline
+            .cmd("DEL")
+            .arg(polis_common::blocked_dedup_key(&blocked_request.destination, pattern))
+            .ignore();
+    }
+
     pipeline
         .query_async::<()>(con)
         .await
@@ -292,6 +301,13 @@ async fn handle_allow_credential(
         .arg(&allow_key)
         .arg("1")
         .ignore();
+    // Clean up dedup sentinel so the same destination can be blocked again
+    if let Some(pattern) = blocked_request.pattern.as_deref() {
+        pipeline
+            .cmd("DEL")
+            .arg(polis_common::blocked_dedup_key(&blocked_request.destination, pattern))
+            .ignore();
+    }
     queue_audit_entry(
         &mut pipeline,
         "credential_allowed_via_cli",
@@ -331,6 +347,13 @@ async fn handle_bypass_domain(
         .arg(&bypass_key)
         .arg("bypass")
         .ignore();
+    // Clean up dedup sentinel so the same destination can be blocked again
+    if let Some(pattern) = blocked_request.pattern.as_deref() {
+        pipeline
+            .cmd("DEL")
+            .arg(polis_common::blocked_dedup_key(&blocked_request.destination, pattern))
+            .ignore();
+    }
     queue_audit_entry(
         &mut pipeline,
         "bypass_domain_via_cli",
@@ -349,8 +372,17 @@ async fn handle_bypass_domain(
 
 async fn handle_deny(con: &mut redis::aio::MultiplexedConnection, request_id: &str) -> Result<()> {
     let (blocked_key, blocked_data, now) = fetch_blocked(con, request_id).await?;
+    let blocked_request = serde_json::from_str::<polis_common::BlockedRequest>(&blocked_data)
+        .context("failed to parse blocked request")?;
     let mut pipeline = redis::pipe();
     pipeline.atomic().cmd("DEL").arg(&blocked_key).ignore();
+    // Clean up dedup sentinel so the same destination can be blocked again
+    if let Some(pattern) = blocked_request.pattern.as_deref() {
+        pipeline
+            .cmd("DEL")
+            .arg(polis_common::blocked_dedup_key(&blocked_request.destination, pattern))
+            .ignore();
+    }
     queue_audit_entry(
         &mut pipeline,
         "denied_via_cli",
