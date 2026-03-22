@@ -68,29 +68,29 @@ setup() {
 # =============================================================================
 
 @test "exec whoami: returns a username" {
-    run polis exec whoami
+    run polis exec whoami </dev/null
     assert_success
     [[ -n "${output}" ]]
 }
 
 @test "exec echo hello: output contains hello" {
-    run polis exec echo hello
+    run polis exec echo hello </dev/null
     assert_success
     assert_output --partial "hello"
 }
 
 @test "exec -- ls -la /: succeeds with -- separator" {
-    run polis exec -- ls -la /
+    run polis exec -- ls -la / </dev/null
     assert_success
 }
 
 @test "exec false: propagates non-zero exit code" {
-    run polis exec false
+    run polis exec false </dev/null
     assert_failure
 }
 
 @test "exec printf: passes multiple arguments" {
-    run polis exec printf '%s\n' foo bar
+    run polis exec printf '%s\n' foo bar </dev/null
     assert_success
     assert_output --partial "foo"
     assert_output --partial "bar"
