@@ -267,7 +267,10 @@ async fn handle_approve(
     if let Some(pattern) = blocked_request.pattern.as_deref() {
         pipeline
             .cmd("DEL")
-            .arg(polis_common::blocked_dedup_key(&blocked_request.destination, pattern))
+            .arg(polis_common::blocked_dedup_key(
+                &blocked_request.destination,
+                pattern,
+            ))
             .ignore();
     }
 
@@ -305,7 +308,10 @@ async fn handle_allow_credential(
     if let Some(pattern) = blocked_request.pattern.as_deref() {
         pipeline
             .cmd("DEL")
-            .arg(polis_common::blocked_dedup_key(&blocked_request.destination, pattern))
+            .arg(polis_common::blocked_dedup_key(
+                &blocked_request.destination,
+                pattern,
+            ))
             .ignore();
     }
     queue_audit_entry(
@@ -351,7 +357,10 @@ async fn handle_bypass_domain(
     if let Some(pattern) = blocked_request.pattern.as_deref() {
         pipeline
             .cmd("DEL")
-            .arg(polis_common::blocked_dedup_key(&blocked_request.destination, pattern))
+            .arg(polis_common::blocked_dedup_key(
+                &blocked_request.destination,
+                pattern,
+            ))
             .ignore();
     }
     queue_audit_entry(
@@ -380,7 +389,10 @@ async fn handle_deny(con: &mut redis::aio::MultiplexedConnection, request_id: &s
     if let Some(pattern) = blocked_request.pattern.as_deref() {
         pipeline
             .cmd("DEL")
-            .arg(polis_common::blocked_dedup_key(&blocked_request.destination, pattern))
+            .arg(polis_common::blocked_dedup_key(
+                &blocked_request.destination,
+                pattern,
+            ))
             .ignore();
     }
     queue_audit_entry(
