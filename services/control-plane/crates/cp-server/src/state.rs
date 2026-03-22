@@ -2668,4 +2668,450 @@ mod tests {
             "expected *.github.com in compiled bypass domains, got: {domains:?}"
         );
     }
+
+    // ── Tier 1: DLP dedup cleanup tests (guards real bugs) ─────────────
+
+    #[tokio::test]
+    async fn dedup_key_cleaned_after_approve() {
+        let client = FakeValkeyClient::default();
+        let req = blocked_request(
+            "req-abc12345",
+            "a.example",
+            1,
+            BlockReason::CredentialDetected,
+            Some("aws_access"),
+            Some("0123456789abcdef"),
+        );
+        store_with_blocked(&client, &req);
+        let dedup = blocked_dedup_key("a.example", "aws_access");
+        client.seed_string(&dedup, "req-abc12345");
+        let store = GovernanceState::new_with_client(client.clone());
+
+        store.approve("req-abc12345").await.expect("approve");
+
+        assert!(
+            !client
+                .strings
+                .lock()
+                .expect("lock")
+                .contains_key(&dedup),
+            "dedup sentinel key must be deleted after approve"
+        );
+    }
+
+    #[tokio::test]
+    async fn dedup_key_cleaned_after_deny() {
+        let client = FakeValkeyClient::default();
+        let req = blocked_request(
+            "req-abc12345",
+            "a.example",
+            1,
+            BlockReason::CredentialDetected,
+            Some("aws_access"),
+            Some("0123456789abcdef"),
+        );
+        store_with_blocked(&client, &req);
+        let dedup = blocked_dedup_key("a.example", "aws_access");
+        client.seed_string(&dedup, "req-abc12345");
+        let store = GovernanceState::new_with_client(client.clone());
+
+        store.deny("req-abc12345").await.expect("deny");
+
+        assert!(
+            !client
+                .strings
+                .lock()
+                .expect("lock")
+                .contains_key(&dedup),
+            "dedup sentinel key must be deleted after deny"
+        );
+    }
+
+    #[tokio::test]
+    async fn dedup_key_cleaned_after_allow_credential() {
+        let client = FakeValkeyClient::default();
+        let req = blocked_request(
+            "req-abc12345",
+            "example.com",
+            1,
+            BlockReason::CredentialDetected,
+            Some("aws_access"),
+            Some("0123456789abcdef"),
+        );
+        store_with_blocked(&client, &req);
+        let dedup = blocked_dedup_key("example.com", "aws_access");
+        client.seed_string(&dedup, "req-abc12345");
+        let store = GovernanceState::new_with_client(client.clone());
+
+        store
+            .allow_credential("req-abc12345")
+            .await
+            .expect("allow credential");
+
+        assert!(
+            !client
+                .strings
+                .lock()
+                .expect("lock")
+                .contains_key(&dedup),
+            "dedup sentinel key must be deleted after allow_credential"
+        );
+    }
+
+    #[tokio::test]
+    async fn dedup_key_cleaned_after_bypass() {
+        let client = FakeValkeyClient::default();
+        let req = blocked_request(
+            "req-abc12345",
+            "example.com",
+            1,
+            BlockReason::NewDomainPrompt,
+            Some("new_domain_prompt"),
+            None,
+        );
+        store_with_blocked(&client, &req);
+        let dedup = blocked_dedup_key("example.com", "new_domain_prompt");
+        client.seed_string(&dedup, "req-abc12345");
+        let store = GovernanceState::new_with_client(client.clone());
+
+        store
+            .bypass_blocked_domain("req-abc12345")
+            .await
+            .expect("bypass domain");
+
+        assert!(
+            !client
+                .strings
+                .lock()
+                .expect("lock")
+                .contains_key(&dedup),
+            "dedup sentinel key must be deleted after bypass_blocked_domain"
+        );
+    }
+
+    // ── Tier 1: dedup key filtering (guards real bugs) ─────────────────
+
+    #[tokio::test]
+    async fn list_blocked_excludes_dedup_keys() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
+        );
+        // Seed a dedup sentinel — must NOT appear in the blocked list.
+        client.seed_string(
+            blocked_dedup_key("a.example", "aws_access"),
+            "req-abc12345",
+        );
+        let store = GovernanceState::new_with_client(client);
+
+        let response = store.list_blocked().await.expect("list blocked");
+
+        assert_eq!(
+            response.items.len(),
+            1,
+            "dedup sentinel key must be filtered out of the blocked list"
+        );
+        assert_eq!(response.items[0].request_id, "req-abc12345");
+    }
+
+    #[tokio::test]
+    async fn status_pending_count_excludes_dedup_keys() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
+        );
+        // Dedup key lives under polis:blocked:dedup:* — must not inflate pending_count.
+        client.seed_string(
+            blocked_dedup_key("a.example", "aws_access"),
+            "req-abc12345",
+        );
+        let store = GovernanceState::new_with_client(client);
+
+        let status = store.get_status().await.expect("get status");
+
+        assert_eq!(
+            status.pending_count, 1,
+            "pending_count must exclude dedup sentinel keys"
+        );
+    }
+
+    // ── Tier 1: compound approval (guards design fix) ──────────────────
+
+    #[tokio::test]
+    async fn approve_credential_creates_compound_host_marker() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
+        );
+        let store = GovernanceState::new_with_client(client.clone());
+
+        store.approve("req-abc12345").await.expect("approve");
+
+        // Compound approval: approving a credential block must also create
+        // a host-based approval so the user doesn't need to approve the
+        // same destination twice (credential + new domain).
+        assert!(
+            client
+                .strings
+                .lock()
+                .expect("lock")
+                .contains_key(&approved_host_key("a.example")),
+            "approving a credential block must also create a host approval marker"
+        );
+    }
+
+    // ── Tier 2: DLP edge cases ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn allow_credential_rejects_domain_block() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "example.com",
+                1,
+                BlockReason::NewDomainPrompt,
+                Some("new_domain_prompt"),
+                None,
+            ),
+        );
+        let store = GovernanceState::new_with_client(client);
+
+        let error = store
+            .allow_credential("req-abc12345")
+            .await
+            .expect_err("domain block should not be allow-credential-able");
+        assert!(
+            matches!(error, AppError::Validation(_)),
+            "expected Validation error, got: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bypass_blocked_domain_creates_temporary_host_approval() {
+        let client = FakeValkeyClient::default();
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "example.com",
+                1,
+                BlockReason::NewDomainPrompt,
+                Some("new_domain_prompt"),
+                None,
+            ),
+        );
+        let store = GovernanceState::new_with_client(client.clone());
+
+        store
+            .bypass_blocked_domain("req-abc12345")
+            .await
+            .expect("bypass domain");
+
+        // Must create a temporary host approval for immediate access while
+        // the DLP module picks up the permanent bypass key.
+        assert!(
+            client
+                .strings
+                .lock()
+                .expect("lock")
+                .contains_key(&approved_host_key("example.com")),
+            "bypass_blocked_domain must create a temporary host approval"
+        );
+    }
+
+    #[test]
+    fn normalize_bypass_domain_validates_input() {
+        // Empty
+        assert!(GovernanceState::<FakeValkeyClient>::normalize_bypass_domain("").is_err());
+        // Path separators
+        assert!(
+            GovernanceState::<FakeValkeyClient>::normalize_bypass_domain("example.com/path")
+                .is_err()
+        );
+        // Whitespace
+        assert!(
+            GovernanceState::<FakeValkeyClient>::normalize_bypass_domain("example .com").is_err()
+        );
+        // Port
+        assert!(
+            GovernanceState::<FakeValkeyClient>::normalize_bypass_domain("example.com:443")
+                .is_err()
+        );
+        // Wildcard conversion: *.example.com → .example.com
+        assert_eq!(
+            GovernanceState::<FakeValkeyClient>::normalize_bypass_domain("*.example.com")
+                .expect("valid wildcard"),
+            ".example.com"
+        );
+        // Plain domain passes through
+        assert_eq!(
+            GovernanceState::<FakeValkeyClient>::normalize_bypass_domain("example.com")
+                .expect("valid domain"),
+            "example.com"
+        );
+        // Double dots
+        assert!(
+            GovernanceState::<FakeValkeyClient>::normalize_bypass_domain("example..com").is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_request_id_rejected() {
+        let store = GovernanceState::new_with_client(FakeValkeyClient::default());
+
+        let error = store
+            .approve("not-valid-id")
+            .await
+            .expect_err("malformed request ID");
+        assert!(
+            matches!(error, AppError::Validation(_)),
+            "expected Validation error for malformed request ID, got: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_bypass_domain_creates_temporary_host_approval() {
+        let client = FakeValkeyClient::default();
+        let store = GovernanceState::new_with_client(client.clone());
+
+        store
+            .add_bypass_domain("example.com")
+            .await
+            .expect("add bypass domain");
+
+        // Permanent bypass key
+        assert!(
+            client
+                .strings
+                .lock()
+                .expect("lock")
+                .contains_key("polis:config:bypass:example.com"),
+            "add_bypass_domain must persist the bypass key"
+        );
+        // Temporary host approval for immediate access
+        assert!(
+            client
+                .strings
+                .lock()
+                .expect("lock")
+                .contains_key(&approved_host_key("example.com")),
+            "add_bypass_domain must create a temporary host approval"
+        );
+    }
+
+    // ── Tier 3: completeness ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn runtime_bypass_domains_merge_with_compiled() {
+        let client = FakeValkeyClient::default();
+        client.seed_string("polis:config:bypass:custom-domain.io", "bypass");
+        let store = GovernanceState::new_with_client(client);
+
+        let response = store.list_bypass_domains().await.expect("list bypass");
+
+        assert!(
+            response.domains.iter().any(|d| d == "custom-domain.io"),
+            "runtime bypass domain must appear in the merged list"
+        );
+        assert!(
+            response.domains.iter().any(|d| d.contains("github.com")),
+            "compiled bypass domains must still be present"
+        );
+        assert_eq!(response.source, "combined");
+    }
+
+    #[tokio::test]
+    async fn list_blocked_skips_malformed_json() {
+        let client = FakeValkeyClient::default();
+        // Seed a valid blocked request
+        store_with_blocked(
+            &client,
+            &blocked_request(
+                "req-abc12345",
+                "a.example",
+                1,
+                BlockReason::CredentialDetected,
+                Some("aws_access"),
+                Some("0123456789abcdef"),
+            ),
+        );
+        // Seed a malformed entry — must be silently skipped
+        client.seed_string(
+            blocked_key("req-bad00000"),
+            "this is not valid json",
+        );
+        let store = GovernanceState::new_with_client(client);
+
+        let response = store.list_blocked().await.expect("list blocked");
+
+        assert_eq!(
+            response.items.len(),
+            1,
+            "malformed blocked entries must be silently skipped"
+        );
+        assert_eq!(response.items[0].request_id, "req-abc12345");
+    }
+
+    #[tokio::test]
+    async fn event_log_trims_at_max_entries() {
+        let client = FakeValkeyClient::default();
+        let store = GovernanceState::new_with_client(client.clone());
+
+        // Seed EVENT_LOG_MAX_ENTRIES + 2 events
+        for i in 0..EVENT_LOG_MAX_ENTRIES + 2 {
+            let score = i as f64;
+            let entry = SecurityLogEntry {
+                timestamp: Utc::now(),
+                event_type: "test_event".to_string(),
+                request_id: None,
+                details: format!("event {i}"),
+            };
+            let json = serde_json::to_string(&entry).expect("serialize");
+            client.zadd(keys::EVENT_LOG, score, &json).await.expect("zadd");
+        }
+
+        // Appending one more should trigger trimming
+        store
+            .append_event(&SecurityLogEntry {
+                timestamp: Utc::now(),
+                event_type: "trigger_trim".to_string(),
+                request_id: None,
+                details: "this should trigger trimming".to_string(),
+            })
+            .await
+            .expect("append event");
+
+        let count = client.zcard(keys::EVENT_LOG).await.expect("zcard");
+        assert!(
+            count as usize <= EVENT_LOG_MAX_ENTRIES,
+            "event log must be trimmed to at most {EVENT_LOG_MAX_ENTRIES} entries, got {count}"
+        );
+    }
+
 }
