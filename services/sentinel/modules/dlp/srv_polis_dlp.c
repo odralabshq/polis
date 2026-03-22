@@ -975,12 +975,17 @@ static int is_new_domain_locked(const char *host)
         ".api.cohere.ai",
         ".generativelanguage.googleapis.com",
         ".aiplatform.googleapis.com",
+        ".openrouter.ai",
 
         /* ── GitHub ─────────────────────────────────────────────────── */
         ".api.github.com",
         ".github.com",
         ".githubusercontent.com",
         ".lfs.github.com",
+
+        /* ── GitLab / Bitbucket ─────────────────────────────────────── */
+        ".gitlab.com",
+        ".bitbucket.org",
 
         /* ── Cloud providers ────────────────────────────────────────── */
         ".amazonaws.com",
@@ -1006,6 +1011,7 @@ static int is_new_domain_locked(const char *host)
         ".nodejs.org",
         ".get.pnpm.io",
         ".bun.sh",
+        ".npmjs.com",
 
         /* ── Python ─────────────────────────────────────────────────── */
         ".pypi.org",
@@ -1020,6 +1026,7 @@ static int is_new_domain_locked(const char *host)
         ".static.crates.io",
         ".sh.rustup.rs",
         ".static.rust-lang.org",
+        ".docs.rs",
 
         /* ── Go ─────────────────────────────────────────────────────── */
         ".proxy.golang.org",
@@ -1101,6 +1108,23 @@ static int is_new_domain_locked(const char *host)
 
         /* ── CDNs ───────────────────────────────────────────────────── */
         ".cloudfront.net",
+
+        /* ── Developer documentation & Q&A ──────────────────────────── */
+        ".stackoverflow.com",
+        ".stackexchange.com",
+        ".serverfault.com",
+        ".superuser.com",
+        ".askubuntu.com",
+        ".docs.python.org",
+        ".developer.mozilla.org",
+        ".devdocs.io",
+        ".readthedocs.io",
+        ".readthedocs.org",
+        ".doc.rust-lang.org",
+        ".learn.microsoft.com",
+
+        /* ── Search APIs (agent web search) ─────────────────────────── */
+        ".api.search.brave.com",
 
         NULL
     };
