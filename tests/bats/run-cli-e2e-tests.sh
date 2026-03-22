@@ -120,34 +120,32 @@ run_bats_file() {
 }
 
 build_file_list() {
-    local files=()
     case "${SUITE}" in
         safe)
-            files=(
+            FILE_LIST=(
                 "${BATS_DIR}/cli-offline.bats"
                 "${BATS_DIR}/cli-e2e.bats"
                 "${BATS_DIR}/cli-live.bats"
             )
             ;;
         all)
-            files=(
+            FILE_LIST=(
                 "${BATS_DIR}/cli-offline.bats"
                 "${BATS_DIR}/cli-e2e.bats"
                 "${BATS_DIR}/cli-live.bats"
                 "${BATS_DIR}/cli-lifecycle.bats"
             )
             ;;
-        offline)   files=("${BATS_DIR}/cli-offline.bats") ;;
-        e2e)       files=("${BATS_DIR}/cli-e2e.bats") ;;
-        live)      files=("${BATS_DIR}/cli-live.bats") ;;
-        lifecycle) files=("${BATS_DIR}/cli-lifecycle.bats") ;;
+        offline)   FILE_LIST=("${BATS_DIR}/cli-offline.bats") ;;
+        e2e)       FILE_LIST=("${BATS_DIR}/cli-e2e.bats") ;;
+        live)      FILE_LIST=("${BATS_DIR}/cli-live.bats") ;;
+        lifecycle) FILE_LIST=("${BATS_DIR}/cli-lifecycle.bats") ;;
         *)
             log_error "Unknown suite: ${SUITE}"
             log_error "Valid suites: safe, all, offline, e2e, live, lifecycle"
             exit 1
             ;;
     esac
-    printf '%s\n' "${files[@]}"
 }
 
 echo ""
@@ -158,13 +156,16 @@ echo ""
 
 check_prerequisites
 
+FILE_LIST=()
+build_file_list
+
 FAILED=0
-while IFS= read -r file; do
+for file in "${FILE_LIST[@]}"; do
     label="$(basename "${file}" .bats)"
     if ! run_bats_file "${file}" "${label}"; then
         FAILED=1
     fi
-done < <(build_file_list)
+done
 
 echo ""
 if [[ "${FAILED}" -eq 0 ]]; then
