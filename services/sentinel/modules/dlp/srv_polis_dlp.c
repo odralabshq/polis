@@ -2202,9 +2202,12 @@ int dlp_process(ci_request_t *req)
         /* Add diagnostic headers */
         ci_http_response_add_header(req, "X-polis-Block: true");
 
-        snprintf(hdr_buf, sizeof(hdr_buf),
-                 "X-polis-Reason: %s", data->matched_pattern);
-        ci_http_response_add_header(req, hdr_buf);
+        {
+            const char *reason_str = block_reason_for_pattern(data->matched_pattern);
+            snprintf(hdr_buf, sizeof(hdr_buf),
+                     "X-polis-Reason: %s", reason_str);
+            ci_http_response_add_header(req, hdr_buf);
+        }
 
         snprintf(hdr_buf, sizeof(hdr_buf),
                  "X-polis-Pattern: %s", data->matched_pattern);
