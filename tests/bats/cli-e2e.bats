@@ -102,11 +102,13 @@ ensure_running() {
 }
 
 @test "agent list: returns 0 and lists agents" {
+    ensure_running
     run polis agent list
     assert_success
 }
 
 @test "agent list --json: returns valid JSON" {
+    ensure_running
     run polis agent list --json
     assert_success
     echo "${output}" | jq . >/dev/null
