@@ -116,7 +116,7 @@ run_bats_file() {
     [[ -n "${VERBOSE}" ]] && bats_args+=("${VERBOSE}")
     [[ -n "${FILTER}" ]]  && bats_args+=("--filter" "${FILTER}")
 
-    "${BATS_BIN}" "${bats_args[@]}" "${file}"
+    "${BATS_BIN}" "${bats_args[@]}" "${file}" || return 1
 }
 
 build_file_list() {
