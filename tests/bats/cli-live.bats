@@ -245,18 +245,24 @@ setup() {
 # AGENT — install / list / remove lifecycle
 # =============================================================================
 
-@test "agent install --path: installs template agent" {
-    run polis agent install --path "${PROJECT_ROOT}/agents/_template"
+@test "agent install --path: installs test agent" {
+    # Copy template and patch the name to pass validation
+    TEST_AGENT_DIR="$(mktemp -d)"
+    cp -r "${PROJECT_ROOT}/agents/_template/." "${TEST_AGENT_DIR}/"
+    sed -i 's/CHANGEME/e2e-test-agent/g' "${TEST_AGENT_DIR}/agent.yaml"
+
+    run polis agent install --path "${TEST_AGENT_DIR}"
+    rm -rf "${TEST_AGENT_DIR}"
     assert_success
 }
 
-@test "agent list: shows installed template agent" {
+@test "agent list: shows installed test agent" {
     run polis agent list
     assert_success
-    assert_output --partial "_template"
+    assert_output --partial "e2e-test-agent"
 }
 
-@test "agent remove: removes template agent" {
-    run polis agent remove _template
+@test "agent remove: removes test agent" {
+    run polis agent remove e2e-test-agent
     assert_success
 }

@@ -43,7 +43,7 @@ require_state() {
     require_state "Stopped"
     run polis status
     assert_success
-    assert_output --partial "Stopped"
+    assert_output --partial "stopped"
 }
 
 @test "lifecycle: stop is idempotent on stopped VM" {
@@ -78,7 +78,7 @@ require_state() {
     require_state "Running"
     run polis status
     assert_success
-    assert_output --partial "Running"
+    assert_output --partial "running"
 }
 
 @test "lifecycle: exec works after restart" {
@@ -118,7 +118,7 @@ require_state() {
     require_state "Running"
     run polis status
     assert_success
-    assert_output --partial "Running"
+    assert_output --partial "running"
 }
 
 # =============================================================================
