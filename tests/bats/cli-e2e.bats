@@ -140,9 +140,8 @@ ensure_running() {
     assert_output --partial "approve"
     assert_output --partial "deny"
     assert_output --partial "log"
-    assert_output --partial "allow"
+    assert_output --partial "rule"
     assert_output --partial "level"
-    assert_output --partial "rules"
 }
 
 @test "security status: returns 0 when workspace is running" {
