@@ -437,8 +437,7 @@ impl<'a> HumanRenderer<'a> {
                 ));
                 self.ctx.info(&format!(
                     "   VS Code:                 {}",
-                    "code --remote ssh-remote+workspace /workspace"
-                        .style(self.ctx.styles.command)
+                    "code --remote ssh-remote+workspace /workspace".style(self.ctx.styles.command)
                 ));
             }
         }
