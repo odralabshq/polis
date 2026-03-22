@@ -54,7 +54,7 @@ require_state() {
 
 @test "lifecycle: exec fails when VM is stopped" {
     require_state "Stopped"
-    run polis exec echo hi </dev/null
+    run bash -c 'polis exec echo hi </dev/null'
     assert_failure
 }
 
@@ -83,7 +83,7 @@ require_state() {
 
 @test "lifecycle: exec works after restart" {
     require_state "Running"
-    run polis exec echo alive </dev/null
+    run bash -c 'polis exec echo alive </dev/null'
     assert_success
     assert_output --partial "alive"
 }

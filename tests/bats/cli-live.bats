@@ -23,16 +23,16 @@ setup() {
 # STATUS
 # =============================================================================
 
-@test "status: shows Running" {
+@test "status: shows running" {
     run polis status
     assert_success
-    assert_output --partial "Running"
+    assert_output --partial "running"
 }
 
 @test "--json status: valid JSON with state" {
-    run polis --json status
+    run polis --json --quiet status
     assert_success
-    echo "${output}" | jq -e '.vm.state' >/dev/null
+    echo "${output}" | jq -e '.workspace.state' >/dev/null
 }
 
 # =============================================================================
@@ -68,29 +68,29 @@ setup() {
 # =============================================================================
 
 @test "exec whoami: returns a username" {
-    run polis exec whoami </dev/null
+    run bash -c 'polis exec whoami </dev/null'
     assert_success
     [[ -n "${output}" ]]
 }
 
 @test "exec echo hello: output contains hello" {
-    run polis exec echo hello </dev/null
+    run bash -c 'polis exec echo hello </dev/null'
     assert_success
     assert_output --partial "hello"
 }
 
 @test "exec -- ls -la /: succeeds with -- separator" {
-    run polis exec -- ls -la / </dev/null
+    run bash -c 'polis exec -- ls -la / </dev/null'
     assert_success
 }
 
 @test "exec false: propagates non-zero exit code" {
-    run polis exec false </dev/null
+    run bash -c 'polis exec false </dev/null'
     assert_failure
 }
 
 @test "exec printf: passes multiple arguments" {
-    run polis exec printf '%s\n' foo bar </dev/null
+    run bash -c 'polis exec printf "%s\n" foo bar </dev/null'
     assert_success
     assert_output --partial "foo"
     assert_output --partial "bar"
@@ -103,7 +103,7 @@ setup() {
 @test "security status: exits 0 and contains level" {
     run polis security status
     assert_success
-    assert_output --partial -i "level"
+    assert_output --partial "level"
 }
 
 @test "--json security status: valid JSON" {

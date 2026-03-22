@@ -69,20 +69,20 @@ ensure_running() {
 
 @test "exec: runs a command inside the workspace" {
     ensure_running
-    run polis exec echo hello </dev/null
+    run bash -c 'polis exec echo hello </dev/null'
     assert_success
     assert_output --partial "hello"
 }
 
 @test "exec: propagates non-zero exit code from remote command" {
     ensure_running
-    run polis exec false </dev/null
+    run bash -c 'polis exec false </dev/null'
     assert_failure
 }
 
 @test "exec: passes arguments correctly" {
     ensure_running
-    run polis exec printf '%s\n' foo bar </dev/null
+    run bash -c 'polis exec printf "%s\n" foo bar </dev/null'
     assert_success
     assert_output --partial "foo"
     assert_output --partial "bar"
