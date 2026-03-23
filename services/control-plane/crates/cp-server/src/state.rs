@@ -2690,11 +2690,7 @@ mod tests {
         store.approve("req-abc12345").await.expect("approve");
 
         assert!(
-            !client
-                .strings
-                .lock()
-                .expect("lock")
-                .contains_key(&dedup),
+            !client.strings.lock().expect("lock").contains_key(&dedup),
             "dedup sentinel key must be deleted after approve"
         );
     }
@@ -2718,11 +2714,7 @@ mod tests {
         store.deny("req-abc12345").await.expect("deny");
 
         assert!(
-            !client
-                .strings
-                .lock()
-                .expect("lock")
-                .contains_key(&dedup),
+            !client.strings.lock().expect("lock").contains_key(&dedup),
             "dedup sentinel key must be deleted after deny"
         );
     }
@@ -2749,11 +2741,7 @@ mod tests {
             .expect("allow credential");
 
         assert!(
-            !client
-                .strings
-                .lock()
-                .expect("lock")
-                .contains_key(&dedup),
+            !client.strings.lock().expect("lock").contains_key(&dedup),
             "dedup sentinel key must be deleted after allow_credential"
         );
     }
@@ -2780,11 +2768,7 @@ mod tests {
             .expect("bypass domain");
 
         assert!(
-            !client
-                .strings
-                .lock()
-                .expect("lock")
-                .contains_key(&dedup),
+            !client.strings.lock().expect("lock").contains_key(&dedup),
             "dedup sentinel key must be deleted after bypass_blocked_domain"
         );
     }
@@ -2806,10 +2790,7 @@ mod tests {
             ),
         );
         // Seed a dedup sentinel — must NOT appear in the blocked list.
-        client.seed_string(
-            blocked_dedup_key("a.example", "aws_access"),
-            "req-abc12345",
-        );
+        client.seed_string(blocked_dedup_key("a.example", "aws_access"), "req-abc12345");
         let store = GovernanceState::new_with_client(client);
 
         let response = store.list_blocked().await.expect("list blocked");
@@ -2837,10 +2818,7 @@ mod tests {
             ),
         );
         // Dedup key lives under polis:blocked:dedup:* — must not inflate pending_count.
-        client.seed_string(
-            blocked_dedup_key("a.example", "aws_access"),
-            "req-abc12345",
-        );
+        client.seed_string(blocked_dedup_key("a.example", "aws_access"), "req-abc12345");
         let store = GovernanceState::new_with_client(client);
 
         let status = store.get_status().await.expect("get status");
@@ -3062,10 +3040,7 @@ mod tests {
             ),
         );
         // Seed a malformed entry — must be silently skipped
-        client.seed_string(
-            blocked_key("req-bad00000"),
-            "this is not valid json",
-        );
+        client.seed_string(blocked_key("req-bad00000"), "this is not valid json");
         let store = GovernanceState::new_with_client(client);
 
         let response = store.list_blocked().await.expect("list blocked");
@@ -3085,7 +3060,7 @@ mod tests {
 
         // Seed EVENT_LOG_MAX_ENTRIES + 2 events
         for i in 0..EVENT_LOG_MAX_ENTRIES + 2 {
-            let score = i as f64;
+            let rank = f64::from(u32::try_from(i).expect("test index fits u32"));
             let entry = SecurityLogEntry {
                 timestamp: Utc::now(),
                 event_type: "test_event".to_string(),
@@ -3093,7 +3068,10 @@ mod tests {
                 details: format!("event {i}"),
             };
             let json = serde_json::to_string(&entry).expect("serialize");
-            client.zadd(keys::EVENT_LOG, score, &json).await.expect("zadd");
+            client
+                .zadd(keys::EVENT_LOG, rank, &json)
+                .await
+                .expect("zadd");
         }
 
         // Appending one more should trigger trimming
@@ -3107,11 +3085,11 @@ mod tests {
             .await
             .expect("append event");
 
-        let count = client.zcard(keys::EVENT_LOG).await.expect("zcard");
+        let count = usize::try_from(client.zcard(keys::EVENT_LOG).await.expect("zcard"))
+            .expect("count fits usize");
         assert!(
-            count as usize <= EVENT_LOG_MAX_ENTRIES,
+            count <= EVENT_LOG_MAX_ENTRIES,
             "event log must be trimmed to at most {EVENT_LOG_MAX_ENTRIES} entries, got {count}"
         );
     }
-
 }
