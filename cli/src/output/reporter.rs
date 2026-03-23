@@ -4,7 +4,7 @@
 //! trait so application services can emit progress events without depending on
 //! any presentation type directly.
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -23,7 +23,7 @@ use crate::output::OutputContext;
 /// - `fail_stage()` finishes the spinner with ✗ and elapsed time
 pub struct TerminalReporter<'a> {
     ctx: &'a OutputContext,
-    stage: RefCell<Option<ActiveStage>>,
+    stage: Mutex<Option<ActiveStage>>,
 }
 
 /// A currently-running timed stage.
@@ -40,13 +40,14 @@ impl<'a> TerminalReporter<'a> {
     pub fn new(ctx: &'a OutputContext) -> Self {
         Self {
             ctx,
-            stage: RefCell::new(None),
+            stage: Mutex::new(None),
         }
     }
 
     /// Finish the active stage, printing a final status line.
     fn finish_active_stage(&self, success: bool) {
-        let Some(stage) = self.stage.borrow_mut().take() else {
+        #[allow(clippy::expect_used)] // Mutex poison is unrecoverable — panic is correct.
+        let Some(stage) = self.stage.lock().expect("stage lock").take() else {
             return;
         };
         let elapsed = stage.start.elapsed().as_secs();
@@ -127,7 +128,9 @@ impl ProgressReporter for TerminalReporter<'_> {
             None
         };
 
-        *self.stage.borrow_mut() = Some(ActiveStage {
+        #[allow(clippy::expect_used)] // Mutex poison is unrecoverable — panic is correct.
+        let mut guard = self.stage.lock().expect("stage lock");
+        *guard = Some(ActiveStage {
             message: message.to_owned(),
             start: Instant::now(),
             spinner,

@@ -1,8 +1,9 @@
 //! Command implementations
 
 pub mod agent;
-pub mod config;
 pub mod connect;
+#[cfg(feature = "dashboard")]
+pub mod dashboard;
 pub mod delete;
 pub mod doctor;
 pub mod exec;
@@ -13,17 +14,3 @@ pub mod status;
 pub mod stop;
 pub mod update;
 pub mod version;
-
-use clap::Args;
-
-/// Arguments for the delete command.
-#[derive(Args)]
-pub struct DeleteArgs {
-    /// Remove everything including certificates, cache, and configuration
-    #[arg(long)]
-    pub all: bool,
-
-    /// Skip confirmation prompt
-    #[arg(short = 'y', long)]
-    pub yes: bool,
-}

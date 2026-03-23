@@ -47,8 +47,11 @@ impl crate::application::ports::AssetExtractor for EmbeddedAssets {
 ///
 /// Returns an error if the directory cannot be created or if any asset fails
 /// to extract.
-pub fn extract_assets() -> Result<(PathBuf, tempfile::TempDir)> {
-    let base = dirs::home_dir()
+pub(crate) fn extract_assets() -> Result<(PathBuf, tempfile::TempDir)> {
+    let polis_dir = crate::infra::polis_dir::PolisDir::new()?;
+    let base = polis_dir
+        .root()
+        .parent()
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
         .join("polis")
         .join("tmp");
@@ -69,7 +72,7 @@ pub fn extract_assets() -> Result<(PathBuf, tempfile::TempDir)> {
 /// # Errors
 ///
 /// Returns an error if no asset with the given `name` exists.
-pub fn get_asset(name: &str) -> Result<&'static [u8]> {
+pub(crate) fn get_asset(name: &str) -> Result<&'static [u8]> {
     EMBEDDED_ASSETS
         .get_file(name)
         .map(include_dir::File::contents)

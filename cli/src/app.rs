@@ -7,14 +7,22 @@
 
 use anyhow::Result;
 
+use crate::application::ports::{
+    AssetExtractor, CommandRunner, ConfigStore, ContainerExecutor, FileHasher, FileTransfer,
+    InstanceInspector, InstanceLifecycle, LocalFs, LocalPaths, NetworkProbe, ShellExecutor,
+    SshConfigurator, WorkspaceStateStore,
+};
 use crate::infra::assets::EmbeddedAssets;
 use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, TokioCommandRunner};
 use crate::infra::config::YamlConfigStore;
-use crate::infra::fs::LocalFs;
+use crate::infra::control_plane::ControlPlaneClient;
+use crate::infra::fs::OsFs;
 use crate::infra::network::TokioNetworkProbe;
 use crate::infra::provisioner::MultipassProvisioner;
 use crate::infra::ssh::SshConfigManager;
 use crate::infra::state::StateManager;
+use console::Term;
+
 use crate::output::{HumanRenderer, JsonRenderer, OutputContext, Renderer};
 
 /// Output rendering mode.
@@ -78,20 +86,24 @@ pub struct AppContext {
     /// Network probe for connectivity checks.
     pub network_probe: TokioNetworkProbe,
     /// Local filesystem operations.
-    pub local_fs: LocalFs,
+    pub local_fs: OsFs,
     /// Configuration store.
     pub config_store: YamlConfigStore,
+    /// Control-plane HTTP client.
+    pub control_plane: ControlPlaneClient,
 }
 
 impl AppContext {
-    /// Construct an `AppContext` from top-level CLI flags.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `StateManager::new()` fails (home directory not found).
-    pub fn new(flags: &AppFlags) -> Result<Self> {
+    fn build(
+        flags: &AppFlags,
+        config_store: YamlConfigStore,
+        config: &crate::domain::config::PolisConfig,
+        state_mgr: StateManager,
+        ssh: SshConfigManager,
+    ) -> Result<Self> {
         let ci_env = std::env::var("CI").is_ok() || std::env::var("POLIS_YES").is_ok();
         let non_interactive = flags.behaviour.yes || ci_env;
+        let control_plane = ControlPlaneClient::from_config(config)?;
 
         let mode = if flags.output.json {
             OutputMode::Json
@@ -99,19 +111,41 @@ impl AppContext {
             OutputMode::Human
         };
 
+        let is_tty = Term::stdout().is_term();
+        let env_no_color = std::env::var("NO_COLOR").is_ok();
+        let effective_no_color = flags.output.no_color || env_no_color;
+
         Ok(Self {
-            output: OutputContext::new(flags.output.no_color, flags.output.quiet),
+            output: OutputContext::new(effective_no_color, is_tty, flags.output.quiet),
             mode,
             provisioner: MultipassProvisioner::default_runner(),
-            state_mgr: StateManager::new()?,
+            state_mgr,
             assets: EmbeddedAssets,
-            ssh: SshConfigManager::new()?,
+            ssh,
             non_interactive,
             cmd_runner: TokioCommandRunner::new(DEFAULT_CMD_TIMEOUT),
             network_probe: TokioNetworkProbe,
-            local_fs: LocalFs,
-            config_store: YamlConfigStore,
+            local_fs: OsFs,
+            config_store,
+            control_plane,
         })
+    }
+
+    /// Construct an `AppContext` from top-level CLI flags.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `StateManager::new()` fails (home directory not found).
+    pub fn new(flags: &AppFlags) -> Result<Self> {
+        let config_store = YamlConfigStore::new();
+        let config = config_store.load()?;
+        Self::build(
+            flags,
+            config_store,
+            &config,
+            StateManager::new()?,
+            SshConfigManager::new()?,
+        )
     }
 
     /// Returns `true` when JSON output mode is active.
@@ -151,7 +185,6 @@ impl AppContext {
 
     /// Returns a `TerminalReporter` bound to this context's output.
     #[must_use]
-    #[allow(dead_code)] // Not yet called from command handlers
     pub fn terminal_reporter(&self) -> crate::output::reporter::TerminalReporter<'_> {
         crate::output::reporter::TerminalReporter::new(&self.output)
     }
@@ -164,9 +197,248 @@ impl AppContext {
     /// # Errors
     ///
     /// Returns an error if asset extraction fails.
-    #[allow(dead_code)] // Not yet called from command handlers
     pub fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
         let (path, guard) = crate::infra::assets::extract_assets()?;
         Ok((path, guard))
+    }
+
+    /// Returns a reference to the VM provisioner (opaque type).
+    ///
+    /// This accessor provides source-level decoupling — the commands layer
+    /// cannot name or depend on the concrete type.
+    #[must_use]
+    pub fn provisioner(
+        &self,
+    ) -> &(impl ShellExecutor + FileTransfer + InstanceInspector + InstanceLifecycle + ContainerExecutor)
+    {
+        &self.provisioner
+    }
+
+    /// Returns a reference to the workspace state store.
+    #[must_use]
+    pub fn state_store(&self) -> &impl WorkspaceStateStore {
+        &self.state_mgr
+    }
+
+    /// Returns a reference to the local filesystem.
+    #[must_use]
+    pub fn local_fs(&self) -> &impl LocalFs {
+        &self.local_fs
+    }
+}
+
+// ── App trait ─────────────────────────────────────────────────────────────────
+
+/// Trait abstracting the application context for dependency injection.
+///
+/// Implement this trait to provide mock dependencies in tests.
+/// `AppContext` is the production implementation; `test_utils::MockAppContext`
+/// is the test implementation.
+pub trait App {
+    /// VM provisioner type.
+    type Provisioner: ShellExecutor
+        + FileTransfer
+        + InstanceInspector
+        + InstanceLifecycle
+        + ContainerExecutor;
+    /// Workspace state store type.
+    type StateStore: WorkspaceStateStore;
+    /// Local filesystem type (implements `LocalFs` + `LocalPaths` + `FileHasher`).
+    type Fs: LocalFs + LocalPaths + FileHasher;
+    /// Configuration store type.
+    type Config: ConfigStore;
+    /// Command runner type.
+    type CmdRunner: CommandRunner;
+    /// Network probe type.
+    type Network: NetworkProbe;
+    /// SSH configurator type.
+    type Ssh: SshConfigurator;
+    /// Asset extractor type.
+    type Assets: AssetExtractor;
+
+    /// Returns a reference to the VM provisioner.
+    fn provisioner(&self) -> &Self::Provisioner;
+    /// Returns a reference to the workspace state store.
+    fn state_store(&self) -> &Self::StateStore;
+    /// Returns a reference to the local filesystem.
+    fn fs(&self) -> &Self::Fs;
+    /// Returns a reference to the configuration store.
+    fn config(&self) -> &Self::Config;
+    /// Returns a reference to the command runner.
+    fn cmd_runner(&self) -> &Self::CmdRunner;
+    /// Returns a reference to the network probe.
+    fn network(&self) -> &Self::Network;
+    /// Returns a reference to the SSH configurator.
+    fn ssh(&self) -> &Self::Ssh;
+    /// Returns a reference to the asset extractor.
+    fn assets(&self) -> &Self::Assets;
+    /// Ask the user for confirmation.
+    ///
+    /// # Errors
+    /// Returns an error if the terminal prompt fails.
+    fn confirm(&self, prompt: &str, default: bool) -> Result<bool>;
+    /// Returns the appropriate renderer for the current output mode.
+    fn renderer(&self) -> crate::output::Renderer<'_>;
+    /// Returns a terminal reporter bound to this context's output.
+    fn terminal_reporter(&self) -> crate::output::reporter::TerminalReporter<'_>;
+    /// Returns a reference to the output context.
+    fn output(&self) -> &OutputContext;
+    /// Returns `true` when interactive prompts should be skipped.
+    fn non_interactive(&self) -> bool;
+    /// Extract bundled assets to a temp directory.
+    ///
+    /// # Errors
+    /// Returns an error if asset extraction fails.
+    fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)>;
+}
+
+impl App for AppContext {
+    type Provisioner = MultipassProvisioner<TokioCommandRunner>;
+    type StateStore = StateManager;
+    type Fs = OsFs;
+    type Config = YamlConfigStore;
+    type CmdRunner = TokioCommandRunner;
+    type Network = TokioNetworkProbe;
+    type Ssh = SshConfigManager;
+    type Assets = EmbeddedAssets;
+
+    fn provisioner(&self) -> &Self::Provisioner {
+        &self.provisioner
+    }
+    fn state_store(&self) -> &Self::StateStore {
+        &self.state_mgr
+    }
+    fn fs(&self) -> &Self::Fs {
+        &self.local_fs
+    }
+    fn config(&self) -> &Self::Config {
+        &self.config_store
+    }
+    fn cmd_runner(&self) -> &Self::CmdRunner {
+        &self.cmd_runner
+    }
+    fn network(&self) -> &Self::Network {
+        &self.network_probe
+    }
+    fn ssh(&self) -> &Self::Ssh {
+        &self.ssh
+    }
+    fn assets(&self) -> &Self::Assets {
+        &self.assets
+    }
+    fn confirm(&self, prompt: &str, default: bool) -> Result<bool> {
+        self.confirm(prompt, default)
+    }
+    fn renderer(&self) -> crate::output::Renderer<'_> {
+        self.renderer()
+    }
+    fn terminal_reporter(&self) -> crate::output::reporter::TerminalReporter<'_> {
+        self.terminal_reporter()
+    }
+    fn output(&self) -> &OutputContext {
+        &self.output
+    }
+    fn non_interactive(&self) -> bool {
+        self.non_interactive
+    }
+    fn assets_dir(&self) -> Result<(std::path::PathBuf, tempfile::TempDir)> {
+        self.assets_dir()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    use crate::domain::config::PolisConfig;
+    use crate::infra::ssh::IdentityKeyProvider;
+    use crate::infra::ssh::KnownHostsOps;
+    use crate::infra::ssh::OsSocketsDir;
+
+    struct StubKnownHosts;
+    impl KnownHostsOps for StubKnownHosts {
+        fn update(&self, _host_key_line: &str) -> Result<()> {
+            Ok(())
+        }
+        fn remove(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct StubIdentityProvider;
+    impl IdentityKeyProvider for StubIdentityProvider {
+        fn ensure_identity_key(&self) -> Result<String> {
+            Ok("ssh-ed25519 AAAA stub@test".to_string())
+        }
+    }
+
+    fn test_flags(json: bool) -> AppFlags {
+        AppFlags {
+            output: OutputFlags {
+                no_color: true,
+                quiet: false,
+                json,
+            },
+            behaviour: BehaviourFlags { yes: false },
+        }
+    }
+
+    fn build_test_context(config: &PolisConfig, json: bool) -> AppContext {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let state_mgr = StateManager::with_path(temp.path().join("state.json"));
+        let ssh = SshConfigManager::with_deps(
+            temp.path().join(".ssh").join("config.d").join("polis"),
+            temp.path().join(".ssh").join("config"),
+            temp.path().to_path_buf(),
+            Box::new(OsSocketsDir::new(
+                temp.path()
+                    .join(".ssh")
+                    .join("config.d")
+                    .join("polis-sockets"),
+            )),
+            Box::new(StubKnownHosts),
+            Box::new(StubIdentityProvider),
+        );
+
+        AppContext::build(
+            &test_flags(json),
+            YamlConfigStore::new(),
+            config,
+            state_mgr,
+            ssh,
+        )
+        .expect("app context")
+    }
+
+    #[test]
+    fn build_uses_default_control_plane_config() {
+        let config = PolisConfig::default();
+        let app = build_test_context(&config, false);
+
+        assert_eq!(app.mode, OutputMode::Human);
+        assert!(!app.is_json());
+        assert_eq!(
+            app.control_plane.base_url().as_str(),
+            "http://127.0.0.1:9080/"
+        );
+        assert_eq!(app.control_plane.token(), None);
+    }
+
+    #[test]
+    fn build_honors_explicit_control_plane_config() {
+        let mut config = PolisConfig::default();
+        config.control_plane.url = "https://control.example.test:9443/api".to_string();
+        config.control_plane.token = Some("secret-token".to_string());
+
+        let app = build_test_context(&config, true);
+
+        assert_eq!(app.mode, OutputMode::Json);
+        assert!(app.is_json());
+        assert_eq!(
+            app.control_plane.base_url().as_str(),
+            "https://control.example.test:9443/api/"
+        );
+        assert_eq!(app.control_plane.token(), Some("secret-token"));
     }
 }

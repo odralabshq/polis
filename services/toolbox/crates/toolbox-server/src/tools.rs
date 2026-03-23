@@ -87,7 +87,6 @@ pub struct SecurityStatusOutput {
 #[derive(Debug, Clone, Serialize)]
 pub struct PendingApprovalsOutput {
     /// Blocked requests awaiting approval.
-    /// The `pattern` field is set to `None` on every entry (CWE-200).
     pub pending: Vec<BlockedRequest>,
 }
 
@@ -170,6 +169,7 @@ impl PolisAgentTools {
             reason,
             destination: input.destination.clone(),
             pattern: input.pattern.clone(),
+            fingerprint: None,
             blocked_at: chrono::Utc::now(),
             status: RequestStatus::Pending,
         };
@@ -361,7 +361,7 @@ fn parse_block_reason(reason: &str) -> Result<polis_common::BlockReason, String>
     serde_json::from_str::<polis_common::BlockReason>(&json_str).map_err(|_| {
         format!(
             "Unknown block reason '{}'. Expected one of: \
-                 credential_detected, malware_domain, \
+                 credential_detected, new_domain_prompt, new_domain_blocked, malware_domain, \
                  url_blocked, file_infected",
             reason,
         )
@@ -375,6 +375,8 @@ mod tests {
     #[test]
     fn parse_block_reason_valid() {
         assert!(parse_block_reason("credential_detected").is_ok());
+        assert!(parse_block_reason("new_domain_prompt").is_ok());
+        assert!(parse_block_reason("new_domain_blocked").is_ok());
         assert!(parse_block_reason("malware_domain").is_ok());
         assert!(parse_block_reason("url_blocked").is_ok());
         assert!(parse_block_reason("file_infected").is_ok());

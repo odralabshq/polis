@@ -3,7 +3,7 @@ pub mod keys {
     /// Blocked requests awaiting approval
     /// Format: polis:blocked:{request_id}
     /// Value: JSON-serialized BlockedRequest
-    /// TTL: None (persists until approved/denied)
+    /// TTL: 3600 seconds (1 hour)
     pub const BLOCKED: &str = "polis:blocked";
 
     /// Approved requests (temporary allowlist)
@@ -12,10 +12,21 @@ pub mod keys {
     /// TTL: 300 seconds (5 minutes)
     pub const APPROVED: &str = "polis:approved";
 
+    /// Temporary credential fingerprint approvals
+    /// Format: polis:approved:fp:{pattern}:{encoded_host}:{fingerprint}
+    /// Value: "approved"
+    /// TTL: 300 seconds (5 minutes)
+    pub const APPROVED_FINGERPRINT: &str = "polis:approved:fp";
+
     /// Auto-approve configuration rules
     /// Format: polis:config:auto_approve:{pattern}
     /// Value: AutoApproveAction as string
     pub const AUTO_APPROVE: &str = "polis:config:auto_approve";
+
+    /// Persistent credential allow rules
+    /// Format: polis:credential_allow:{pattern}:{encoded_host}:{fingerprint}
+    /// Value: "1"
+    pub const CREDENTIAL_ALLOW: &str = "polis:credential_allow";
 
     /// Global security level setting
     /// Format: polis:config:security_level
@@ -96,6 +107,174 @@ pub fn approved_key(request_id: &str) -> String {
     format!("{}:{}", keys::APPROVED, request_id)
 }
 
+fn normalize_key_pattern(pattern: &str) -> Result<String, &'static str> {
+    let trimmed = pattern.trim();
+    if trimmed.is_empty() {
+        return Err("pattern must not be empty");
+    }
+    if !trimmed
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+    {
+        return Err("pattern must contain only ASCII letters, digits, underscores, and hyphens");
+    }
+    Ok(trimmed.to_ascii_lowercase())
+}
+
+fn normalize_fingerprint_value(fingerprint: &str) -> Result<String, &'static str> {
+    let normalized = fingerprint.trim().to_ascii_lowercase();
+    if normalized.len() != 16 {
+        return Err("fingerprint must be exactly 16 hex characters");
+    }
+    if !normalized
+        .chars()
+        .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err("fingerprint must contain only hex characters");
+    }
+    Ok(normalized)
+}
+
+fn hex_encode_component(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.bytes() {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn decode_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn decode_key_component(value: &str) -> Result<String, &'static str> {
+    let bytes = value.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
+        return Err("encoded component must contain an even number of hex characters");
+    }
+
+    let mut decoded = Vec::with_capacity(bytes.len() / 2);
+    for chunk in bytes.chunks_exact(2) {
+        let high = decode_nibble(chunk[0]).ok_or("encoded component contains non-hex data")?;
+        let low = decode_nibble(chunk[1]).ok_or("encoded component contains non-hex data")?;
+        decoded.push((high << 4) | low);
+    }
+
+    String::from_utf8(decoded).map_err(|_| "encoded component is not valid UTF-8")
+}
+
+/// Strip an optional port suffix from a host string.
+fn strip_port(host: &str) -> Result<&str, &'static str> {
+    if host.starts_with('[') {
+        let end = host
+            .find(']')
+            .ok_or("IPv6 host must contain a closing bracket")?;
+        let host_part = &host[..=end];
+        if host.len() == end + 1
+            || (host.as_bytes().get(end + 1) == Some(&b':')
+                && host[end + 2..]
+                    .chars()
+                    .all(|character| character.is_ascii_digit()))
+        {
+            Ok(host_part)
+        } else {
+            Err("invalid bracketed host format")
+        }
+    } else if let Some((name, port)) = host.rsplit_once(':') {
+        if !name.is_empty()
+            && !name.contains(':')
+            && !port.is_empty()
+            && port.chars().all(|character| character.is_ascii_digit())
+        {
+            Ok(name)
+        } else {
+            Ok(host)
+        }
+    } else {
+        Ok(host)
+    }
+}
+
+/// Normalize a host used in approval keys by lowercasing it, stripping a
+/// trailing dot, and removing an explicit port.
+pub fn normalize_approval_host(host: &str) -> Result<String, &'static str> {
+    let trimmed = host.trim();
+    if trimmed.is_empty() {
+        return Err("host must not be empty");
+    }
+    let trimmed = trimmed.trim_end_matches('.');
+    if trimmed.chars().any(char::is_whitespace) || trimmed.contains('/') || trimmed.contains('\\') {
+        return Err("host must not contain whitespace or path separators");
+    }
+
+    let without_port = strip_port(trimmed)?;
+
+    let normalized = without_port.trim_end_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err("host must not be empty");
+    }
+    Ok(normalized)
+}
+
+fn fingerprint_key(
+    prefix: &str,
+    pattern: &str,
+    host: &str,
+    fingerprint: &str,
+) -> Result<String, &'static str> {
+    let pattern = normalize_key_pattern(pattern)?;
+    let host = normalize_approval_host(host)?;
+    let fingerprint = normalize_fingerprint_value(fingerprint)?;
+    Ok(format!(
+        "{prefix}:{pattern}:{}:{fingerprint}",
+        hex_encode_component(&host)
+    ))
+}
+/// Build the host-based approval key checked by the DLP module.
+/// Format: `polis:approved:host:{destination}`
+/// The DLP C module (`srv_polis_dlp.c`) checks this key before blocking
+/// domain-policy requests (`new_domain_prompt` / `new_domain_blocked`).
+#[must_use]
+pub fn approved_host_key(destination: &str) -> String {
+    format!("polis:approved:host:{destination}")
+}
+
+/// Build the credential fingerprint approval key checked by the DLP module.
+pub fn approved_fingerprint_key(
+    pattern: &str,
+    host: &str,
+    fingerprint: &str,
+) -> Result<String, &'static str> {
+    fingerprint_key(keys::APPROVED_FINGERPRINT, pattern, host, fingerprint)
+}
+
+/// Build the persistent credential allow rule key.
+pub fn credential_allow_key(
+    pattern: &str,
+    host: &str,
+    fingerprint: &str,
+) -> Result<String, &'static str> {
+    fingerprint_key(keys::CREDENTIAL_ALLOW, pattern, host, fingerprint)
+}
+
+/// Parse a persistent credential allow key into `(pattern, host, fingerprint)`.
+#[must_use]
+pub fn parse_credential_allow_key(key: &str) -> Option<(String, String, String)> {
+    let remainder = key.strip_prefix(&format!("{}:", keys::CREDENTIAL_ALLOW))?;
+    let mut parts = remainder.splitn(3, ':');
+    let pattern = parts.next()?.to_string();
+    let host = decode_key_component(parts.next()?).ok()?;
+    let fingerprint = parts.next()?.to_ascii_lowercase();
+    Some((pattern, host, fingerprint))
+}
+
 #[must_use]
 pub fn auto_approve_key(pattern: &str) -> String {
     format!("{}:{}", keys::AUTO_APPROVE, pattern)
@@ -104,6 +283,17 @@ pub fn auto_approve_key(pattern: &str) -> String {
 #[must_use]
 pub fn ott_key(ott_code: &str) -> String {
     format!("{}:{}", keys::OTT_MAPPING, ott_code)
+}
+
+/// Build the dedup sentinel key used by the DLP C module to prevent
+/// duplicate blocked entries for the same destination+pattern combination.
+/// Format: `polis:blocked:dedup:{host}:{pattern}`
+/// The sentinel sets this with a 3600s TTL when creating a blocked entry.
+/// Callers should DEL this key when approving/denying/bypassing a request
+/// so the same destination can be blocked again immediately.
+#[must_use]
+pub fn blocked_dedup_key(host: &str, pattern: &str) -> String {
+    format!("polis:blocked:dedup:{host}:{pattern}")
 }
 
 /// Validate that a request_id matches the expected format: req-[a-f0-9]{8}
@@ -142,6 +332,7 @@ pub fn validate_ott_code(ott_code: &str) -> Result<(), &'static str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -155,6 +346,45 @@ mod tests {
     #[test]
     fn approved_key_format() {
         assert_eq!(approved_key("req-abc12345"), "polis:approved:req-abc12345");
+    }
+
+    #[test]
+    fn approved_host_key_format() {
+        assert_eq!(
+            approved_host_key("https://example.com"),
+            "polis:approved:host:https://example.com"
+        );
+    }
+
+    #[test]
+    fn blocked_dedup_key_format() {
+        assert_eq!(
+            blocked_dedup_key("en.wikipedia.org", "new_domain_prompt"),
+            "polis:blocked:dedup:en.wikipedia.org:new_domain_prompt"
+        );
+    }
+
+    #[test]
+    fn approved_fingerprint_key_format() {
+        assert_eq!(
+            approved_fingerprint_key("aws_access", "Example.COM:443", "0123456789abcdef")
+                .expect("fingerprint key"),
+            "polis:approved:fp:aws_access:6578616d706c652e636f6d:0123456789abcdef"
+        );
+    }
+
+    #[test]
+    fn credential_allow_key_round_trip() {
+        let key = credential_allow_key("aws_access", "Example.COM:443.", "0123456789abcdef")
+            .expect("credential allow key");
+        assert_eq!(
+            parse_credential_allow_key(&key),
+            Some((
+                "aws_access".to_string(),
+                "example.com".to_string(),
+                "0123456789abcdef".to_string(),
+            ))
+        );
     }
 
     #[test]
@@ -239,6 +469,14 @@ mod tests {
         assert!(validate_ott_code("ott-x7k9m2p4").is_ok());
         assert!(validate_ott_code("ott-12345678").is_ok());
         assert!(validate_ott_code("ott-ABCDEFGH").is_ok());
+    }
+
+    #[test]
+    fn normalize_approval_host_handles_ipv6() {
+        assert_eq!(
+            normalize_approval_host("[2001:db8::1]:8443").expect("normalize host"),
+            "[2001:db8::1]"
+        );
     }
 
     #[test]

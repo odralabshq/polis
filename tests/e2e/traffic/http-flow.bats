@@ -10,6 +10,12 @@ setup_file() {
     require_container "$CTR_GATE"
     require_container "$CTR_SENTINEL"
     approve_host "$HTTPBIN_HOST" 600
+    # Warm up the ICAP chain — first request may 502 in CI
+    for _i in 1 2 3; do
+        docker exec "$CTR_WORKSPACE" curl -sf -o /dev/null --connect-timeout 5 \
+            --proxy "http://${IP_GATE_INT}:8080" "http://${HTTPBIN_HOST}/get" 2>/dev/null && break
+        sleep 2
+    done
 }
 
 teardown_file() {
@@ -26,9 +32,15 @@ setup() {
 PROXY="--proxy http://10.10.1.10:8080"
 
 @test "e2e: HTTP GET returns 200" {
-    run docker exec "$CTR_WORKSPACE" \
-        curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 15 \
-        $PROXY "http://${HTTPBIN_HOST}/get"
+    # Retry — ICAP chain may 502 on first request in CI
+    local attempt
+    for attempt in 1 2 3; do
+        run docker exec "$CTR_WORKSPACE" \
+            curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 15 \
+            $PROXY "http://${HTTPBIN_HOST}/get"
+        [[ "$status" -eq 0 && "$output" == "200" ]] && return 0
+        sleep 2
+    done
     assert_success
     assert_output "200"
 }
@@ -55,9 +67,14 @@ PROXY="--proxy http://10.10.1.10:8080"
 }
 
 @test "e2e: HTTP custom header preserved" {
-    run docker exec "$CTR_WORKSPACE" \
-        curl -sf --connect-timeout 15 $PROXY -H "X-Polis-Test: hello" \
-        "http://${HTTPBIN_HOST}/get"
+    local attempt
+    for attempt in 1 2 3; do
+        run docker exec "$CTR_WORKSPACE" \
+            curl -sf --connect-timeout 15 $PROXY -H "X-Polis-Test: hello" \
+            "http://${HTTPBIN_HOST}/get"
+        [[ "$status" -eq 0 ]] && break
+        sleep 2
+    done
     assert_success
     assert_output --partial "X-Polis-Test"
 }

@@ -24,7 +24,7 @@ _valkey_cmd() {
 
 case "${1:-pending}" in
     pending|list)
-        KEYS=$(_valkey_cmd SCAN 0 MATCH 'polis:blocked:*' COUNT 100 | tail -n +2)
+        KEYS=$(_valkey_cmd SCAN 0 MATCH 'polis:blocked:req-*' COUNT 100 | tail -n +2)
         if [[ -z "$KEYS" ]]; then
             echo "No pending requests."
             exit 0

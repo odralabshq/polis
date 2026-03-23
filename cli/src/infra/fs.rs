@@ -8,14 +8,27 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use crate::application::ports::LocalArtifactWriter;
-use crate::domain::workspace::hex_encode;
+use crate::domain::util::hex_encode;
+use crate::infra::blocking::spawn_blocking_io;
+use crate::infra::secure_fs::SecureFs;
 
-/// Writes agent artifact files to the local filesystem under `.generated/`.
-/// Production filesystem implementation of `LocalArtifactWriter`.
-#[allow(dead_code)] // Not yet wired from command handlers
-pub struct LocalFs;
+/// Production filesystem implementation combining `LocalArtifactWriter`, `FileHasher`,
+/// `LocalPaths`, and `LocalFs` in a single struct.
+///
+/// # Cohesion rationale
+///
+/// These four traits are unified in `OsFs` because the `App` trait requires
+/// `type Fs: LocalFs + LocalPaths + FileHasher`, and call sites such as
+/// `commands/delete.rs` pass the same `app.fs()` reference for both the
+/// `local_fs: &F` (`LocalFs`) and `paths: &L` (`LocalPaths`) slots of
+/// `CleanupContext`. Splitting into separate structs would force callers to
+/// construct and manage two independent instances that share no state, adding
+/// complexity without benefit. All four traits operate on the OS filesystem
+/// with no internal state, so a single zero-sized unit struct is the natural
+/// implementation.
+pub struct OsFs;
 
-impl LocalArtifactWriter for LocalFs {
+impl LocalArtifactWriter for OsFs {
     /// # Errors
     ///
     /// This function will return an error if the underlying operations fail.
@@ -26,7 +39,7 @@ impl LocalArtifactWriter for LocalFs {
     ) -> Result<PathBuf> {
         let dir = PathBuf::from("agents").join(agent_name).join(".generated");
         let dir_clone = dir.clone();
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking_io("write agent artifacts", move || {
             std::fs::create_dir_all(&dir_clone)
                 .with_context(|| format!("creating artifact dir {}", dir_clone.display()))?;
             for (filename, content) in &files {
@@ -36,13 +49,12 @@ impl LocalArtifactWriter for LocalFs {
             }
             Ok::<PathBuf, anyhow::Error>(dir_clone)
         })
-        .await
-        .context("spawn_blocking for write_agent_artifacts")??;
+        .await?;
         Ok(dir)
     }
 }
 
-impl crate::application::ports::FileHasher for LocalFs {
+impl crate::application::ports::FileHasher for OsFs {
     /// # Errors
     ///
     /// This function will return an error if the underlying operations fail.
@@ -51,7 +63,7 @@ impl crate::application::ports::FileHasher for LocalFs {
     }
 }
 
-impl crate::application::ports::LocalPaths for LocalFs {
+impl crate::application::ports::LocalPaths for OsFs {
     fn images_dir(&self) -> PathBuf {
         images_dir().unwrap_or_else(|_| PathBuf::from("images"))
     }
@@ -60,13 +72,11 @@ impl crate::application::ports::LocalPaths for LocalFs {
     ///
     /// This function will return an error if the underlying operations fail.
     fn polis_dir(&self) -> Result<PathBuf> {
-        dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))
-            .map(|h| h.join(".polis"))
+        crate::infra::polis_dir::PolisDir::new().map(|pd| pd.root().to_path_buf())
     }
 }
 
-impl crate::application::ports::LocalFs for LocalFs {
+impl crate::application::ports::LocalFs for OsFs {
     fn exists(&self, path: &Path) -> bool {
         path.exists()
     }
@@ -108,22 +118,15 @@ impl crate::application::ports::LocalFs for LocalFs {
         std::fs::read_to_string(path).with_context(|| format!("reading file {}", path.display()))
     }
 
+    fn is_dir(&self, path: &Path) -> bool {
+        path.is_dir()
+    }
+
     /// # Errors
     ///
     /// This function will return an error if the underlying operations fail.
     fn set_permissions(&self, path: &Path, mode: u32) -> Result<()> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-                .with_context(|| format!("setting permissions on {}", path.display()))?;
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = path; // Mark as used to suppress warnings
-            let _ = mode; // Mark as used to suppress warnings
-        }
-        Ok(())
+        SecureFs::set_permissions(path, mode)
     }
 }
 
@@ -134,7 +137,7 @@ impl crate::application::ports::LocalFs for LocalFs {
 /// # Errors
 ///
 /// Returns an error if the file cannot be opened or read.
-pub fn sha256_file(path: &Path) -> Result<String> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String> {
     let mut file =
         std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut hasher = Sha256::new();
@@ -157,15 +160,7 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 /// # Errors
 ///
 /// Returns an error if the home directory cannot be determined.
-pub fn images_dir() -> Result<PathBuf> {
-    #[cfg(target_os = "linux")]
-    return Ok(dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
-        .join("polis")
-        .join("images"));
-    #[cfg(not(target_os = "linux"))]
-    Ok(dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
-        .join(".polis")
-        .join("images"))
+pub(crate) fn images_dir() -> Result<PathBuf> {
+    let polis_dir = crate::infra::polis_dir::PolisDir::new()?;
+    Ok(polis_dir.images_dir())
 }

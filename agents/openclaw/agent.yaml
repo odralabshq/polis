@@ -42,7 +42,7 @@ spec:
       - /home/polis/.openclaw
     noNewPrivileges: true
     privateTmp: true
-    memoryMax: 2G
+    memoryMax: 4G
     cpuQuota: "100%"
 
   ports:
@@ -59,6 +59,8 @@ spec:
       - ANTHROPIC_API_KEY
       - OPENAI_API_KEY
       - OPENROUTER_API_KEY
+      - GOOGLE_API_KEY
+      - GEMINI_API_KEY
     envOptional:
       - BRAVE_SEARCH_API_KEY
 
@@ -74,7 +76,9 @@ spec:
     dockerInDocker: false
 
   onboarding:
-    - title: "Run the onboarding wizard"
+    - title: "Connect to the workspace"
+      command: "polis connect"
+    - title: "Run the onboarding wizard inside the workspace"
       command: "openclaw onboard"
 
   commands: commands.sh

@@ -3,15 +3,21 @@ name = "polis-common"
 version = "0.1.0"
 edition = "2024"
 description = "Shared types for polis MCP servers"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
+clap = { version = "4", features = ["derive"], optional = true }
+
+[features]
+default = []
+clap = ["dep:clap"]
 
 [dev-dependencies]
 serde_json = "1.0"
-serde_yaml = "0.9"   # YAML deserialization for AgentManifest tests (no YAML support in std or existing deps)
+serde_yaml_ng = "0.10"   # YAML deserialization for AgentManifest tests (no YAML support in std or existing deps)
 proptest = "1.5"
 
 [lints.rust]

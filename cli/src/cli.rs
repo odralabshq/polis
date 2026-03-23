@@ -42,33 +42,26 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Start workspace
-    Start(commands::start::StartArgs),
+    Start,
 
     /// Stop workspace
     Stop,
 
     /// Remove workspace
-    Delete(commands::DeleteArgs),
+    Delete(commands::delete::DeleteArgs),
 
     /// Show workspace status
     Status,
 
-    /// Show connection options
+    /// Open an SSH session to the workspace
     Connect(commands::connect::ConnectArgs),
 
-    /// Manage configuration
-    #[command(subcommand)]
-    Config(commands::config::ConfigCommand),
+    /// Open the control-plane dashboard
+    #[cfg(feature = "dashboard")]
+    Dashboard(commands::dashboard::DashboardArgs),
 
     /// Diagnose issues
-    Doctor {
-        /// Show remediation details for each issue
-        #[arg(long)]
-        verbose: bool,
-        /// Attempt to automatically repair detected issues
-        #[arg(long)]
-        fix: bool,
-    },
+    Doctor(commands::doctor::DoctorArgs),
 
     /// Run a command in the workspace
     Exec(commands::exec::ExecArgs),
@@ -91,11 +84,11 @@ pub enum Command {
     #[command(hide = true, name = "_ssh-proxy")]
     SshProxy,
 
-    #[command(hide = true, name = "_provision")]
-    Provision,
-
     #[command(hide = true, name = "_extract-host-key")]
     ExtractHostKey,
+
+    #[command(hide = true, name = "_post-update")]
+    PostUpdate,
 }
 
 impl Cli {
@@ -125,21 +118,26 @@ impl Cli {
         })?;
 
         let exit_code = match command {
-            Command::Start(args) => commands::start::run(&args, &app).await?,
+            Command::Start => commands::start::run(&app).await?,
             Command::Stop => commands::stop::run(&app).await?,
-            Command::Delete(args) => commands::delete::run(&args, &app).await?,
-            Command::Status => commands::status::run(&app, &app.provisioner).await?,
-            Command::Connect(args) => commands::connect::run(&app, args).await?,
-            Command::Config(cmd) => commands::config::run(&app, cmd, &app.provisioner).await?,
+            Command::Delete(args) => commands::delete::run(&app, &args).await?,
+            Command::Status => commands::status::run(&app).await?,
+            Command::Connect(args) => commands::connect::run(&app, &args).await?,
+            #[cfg(feature = "dashboard")]
+            Command::Dashboard(args) => commands::dashboard::run(&args, &app).await?,
             Command::Update(args) => {
-                commands::update::run(&args, &app, &crate::infra::update::GithubUpdateChecker)
+                commands::update::run(&app, &args, crate::infra::update::GithubUpdateChecker)
                     .await?
             }
-            Command::Doctor { verbose, fix } => commands::doctor::run(&app, verbose, fix).await?,
-            Command::Exec(args) => commands::exec::run(&args, &app.provisioner).await?,
+            Command::Doctor(args) => commands::doctor::run(&app, &args).await?,
+            Command::Exec(args) => commands::exec::run(&app, &args).await?,
             Command::Version => commands::version::run(&app)?,
-            Command::Agent(cmd) => commands::agent::run(cmd, &app).await?,
-            Command::Security(cmd) => commands::security::run(cmd, &app, &app.provisioner).await?,
+            Command::Agent(cmd) => commands::agent::run(&app, cmd).await?,
+            Command::Security(cmd) => {
+                let gw =
+                    crate::infra::security_gateway::ToolboxSecurityGateway::new(&app.provisioner);
+                commands::security::run(&app, cmd, &gw).await?
+            }
 
             // --- Internal commands ---
             #[allow(clippy::large_futures)]
@@ -147,8 +145,9 @@ impl Cli {
             Command::ExtractHostKey => {
                 commands::internal::extract_host_key(&app.provisioner).await?
             }
-            Command::Provision => {
-                anyhow::bail!("Provision command is internal only")
+            Command::PostUpdate => {
+                commands::update::post_update(&app).await?;
+                ExitCode::SUCCESS
             }
         };
 

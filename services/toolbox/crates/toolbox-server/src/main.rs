@@ -81,6 +81,13 @@ async fn health() -> StatusCode {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // 0. Install the ring crypto provider before any TLS usage.
+    //    Required because Cargo feature-unification pulls in both
+    //    aws-lc-rs and ring, so rustls cannot auto-detect.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install default CryptoProvider");
+
     // 1. Initialise tracing with RUST_LOG env filter.
     tracing_subscriber::fmt()
         .with_env_filter(

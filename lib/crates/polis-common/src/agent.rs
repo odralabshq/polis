@@ -53,6 +53,7 @@ impl AgentMetadata {
                     "ANTHROPIC_API_KEY" => return "Anthropic".to_string(),
                     "OPENAI_API_KEY" => return "OpenAI".to_string(),
                     "OPENROUTER_API_KEY" => return "OpenRouter".to_string(),
+                    "GOOGLE_API_KEY" | "GEMINI_API_KEY" => return "Google".to_string(),
                     _ => {}
                 }
             }
@@ -264,7 +265,7 @@ spec:
     #[test]
     fn test_agent_manifest_full_yaml_parses_all_fields() {
         let manifest: AgentManifest =
-            serde_yaml::from_str(FULL_MANIFEST_YAML).expect("full manifest should parse");
+            serde_yaml_ng::from_str(FULL_MANIFEST_YAML).expect("full manifest should parse");
 
         assert_eq!(manifest.api_version, "polis.dev/v1");
         assert_eq!(manifest.kind, "AgentPlugin");
@@ -281,7 +282,7 @@ spec:
     #[test]
     fn test_agent_manifest_openclaw_yaml_parses_successfully() {
         let manifest: AgentManifest =
-            serde_yaml::from_str(OPENCLAW_YAML).expect("openclaw manifest should parse");
+            serde_yaml_ng::from_str(OPENCLAW_YAML).expect("openclaw manifest should parse");
 
         assert_eq!(manifest.metadata.name, "openclaw");
         assert_eq!(manifest.metadata.provider, None);
@@ -291,7 +292,7 @@ spec:
     #[test]
     fn test_agent_manifest_template_yaml_parses_successfully() {
         let manifest: AgentManifest =
-            serde_yaml::from_str(TEMPLATE_YAML).expect("template manifest should parse");
+            serde_yaml_ng::from_str(TEMPLATE_YAML).expect("template manifest should parse");
 
         assert_eq!(manifest.metadata.name, "my-agent");
         assert_eq!(manifest.metadata.author, None);
@@ -304,19 +305,19 @@ spec:
 
     #[test]
     fn test_agent_metadata_provider_absent_defaults_to_none() {
-        let manifest: AgentManifest = serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(TEMPLATE_YAML).expect("should parse");
         assert_eq!(manifest.metadata.provider, None);
     }
 
     #[test]
     fn test_agent_metadata_capabilities_absent_defaults_to_empty_vec() {
-        let manifest: AgentManifest = serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(TEMPLATE_YAML).expect("should parse");
         assert!(manifest.metadata.capabilities.is_empty());
     }
 
     #[test]
     fn test_agent_spec_onboarding_absent_defaults_to_empty_vec() {
-        let manifest: AgentManifest = serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(TEMPLATE_YAML).expect("should parse");
         assert!(
             manifest.spec.onboarding.is_empty(),
             "onboarding should default to empty vec when absent from YAML"
@@ -342,7 +343,7 @@ spec:
     workdir: /tmp
     user: polis
 "#;
-        let result: Result<AgentManifest, _> = serde_yaml::from_str(yaml);
+        let result: Result<AgentManifest, _> = serde_yaml_ng::from_str(yaml);
         assert!(
             result.is_err(),
             "manifest without 'name' should fail to parse"
@@ -351,7 +352,7 @@ spec:
 
     #[test]
     fn test_agent_manifest_invalid_yaml_returns_error() {
-        let result: Result<AgentManifest, _> = serde_yaml::from_str("{ not: valid: yaml: [}");
+        let result: Result<AgentManifest, _> = serde_yaml_ng::from_str("{ not: valid: yaml: [}");
         assert!(result.is_err(), "invalid YAML should return an error");
     }
 
@@ -360,7 +361,7 @@ spec:
     #[test]
     fn test_effective_provider_explicit_provider_returns_it() {
         let manifest: AgentManifest =
-            serde_yaml::from_str(FULL_MANIFEST_YAML).expect("should parse");
+            serde_yaml_ng::from_str(FULL_MANIFEST_YAML).expect("should parse");
         let provider = manifest
             .metadata
             .effective_provider(manifest.spec.requirements.as_ref());
@@ -369,7 +370,7 @@ spec:
 
     #[test]
     fn test_effective_provider_anthropic_key_derives_anthropic() {
-        let manifest: AgentManifest = serde_yaml::from_str(OPENCLAW_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(OPENCLAW_YAML).expect("should parse");
         // openclaw has ANTHROPIC_API_KEY first in envOneOf
         let provider = manifest
             .metadata
@@ -398,7 +399,7 @@ spec:
     envOneOf:
       - OPENAI_API_KEY
 "#;
-        let manifest: AgentManifest = serde_yaml::from_str(yaml).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(yaml).expect("should parse");
         let provider = manifest
             .metadata
             .effective_provider(manifest.spec.requirements.as_ref());
@@ -426,7 +427,7 @@ spec:
     envOneOf:
       - OPENROUTER_API_KEY
 "#;
-        let manifest: AgentManifest = serde_yaml::from_str(yaml).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(yaml).expect("should parse");
         let provider = manifest
             .metadata
             .effective_provider(manifest.spec.requirements.as_ref());
@@ -454,7 +455,7 @@ spec:
     envOneOf:
       - CUSTOM_API_KEY
 "#;
-        let manifest: AgentManifest = serde_yaml::from_str(yaml).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(yaml).expect("should parse");
         let provider = manifest
             .metadata
             .effective_provider(manifest.spec.requirements.as_ref());
@@ -463,7 +464,7 @@ spec:
 
     #[test]
     fn test_effective_provider_no_requirements_returns_unknown() {
-        let manifest: AgentManifest = serde_yaml::from_str(TEMPLATE_YAML).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(TEMPLATE_YAML).expect("should parse");
         let provider = manifest.metadata.effective_provider(None);
         assert_eq!(provider, "Unknown");
     }
@@ -490,7 +491,7 @@ spec:
     envOneOf:
       - ANTHROPIC_API_KEY
 "#;
-        let manifest: AgentManifest = serde_yaml::from_str(yaml).expect("should parse");
+        let manifest: AgentManifest = serde_yaml_ng::from_str(yaml).expect("should parse");
         let provider = manifest
             .metadata
             .effective_provider(manifest.spec.requirements.as_ref());
@@ -506,18 +507,23 @@ spec:
         let yaml = std::fs::read_to_string(&yaml_path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", yaml_path.display()));
         let manifest: AgentManifest =
-            serde_yaml::from_str(&yaml).expect("openclaw agent.yaml should parse");
+            serde_yaml_ng::from_str(&yaml).expect("openclaw agent.yaml should parse");
 
         assert_eq!(
             manifest.spec.onboarding.len(),
-            1,
-            "openclaw should have exactly one onboarding step"
+            2,
+            "openclaw should have exactly two onboarding steps"
         );
         assert_eq!(
             manifest.spec.onboarding[0].title,
-            "Run the onboarding wizard"
+            "Connect to the workspace"
         );
-        assert_eq!(manifest.spec.onboarding[0].command, "openclaw onboard");
+        assert_eq!(manifest.spec.onboarding[0].command, "polis connect");
+        assert_eq!(
+            manifest.spec.onboarding[1].title,
+            "Run the onboarding wizard inside the workspace"
+        );
+        assert_eq!(manifest.spec.onboarding[1].command, "openclaw onboard");
     }
 
     #[test]

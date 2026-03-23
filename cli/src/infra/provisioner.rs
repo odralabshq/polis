@@ -11,9 +11,13 @@ use anyhow::{Context, Result};
 
 use crate::application::ports::CommandRunner;
 use crate::application::ports::{
-    FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec, POLIS_INSTANCE, ShellExecutor,
+    ContainerExecutor, FileTransfer, InstanceInspector, InstanceLifecycle, InstanceSpec,
+    POLIS_INSTANCE, ShellExecutor,
 };
 use crate::infra::command_runner::{DEFAULT_CMD_TIMEOUT, DEFAULT_EXEC_TIMEOUT, TokioCommandRunner};
+
+/// Timeout for VM→host file transfers (backups can be large).
+const TRANSFER_FROM_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Infrastructure adapter that routes all multipass CLI calls through a `CommandRunner`.
 ///
@@ -185,6 +189,21 @@ impl<R: CommandRunner> FileTransfer for MultipassProvisioner<R> {
             .await
             .context("failed to run multipass transfer")
     }
+
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
+    async fn transfer_from(&self, remote: &str, local: &str) -> Result<Output> {
+        let src = format!("{POLIS_INSTANCE}:{remote}");
+        self.cmd_runner
+            .run_with_timeout(
+                "multipass",
+                &["transfer", &src, local],
+                TRANSFER_FROM_TIMEOUT,
+            )
+            .await
+            .context("failed to run multipass transfer (VM→host)")
+    }
 }
 
 impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {
@@ -233,6 +252,56 @@ impl<R: CommandRunner> ShellExecutor for MultipassProvisioner<R> {
             .run_status("multipass", &full)
             .await
             .context("failed to run multipass exec")
+    }
+}
+
+impl<R: CommandRunner> ContainerExecutor for MultipassProvisioner<R> {
+    /// Execute a command inside the workspace container.
+    ///
+    /// Constructs docker exec arguments with:
+    /// - User identity (`-u polis`)
+    /// - Environment variables for D-Bus session
+    /// - Platform-specific TTY allocation
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the underlying operations fail.
+    async fn container_exec_status(
+        &self,
+        args: &[&str],
+        interactive: bool,
+    ) -> Result<std::process::ExitStatus> {
+        use crate::domain::workspace::{CONTAINER_NAME, CONTAINER_USER, CONTAINER_USER_UID};
+
+        let xdg_runtime = format!("XDG_RUNTIME_DIR=/run/user/{CONTAINER_USER_UID}");
+        let dbus_addr =
+            format!("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{CONTAINER_USER_UID}/bus");
+
+        let mut docker_args: Vec<&str> = vec![
+            "docker",
+            "exec",
+            "-u",
+            CONTAINER_USER,
+            "-e",
+            &xdg_runtime,
+            "-e",
+            &dbus_addr,
+        ];
+
+        // TTY allocation is platform-specific:
+        // - Unix: `-it` for interactive TTY
+        // - Windows: `-i` only (no TTY support in Windows console)
+        if interactive {
+            #[cfg(unix)]
+            docker_args.push("-it");
+            #[cfg(not(unix))]
+            docker_args.push("-i");
+        }
+
+        docker_args.push(CONTAINER_NAME);
+        docker_args.extend(args);
+
+        self.exec_status(&docker_args).await
     }
 }
 

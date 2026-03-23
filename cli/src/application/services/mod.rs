@@ -5,15 +5,8 @@
 //! `crate::application::ports` — never from `crate::infra`, `crate::commands`,
 //! or `crate::output`.
 
-pub mod agent_crud;
-pub mod cleanup_service;
-pub mod config_service;
-pub mod connect;
-pub mod security_service;
+pub mod agent;
+pub mod security;
+pub mod ssh;
 pub mod update;
-pub mod vm;
-pub mod workspace_doctor;
-pub mod workspace_repair;
-pub mod workspace_start;
-pub mod workspace_status;
-pub mod workspace_stop;
+pub mod workspace;

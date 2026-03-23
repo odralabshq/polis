@@ -62,6 +62,15 @@ run_structure_test() {
     assert_success
 }
 
+# ── Control Plane ──────────────────────────────────────────────────────────
+
+@test "structure-test: control-plane image" {
+    skip_if_no_cst
+    skip_if_image_missing "${IMAGE_PREFIX}/polis-control-plane-oss:latest"
+    run run_structure_test "${IMAGE_PREFIX}/polis-control-plane-oss:latest" "$STRUCTURE_TESTS_DIR/control-plane.yaml"
+    assert_success
+}
+
 # ── Workspace ─────────────────────────────────────────────────────────────
 
 @test "structure-test: workspace image" {

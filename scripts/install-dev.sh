@@ -270,6 +270,16 @@ ENVEOF"
     else
         log_warn "Workspace did not become healthy within 120s — check with: polis status"
     fi
+
+    # ── Step 7: Persist VM IP for container access ────────────────────────
+    log_info "Persisting VM IP..."
+    local vm_ip
+    vm_ip=$(multipass info polis --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['polis']['ipv4'][0])" 2>/dev/null || true)
+    if [[ -n "${vm_ip}" ]]; then
+        multipass exec polis -- bash -c "printf '%s\n' '${vm_ip}' > /opt/polis/.vm-ip"
+        multipass exec polis -- bash -c "sed -i '/^POLIS_VM_IP=/d' /opt/polis/.env; printf '%s\n' 'POLIS_VM_IP=${vm_ip}' >> /opt/polis/.env"
+        log_ok "VM IP persisted: ${vm_ip}"
+    fi
     return 0
 }
 
@@ -313,11 +323,13 @@ echo ""
 log_ok "Polis (dev build) installed successfully!"
 echo ""
 echo "NEXT STEPS:"
-echo "1. Verify status:"
+echo "1. Check workspace status:"
 echo "   polis status"
-echo "2. Start an AI agent (pass your provider API key directly):"
-echo "   polis start --agent openclaw -e OPENAI_API_KEY=sk-..."
-echo "   Note: agent initialization may take several minutes depending on the selected agent."
-echo "3. Connect to the dashboard:"
-echo "   polis connect"
+echo "2. (Optional) Install and activate an AI agent:"
+echo "   polis agent list                              # list available agents"
+echo "   polis agent install --path <agent-path>       # install an agent"
+echo "   polis agent activate <name>                    # activate an agent"
+echo "3. Connect to the workspace:"
+echo "   SSH:      polis connect"
+echo "   VS Code:  code --remote ssh-remote+workspace /workspace"
 echo ""
