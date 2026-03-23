@@ -1,7 +1,7 @@
 # Polis — Secure Workspace for AI Coding Agents
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.4.0-orange.svg)](https://github.com/OdraLabsHQ/polis/releases)
+[![License](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.5.0-orange.svg)](https://github.com/OdraLabsHQ/polis/releases)
 
 > **⚠️ Experimental Preview** — Polis is under active development This platform in not yet recommended for production use.
 
@@ -49,8 +49,8 @@ Once installed:
 
 ```bash
 polis status                   # Show workspace and agent status
-polis connect                  # Connect to workspace via SSH or IDE
-polis start --agent=openclaw   # Start Polis with pre-configured openclaw agent
+polis connect                  # SSH into the workspace
+polis start                    # Start Polis workspace
 ```
 
 To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
@@ -65,22 +65,23 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 
 ## CLI Commands
 
+Global flags: `--json` (JSON output), `-q`/`--quiet` (suppress non-error output), `--no-color`, `-y`/`--yes` (skip prompts).
+
 | Command | Description |
 |---------|-------------|
 | `polis start` | Start workspace (downloads image on first run) |
-| `polis start --agent=<name>` | Start with a specific agent |
-| `polis start --image <path>` | Use a custom VM image |
 | `polis stop` | Stop workspace (preserves state) |
 | `polis delete` | Remove workspace |
 | `polis delete --all` | Remove workspace, certs, config, and cached images |
 | `polis status` | Show workspace and agent status |
-| `polis connect` | Show connection options (SSH, IDE) |
+| `polis connect` | Open an SSH session to the workspace |
+| `polis connect --info` | Display IDE connection strings without opening SSH |
+| `polis dashboard` | Open the control-plane TUI dashboard |
 | `polis exec <cmd>` | Run a command inside the workspace |
 | `polis doctor` | Diagnose issues (workspace, network, image) |
+| `polis doctor --fix` | Attempt to automatically repair detected issues |
 | `polis update` | Update Polis to the latest signed release |
 | `polis update --check` | Check for updates without applying |
-| `polis config show` | Show current configuration |
-| `polis config set <key> <value>` | Set a configuration value |
 | `polis version` | Show CLI version |
 
 ### Security Management
@@ -88,13 +89,19 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | Command | Description |
 |---------|-------------|
 | `polis security status` | Show security level and pending blocked requests |
-| `polis security pending` | List all blocked requests awaiting approval |
+| `polis security pending` | List pending blocked requests awaiting approval |
 | `polis security approve <id>` | Approve a blocked request |
 | `polis security deny <id>` | Deny a blocked request |
 | `polis security log` | Show recent security events |
-| `polis security allow <domain>` | Auto-approve a domain pattern |
-| `polis security allow <domain> --action block` | Block a domain pattern |
+| `polis security rule <pattern>` | Add a domain auto-approve rule |
+| `polis security rule <pattern> --action block` | Add a domain block rule |
+| `polis security rules` | List all domain rules |
+| `polis security rule-remove <pattern>` | Remove a domain rule |
 | `polis security level <level>` | Set security level (relaxed, balanced, strict) |
+| `polis security bypass` | List all bypass domains |
+| `polis security bypass-remove <domain>` | Remove a bypass domain |
+| `polis security credentials` | List all credential allow rules |
+| `polis security credential-remove <pattern> <host> <fingerprint>` | Remove a credential allow rule |
 
 ### Agent Management
 
@@ -104,6 +111,41 @@ To build from source instead, see [docs/DEVELOPER.md](docs/DEVELOPER.md).
 | `polis agent install --path <folder>` | Install a new agent from a local folder |
 | `polis agent remove <name>` | Remove an installed agent |
 | `polis agent activate <name>` | Activate an agent on the running workspace |
+| `polis agent exec <name> <subcmd>` | Run an agent-specific command (e.g. token) |
+
+---
+
+## Dashboard
+
+`polis dashboard` opens a terminal UI (TUI) connected to the control-plane via SSE. It provides real-time visibility into governance state, blocked requests, and workspace health.
+
+### Tabs
+
+| Tab | Content |
+|-----|---------|
+| Dashboard | Security level, pending count, feature health; press `1`/`2`/`3` to switch level |
+| Blocked | Pending blocked requests; approve, deny, allow credential, or bypass domain |
+| Events | Recent security event log |
+| Workspace | Container status, health, and resource usage for all Polis services |
+| Logs | Docker compose logs with service and level filters |
+
+### Keybindings
+
+| Key | Scope | Action |
+|-----|-------|--------|
+| `Tab` / `Shift+Tab` | Global | Next / previous tab |
+| `j` / `↓` | Global | Move selection down |
+| `k` / `↑` | Global | Move selection up |
+| `q` | Global | Quit |
+| `Ctrl+C` | Global | Quit |
+| `a` | Blocked | Approve selected request |
+| `d` | Blocked | Deny selected request |
+| `r` | Blocked | Allow credential (with confirmation) |
+| `b` | Blocked | Bypass domain (with confirmation) |
+| `1` / `2` / `3` | Dashboard | Set level to relaxed / balanced / strict |
+| `f` | Logs | Cycle service filter |
+| `l` | Logs | Cycle log level filter |
+| `r` | Logs | Refresh logs |
 
 ---
 
@@ -133,7 +175,7 @@ http://<host-ip>:18789/#token=<token>
 Get the token:
 
 ```bash
-polis agent cmd token
+polis agent exec openclaw token
 ```
 
 On Multipass, use the VM IP (`multipass info polis` to find it). On native Linux, use `localhost`.
@@ -154,11 +196,11 @@ polis agent activate my-agent
 ## Configuration
 
 ```bash
-# Show current config
-polis config show
+# View current security level
+polis security status
 
 # Set security level (relaxed, balanced, or strict)
-polis config set security.level strict
+polis security level strict
 ```
 
 | Level | Behavior |
@@ -201,9 +243,9 @@ polis security log                 # Recent security events
 To permanently allow a domain:
 
 ```bash
-polis security allow cli.example.com           # Auto-approve this domain
-polis security allow "*.example.com"           # Wildcard pattern
-polis security allow untrusted.com --action block  # Explicitly block
+polis security rule cli.example.com           # Auto-approve this domain
+polis security rule "*.example.com"           # Wildcard pattern
+polis security rule untrusted.com --action block  # Explicitly block
 ```
 
 To change the security level:
@@ -212,6 +254,17 @@ To change the security level:
 polis security level relaxed    # Auto-allow unknown domains, still scan for credentials
 polis security level balanced   # Default — unknown domains prompt for approval
 polis security level strict     # All domains require explicit approval
+```
+
+To view and manage rules, bypass domains, and credential allows:
+
+```bash
+polis security rules                                    # List auto-approve/block rules
+polis security rule-remove "*.example.com"              # Remove a rule
+polis security bypass                                   # List bypass domains
+polis security bypass-remove en.wikipedia.org           # Remove a bypass domain
+polis security credentials                              # List credential allow rules
+polis security credential-remove <pattern> <host> <fp>  # Remove a credential allow
 ```
 
 ### Default bypass domains
@@ -264,6 +317,8 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 | **Gateway** | TLS-intercepting proxy (g3proxy), traffic routing | `services/gate` |
 | **Sentinel** | Content inspection logic (c-icap), DLP, approvals | `services/sentinel` |
 | **Scanner** | Real-time malware scanning (ClamAV) | `services/scanner` |
+| **Control Plane** | Governance REST API, SSE stream, web dashboard | `services/control-plane` |
+| **Docker Proxy** | Read-only Docker socket filter for control-plane | docker-compose (socket-proxy) |
 | **Toolbox** | MCP tools for agent interaction | `services/toolbox` |
 | **State** | Redis-compatible data store (Valkey) | `services/state` |
 | **Workspace** | Isolated environment (Sysbox) | `services/workspace` |
@@ -274,24 +329,16 @@ Three isolated Docker networks ensure the workspace can never bypass inspection:
 
 | Threat | How |
 |--------|-----|
-| Compromised agent exfiltrates credentials | TLS interception + DLP engine scans for AWS keys, GitHub tokens, OpenAI/Anthropic keys, private keys |
+| Compromised agent exfiltrates credentials | TLS interception + DLP engine scans for AWS keys, GitHub tokens, OpenAI/Anthropic keys, private keys; SHA-256 fingerprinting enables per-credential approval |
+| Private key exfiltration | Always-block patterns cannot be bypassed even on known/trusted domains |
 | Agent requests access to new domains | Human-in-the-loop (HITL) approval system blocks requests until user confirms |
 | Malicious code downloaded by agent | ClamAV scans every HTTP response via ICAP before it reaches the agent |
 | Agent attempts non-HTTP connections | Only HTTP/HTTPS (80/443) allowed outbound; all other ports blocked via iptables |
 | Container escape vulnerability | Sysbox runtime provides VM-like isolation without privileged mode |
 | Proxy bypass via IPv6 | IPv6 disabled at Docker network level and via sysctl/ip6tables in containers |
-| Unauthorized host resource access | No Docker socket mounted; only read-only CA cert and init scripts bind-mounted |
+| Unauthorized host resource access | No Docker socket mounted; control-plane uses a read-only socket proxy (docker-proxy) restricted to GET operations |
 | Data exfiltration via DNS tunneling | All traffic forced through proxy; non-HTTP ports blocked |
 | Cloud metadata service access (SSRF) | Blocked by network isolation — workspace has no route to 169.254.169.254 |
-
-### Coming Soon
-
-| Threat | Status |
-|--------|--------|
-| Typosquatted packages (`nxdebug` vs `nx-debug`) | 🔜 Package name validation |
-| Poisoned dependencies in lockfiles | 🔜 Dependency integrity checks |
-| Tool chaining for exfiltration (DB read → HTTP POST) | 🔜 MCP tool call auditing |
-| Indirect prompt injection via fetched content | 🔜 Content sanitization |
 
 ---
 
@@ -335,6 +382,67 @@ multipass list   # Find the polis VM IP
 # Open http://<vm-ip>:18789 in your browser
 ```
 
+**Windows: `polis start` times out / Multipass shows N/A for IPv4:**
+
+This is a known Hyper-V Default Switch issue where the ICS (Internet Connection Sharing)
+DNS server accumulates stale hostname entries. Multipass resolves `polis.mshome.net` to a
+dead IP and SSH times out.
+
+Symptoms:
+
+- `multipass list` shows `N/A` or `--` for IPv4
+- `polis start` fails with `Timed out waiting for instance launch`
+- `multipass info polis` fails with `Timeout connecting to polis.mshome.net`
+
+Step 1 — Confirm the VM is actually running:
+
+```powershell
+# Check the ARP table for VMs on the Hyper-V subnet
+arp -a | findstr 172.
+
+# Test SSH port on candidate IPs (replace with IPs from arp output)
+Test-NetConnection -ComputerName 172.31.x.x -Port 22
+```
+
+Step 2 — Clean the ICS hosts file (requires admin PowerShell):
+
+```powershell
+# Open the ICS hosts file — this is the DNS source of truth for the Default Switch
+notepad C:\Windows\System32\drivers\etc\hosts.ics
+
+# Remove ALL lines containing "polis" (both polis.mshome.net and polis-vm.mshome.net)
+# Save the file, then flush DNS:
+ipconfig /flushdns
+```
+
+Step 3 — Verify and retry:
+
+```powershell
+multipass list       # Should now show the IPv4 address
+polis start          # Should succeed
+```
+
+If Step 2 doesn't work — reset the Default Switch (requires admin PowerShell + reboot):
+
+```powershell
+Get-HNSNetwork | ? Name -Like "Default Switch" | Remove-HNSNetwork
+Restart-Computer
+# Hyper-V recreates the Default Switch on boot. Then run polis start again.
+```
+
+Optional — override DNS via the regular hosts file:
+
+```powershell
+# Find the VM IP from the arp table, then add it to the hosts file
+# (admin PowerShell)
+Add-Content C:\Windows\System32\drivers\etc\hosts "172.31.x.x polis.mshome.net"
+ipconfig /flushdns
+```
+
+> **Tip:** Disable VPN software during VM creation. VPNs can interfere with the
+> Hyper-V Default Switch DHCP/DNS. Anti-virus software (Symantec, ESET, Kaspersky,
+> Malwarebytes) can also block VM networking.
+
 **Workspace won't start:**
 
 ```bash
@@ -354,7 +462,7 @@ polis start          # Fresh install
 
 ## 📄 License
 
-Apache 2.0 — See [LICENSE](LICENSE) for details.
+AGPL-3.0-or-later — See [LICENSE](LICENSE) for details.
 
 ## ⚠️ Disclaimer
 

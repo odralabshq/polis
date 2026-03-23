@@ -114,7 +114,9 @@ mod tests {
 
     use super::*;
     use crate::application::ports::ShellExecutor;
-    use crate::application::vm::test_support::{fail_output, impl_shell_executor_stubs, ok_output};
+    use crate::application::vm::test_support::{
+        NoopReporter, fail_output, impl_shell_executor_stubs, ok_output,
+    };
 
     // ── Mock ─────────────────────────────────────────────────────────────────
 
@@ -146,9 +148,6 @@ mod tests {
     }
 
     impl ShellExecutor for DigestMock {
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             let args_owned: Vec<String> =
                 args.iter().map(std::string::ToString::to_string).collect();
@@ -182,18 +181,12 @@ mod tests {
     }
 
     impl ShellExecutor for WriteHashSpy {
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
         async fn exec(&self, args: &[&str]) -> Result<Output> {
             self.exec_calls
                 .borrow_mut()
                 .push(args.iter().map(std::string::ToString::to_string).collect());
             Ok(ok_output(b""))
         }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
         async fn exec_with_stdin(&self, args: &[&str], stdin: &[u8]) -> Result<Output> {
             self.exec_with_stdin_calls.borrow_mut().push((
                 args.iter().map(std::string::ToString::to_string).collect(),
@@ -259,32 +252,19 @@ mod tests {
 
     struct ManifestStub(&'static [u8]);
     impl AssetExtractor for ManifestStub {
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
         async fn extract_assets(&self) -> Result<(std::path::PathBuf, Box<dyn std::any::Any>)> {
             anyhow::bail!("not used")
         }
-        /// # Errors
-        ///
-        /// This function will return an error if the underlying operations fail.
         async fn get_asset(&self, _: &str) -> Result<&'static [u8]> {
             Ok(self.0)
         }
-    }
-
-    struct ReporterStub;
-    impl crate::application::ports::ProgressReporter for ReporterStub {
-        fn step(&self, _: &str) {}
-        fn success(&self, _: &str) {}
-        fn warn(&self, _: &str) {}
     }
 
     #[tokio::test]
     async fn empty_manifest_skips_verification() {
         let mp = DigestMock::new(vec![]);
         let stub = ManifestStub(b"{}");
-        let result = verify_image_digests(&mp, &stub, &ReporterStub).await;
+        let result = verify_image_digests(&mp, &stub, &NoopReporter).await;
         assert!(result.is_ok(), "empty manifest should succeed");
         assert!(mp.calls().is_empty(), "no docker inspect calls");
     }
@@ -302,7 +282,7 @@ mod tests {
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
-        let result = verify_image_digests(&mp, &stub, &ReporterStub).await;
+        let result = verify_image_digests(&mp, &stub, &NoopReporter).await;
         assert!(result.is_ok(), "matching digest should pass: {result:?}");
     }
 
@@ -319,7 +299,7 @@ mod tests {
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
-        let err = verify_image_digests(&mp, &stub, &ReporterStub)
+        let err = verify_image_digests(&mp, &stub, &NoopReporter)
             .await
             .expect_err("mismatched digest should fail");
 
@@ -352,7 +332,7 @@ mod tests {
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
-        let err = verify_image_digests(&mp, &stub, &ReporterStub)
+        let err = verify_image_digests(&mp, &stub, &NoopReporter)
             .await
             .expect_err("should fail");
         let msg = err.to_string();
@@ -383,7 +363,7 @@ mod tests {
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
-        let err = verify_image_digests(&FailingMock, &stub, &ReporterStub)
+        let err = verify_image_digests(&FailingMock, &stub, &NoopReporter)
             .await
             .expect_err("exec failure should propagate");
         assert!(err.to_string().contains("inspecting image"));
@@ -416,7 +396,7 @@ mod tests {
         let manifest_bytes: &'static [u8] = manifest_json.leak().as_bytes();
         let stub = ManifestStub(manifest_bytes);
 
-        let result = verify_image_digests(&mp, &stub, &ReporterStub).await;
+        let result = verify_image_digests(&mp, &stub, &NoopReporter).await;
         assert!(result.is_ok(), "all matching digests should pass");
         assert_eq!(mp.calls().len(), 3, "should inspect all 3 images");
     }

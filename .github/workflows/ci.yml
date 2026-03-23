@@ -73,7 +73,33 @@ jobs:
           find services/sentinel/modules -name '*.c' -print0 | \
             xargs -0 cppcheck --enable=warning,performance --error-exitcode=1
 
-  # ── Stage 1c: Lint Shell ──────────────────────────────────────────
+  # ── Stage 1c: cargo-deny (licenses, advisories, bans, sources) ──
+  cargo-deny:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        workspace:
+          - cli
+          - services/control-plane
+          - services/toolbox
+        checks:
+          - advisories
+          - bans licenses sources
+      fail-fast: false
+    continue-on-error: ${{ matrix.checks == 'advisories' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
+        with:
+          command: check ${{ matrix.checks }}
+          manifest-path: ${{ matrix.workspace }}/Cargo.toml
+
+  # ── Stage 1d: Lint Shell ──────────────────────────────────────────
   lint-shell:
     runs-on: ubuntu-24.04
     permissions:
@@ -167,21 +193,21 @@ jobs:
           persist-credentials: false
 
       - name: Login to DHI registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: dhi.io
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
         with:
           driver-opts: |
             image=moby/buildkit:v0.19.0@sha256:14aa1b4dd92ea0a4cd03a54d0c6079046ea98cd0c0ae6176bdd7036ba370cbbe
@@ -240,11 +266,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install container-structure-test
-        run: |
-          curl -fsSL -o /tmp/container-structure-test https://github.com/GoogleContainerTools/container-structure-test/releases/download/v1.19.3/container-structure-test-linux-amd64
-          sudo install -m 755 /tmp/container-structure-test /usr/local/bin/container-structure-test
-          rm /tmp/container-structure-test
+      - name: Pull container-structure-test image
+        run: docker pull ghcr.io/googlecontainertools/container-structure-test:1.22.1
 
       - name: Download image artifact
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
@@ -256,14 +279,15 @@ jobs:
 
       - name: Run container structure tests
         run: |
-          container-structure-test test --image ghcr.io/odralabshq/polis-certgen-oss:latest --config tests/container-structure/certgen.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-gate-oss:latest --config tests/container-structure/gate.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-resolver-oss:latest --config tests/container-structure/resolver.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-scanner-oss:latest --config tests/container-structure/scanner.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-sentinel-oss:latest --config tests/container-structure/sentinel.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-toolbox-oss:latest --config tests/container-structure/toolbox.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-control-plane-oss:latest --config tests/container-structure/control-plane.yaml
-          container-structure-test test --image ghcr.io/odralabshq/polis-workspace-oss:latest --config tests/container-structure/workspace.yaml
+          CST="docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v ${{ github.workspace }}/tests:/tests ghcr.io/googlecontainertools/container-structure-test:1.22.1 test"
+          $CST --image ghcr.io/odralabshq/polis-certgen-oss:latest --config /tests/container-structure/certgen.yaml
+          $CST --image ghcr.io/odralabshq/polis-gate-oss:latest --config /tests/container-structure/gate.yaml
+          $CST --image ghcr.io/odralabshq/polis-resolver-oss:latest --config /tests/container-structure/resolver.yaml
+          $CST --image ghcr.io/odralabshq/polis-scanner-oss:latest --config /tests/container-structure/scanner.yaml
+          $CST --image ghcr.io/odralabshq/polis-sentinel-oss:latest --config /tests/container-structure/sentinel.yaml
+          $CST --image ghcr.io/odralabshq/polis-toolbox-oss:latest --config /tests/container-structure/toolbox.yaml
+          $CST --image ghcr.io/odralabshq/polis-control-plane-oss:latest --config /tests/container-structure/control-plane.yaml
+          $CST --image ghcr.io/odralabshq/polis-workspace-oss:latest --config /tests/container-structure/workspace.yaml
 
   # ── Stage 3c: Scan images (Trivy) ─────────────────────────────────
   scan-images:
@@ -295,15 +319,20 @@ jobs:
       - name: Load images
         run: zstd -d polis-images.tar.zst -o polis-images.tar && docker load -i polis-images.tar
 
-      - name: Scan ${{ matrix.image }} with Trivy
-        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # v0.34.1
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6 (only clean tag)
         with:
-          image-ref: 'ghcr.io/odralabshq/${{ matrix.image }}:latest'
-          format: 'sarif'
-          output: 'trivy-${{ matrix.image }}.sarif'
-          severity: 'HIGH,CRITICAL'
-          ignore-unfixed: true
-          skip-setup-trivy: false
+          version: v0.69.3
+          cache: true
+
+      - name: Scan ${{ matrix.image }} with Trivy
+        run: |
+          trivy image \
+            --format sarif \
+            --output 'trivy-${{ matrix.image }}.sarif' \
+            --severity 'HIGH,CRITICAL' \
+            --ignore-unfixed \
+            'ghcr.io/odralabshq/${{ matrix.image }}:latest'
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@e34fc2711fb7964ca6850c8a8382121f34745f3b # v4.32.4
@@ -326,7 +355,7 @@ jobs:
           persist-credentials: false
 
       - name: Login to DHI registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: dhi.io
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -375,7 +404,7 @@ jobs:
           persist-credentials: false
 
       - name: Login to DHI registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         with:
           registry: dhi.io
           username: ${{ secrets.DOCKER_USERNAME }}

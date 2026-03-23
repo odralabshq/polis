@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM dhi.io/rust:1-dev@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
+FROM dhi.io/rust@sha256:8cfde71b7c05f77d045f83f1fcb806aac095a447e84b6c705d3f2447c05c9aa4 AS builder
 WORKDIR /build
 COPY services/control-plane/crates/ crates/
 COPY services/control-plane/Cargo.toml services/control-plane/Cargo.lock* ./
@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --release -p cp-server && \
     cp target/release/cp-server /cp-server
 
-FROM dhi.io/debian-base:trixie@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
+FROM dhi.io/debian-base@sha256:9ef766670af4743904b0f992a26b525c6c914648b56ea597ec23452adcf1a95d
 
 COPY --from=builder /cp-server /usr/local/bin/cp-server
 

@@ -23,11 +23,13 @@ mkdir -p "${OUTPUT_DIR}"
 
 generate_password() {
     openssl rand -base64 32 | tr -d '/+=' | head -c 32
+    return 0
 }
 
 generate_token() {
     local prefix="$1"
     printf '%s_%s' "${prefix}" "$(openssl rand -hex 16)"
+    return 0
 }
 
 ensure_password_file() {
@@ -42,6 +44,7 @@ ensure_password_file() {
         chmod 600 "${path}" 2>/dev/null || true
         printf '%s' "${password}"
     fi
+    return 0
 }
 
 ensure_token_file() {
@@ -57,6 +60,7 @@ ensure_token_file() {
         chmod 600 "${path}" 2>/dev/null || true
         printf '%s' "${token}"
     fi
+    return 0
 }
 
 ensure_output_file_path() {
@@ -68,6 +72,7 @@ ensure_output_file_path() {
         fi
         rmdir "${path}"
     fi
+    return 0
 }
 
 upsert_env_var() {
@@ -91,6 +96,8 @@ detect_docker_gid() {
         MINGW*|MSYS*|CYGWIN*)
             echo "0"
             return
+            ;;
+        *)
             ;;
     esac
     if [[ -S /var/run/docker.sock ]]; then
@@ -126,10 +133,10 @@ AUTH_ENABLED="$(printf '%s' "${AUTH_ENABLED}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${AUTH_ENABLED}" == "true" ]]; then
     echo ""
     echo "--- Ensuring control-plane auth token files ---"
-    CP_ADMIN_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_admin_token.txt" "polis_admin")"
-    CP_OPERATOR_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_operator_token.txt" "polis_operator")"
-    CP_VIEWER_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_viewer_token.txt" "polis_viewer")"
-    CP_AGENT_TOKEN="$(ensure_token_file "${OUTPUT_DIR}/cp_agent_token.txt" "polis_agent")"
+    ensure_token_file "${OUTPUT_DIR}/cp_admin_token.txt" "polis_admin" > /dev/null
+    ensure_token_file "${OUTPUT_DIR}/cp_operator_token.txt" "polis_operator" > /dev/null
+    ensure_token_file "${OUTPUT_DIR}/cp_viewer_token.txt" "polis_viewer" > /dev/null
+    ensure_token_file "${OUTPUT_DIR}/cp_agent_token.txt" "polis_agent" > /dev/null
     echo "Auth token files are present for enabled control-plane auth."
 fi
 

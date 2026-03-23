@@ -231,7 +231,9 @@ mod tests {
     use crate::application::ports::{
         InstanceInspector, InstanceLifecycle, InstanceSpec, ShellExecutor, WorkspaceStateStore,
     };
-    use crate::application::vm::test_support::{fail_output, impl_shell_executor_stubs, ok_output};
+    use crate::application::vm::test_support::{
+        NoopReporter, fail_output, impl_shell_executor_stubs, ok_output,
+    };
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -415,16 +417,6 @@ mod tests {
         }
     }
 
-    // ── ProgressReporter stub ─────────────────────────────────────────────────
-
-    struct ReporterStub;
-
-    impl ProgressReporter for ReporterStub {
-        fn step(&self, _: &str) {}
-        fn success(&self, _: &str) {}
-        fn warn(&self, _: &str) {}
-    }
-
     // ── LocalFs stub ──────────────────────────────────────────────────────────
 
     struct FsStub {
@@ -527,7 +519,7 @@ mod tests {
     async fn delete_not_found() {
         let provisioner = ProvisionerStub::not_found();
         let state_store = StateStoreStub { clear_fails: false };
-        let reporter = ReporterStub;
+        let reporter = NoopReporter;
 
         let outcome = delete(&provisioner, &state_store, &reporter, false)
             .await
@@ -544,7 +536,7 @@ mod tests {
     async fn delete_success() {
         let provisioner = ProvisionerStub::running(false, false);
         let state_store = StateStoreStub { clear_fails: false };
-        let reporter = ReporterStub;
+        let reporter = NoopReporter;
 
         let outcome = delete(&provisioner, &state_store, &reporter, false)
             .await
@@ -561,7 +553,7 @@ mod tests {
     async fn delete_vm_delete_fails() {
         let provisioner = ProvisionerStub::running(true, false);
         let state_store = StateStoreStub { clear_fails: false };
-        let reporter = ReporterStub;
+        let reporter = NoopReporter;
 
         let err = delete(&provisioner, &state_store, &reporter, false)
             .await
@@ -575,7 +567,7 @@ mod tests {
     async fn delete_state_clear_fails() {
         let provisioner = ProvisionerStub::running(false, false);
         let state_store = StateStoreStub { clear_fails: true };
-        let reporter = ReporterStub;
+        let reporter = NoopReporter;
 
         let err = delete(&provisioner, &state_store, &reporter, false)
             .await
@@ -591,7 +583,7 @@ mod tests {
     async fn delete_stops_containers_when_running() {
         let provisioner = ProvisionerStub::running(false, false);
         let state_store = StateStoreStub { clear_fails: false };
-        let reporter = ReporterStub;
+        let reporter = NoopReporter;
 
         delete(&provisioner, &state_store, &reporter, false)
             .await
@@ -612,7 +604,7 @@ mod tests {
     async fn delete_container_stop_failure_continues() {
         let provisioner = ProvisionerStub::running(false, true);
         let state_store = StateStoreStub { clear_fails: false };
-        let reporter = ReporterStub;
+        let reporter = NoopReporter;
 
         let outcome = delete(&provisioner, &state_store, &reporter, false)
             .await
@@ -637,8 +629,8 @@ mod tests {
         fs: &'a FsStub,
         paths: &'a PathsStub,
         ssh: &'a SshStub,
-        reporter: &'a ReporterStub,
-    ) -> CleanupContext<'a, ProvisionerStub, StateStoreStub, FsStub, PathsStub, SshStub, ReporterStub>
+        reporter: &'a NoopReporter,
+    ) -> CleanupContext<'a, ProvisionerStub, StateStoreStub, FsStub, PathsStub, SshStub, NoopReporter>
     {
         CleanupContext {
             provisioner,
@@ -667,7 +659,7 @@ mod tests {
             remove_config_fails: false,
             remove_include_fails: false,
         };
-        let reporter = ReporterStub;
+        let reporter = NoopReporter;
 
         let ctx = make_cleanup_ctx(&provisioner, &state_store, &fs, &paths, &ssh, &reporter);
         let result = delete_all(&ctx).await;
@@ -691,7 +683,7 @@ mod tests {
             remove_config_fails: true,
             remove_include_fails: false,
         };
-        let reporter = ReporterStub;
+        let reporter = NoopReporter;
 
         let ctx = make_cleanup_ctx(&provisioner, &state_store, &fs, &paths, &ssh, &reporter);
         let err = delete_all(&ctx)

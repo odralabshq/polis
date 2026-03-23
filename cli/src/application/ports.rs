@@ -563,4 +563,45 @@ pub trait SecurityGateway {
     /// # Errors
     /// This function will return an error if the underlying operations fail.
     async fn get_log(&self) -> Result<Vec<String>>;
+
+    /// List all auto-approve rules.
+    /// Returns empty vec if no rules configured.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn list_rules(&self) -> Result<Vec<String>>;
+
+    /// Remove an auto-approve rule by pattern.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn remove_rule(&self, pattern: &str) -> Result<String>;
+
+    /// List all bypass domains.
+    /// Returns empty vec if no bypass domains configured.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn list_bypass_domains(&self) -> Result<Vec<String>>;
+
+    /// Remove a bypass domain.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn remove_bypass_domain(&self, domain: &str) -> Result<String>;
+
+    /// List all persistent credential allow rules.
+    /// Returns empty vec if no credential allow rules configured.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn list_credential_allows(&self) -> Result<Vec<String>>;
+
+    /// Remove a persistent credential allow rule.
+    /// Returns confirmation message from toolbox.
+    /// # Errors
+    /// This function will return an error if the underlying operations fail.
+    async fn remove_credential_allow(
+        &self,
+        pattern: &str,
+        host: &str,
+        fingerprint: &str,
+    ) -> Result<String>;
 }

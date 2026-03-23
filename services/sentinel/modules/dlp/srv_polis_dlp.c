@@ -975,12 +975,17 @@ static int is_new_domain_locked(const char *host)
         ".api.cohere.ai",
         ".generativelanguage.googleapis.com",
         ".aiplatform.googleapis.com",
+        ".openrouter.ai",
 
         /* ── GitHub ─────────────────────────────────────────────────── */
         ".api.github.com",
         ".github.com",
         ".githubusercontent.com",
         ".lfs.github.com",
+
+        /* ── GitLab / Bitbucket ─────────────────────────────────────── */
+        ".gitlab.com",
+        ".bitbucket.org",
 
         /* ── Cloud providers ────────────────────────────────────────── */
         ".amazonaws.com",
@@ -1006,6 +1011,7 @@ static int is_new_domain_locked(const char *host)
         ".nodejs.org",
         ".get.pnpm.io",
         ".bun.sh",
+        ".npmjs.com",
 
         /* ── Python ─────────────────────────────────────────────────── */
         ".pypi.org",
@@ -1020,6 +1026,7 @@ static int is_new_domain_locked(const char *host)
         ".static.crates.io",
         ".sh.rustup.rs",
         ".static.rust-lang.org",
+        ".docs.rs",
 
         /* ── Go ─────────────────────────────────────────────────────── */
         ".proxy.golang.org",
@@ -1101,6 +1108,23 @@ static int is_new_domain_locked(const char *host)
 
         /* ── CDNs ───────────────────────────────────────────────────── */
         ".cloudfront.net",
+
+        /* ── Developer documentation & Q&A ──────────────────────────── */
+        ".stackoverflow.com",
+        ".stackexchange.com",
+        ".serverfault.com",
+        ".superuser.com",
+        ".askubuntu.com",
+        ".docs.python.org",
+        ".developer.mozilla.org",
+        ".devdocs.io",
+        ".readthedocs.io",
+        ".readthedocs.org",
+        ".doc.rust-lang.org",
+        ".learn.microsoft.com",
+
+        /* ── Search APIs (agent web search) ─────────────────────────── */
+        ".api.search.brave.com",
 
         NULL
     };
@@ -2202,9 +2226,12 @@ int dlp_process(ci_request_t *req)
         /* Add diagnostic headers */
         ci_http_response_add_header(req, "X-polis-Block: true");
 
-        snprintf(hdr_buf, sizeof(hdr_buf),
-                 "X-polis-Reason: %s", data->matched_pattern);
-        ci_http_response_add_header(req, hdr_buf);
+        {
+            const char *reason_str = block_reason_for_pattern(data->matched_pattern);
+            snprintf(hdr_buf, sizeof(hdr_buf),
+                     "X-polis-Reason: %s", reason_str);
+            ci_http_response_add_header(req, hdr_buf);
+        }
 
         snprintf(hdr_buf, sizeof(hdr_buf),
                  "X-polis-Pattern: %s", data->matched_pattern);

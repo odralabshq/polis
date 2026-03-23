@@ -52,6 +52,29 @@ impl SecurityGateway for MockGateway {
     async fn get_log(&self) -> Result<Vec<String>> {
         Ok(vec!["event1".into()])
     }
+    async fn list_rules(&self) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+    async fn remove_rule(&self, _pattern: &str) -> Result<String> {
+        Ok("rule removed".into())
+    }
+    async fn list_bypass_domains(&self) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+    async fn remove_bypass_domain(&self, _domain: &str) -> Result<String> {
+        Ok("bypass removed".into())
+    }
+    async fn list_credential_allows(&self) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+    async fn remove_credential_allow(
+        &self,
+        _pattern: &str,
+        _host: &str,
+        _fingerprint: &str,
+    ) -> Result<String> {
+        Ok("credential allow removed".into())
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

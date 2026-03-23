@@ -430,12 +430,15 @@ impl<'a> HumanRenderer<'a> {
                     "   Activate an agent:       {}",
                     "polis agent activate <name>".style(self.ctx.styles.command)
                 ));
+                self.ctx.info("3. Connect to the workspace:");
                 self.ctx.info(&format!(
-                    "3. Connect to the workspace: {}",
+                    "   SSH:                     {}",
                     "polis connect".style(self.ctx.styles.command)
                 ));
-                self.ctx
-                    .info("   Shows available connection methods (SSH, VS Code, Cursor).");
+                self.ctx.info(&format!(
+                    "   VS Code:                 {}",
+                    "code --remote ssh-remote+workspace /workspace".style(self.ctx.styles.command)
+                ));
             }
         }
     }
@@ -512,6 +515,18 @@ impl<'a> HumanRenderer<'a> {
     /// Render security action result (approve/deny/rule/level).
     pub fn render_security_action(&self, message: &str) {
         self.ctx.success(message);
+    }
+
+    /// Render a generic security list (rules, bypass domains, credentials).
+    pub fn render_security_list(&self, title: &str, empty_msg: &str, items: &[String]) {
+        self.ctx.header(title);
+        if items.is_empty() {
+            self.ctx.info(empty_msg);
+        } else {
+            for item in items {
+                self.ctx.info(&format!("   - {item}"));
+            }
+        }
     }
 }
 

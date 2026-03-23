@@ -744,7 +744,7 @@
             </label>
             <button id="refresh-logs-button" type="button" aria-label="Refresh logs">Refresh Logs</button>
           </div>
-          <div id="log-viewer" class="log-viewer" tabindex="0" aria-label="Scrollable log viewer"></div>
+          <div id="log-viewer" class="log-viewer" role="log" tabindex="0" aria-label="Scrollable log viewer"></div>
           <p id="logs-empty-state" class="empty-state">No logs loaded.</p>
         </section>
       </main>
@@ -758,16 +758,16 @@
     <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
     <script>
-      const authToken = new URLSearchParams(window.location.search).get("token") || "";
+      const authToken = new URLSearchParams(globalThis.location.search).get("token") || "";
 
       // Security: strip token from URL to prevent leaking in browser
       // history, Referer headers, and shoulder-surfing. The token is
       // kept in memory for API calls but removed from the address bar.
       if (authToken) {
-        const cleanUrl = new URL(window.location.href);
+        const cleanUrl = new URL(globalThis.location.href);
         cleanUrl.searchParams.delete("token");
         const cleaned = cleanUrl.pathname + cleanUrl.search + cleanUrl.hash;
-        window.history.replaceState({}, document.title, cleaned || "/");
+        globalThis.history.replaceState({}, document.title, cleaned || "/");
       }
 
       const state = {
@@ -819,7 +819,7 @@
         const stack = document.getElementById("toast-stack");
         const toast = createElement("div", { className: `toast ${type}`, text: message });
         stack.append(toast);
-        window.setTimeout(() => toast.remove(), 5000);
+        globalThis.setTimeout(() => toast.remove(), 5000);
       }
 
       function switchTab(sectionId) {
@@ -1113,8 +1113,8 @@
             if (errorBody && typeof errorBody.error === "string") {
               errorMessage = errorBody.error;
             }
-          } catch (_error) {
-            // Keep the fallback message.
+          } catch (parseError) {
+            console.debug("Could not parse error response body as JSON:", parseError);
           }
           throw new Error(errorMessage);
         }
@@ -1257,7 +1257,7 @@
           source.addEventListener("error", () => {
             setConnectionStatus(false);
             source.close();
-            window.setTimeout(() => connect(), retryDelay);
+            globalThis.setTimeout(() => connect(), retryDelay);
             retryDelay = Math.min(retryDelay * 2, maxRetryDelay);
           });
 

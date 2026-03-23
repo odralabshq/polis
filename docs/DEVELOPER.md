@@ -21,8 +21,8 @@ just build
 # 4. Install dev build
 bash scripts/install-dev.sh
 
-# 5. Run workspace
-polis run
+# 5. Start workspace
+polis start
 ```
 
 **Windows (Hyper-V):**
@@ -77,23 +77,31 @@ Run `just install-tools-windows` to install everything automatically, or install
 
 ```
 polis/
+├── agents/                   # Agent definitions (openclaw, _template)
 ├── cli/src/                  # Rust CLI (polis binary)
-├── tools/dev-vm.sh           # Development VM management
-├── cloud-init.yaml           # Cloud-init config for dev VMs
-├── packer/                   # VM image build
-│   ├── polis-vm.pkr.hcl      # Packer template
-│   ├── goss/                 # Goss tests for VM validation
-│   └── scripts/              # Provisioner scripts
+├── config/                   # Shared configuration (polis.yaml)
+├── docs/                     # Developer and tester guides
+├── lib/                      # Shared Rust crates (polis-common) and shell libs
+├── scripts/                  # Install, setup, and CI helper scripts
 ├── services/                 # Docker service definitions
+│   ├── control-plane/        # Governance REST API, SSE stream, web dashboard
+│   ├── gate/                 # TLS-intercepting proxy (g3proxy)
+│   ├── resolver/             # DNS entry point (CoreDNS)
+│   ├── scanner/              # Malware scanning (ClamAV)
+│   ├── sentinel/             # Content inspection (c-icap), DLP
+│   ├── state/                # Redis-compatible data store (Valkey)
+│   ├── toolbox/              # MCP tools for agent interaction
+│   └── workspace/            # Isolated environment (Sysbox)
 ├── tests/                    # Test suites
+│   ├── bats/                 # CLI BATS tests (offline, lifecycle, e2e)
 │   ├── unit/                 # Unit tests (no Docker)
-│   │   ├── packer/           # Packer config validation
-│   │   └── docker/           # Dockerfile/Compose linting
 │   ├── integration/          # Integration tests (requires containers)
 │   ├── e2e/                  # End-to-end tests (full stack)
 │   ├── container-structure/  # Container structure test configs
 │   └── lib/                  # Test helpers and constants
+├── tools/                    # Development VM management
 ├── Justfile                  # Task runner recipes
+├── docker-compose.yml        # Service orchestration
 └── .github/workflows/        # CI/CD pipelines
 ```
 
@@ -399,8 +407,8 @@ fix/some-bug      ──┘
 # 1. Open a PR from develop → main, get 1 approval, squash merge
 # 2. Tag main
 git checkout main && git pull
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 ---
@@ -481,6 +489,7 @@ Docker images pushed to GHCR:
 - `ghcr.io/odralabshq/polis-gate-oss:vX.X.X`
 - `ghcr.io/odralabshq/polis-sentinel-oss:vX.X.X`
 - `ghcr.io/odralabshq/polis-resolver-oss:vX.X.X`
+- `ghcr.io/odralabshq/polis-control-plane-oss:vX.X.X`
 - etc.
 
 ### Release Process
@@ -649,7 +658,7 @@ just build-vm-hyperv headless=false
 The build runs:
 
 1. `cargo build --release` — CLI binary
-2. `docker compose build` — all 9 service images
+2. `docker compose build` — all 10 service images
 3. `export-images-windows.ps1` — `docker save` → `.build/polis-images.tar` (≈500 MB)
 4. `bundle-config-windows.ps1` — bundles compose config → `.build/polis-config.tar.gz`
 5. `build-agents-windows.ps1` — bundles agent artifacts → `.build/polis-agents.tar.gz`
@@ -748,7 +757,7 @@ multipass start polis-dev
 
 **Disk space requirements**
 
-`polis run` causes multipassd to copy the workspace image (~3.4 GB) into its vault, then expand a 50 GB virtual disk inside the nested VM. The dev VM needs enough free space to hold both. Recommended minimum: **200 GB**.
+`polis start` causes multipassd to copy the workspace image (~3.4 GB) into its vault, then expand a 50 GB virtual disk inside the nested VM. The dev VM needs enough free space to hold both. Recommended minimum: **200 GB**.
 
 To check and resize from the host:
 
@@ -799,7 +808,7 @@ OpenClaw runs as a systemd service inside the workspace container, exposing a Co
 
 ```bash
 echo "OPENAI_API_KEY=sk-proj-..." >> .env   # or ANTHROPIC_API_KEY / OPENROUTER_API_KEY
-polis start --agent=openclaw
+polis start
 ```
 
 ### Checking progress

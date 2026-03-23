@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use fred::prelude::*;
 use fred::types::config::{TlsConfig, TlsConnector, TlsHostMapping};
 use fred::types::scan::Scanner;
+use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
@@ -36,7 +38,7 @@ impl AppState {
         let ca_file =
             File::open(&ca_path).with_context(|| format!("failed to open CA cert: {}", ca_path))?;
         let mut ca_reader = BufReader::new(ca_file);
-        let ca_certs = rustls_pemfile::certs(&mut ca_reader)
+        let ca_certs = CertificateDer::pem_reader_iter(&mut ca_reader)
             .collect::<Result<Vec<_>, _>>()
             .context("failed to parse CA cert")?;
 
@@ -51,7 +53,7 @@ impl AppState {
         let cert_file = File::open(&cert_path)
             .with_context(|| format!("failed to open client cert: {}", cert_path))?;
         let mut cert_reader = BufReader::new(cert_file);
-        let client_certs = rustls_pemfile::certs(&mut cert_reader)
+        let client_certs = CertificateDer::pem_reader_iter(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
             .context("failed to parse client cert")?;
 
@@ -59,9 +61,8 @@ impl AppState {
         let key_file = File::open(&key_path)
             .with_context(|| format!("failed to open client key: {}", key_path))?;
         let mut key_reader = BufReader::new(key_file);
-        let client_key = rustls_pemfile::private_key(&mut key_reader)
-            .context("failed to parse client key")?
-            .context("no private key found in file")?;
+        let client_key = PrivateKeyDer::from_pem_reader(&mut key_reader)
+            .context("failed to parse client key")?;
 
         // Build rustls ClientConfig with mTLS
         let tls_config = rustls::ClientConfig::builder()

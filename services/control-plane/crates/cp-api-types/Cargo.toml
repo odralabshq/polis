@@ -3,6 +3,7 @@ name = "cp-api-types"
 version = "0.1.0"
 edition = "2024"
 description = "Shared API types for the Polis control-plane service"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }

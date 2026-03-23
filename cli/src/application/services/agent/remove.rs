@@ -246,6 +246,20 @@ async fn restart_control_plane_and_clear_state(
     reporter: &impl ProgressReporter,
     agent_name: &str,
 ) -> Result<()> {
+    // Clear POLIS_AGENT_* env vars so the workspace container restarts
+    // without stale agent labels (used by both `polis status` and the
+    // control-plane dashboard to detect the active agent).
+    reporter.step("clearing agent metadata from .env...");
+    let env_path = format!("{VM_ROOT}/.env");
+    let _ = provisioner
+        .exec(&[
+            "sed",
+            "-i",
+            "/^POLIS_AGENT_NAME=/d;/^POLIS_AGENT_VERSION=/d;/^POLIS_AGENT_DISPLAY_NAME=/d",
+            &env_path,
+        ])
+        .await;
+
     reporter.step("restarting control plane...");
     let base = format!("{VM_ROOT}/docker-compose.yml");
     let up = provisioner

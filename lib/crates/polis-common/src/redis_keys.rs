@@ -170,6 +170,38 @@ fn decode_key_component(value: &str) -> Result<String, &'static str> {
     String::from_utf8(decoded).map_err(|_| "encoded component is not valid UTF-8")
 }
 
+/// Strip an optional port suffix from a host string.
+fn strip_port(host: &str) -> Result<&str, &'static str> {
+    if host.starts_with('[') {
+        let end = host
+            .find(']')
+            .ok_or("IPv6 host must contain a closing bracket")?;
+        let host_part = &host[..=end];
+        if host.len() == end + 1
+            || (host.as_bytes().get(end + 1) == Some(&b':')
+                && host[end + 2..]
+                    .chars()
+                    .all(|character| character.is_ascii_digit()))
+        {
+            Ok(host_part)
+        } else {
+            Err("invalid bracketed host format")
+        }
+    } else if let Some((name, port)) = host.rsplit_once(':') {
+        if !name.is_empty()
+            && !name.contains(':')
+            && !port.is_empty()
+            && port.chars().all(|character| character.is_ascii_digit())
+        {
+            Ok(name)
+        } else {
+            Ok(host)
+        }
+    } else {
+        Ok(host)
+    }
+}
+
 /// Normalize a host used in approval keys by lowercasing it, stripping a
 /// trailing dot, and removing an explicit port.
 pub fn normalize_approval_host(host: &str) -> Result<String, &'static str> {
@@ -182,34 +214,7 @@ pub fn normalize_approval_host(host: &str) -> Result<String, &'static str> {
         return Err("host must not contain whitespace or path separators");
     }
 
-    let without_port = if trimmed.starts_with('[') {
-        let end = trimmed
-            .find(']')
-            .ok_or("IPv6 host must contain a closing bracket")?;
-        let host_part = &trimmed[..=end];
-        if trimmed.len() == end + 1
-            || (trimmed.as_bytes().get(end + 1) == Some(&b':')
-                && trimmed[end + 2..]
-                    .chars()
-                    .all(|character| character.is_ascii_digit()))
-        {
-            host_part
-        } else {
-            return Err("invalid bracketed host format");
-        }
-    } else if let Some((name, port)) = trimmed.rsplit_once(':') {
-        if !name.is_empty()
-            && !name.contains(':')
-            && !port.is_empty()
-            && port.chars().all(|character| character.is_ascii_digit())
-        {
-            name
-        } else {
-            trimmed
-        }
-    } else {
-        trimmed
-    };
+    let without_port = strip_port(trimmed)?;
 
     let normalized = without_port.trim_end_matches('.').to_ascii_lowercase();
     if normalized.is_empty() {
@@ -280,6 +285,17 @@ pub fn ott_key(ott_code: &str) -> String {
     format!("{}:{}", keys::OTT_MAPPING, ott_code)
 }
 
+/// Build the dedup sentinel key used by the DLP C module to prevent
+/// duplicate blocked entries for the same destination+pattern combination.
+/// Format: `polis:blocked:dedup:{host}:{pattern}`
+/// The sentinel sets this with a 3600s TTL when creating a blocked entry.
+/// Callers should DEL this key when approving/denying/bypassing a request
+/// so the same destination can be blocked again immediately.
+#[must_use]
+pub fn blocked_dedup_key(host: &str, pattern: &str) -> String {
+    format!("polis:blocked:dedup:{host}:{pattern}")
+}
+
 /// Validate that a request_id matches the expected format: req-[a-f0-9]{8}
 /// Returns Ok(()) if valid, Err with description if invalid.
 /// SECURITY: Always call before constructing Redis keys from untrusted input.
@@ -337,6 +353,14 @@ mod tests {
         assert_eq!(
             approved_host_key("https://example.com"),
             "polis:approved:host:https://example.com"
+        );
+    }
+
+    #[test]
+    fn blocked_dedup_key_format() {
+        assert_eq!(
+            blocked_dedup_key("en.wikipedia.org", "new_domain_prompt"),
+            "polis:blocked:dedup:en.wikipedia.org:new_domain_prompt"
         );
     }
 

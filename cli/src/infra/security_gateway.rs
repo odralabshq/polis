@@ -26,7 +26,7 @@ impl<'a, E: ShellExecutor> ToolboxSecurityGateway<'a, E> {
 /// Executes arbitrary commands in the toolbox container.
 ///
 /// Reads the mcp-admin password from the mounted Docker secret and injects it
-/// as `VALKEY_MCP_ADMIN_PASSWORD` so `polis-approve` can authenticate to Valkey.
+/// as `polis_VALKEY_PASS` so `polis-approve` can authenticate to Valkey.
 ///
 /// Memory efficiency:
 /// - Password bytes are formatted directly into the env var string (single allocation)
@@ -69,7 +69,7 @@ pub(super) async fn exec_in_toolbox(
         .context("non-UTF-8 output from polis-approve: password contains invalid UTF-8")?;
 
     // Format env var as single string: one allocation, not three
-    let pass_env = format!("VALKEY_MCP_ADMIN_PASSWORD={}", password.trim());
+    let pass_env = format!("polis_VALKEY_PASS={}", password.trim());
 
     let mut cmd: Vec<&str> = vec![
         "docker",
@@ -105,7 +105,7 @@ pub(super) async fn exec_in_toolbox(
 
 impl<E: ShellExecutor> SecurityGateway for ToolboxSecurityGateway<'_, E> {
     async fn list_pending(&self) -> Result<Vec<String>> {
-        let output = exec_in_toolbox(self.executor, &["list"]).await?;
+        let output = exec_in_toolbox(self.executor, &["list-pending"]).await?;
         let trimmed = output.trim();
 
         // Handle toolbox sentinel value for empty queue (Req 28.1, 28.2)
@@ -128,17 +128,14 @@ impl<E: ShellExecutor> SecurityGateway for ToolboxSecurityGateway<'_, E> {
 
     async fn set_level(&self, level: SecurityLevel) -> Result<String> {
         let level_str = level.to_string();
-        let output = exec_in_toolbox(self.executor, &["set-level", &level_str]).await?;
+        let output = exec_in_toolbox(self.executor, &["set-security-level", &level_str]).await?;
         Ok(output.trim().to_string())
     }
 
     async fn add_domain_rule(&self, pattern: &str, action: AllowAction) -> Result<String> {
         let action_str = action.to_string();
-        let output = exec_in_toolbox(
-            self.executor,
-            &["add-rule", pattern, "--action", &action_str],
-        )
-        .await?;
+        let output =
+            exec_in_toolbox(self.executor, &["auto-approve", pattern, &action_str]).await?;
         Ok(output.trim().to_string())
     }
 
@@ -151,5 +148,62 @@ impl<E: ShellExecutor> SecurityGateway for ToolboxSecurityGateway<'_, E> {
         }
 
         Ok(trimmed.lines().map(ToString::to_string).collect())
+    }
+
+    async fn list_rules(&self) -> Result<Vec<String>> {
+        let output = exec_in_toolbox(self.executor, &["list-rules"]).await?;
+        let trimmed = output.trim();
+
+        if trimmed == "no auto-approve rules" || trimmed.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(trimmed.lines().map(ToString::to_string).collect())
+    }
+
+    async fn remove_rule(&self, pattern: &str) -> Result<String> {
+        let output = exec_in_toolbox(self.executor, &["delete-rule", pattern]).await?;
+        Ok(output.trim().to_string())
+    }
+
+    async fn list_bypass_domains(&self) -> Result<Vec<String>> {
+        let output = exec_in_toolbox(self.executor, &["list-bypass-domains"]).await?;
+        let trimmed = output.trim();
+
+        if trimmed == "no bypass domains" || trimmed.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(trimmed.lines().map(ToString::to_string).collect())
+    }
+
+    async fn remove_bypass_domain(&self, domain: &str) -> Result<String> {
+        let output = exec_in_toolbox(self.executor, &["delete-bypass-domain", domain]).await?;
+        Ok(output.trim().to_string())
+    }
+
+    async fn list_credential_allows(&self) -> Result<Vec<String>> {
+        let output = exec_in_toolbox(self.executor, &["list-credential-allows"]).await?;
+        let trimmed = output.trim();
+
+        if trimmed == "no credential allow rules" || trimmed.is_empty() {
+            return Ok(vec![]);
+        }
+
+        Ok(trimmed.lines().map(ToString::to_string).collect())
+    }
+
+    async fn remove_credential_allow(
+        &self,
+        pattern: &str,
+        host: &str,
+        fingerprint: &str,
+    ) -> Result<String> {
+        let output = exec_in_toolbox(
+            self.executor,
+            &["delete-credential-allow", pattern, host, fingerprint],
+        )
+        .await?;
+        Ok(output.trim().to_string())
     }
 }

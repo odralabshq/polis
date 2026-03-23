@@ -385,6 +385,21 @@ pub async fn run_healthcheck() -> Result<()> {
     }
 }
 
+/// Poll a store method and broadcast if the value changed.
+macro_rules! poll_notify {
+    ($state:expr, $last:expr, $poll:expr, $msg:expr, $label:literal) => {
+        match $poll.await {
+            Ok(val) => {
+                if $last.as_ref() != Some(&val) {
+                    $last = Some(val);
+                    $state.notify($msg);
+                }
+            }
+            Err(error) => tracing::warn!(%error, $label),
+        }
+    };
+}
+
 #[must_use]
 pub fn spawn_poller<S>(state: HttpState<S>) -> JoinHandle<()>
 where
@@ -407,59 +422,46 @@ where
             interval.tick().await;
             ticks = ticks.wrapping_add(1);
 
-            match state.store.get_status().await {
-                Ok(status) => {
-                    if last_status.as_ref() != Some(&status) {
-                        last_status = Some(status);
-                        state.notify(BroadcastMessage::Status);
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "failed to poll status snapshot"),
-            }
-
-            match state.store.list_blocked().await {
-                Ok(blocked) => {
-                    if last_blocked.as_ref() != Some(&blocked) {
-                        last_blocked = Some(blocked);
-                        state.notify(BroadcastMessage::Blocked);
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "failed to poll blocked snapshot"),
-            }
-
-            match state.store.list_events(DEFAULT_EVENT_LIMIT).await {
-                Ok(events) => {
-                    if last_events.as_ref() != Some(&events) {
-                        last_events = Some(events);
-                        state.notify(BroadcastMessage::EventLog);
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "failed to poll event snapshot"),
-            }
-
-            match state.store.list_rules().await {
-                Ok(rules) => {
-                    if last_rules.as_ref() != Some(&rules) {
-                        last_rules = Some(rules);
-                        state.notify(BroadcastMessage::Rules);
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "failed to poll rules snapshot"),
-            }
+            poll_notify!(
+                state,
+                last_status,
+                state.store.get_status(),
+                BroadcastMessage::Status,
+                "failed to poll status snapshot"
+            );
+            poll_notify!(
+                state,
+                last_blocked,
+                state.store.list_blocked(),
+                BroadcastMessage::Blocked,
+                "failed to poll blocked snapshot"
+            );
+            poll_notify!(
+                state,
+                last_events,
+                state.store.list_events(DEFAULT_EVENT_LIMIT),
+                BroadcastMessage::EventLog,
+                "failed to poll event snapshot"
+            );
+            poll_notify!(
+                state,
+                last_rules,
+                state.store.list_rules(),
+                BroadcastMessage::Rules,
+                "failed to poll rules snapshot"
+            );
 
             if !ticks.is_multiple_of(WORKSPACE_POLL_TICKS) {
                 continue;
             }
 
-            match state.store.get_workspace().await {
-                Ok(workspace) => {
-                    if last_workspace.as_ref() != Some(&workspace) {
-                        last_workspace = Some(workspace);
-                        state.notify(BroadcastMessage::Workspace);
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "failed to poll workspace snapshot"),
-            }
+            poll_notify!(
+                state,
+                last_workspace,
+                state.store.get_workspace(),
+                BroadcastMessage::Workspace,
+                "failed to poll workspace snapshot"
+            );
 
             match state.store.get_agent().await {
                 Ok(agent) => {
@@ -478,15 +480,13 @@ where
                 continue;
             }
 
-            match state.store.get_metrics().await {
-                Ok(metrics) => {
-                    if last_metrics.as_ref() != Some(&metrics) {
-                        last_metrics = Some(metrics);
-                        state.notify(BroadcastMessage::Metrics);
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "failed to poll metrics snapshot"),
-            }
+            poll_notify!(
+                state,
+                last_metrics,
+                state.store.get_metrics(),
+                BroadcastMessage::Metrics,
+                "failed to poll metrics snapshot"
+            );
         }
     })
 }

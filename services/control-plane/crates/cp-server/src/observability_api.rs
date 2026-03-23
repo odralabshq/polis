@@ -349,7 +349,15 @@ mod tests {
     fn test_router() -> Router {
         let (sender, _) = broadcast::channel(4);
         let state = HttpState::new(Arc::new(TestStore), sender);
-        routes::<TestStore>().with_state(state)
+        routes::<TestStore>()
+            .layer(axum::middleware::from_fn(
+                |mut req: Request<Body>, next: axum::middleware::Next| async {
+                    req.extensions_mut()
+                        .insert(crate::auth::AuthSession::new(crate::auth::Role::Admin));
+                    next.run(req).await
+                },
+            ))
+            .with_state(state)
     }
 
     fn sample_logs_response(limit: usize, level: Option<&str>) -> LogsResponse {

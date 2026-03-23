@@ -1,11 +1,17 @@
 //! `polis security` — manage security policy, blocked requests, and domain rules.
 
 mod approve;
+mod bypass;
+mod bypass_remove;
+mod credential_remove;
+mod credentials;
 mod deny;
 mod level;
 mod log;
 mod pending;
 mod rule;
+mod rule_remove;
+mod rules;
 mod status;
 
 use anyhow::Result;
@@ -43,11 +49,36 @@ pub enum SecurityCommand {
         #[arg(long, default_value_t = AllowAction::Allow, value_enum)]
         action: AllowAction,
     },
+    /// List all auto-approve rules
+    Rules,
+    /// Remove an auto-approve rule
+    RuleRemove {
+        /// Domain pattern to remove (e.g. "*.example.com")
+        pattern: String,
+    },
     /// Set the security level
     Level {
         /// Security level: relaxed, balanced, or strict
         #[arg(value_enum)]
         level: SecurityLevel,
+    },
+    /// List bypass domains (traffic not inspected)
+    Bypass,
+    /// Remove a bypass domain
+    BypassRemove {
+        /// Domain to remove from the bypass list
+        domain: String,
+    },
+    /// List persistent credential allow rules
+    Credentials,
+    /// Remove a persistent credential allow rule
+    CredentialRemove {
+        /// Credential pattern name (e.g. `aws_access`)
+        pattern: String,
+        /// Host name used by the rule
+        host: String,
+        /// 16-hex credential fingerprint
+        fingerprint: String,
     },
 }
 
@@ -70,6 +101,16 @@ pub async fn run(
         SecurityCommand::Rule { pattern, action } => {
             rule::run(app, gateway, &pattern, action).await
         }
+        SecurityCommand::Rules => rules::run(app, gateway).await,
+        SecurityCommand::RuleRemove { pattern } => rule_remove::run(app, gateway, &pattern).await,
         SecurityCommand::Level { level } => level::run(app, gateway, level).await,
+        SecurityCommand::Bypass => bypass::run(app, gateway).await,
+        SecurityCommand::BypassRemove { domain } => bypass_remove::run(app, gateway, &domain).await,
+        SecurityCommand::Credentials => credentials::run(app, gateway).await,
+        SecurityCommand::CredentialRemove {
+            pattern,
+            host,
+            fingerprint,
+        } => credential_remove::run(app, gateway, &pattern, &host, &fingerprint).await,
     }
 }

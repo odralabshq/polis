@@ -516,9 +516,9 @@ spec:
         );
         assert_eq!(
             manifest.spec.onboarding[0].title,
-            "Connect to workspace via SSH"
+            "Connect to the workspace"
         );
-        assert_eq!(manifest.spec.onboarding[0].command, "ssh workspace");
+        assert_eq!(manifest.spec.onboarding[0].command, "polis connect");
         assert_eq!(
             manifest.spec.onboarding[1].title,
             "Run the onboarding wizard inside the workspace"

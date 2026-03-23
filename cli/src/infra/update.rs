@@ -338,6 +338,13 @@ fn extract_binary_from_archive(archive_path: &std::path::Path) -> Result<std::pa
 }
 
 /// Extract a binary from a tar.gz archive.
+/// Check whether `path`'s file name matches the target binary.
+fn is_target_binary(path: &std::path::Path, binary_name: &str) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n == binary_name)
+}
+
 fn extract_from_tar_gz(
     archive_path: &std::path::Path,
     binary_name: &str,
@@ -346,18 +353,12 @@ fn extract_from_tar_gz(
     use flate2::read::GzDecoder;
 
     let file = std::fs::File::open(archive_path).context("opening tar.gz archive")?;
-    let decoder = GzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
+    let mut archive = tar::Archive::new(GzDecoder::new(file));
 
     for entry in archive.entries().context("reading tar entries")? {
         let mut entry = entry.context("reading tar entry")?;
         let path = entry.path().context("reading tar entry path")?;
-
-        // Check if this entry is the binary we're looking for
-        // It could be at the root or in a subdirectory
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-        if file_name == binary_name {
+        if is_target_binary(&path, binary_name) {
             std::io::copy(&mut entry, writer).context("extracting binary from tar.gz")?;
             return Ok(());
         }
@@ -377,16 +378,10 @@ fn extract_from_zip(
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).context("reading zip entry")?;
-
-        let path = match entry.enclosed_name() {
-            Some(p) => p.clone(),
-            None => continue,
+        let Some(path) = entry.enclosed_name() else {
+            continue;
         };
-
-        // Check if this entry is the binary we're looking for
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-        if file_name == binary_name {
+        if is_target_binary(&path, binary_name) {
             std::io::copy(&mut entry, writer).context("extracting binary from zip")?;
             return Ok(());
         }

@@ -175,27 +175,39 @@ where
 
 // ── Provisioning step structs ─────────────────────────────────────────────────
 
-struct LaunchVm;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for LaunchVm
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "launch-vm"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move { vm::create(ctx.provisioner, ctx.assets, reporter).await })
-    }
+/// Generate a `ProvisioningStep` impl with the standard where-clause and
+/// `Pin<Box<dyn Future>>` return type.
+macro_rules! impl_provisioning_step {
+    ($ty:ty, $id:expr, $ctx:ident, $reporter:ident, $body:expr) => {
+        impl<P, A, H, R> ProvisioningStep<P, A, H, R> for $ty
+        where
+            P: VmProvisioner,
+            A: AssetExtractor,
+            H: FileHasher,
+            R: ProgressReporter,
+        {
+            fn id(&self) -> &'static str {
+                $id
+            }
+            fn execute<'a>(
+                &'a self,
+                $ctx: &'a ProvisioningContext<'a, P, A, H>,
+                $reporter: &'a R,
+            ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+                Box::pin(async move { $body })
+            }
+        }
+    };
 }
+
+struct LaunchVm;
+impl_provisioning_step!(
+    LaunchVm,
+    "launch-vm",
+    ctx,
+    reporter,
+    vm::create(ctx.provisioner, ctx.assets, reporter).await
+);
 
 struct TransferConfigStep<'b> {
     assets_dir: &'b std::path::Path,
@@ -212,7 +224,6 @@ where
     fn id(&self) -> &'static str {
         "transfer-config"
     }
-
     fn execute<'a>(
         &'a self,
         ctx: &'a ProvisioningContext<'a, P, A, H>,
@@ -230,203 +241,76 @@ where
 }
 
 struct PersistVmIp;
+impl_provisioning_step!(PersistVmIp, "persist-vm-ip", ctx, _reporter, {
+    persist_vm_ip(ctx.provisioner).await.ok();
+    Ok(())
+});
 
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for PersistVmIp
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "persist-vm-ip"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        _reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move {
-            persist_vm_ip(ctx.provisioner).await.ok(); // best-effort
-            Ok(())
-        })
-    }
-}
 struct GenerateCerts;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for GenerateCerts
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "generate-certs"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        _reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move {
-            generate_certs_and_secrets(ctx.provisioner)
-                .await
-                .context("generating certificates and secrets")
-        })
-    }
-}
+impl_provisioning_step!(
+    GenerateCerts,
+    "generate-certs",
+    ctx,
+    _reporter,
+    generate_certs_and_secrets(ctx.provisioner)
+        .await
+        .context("generating certificates and secrets")
+);
 
 struct PullImages;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for PullImages
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "pull-images"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move {
-            reporter.begin_stage("verifying components...");
-            pull_images(ctx.provisioner, reporter)
-                .await
-                .context("pulling Docker images")
-        })
-    }
-}
+impl_provisioning_step!(PullImages, "pull-images", ctx, reporter, {
+    reporter.begin_stage("verifying components...");
+    pull_images(ctx.provisioner, reporter)
+        .await
+        .context("pulling Docker images")
+});
 
 struct VerifyDigests;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for VerifyDigests
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "verify-digests"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move {
-            verify_image_digests(ctx.provisioner, ctx.assets, reporter)
-                .await
-                .context("verifying image digests")
-        })
-    }
-}
+impl_provisioning_step!(
+    VerifyDigests,
+    "verify-digests",
+    ctx,
+    reporter,
+    verify_image_digests(ctx.provisioner, ctx.assets, reporter)
+        .await
+        .context("verifying image digests")
+);
 
 struct SetBaseOverlay;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for SetBaseOverlay
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "set-base-overlay"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        _reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move { set_active_overlay(ctx.provisioner, None).await })
-    }
-}
+impl_provisioning_step!(
+    SetBaseOverlay,
+    "set-base-overlay",
+    ctx,
+    _reporter,
+    set_active_overlay(ctx.provisioner, None).await
+);
 
 struct SetReadyMarker;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for SetReadyMarker
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "set-ready-marker"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        _reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move { set_ready_marker(ctx.provisioner, true).await })
-    }
-}
+impl_provisioning_step!(
+    SetReadyMarker,
+    "set-ready-marker",
+    ctx,
+    _reporter,
+    set_ready_marker(ctx.provisioner, true).await
+);
 
 struct StartServices;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for StartServices
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "start-services"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        _reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move {
-            ctx.provisioner
-                .exec(&["sudo", "systemctl", "start", "polis"])
-                .await
-                .context("starting polis service")?;
-            Ok(())
-        })
-    }
-}
+impl_provisioning_step!(StartServices, "start-services", ctx, _reporter, {
+    ctx.provisioner
+        .exec(&["sudo", "systemctl", "start", "polis"])
+        .await
+        .context("starting polis service")?;
+    Ok(())
+});
 
 struct WaitHealth;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for WaitHealth
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "wait-health"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        ctx: &'a ProvisioningContext<'a, P, A, H>,
-        reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        Box::pin(
-            async move { wait_ready(ctx.provisioner, reporter, false, "workspace ready").await },
-        )
-    }
-}
+impl_provisioning_step!(
+    WaitHealth,
+    "wait-health",
+    ctx,
+    reporter,
+    wait_ready(ctx.provisioner, reporter, false, "workspace ready").await
+);
 
 struct WriteConfigHash {
     hash: String,
@@ -442,7 +326,6 @@ where
     fn id(&self) -> &'static str {
         "write-config-hash"
     }
-
     fn execute<'a>(
         &'a self,
         ctx: &'a ProvisioningContext<'a, P, A, H>,
@@ -465,28 +348,15 @@ where
 /// we guarantee the checkpoint is cleared — and state is considered fully
 /// provisioned — only after health has been confirmed (BUG-3 fix, Req 5.8, 9.3).
 struct FinalizeProvisioning;
-
-impl<P, A, H, R> ProvisioningStep<P, A, H, R> for FinalizeProvisioning
-where
-    P: VmProvisioner,
-    A: AssetExtractor,
-    H: FileHasher,
-    R: ProgressReporter,
-{
-    fn id(&self) -> &'static str {
-        "finalize-provisioning"
-    }
-
-    fn execute<'a>(
-        &'a self,
-        _ctx: &'a ProvisioningContext<'a, P, A, H>,
-        _reporter: &'a R,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        // No-op: the runner clears the checkpoint after this step completes,
-        // which is the desired side-effect. All real work is done by prior steps.
-        Box::pin(async move { Ok(()) })
-    }
-}
+impl_provisioning_step!(
+    FinalizeProvisioning,
+    "finalize-provisioning",
+    _ctx,
+    _reporter,
+    // No-op: the runner clears the checkpoint after this step completes,
+    // which is the desired side-effect. All real work is done by prior steps.
+    Ok(())
+);
 
 // ── Restart path ──────────────────────────────────────────────────────────────
 

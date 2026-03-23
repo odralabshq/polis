@@ -23,6 +23,10 @@ use crate::domain::workspace::VM_ROOT;
 pub async fn run(app: &impl App, name: &str, subcmd: &str, args: &[String]) -> Result<ExitCode> {
     let mp = app.provisioner();
 
+    if !crate::domain::agent::validate::AGENT_NAME_RE.is_match(name) {
+        anyhow::bail!("Invalid agent name format");
+    }
+
     // Ensure workspace is running.
     let state = vm::state(mp).await?;
     if state != VmState::Running {
