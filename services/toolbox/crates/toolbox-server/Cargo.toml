@@ -6,7 +6,7 @@ license = "AGPL-3.0-or-later"
 
 [dependencies]
 polis-common = { path = "../../../../lib/crates/polis-common" }
-rmcp = { version = "0.16", features = ["server", "macros", "transport-streamable-http-server"] }
+rmcp = { version = "1.6", features = ["server", "macros", "transport-streamable-http-server"] }
 schemars = "1.2"
 tokio = { version = "1.49", features = ["full"] }
 fred = { version = "10.1", features = ["enable-rustls", "i-all"] }
